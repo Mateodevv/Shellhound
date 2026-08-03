@@ -252,27 +252,95 @@ def _hash_type(pw):
     return "other" if pw else "-"
 
 
+# Ein Zeitstempel, den das CMS als "nie" schreibt. MySQL kennt dafür kein
+# NULL-Idiom, sondern die Null-Datumsangabe -- wer sie als Datum liest, hält
+# einen nie angemeldeten Admin für einen von 1899.
+_NEVER = ("", "-", "0000-00-00 00:00:00", "0000-00-00", "1970-01-01 00:00:00")
+
+
+def _clean_stamp(value):
+    text = str(value or "").strip()
+    return "" if text in _NEVER else text
+
+
 def _extract_users(table, rows, cms):
+    """(uid, login, email, registriert, hash, letzter_login, gesperrt).
+
+    Letzter Login und Sperrstatus stehen NUR dort, wo das CMS sie führt:
+    Joomla hat beides fest im Schema (lastvisitDate, block), WordPress hat
+    im Kern keinen letzten Login -- der kommt dort, wenn überhaupt, aus
+    usermeta eines Plugins und wird später ergänzt. Was fehlt, bleibt leer;
+    ein geratener Zeitstempel wäre schlimmer als keiner."""
     users = []
     for row in rows:
         if len(row) < 4:
             continue
         uid = str(row[0]).strip() if row[0] is not None else "?"
+        last, blocked = "", 0
         if cms == "WordPress" and _looks_wordpress(row):
             login, pw, email, reg = row[1], row[2], row[4], row[6]
+            # user_status: im Kern kaum genutzt, aber wenn gesetzt, dann als
+            # Sperre gemeint.
+            if len(row) > 8:
+                try:
+                    blocked = 1 if int(str(row[8]).strip() or 0) else 0
+                except ValueError:
+                    blocked = 0
         elif cms == "Joomla" and len(row) >= 5:
             login = row[2]
             email = row[3]
             pw = row[4]
-            reg = _first(_is_datetime, row)
+            # Feste Spaltenordnung: 5 block, 7 registerDate, 8 lastvisitDate.
+            if len(row) >= 9:
+                try:
+                    blocked = 1 if int(str(row[5]).strip() or 0) else 0
+                except ValueError:
+                    blocked = 0
+                reg = row[7]
+                last = _clean_stamp(row[8])
+            else:
+                reg = _first(_is_datetime, row)
         else:
             email = _first(_is_email, row)
             reg = _first(_is_datetime, row)
             login = row[1] if len(row) > 1 else uid
             pw = _first(lambda v: isinstance(v, str) and v.startswith("$"), row)
         users.append((uid, str(login or "?"), str(email or "-"),
-                      str(reg or "-"), _hash_type(pw)))
+                      _clean_stamp(reg) or "-", _hash_type(pw), last, blocked))
     return users
+
+
+# WordPress führt den letzten Login nicht im Kern. Was es gibt, steht in
+# usermeta -- entweder als Plugin-Feld oder als aktive Sitzung. Beides ist
+# eine Aussage: "war zuletzt da" bzw. "ist GERADE angemeldet".
+_LAST_LOGIN_KEYS = ("last_login", "wfls-last-login", "last_activity",
+                    "wp_last_login", "_last_login")
+
+
+def _wp_user_meta_signals(rows):
+    """user_id -> {"last": str, "sessions": int} aus der usermeta-Tabelle."""
+    out = {}
+    for row in rows:
+        if len(row) < 4:
+            continue
+        uid = str(row[1]).strip()
+        key = str(row[2] or "").strip().lower()
+        value = str(row[3] or "")
+        entry = out.setdefault(uid, {"last": "", "sessions": 0})
+        if key.endswith("session_tokens") and value.strip():
+            entry["sessions"] = 1
+        elif any(key.endswith(k) for k in _LAST_LOGIN_KEYS):
+            stamp = _clean_stamp(value)
+            if stamp.isdigit():          # Unix-Zeit, wie Plugins sie schreiben
+                from datetime import datetime as _dt
+                try:
+                    stamp = _dt.fromtimestamp(int(stamp)).isoformat(sep=" ",
+                                                                   timespec="seconds")
+                except (ValueError, OSError, OverflowError):
+                    stamp = ""
+            if stamp > entry["last"]:
+                entry["last"] = stamp
+    return out
 
 
 def _wp_admin_ids(rows):
@@ -315,7 +383,9 @@ def _excerpt(text, start, end, radius=70, max_len=200):
 
 # --- the engine -------------------------------------------------------------
 
-_Account = namedtuple("_Account", "cms table uid login email registered hash_type admin")
+_Account = namedtuple(
+    "_Account",
+    "cms table uid login email registered hash_type admin last_login blocked sessions")
 
 
 def scan(case_dir, targets, ctx=None):
@@ -375,9 +445,11 @@ def scan(case_dir, targets, ctx=None):
             for acc in result["accounts"]:
                 conn.execute(
                     "INSERT INTO db_accounts (dump_id, cms, tbl, user_id, login,"
-                    " email, registered, hash_type, admin) VALUES (?,?,?,?,?,?,?,?,?)",
+                    " email, registered, hash_type, admin, last_login, blocked,"
+                    " sessions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (dump_id, acc.cms, acc.table, acc.uid, acc.login, acc.email,
-                     acc.registered, acc.hash_type, int(acc.admin)))
+                     acc.registered, acc.hash_type, int(acc.admin),
+                     acc.last_login, int(acc.blocked), int(acc.sessions)))
                 stats["accounts"] += 1
                 if acc.admin:
                     stats["admins"] += 1
@@ -397,6 +469,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     """One streaming pass over one dump."""
     tables_seen = []
     wp_admin_ids, joomla_super_ids = set(), set()
+    wp_meta = {}                 # user_id -> letzter Login / aktive Sitzung
     user_tables = []
     row_offsets = {}
     inv = {}
@@ -459,6 +532,11 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                 user_tables.append((table, rows))
             elif suf == "usermeta":
                 wp_admin_ids |= _wp_admin_ids(rows)
+                for uid, sig in _wp_user_meta_signals(rows).items():
+                    entry = wp_meta.setdefault(uid, {"last": "", "sessions": 0})
+                    entry["sessions"] = max(entry["sessions"], sig["sessions"])
+                    if sig["last"] > entry["last"]:
+                        entry["last"] = sig["last"]
             elif suf == "user_usergroup_map":
                 joomla_super_ids |= _joomla_super_ids(rows)
 
@@ -470,10 +548,16 @@ def _scan_dump(path, size, total_size, done_before, ctx):
         tbl_cms = cms_single or ("WordPress" if _suffix(table) == "users"
                                  and any(_looks_wordpress(r) for r in rows)
                                  else "Joomla")
-        for uid, login, email, reg, htype in _extract_users(table, rows, tbl_cms):
+        for uid, login, email, reg, htype, last, blocked in _extract_users(
+                table, rows, tbl_cms):
             admin = (uid in wp_admin_ids) or (uid in joomla_super_ids)
+            # NICHT `meta` nennen: in dieser Funktion sind das die Kopfdaten
+            # des Dumps, und die stehen weiter unten im Rückgabewert.
+            signals = wp_meta.get(uid, {})
             accounts.append(_Account(tbl_cms, table, uid, login, email, reg,
-                                     htype, admin))
+                                     htype, admin,
+                                     last or signals.get("last", ""),
+                                     blocked, signals.get("sessions", 0)))
 
     return {"meta": meta, "tables": inv, "statements": statements,
             "findings": findings, "accounts": accounts, "cms": cms}
