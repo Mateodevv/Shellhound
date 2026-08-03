@@ -1,0 +1,58 @@
+{
+  // Terminal > Run Task (oder Strg+Shift+B für den Build).
+  // Diese Tasks brauchen KEINE Erweiterung — sie laufen im Terminal.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "web: build",
+      "detail": "Frontend bauen — danach serviert das Panel den neuen Stand.",
+      "type": "shell",
+      "command": "npm run build",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "web: install",
+      "detail": "Einmalig nach dem Klonen: Frontend-Abhängigkeiten holen.",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "problemMatcher": []
+    },
+    {
+      "label": "web: dev (Vite)",
+      "detail": "Hot Reload auf http://localhost:5173/?token=dev — dazu die Startkonfiguration »Panel für Vite-Dev« laufen lassen.",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "web: lint",
+      "type": "shell",
+      "command": "npm run lint",
+      "options": { "cwd": "${workspaceFolder}/web" },
+      "problemMatcher": []
+    },
+    {
+      "label": "panel: starten",
+      "detail": "Das Panel ohne Debugger starten (öffnet den Browser).",
+      "type": "shell",
+      "command": "python -m server.main",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "panel: bauen und starten",
+      "detail": "Frontend bauen, dann das Panel starten — der übliche Ablauf.",
+      "dependsOn": ["web: build"],
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "python -m server.main",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

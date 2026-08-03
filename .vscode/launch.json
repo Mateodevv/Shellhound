@@ -1,0 +1,56 @@
+{
+  // F5 startet das Panel. Braucht die Debugger-Erweiterung "Python
+  // Debugger" (debugpy) aus dem Open-VSX-Marktplatz. Ältere Versionen
+  // kennen den Typ "debugpy" noch nicht — dort "type": "python" eintragen.
+  // Ganz ohne Erweiterung: Terminal > Run Task > "panel: starten".
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Der Normalfall: FastAPI serviert den gebauten Frontend-Stand aus
+      // web/dist und öffnet den Browser mit eingesetztem Token.
+      // Vorher einmal "web: build" laufen lassen.
+      "name": "Panel starten",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "server.main",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      // Für die Frontend-Arbeit: Vite läuft auf 5173 und leitet /api und
+      // /ws hierher weiter. Weil die Seite dann NICHT von FastAPI kommt,
+      // wird der Token nicht in die Seite injiziert — daher ein fester
+      // Token, den man an die URL hängt:
+      //     http://localhost:5173/?token=dev
+      // Dazu parallel Task "web: dev (Vite)" starten.
+      "name": "Panel für Vite-Dev (Token 'dev')",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "server.main",
+      "args": ["--no-browser", "--token", "dev"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      // Eigener Workspace-Ordner, z.B. für einen Testfall neben den echten.
+      "name": "Panel starten (Workspace wählen)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "server.main",
+      "args": ["--workspace", "${input:workspace}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "workspace",
+      "type": "promptString",
+      "description": "Workspace-Ordner (enthält die Fall-Ordner)",
+      "default": "${env:USERPROFILE}/ShellhoundCases"
+    }
+  ]
+}
