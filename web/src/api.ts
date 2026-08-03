@@ -1,0 +1,377 @@
+// api.ts — fetch wrapper + shared types for the SHELLHOUND API.
+
+declare global {
+  interface Window { __SHELLHOUND_TOKEN__?: string }
+}
+
+export const TOKEN: string =
+  window.__SHELLHOUND_TOKEN__ ??
+  new URLSearchParams(location.search).get('token') ??
+  ''
+
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
+export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      'X-Token': TOKEN,
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  })
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const body = await res.json()
+      detail = body.detail ?? detail
+    } catch { /* not JSON */ }
+    throw new ApiError(res.status, String(detail))
+  }
+  return res.json() as Promise<T>
+}
+
+export const post = <T = unknown>(path: string, body?: unknown) =>
+  api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+
+export const patch = <T = unknown>(path: string, body: unknown) =>
+  api<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
+
+export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE' })
+
+export function downloadUrl(path: string): string {
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}token=${encodeURIComponent(TOKEN)}`
+}
+
+// ---- types -----------------------------------------------------------------
+
+export interface CaseInfo {
+  slug: string
+  dir: string
+  name: string
+  reference: string
+  notes: string
+  created: string
+  findings?: number
+  confirmed?: number
+  iocs?: number
+  evidence?: number
+}
+
+export interface EvidenceItem {
+  id: number
+  kind: 'webroot' | 'access_logs' | 'sql_dump'
+  path: string
+  added: string
+  scanned_at: string
+  stats: Record<string, unknown>
+  exists?: boolean
+  label?: string
+  files?: number
+  bytes?: number
+  meta_at?: string
+  meta_partial?: number
+}
+
+export interface LogIndexStatus {
+  exists: boolean
+  fresh: boolean
+  reason: string
+  lines: number
+  clients: number
+  unparsed: number
+  size: number
+}
+
+export interface CaseDetail extends CaseInfo {
+  evidence_items: EvidenceItem[]
+  log_index: LogIndexStatus
+}
+
+export interface Job {
+  id: number
+  kind: string
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  progress: number
+  message: string
+  error: string
+  created: string
+  started?: string
+  finished?: string
+  stats: Record<string, unknown>
+}
+
+export interface Finding {
+  id: number
+  fingerprint: string
+  source: 'webshell' | 'sqldb' | 'logs'
+  severity: 0 | 1 | 2
+  rule: string
+  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  artifact: string
+  line: number | null
+  evidence: string
+  created: string
+  last_seen: string
+  triage: 'new' | 'reviewed' | 'confirmed' | 'dismissed'
+  triage_note: string
+  triaged_at?: string
+}
+
+export interface FindingsResponse {
+  total: number
+  findings: Finding[]
+  counts: {
+    severity: Record<string, number>
+    triage: Record<string, number>
+    source: Record<string, number>
+  }
+  roots: { kind: string; path: string; label: string }[]
+}
+
+export interface ActorAlert { kind: string; severity: number; detail: string }
+
+export interface Actor {
+  ip_id: number
+  ip: string
+  requests: number
+  first_epoch: number | null
+  last_epoch: number | null
+  tz: number
+  err4: number
+  err5: number
+  bytes: number
+  posts: number
+  login_posts: number
+  login_redirects: number
+  login_statuses: string
+  scanner_uas: string
+  sqli_attempts: number
+  sqli_ok: number
+  traversal_attempts: number
+  traversal_ok: number
+  upload_php_attempts: number
+  upload_php_ok: number
+  agents: number
+  alerts: ActorAlert[]
+  sparkline: number[]
+  in_box: boolean
+}
+
+export interface ActorsResponse {
+  total: number
+  actors: Actor[]
+  span: { from_hour: number; to_hour: number } | null
+}
+
+export interface TraceRow {
+  client: string
+  epoch: number
+  tz: number
+  method: string
+  uri: string
+  status: number
+  size: number
+  referrer: string
+  agent: string
+  source: string
+}
+
+export interface Ioc {
+  id: number
+  value: string
+  type: string
+  note: string
+  tags: string[]
+  origin: string
+  added: string
+}
+
+export interface CmsItem {
+  id: number
+  install_id: number
+  type: string
+  name: string
+  slug: string
+  version: string
+  path: string
+}
+
+export interface CmsInstall {
+  id: number
+  root: string
+  cms: string
+  version: string
+  items: CmsItem[]
+}
+
+export interface DbDump {
+  id: number
+  path: string
+  meta: Record<string, string>
+  statements: number
+  size: number
+  cms: string
+}
+
+export interface DbTable {
+  id: number
+  dump_id: number
+  name: string
+  columns: number
+  rows: number
+  bytes: number
+  col_list: string
+}
+
+export interface DbAccount {
+  id: number
+  dump_id: number
+  cms: string
+  tbl: string
+  user_id: string
+  login: string
+  email: string
+  registered: string
+  hash_type: string
+  admin: number
+}
+
+export interface Dashboard {
+  severity: Record<string, number>
+  triage: Record<string, number>
+  iocs: number
+  accounts: number
+  admins: number
+  cms_installs: { id: number; root: string; cms: string; version: string }[]
+  evidence: EvidenceItem[]
+  jobs_running: Job[]
+  logs: {
+    lines: number
+    clients: number
+    unparsed: number
+    alerted_clients: number
+    first_epoch: number | null
+    last_epoch: number | null
+  } | null
+  timeline: { day: string; requests: number; errors: number; new_clients: number }[]
+}
+
+export interface CaseSummary {
+  name: string
+  reference: string
+  slug: string
+  created: string
+  closed?: string
+  findings: number
+  confirmed: number
+  dismissed: number
+  iocs: number
+  evidence: { kind: string; path: string }[]
+  severity: Record<string, number>
+}
+
+export interface ArchiveEntry {
+  file: string
+  size: number
+  modified: string
+  readable: boolean
+  summary: CaseSummary | null
+}
+
+export interface ArchivesResponse {
+  archive_dir: string
+  archives: ArchiveEntry[]
+}
+
+export interface ImportResult {
+  slug: string
+  dir: string
+  renamed: boolean
+  name: string
+}
+
+export interface FileContent {
+  path: string
+  size: number
+  offset: number
+  length: number
+  eof: boolean
+  mode: 'raw' | 'hex'
+  window: number
+  binary: boolean
+  from_line?: number | null
+  lines?: string[]
+  rows?: { offset: number; hex: string; ascii: string }[]
+}
+
+export interface PickPath {
+  path: string
+  parent: string | null
+  dirs: { name: string; path: string }[]
+}
+
+export interface DetectResult {
+  candidates: Record<'webroot' | 'access_logs' | 'sql_dump',
+    { path: string; score: number; why: string; kind: string }[]>
+  scanned: number
+  truncated: boolean
+  root: string
+  error: string
+}
+
+export interface HuntHit { ip: string; name: string; hits: number; ok_hits: number }
+
+export interface FilePreview {
+  error?: string
+  binary?: boolean
+  from_line?: number
+  focus?: number | null
+  lines?: string[]
+  total_lines?: number
+  truncated?: boolean
+}
+
+export interface SiblingFinding {
+  fingerprint: string
+  severity: number
+  rule: string
+  line: number | null
+  triage: string
+}
+
+export interface FindingContext {
+  siblings: SiblingFinding[]
+  file?: {
+    exists: boolean
+    size?: number
+    mtime?: string
+    sha256?: string
+    in_upload_dir?: boolean
+    cms_guard?: boolean | null
+    preview?: FilePreview
+  }
+  hunt?: HuntHit[]
+  actor?: {
+    actor: Actor
+    alerts: { kind: string; severity: number; detail: string; example: string }[]
+    top_paths: { uri: string; n: number; ok: number }[]
+    top_agents: { agent: string; n: number }[]
+  } | null
+  table?: {
+    name: string
+    columns: number
+    rows: number
+    bytes: number
+    col_list: string
+    dump_path: string
+    cms: string
+  } | null
+}

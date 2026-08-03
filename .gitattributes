@@ -1,0 +1,11 @@
+# Keep repo files LF on every platform: hash-based tests compare byte-exact
+# content, and Windows checkouts must not churn diffs on line endings.
+* text=auto eol=lf
+
+# Windows launcher scripts need CRLF to run under cmd.exe.
+*.bat text eol=crlf
+
+# Compressed fixtures are binary; never normalize them.
+*.gz binary
+*.bz2 binary
+*.zip binary

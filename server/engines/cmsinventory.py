@@ -1,0 +1,235 @@
+# server/engines/cmsinventory.py
+"""CMS inventory: WordPress/Joomla installs + every extension with version.
+
+Ported from legacy core/cms.py + modules/cms_inventory.py. One directory walk
+finds the installs; each install is then inventoried (plugins, themes,
+components, modules, templates). "(unknown)" versions are reported, never
+silently dropped -- incomplete or manipulated extensions often lack manifests.
+"""
+import os
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+from server import db
+
+WORDPRESS = "WordPress"
+JOOMLA = "Joomla"
+
+_WP_VERSION_RE = re.compile(r"\$wp_version\s*=\s*['\"]([^'\"]+)['\"]")
+_J_CONST_RE = re.compile(
+    r"const\s+(MAJOR_VERSION|MINOR_VERSION|PATCH_VERSION)\s*=\s*(\d+)")
+_J_RELEASE_RE = re.compile(r"const\s+RELEASE\s*=\s*['\"]([\d.]+)['\"]")
+_J_DEVLEVEL_RE = re.compile(r"const\s+DEV_LEVEL\s*=\s*['\"](\d+)['\"]")
+
+_WP_HEADER_RES = {
+    "plugin_name": re.compile(r"^[ \t/*#@]*Plugin Name:\s*(.+?)\s*$", re.M | re.I),
+    "theme_name": re.compile(r"^[ \t/*#@]*Theme Name:\s*(.+?)\s*$", re.M | re.I),
+    "version": re.compile(r"^[ \t/*#@]*Version:\s*(.+?)\s*$", re.M | re.I),
+}
+
+
+def _read_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _read_head(path, size=8192):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read(size)
+    except OSError:
+        return ""
+
+
+def parse_wp_version(text):
+    m = _WP_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def parse_joomla_version(text):
+    consts = dict(_J_CONST_RE.findall(text))
+    if {"MAJOR_VERSION", "MINOR_VERSION", "PATCH_VERSION"} <= consts.keys():
+        return "{}.{}.{}".format(consts["MAJOR_VERSION"], consts["MINOR_VERSION"],
+                                 consts["PATCH_VERSION"])
+    release = _J_RELEASE_RE.search(text)
+    dev_level = _J_DEVLEVEL_RE.search(text)
+    if release and dev_level:
+        return f"{release.group(1)}.{dev_level.group(1)}"
+    return None
+
+
+def find_installs(target_dir):
+    """All CMS installs under target_dir in a SINGLE walk."""
+    wordpress, joomla4, joomla3 = {}, {}, {}
+    for dirpath, _dirnames, filenames in os.walk(target_dir):
+        files = {name.lower(): name for name in filenames}
+        d = Path(dirpath)
+        name = d.name.lower()
+        if name == "wp-includes" and "version.php" in files:
+            wordpress.setdefault(
+                d.parent, parse_wp_version(_read_text(d / files["version.php"])))
+        elif (name == "src" and d.parent.name.lower() == "libraries"
+                and "version.php" in files):
+            joomla4.setdefault(
+                d.parents[1], parse_joomla_version(_read_text(d / files["version.php"])))
+        elif (name == "version" and d.parent.name.lower() == "cms"
+                and d.parent.parent.name.lower() == "libraries"
+                and "version.php" in files):
+            joomla3.setdefault(
+                d.parents[2], parse_joomla_version(_read_text(d / files["version.php"])))
+    installs = [{"type": WORDPRESS, "root": root, "version": version}
+                for root, version in wordpress.items()]
+    joomla_roots = {**joomla3, **joomla4}
+    installs += [{"type": JOOMLA, "root": root, "version": version}
+                 for root, version in joomla_roots.items()]
+    return sorted(installs, key=lambda i: str(i["root"]))
+
+
+# --- WordPress --------------------------------------------------------------
+
+def _wp_plugin_header(php_path):
+    head = _read_head(php_path)
+    name = _WP_HEADER_RES["plugin_name"].search(head)
+    if not name:
+        return None
+    version = _WP_HEADER_RES["version"].search(head)
+    return name.group(1), version.group(1) if version else "(unknown)"
+
+
+def inventory_wordpress(root):
+    plugins_dir = root / "wp-content" / "plugins"
+    if plugins_dir.is_dir():
+        for entry in sorted(plugins_dir.iterdir()):
+            if entry.is_file() and entry.suffix == ".php":
+                header = _wp_plugin_header(entry)
+                if header:
+                    yield "Plugin", header[0], entry.stem, header[1], entry
+            elif entry.is_dir():
+                header = None
+                for php in sorted(entry.glob("*.php")):
+                    header = _wp_plugin_header(php)
+                    if header:
+                        yield "Plugin", header[0], entry.name, header[1], php
+                        break
+                if header is None:
+                    yield "Plugin", entry.name, entry.name, "(unknown)", entry
+
+    themes_dir = root / "wp-content" / "themes"
+    if themes_dir.is_dir():
+        for entry in sorted(themes_dir.iterdir()):
+            if not entry.is_dir():
+                continue
+            head = _read_head(entry / "style.css")
+            name = _WP_HEADER_RES["theme_name"].search(head)
+            version = _WP_HEADER_RES["version"].search(head)
+            yield ("Theme",
+                   name.group(1) if name else entry.name,
+                   entry.name,
+                   version.group(1) if version else "(unknown)",
+                   entry)
+
+
+# --- Joomla -----------------------------------------------------------------
+
+def _joomla_manifest(xml_path):
+    try:
+        tree = ET.parse(xml_path)
+    except (ET.ParseError, OSError):
+        return None
+    root = tree.getroot()
+    if root.tag not in ("extension", "install"):
+        return None
+    name = root.findtext("name") or xml_path.stem
+    version = root.findtext("version") or "(unknown)"
+    return name.strip(), version.strip()
+
+
+def _joomla_dir_entries(base_dir, ext_type):
+    if not base_dir.is_dir():
+        return
+    for entry in sorted(base_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        manifest = None
+        for xml_file in sorted(entry.glob("*.xml")):
+            manifest = _joomla_manifest(xml_file)
+            if manifest:
+                yield ext_type, manifest[0], entry.name, manifest[1], xml_file
+                break
+        if manifest is None:
+            yield ext_type, entry.name, entry.name, "(unknown)", entry
+
+
+def inventory_joomla(root):
+    yield from _joomla_dir_entries(root / "administrator" / "components", "Component")
+    yield from _joomla_dir_entries(root / "components", "Component (Site)")
+    yield from _joomla_dir_entries(root / "modules", "Module")
+    yield from _joomla_dir_entries(root / "administrator" / "modules", "Module (Admin)")
+
+    plugins_dir = root / "plugins"
+    if plugins_dir.is_dir():
+        for group in sorted(plugins_dir.iterdir()):
+            if group.is_dir():
+                yield from _joomla_dir_entries(group, f"Plugin ({group.name})")
+
+    for tpl_base, label in ((root / "templates", "Template"),
+                            (root / "administrator" / "templates", "Template (Admin)")):
+        if not tpl_base.is_dir():
+            continue
+        for entry in sorted(tpl_base.iterdir()):
+            if not entry.is_dir() or entry.name == "system":
+                continue
+            manifest = (_joomla_manifest(entry / "templateDetails.xml")
+                        if (entry / "templateDetails.xml").is_file() else None)
+            if manifest:
+                yield label, manifest[0], entry.name, manifest[1], entry / "templateDetails.xml"
+            else:
+                yield label, entry.name, entry.name, "(unknown)", entry
+
+
+# --- the engine -------------------------------------------------------------
+
+def scan(case_dir, targets, ctx=None):
+    """Inventory every install under `targets` into case.db."""
+    stats = {"installs": 0, "items": 0, "unknown_versions": 0}
+    conn = db.connect(case_dir)
+    try:
+        conn.execute("DELETE FROM cms_items")
+        conn.execute("DELETE FROM cms_installs")
+        for target in targets:
+            if ctx is not None and ctx.cancelled():
+                break
+            if ctx is not None:
+                ctx.progress(0.05, f"Suche CMS-Installationen in {target}…")
+            installs = find_installs(target)
+            for n, install in enumerate(installs):
+                root = str(install["root"])
+                version = install["version"] or "(unknown)"
+                if ctx is not None:
+                    ctx.progress(0.2 + 0.75 * (n / max(1, len(installs))),
+                                 f"Inventarisiere {install['type']} — {root}")
+                cur = conn.execute(
+                    "INSERT OR REPLACE INTO cms_installs (root, cms, version) "
+                    "VALUES (?,?,?)", (root, install["type"], version))
+                install_id = cur.lastrowid
+                stats["installs"] += 1
+                if version == "(unknown)":
+                    stats["unknown_versions"] += 1
+                inventory_fn = (inventory_wordpress if install["type"] == WORDPRESS
+                                else inventory_joomla)
+                for ext_type, name, slug, ext_version, path in inventory_fn(
+                        Path(install["root"])):
+                    conn.execute(
+                        "INSERT INTO cms_items (install_id, type, name, slug,"
+                        " version, path) VALUES (?,?,?,?,?,?)",
+                        (install_id, ext_type, name, slug, ext_version, str(path)))
+                    stats["items"] += 1
+                    if ext_version == "(unknown)":
+                        stats["unknown_versions"] += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return stats

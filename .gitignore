@@ -1,0 +1,88 @@
+# SHELLHOUND -- was NIEMALS in dieses Repository darf
+#
+# Dieses Werkzeug arbeitet mit Beweismitteln aus echten Vorfällen: Webroots
+# mit funktionsfähigen Webshells, Access-Logs mit Kunden- und Besucher-IPs,
+# Datenbank-Exporte mit Konten und E-Mail-Adressen. Nichts davon gehört in
+# eine Versionsverwaltung, schon gar nicht in eine öffentliche.
+#
+# Die Regeln unten sind bewusst breit gefasst: ein zu viel ignoriertes
+# Testfile kostet nichts, eine versehentlich veröffentlichte Kundendatei
+# lässt sich nicht zurücknehmen.
+
+# --- Beweismittel und Fall-Daten (niemals committen) -------------------------
+# Arbeitsverzeichnisse des Analysten
+ShellhoundCases/
+cases/
+workspace/
+workspaces/
+# Fall-Datenbanken und der abgeleitete Log-Index
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+case.json
+case_summary.json
+# Beweismittel-Kopien, wie sie beim Testen im Projekt landen
+evidence/
+test_case_data/
+testdata/
+real-world-data/
+*_evidence/
+access_log*/
+# Datenbank-Exporte
+*.sql
+*.sql.gz
+*.sql.bz2
+*.dump
+# Log-Dateien und rotierte Archive
+*.log
+*.log.gz
+*.log.bz2
+# Fall-Archive (enthalten den kompletten Fall)
+archive/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# --- Zugangsdaten und Konfiguration ------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+token.txt
+.shellhound/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / Frontend ---------------------------------------------------------
+node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+
+# --- Editoren und Betriebssystem ---------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+launch.json
+
+# --- Werkzeug-Artefakte ------------------------------------------------------
+.claude/
+CLAUDE.md
