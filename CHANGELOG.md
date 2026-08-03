@@ -62,7 +62,12 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Symbol und Farbe für Art und Schweregrad, die Regeln als Chips unter dem
   Namen, ein Balken für die Verteilung der Findings über die Schweregrade
   (viermal LOW ist ein anderes Bild als zweimal HIGH) und der Zustand als
-  Pille. Kategorien tragen einen Fortschrittsbalken „x von y entschieden".
+  Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
+  Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
+  entschieden".
+- Die **Listenbox umschließt ihren Inhalt**, statt immer die volle Fensterhöhe
+  zu füllen. Unter der letzten Zeile stand sonst eine leere Fläche, die
+  aussah, als fehle dort etwas.
 
 ### Behoben
 
