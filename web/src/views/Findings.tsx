@@ -19,38 +19,30 @@
 // Balken für die Verteilung der Findings, der Zustand als Pille. Eine Liste
 // aus lauter gleich aussehenden Zeilen zwingt zum Lesen jeder einzelnen.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code, Copy, Crosshair,
-  Database, DoorOpen, Eye, EyeOff, FileCode2, FileCog, FileSearch, KeyRound,
-  Radar, ServerCog, ShieldCheck, ShieldOff, Table2, Undo2, Users, X,
+  Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code, Crosshair,
+  Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch, KeyRound, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
-  api, post, type ArtifactContext, type ArtifactRow, type Finding,
-  type FindingsResponse, type TriageLink, type TriageResult, type TriageState,
+  api, type ArtifactRow, type Finding, type FindingsResponse,
 } from '../api'
 import {
-  SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, absoluteTime,
-  formatBytes, formatCount, formatDay, relativeTime, relativeToRoot, shortPath,
-  type EvidenceRoot,
+  SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, formatCount,
+  relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
-  Button, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag, Toast,
-  TriageBadge,
+  Button, Chip, EmptyState, SearchInput, SeverityBadge, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
 import { TraceWindow } from '../components/TraceWindow'
-import {
-  FIELD_EXPLAIN, artifactNoun, categorize, explainRule, type Category,
-} from '../explain'
+import { ArtifactWindow, KIND_ICON } from '../components/ArtifactWindow'
+import { TriageFollowUp, useTriage } from '../components/triage'
+import { artifactNoun, categorize, explainRule, type Category } from '../explain'
 import type { ViewId } from '../App'
-
-const KIND_ICON: Record<string, typeof Bug> = {
-  file: FileCode2, table: Table2, client: Users, dump: ServerCog,
-}
 
 // Ein Symbol je Kategorie. Die Kategorie ist die Gliederung, mit der man
 // anfängt — sie soll auf einen Blick unterscheidbar sein und nicht als
@@ -66,17 +58,6 @@ const CATEGORY_ICON: Record<string, typeof Bug> = {
   probes: Crosshair,
   scanner: Radar,
   other: CircleDashed,
-}
-
-const KIND_LABEL: Record<string, string> = {
-  file: 'Datei', table: 'Tabelle', client: 'Client', dump: 'Dump',
-}
-
-// Mit Artikel, für die Frage im Detail-Fenster: „Ist dieses Datei" liest
-// sich wie eine Maschine, und der Satz ist die wichtigste Zeile darin.
-const KIND_THIS: Record<string, string> = {
-  file: 'diese Datei', table: 'diese Tabelle',
-  client: 'dieser Client', dump: 'dieser Dump',
 }
 
 /** Ein Artefakt mit allem, was der Server dazu aggregiert hat, plus seinen
@@ -107,7 +88,6 @@ type Item =
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
-  const qc = useQueryClient()
   const [severity, setSeverity] = useState('')
   const [triage, setTriage] = useState('')
   const [source, setSource] = useState('')
@@ -123,16 +103,14 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
-  const [lastCollected, setLastCollected] = useState<TriageResult['collected']>([])
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Was die letzte Entscheidung nach sich gezogen hat: mitentschieden
-  // (`linked`) und nur vorgeschlagen (`suggested`).
-  const [notice, setNotice] = useState<
-    { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
-  const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
   const [hideDismissed, setHideDismissed] = useState(true)
   const [hideInfo, setHideInfo] = useState(true)
+
+  // Entscheidung + Nachsorge (Quittung, Übernahme-Meldung, Vorschläge) —
+  // geteilt mit Actors, damit es überall dieselbe Entscheidung ist.
+  const t = useTriage(slug, () => { setChecked(new Set()); setBulkNote('') })
 
   const query = useMemo(() => {
     const p = new URLSearchParams()
@@ -207,52 +185,6 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     return out
   }, [categories, expanded, collapsedCats, expandedCats, filtering])
 
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['findings'] })
-    qc.invalidateQueries({ queryKey: ['artifact'] })
-    qc.invalidateQueries({ queryKey: ['dashboard'] })
-    qc.invalidateQueries({ queryKey: ['iocs'] })
-  }
-
-  const setTriageState = useMutation({
-    mutationFn: (v: {
-      artifacts: string[]; state: string; note?: string; propagate?: boolean
-    }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
-    onSuccess: (result) => {
-      setLastCollected(result.collected)
-      setChecked(new Set())
-      setBulkNote('')
-      // Mitentschiedenes und Vorschläge sind eine MELDUNG, keine Frage: der
-      // Analyst hat gerade entschieden und soll erfahren, was daraus folgte,
-      // ohne aus seinem Ablauf gerissen zu werden.
-      if (result.linked?.length || result.suggested?.length) {
-        setNotice({ linked: result.linked ?? [], suggested: result.suggested ?? [] })
-      }
-      refresh()
-    },
-  })
-
-  /** Eine Übernahme zurücknehmen: jedes Artefakt zurück auf den Zustand, den
-   *  es vorher hatte — nach Zustand gruppiert, damit es ein Aufruf je Gruppe
-   *  bleibt. `propagate: false`, sonst löst das Zurücknehmen eine neue Welle
-   *  aus. */
-  const undoLinked = async (links: TriageLink[]) => {
-    const groups = new Map<string, { state: string; note: string; names: string[] }>()
-    for (const l of links) {
-      const key = `${l.previous.state}${l.previous.note}`
-      const g = groups.get(key)
-      if (g) g.names.push(l.artifact)
-      else groups.set(key, { state: l.previous.state, note: l.previous.note,
-                             names: [l.artifact] })
-    }
-    for (const g of groups.values()) {
-      await post(`/api/cases/${slug}/triage`,
-                 { artifacts: g.names, state: g.state, note: g.note,
-                   propagate: false })
-    }
-    setNotice(null)
-    refresh()
-  }
 
   /** Markierte Artefakte, sonst das unter dem Cursor. */
   const bulkTriage = (state: string) => {
@@ -260,7 +192,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     const names = checked.size
       ? [...checked]
       : (isArtifactRow(at) ? [(at as { a: Artifact }).a.artifact] : [])
-    if (names.length) setTriageState.mutate({ artifacts: names, state, note: bulkNote })
+    if (names.length) t.decide(names, state, bulkNote)
   }
 
   const parentRef = useRef<HTMLDivElement>(null)
@@ -268,8 +200,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     count: items.length,
     getScrollElement: () => parentRef.current,
     estimateSize: (i) => {
-      const t = items[i]?.t
-      return t === 'c' ? 62 : t === 'a' ? 68 : 34
+      const kind = items[i]?.t
+      return kind === 'c' ? 62 : kind === 'a' ? 68 : 34
     },
     overscan: 20,
   })
@@ -290,7 +222,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       else if (e.key === 'Enter') {
         const it = items[cursor]
         if (isArtifactRow(it)) {
-          setLastCollected([])
+          t.clearCollected()
           setSelected((it as { a: Artifact }).a)
         }
       } else if (e.key === 'x') {
@@ -611,7 +543,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       // erzeugt hat -- beim Öffnen eines anderen Artefakts
                       // verfällt es, sonst liest es sich als Ergebnis für
                       // dieses hier.
-                      setLastCollected([])
+                      t.clearCollected()
                       setSelected(a)
                     }}>
                     {/* Die Art des Artefakts als Symbol, eingefärbt nach dem
@@ -689,12 +621,12 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         slug={slug}
         artifact={selected}
         roots={roots}
-        collected={lastCollected}
+        collected={t.collected}
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips) => setTraceIps(ips)}
-        onClose={() => { setSelected(null); setLastCollected([]) }}
+        onClose={() => { setSelected(null); t.clearCollected() }}
         onTriage={(state, note) => {
-          if (selected) setTriageState.mutate({ artifacts: [selected.artifact], state, note })
+          if (selected) t.decide([selected.artifact], state, note)
         }}
       />
 
@@ -709,138 +641,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         onClose={() => setViewing(null)}
       />
 
-      <SuggestionWindow
-        links={reviewing}
-        roots={roots}
-        onClose={() => setReviewing(null)}
-        onDecide={(names, state) => {
-          setReviewing(null)
-          setNotice(null)
-          // Ein Vorschlag ist bereits das Ergebnis einer Übernahme -- er
-          // zieht keine weitere nach sich.
-          setTriageState.mutate({ artifacts: names, state,
-                                  note: 'aus Vorschlag entschieden',
-                                  propagate: false })
-        }}
-      />
-
-      <Toast
-        open={!!notice}
-        onClose={() => setNotice(null)}
-        tone={notice?.linked.length ? 'ok' : 'info'}
-        title={notice?.linked.length
-          ? `${formatCount(notice.linked.length)} Artefakt${notice.linked.length === 1 ? '' : 'e'} mitentschieden`
-          : `${formatCount(notice?.suggested.length ?? 0)} verknüpfte${(notice?.suggested.length ?? 0) === 1 ? 's' : ''} Artefakt${(notice?.suggested.length ?? 0) === 1 ? '' : 'e'} gefunden`}
-        actions={
-          <>
-            {!!notice?.suggested.length && (
-              <Button onClick={() => setReviewing(notice.suggested)}>
-                {formatCount(notice.suggested.length)} Vorschlag{notice.suggested.length === 1 ? '' : 'e'} prüfen
-              </Button>
-            )}
-            {!!notice?.linked.length && (
-              <Button variant="ghost" onClick={() => undoLinked(notice.linked)}>
-                <Undo2 size={14} /> Rückgängig
-              </Button>
-            )}
-            <Button variant="ghost" onClick={() => setNotice(null)}>Schließen</Button>
-          </>
-        }>
-        {!!notice?.linked.length && (
-          <>
-            Das Log belegt, dass diese zum selben Vorfall gehören — sie sind
-            jetzt True Positive, mit Vermerk woraus:
-            <ul className="mt-1 flex flex-col gap-0.5">
-              {notice.linked.slice(0, 4).map((l) => (
-                <li key={l.artifact} className="truncate">
-                  <span className="mono text-[var(--fg)]">{shortArtifact(l.artifact)}</span>
-                  {' — '}{l.why}
-                </li>
-              ))}
-              {notice.linked.length > 4 && <li>… und {notice.linked.length - 4} weitere</li>}
-            </ul>
-          </>
-        )}
-        {!notice?.linked.length && !!notice?.suggested.length && (
-          <>Nur angefragt, nie erfolgreich beantwortet — das entscheidet sich
-            nicht von selbst.</>
-        )}
-      </Toast>
+      <TriageFollowUp t={t} roots={roots} />
     </div>
-  )
-}
-
-/** Nur der Dateiname bzw. die Adresse — in einer Meldung zählt, WAS gemeint
- *  ist, nicht der vollständige Pfad. */
-function shortArtifact(artifact: string): string {
-  return artifact.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() ?? artifact
-}
-
-/** Die mittlere Stufe: Artefakte, die an der Entscheidung HÄNGEN, aber nicht
- *  von ihr FOLGEN — angefragt, nie erfolgreich. Sie werden vorgelegt, nicht
- *  entschieden: eine Sondierung ins Leere ist etwas anderes als ein Zugriff. */
-function SuggestionWindow({ links, roots, onClose, onDecide }: {
-  links: TriageLink[] | null
-  roots: EvidenceRoot[]
-  onClose: () => void
-  onDecide: (artifacts: string[], state: string) => void
-}) {
-  const [picked, setPicked] = useState<Set<string>>(new Set())
-  useEffect(() => { setPicked(new Set(links?.map((l) => l.artifact) ?? [])) }, [links])
-  if (!links) return null
-  return (
-    <Modal open onClose={onClose} layer={1}
-      title={<span className="flex items-center gap-2">
-        <Crosshair size={16} className="text-[var(--accent)]" />
-        {formatCount(links.length)} verknüpfte{links.length === 1 ? 's' : ''} Artefakt{links.length === 1 ? '' : 'e'} prüfen
-      </span>}>
-      <div className="flex flex-col gap-3">
-        <p className="text-[12.5px] text-[var(--muted)]">
-          Diese hängen an dem, was du gerade entschieden hast — aber der Log
-          zeigt <span className="text-[var(--fg)]">keinen erfolgreichen Zugriff</span>.
-          Ein Versuch ins Leere kann zum Vorfall gehören oder Rauschen sein;
-          deshalb steht die Entscheidung hier bei dir.
-        </p>
-        <div className="flex flex-col gap-1">
-          {links.map((l) => {
-            const Icon = KIND_ICON[l.kind] ?? Bug
-            const { root, rel } = relativeToRoot(l.artifact, roots)
-            return (
-              <label key={l.artifact}
-                className="flex cursor-pointer items-center gap-2.5 rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12.5px]">
-                <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-                  checked={picked.has(l.artifact)}
-                  onChange={(e) => {
-                    const next = new Set(picked)
-                    if (e.target.checked) next.add(l.artifact)
-                    else next.delete(l.artifact)
-                    setPicked(next)
-                  }} />
-                <Icon size={14} className="shrink-0 text-[var(--muted)]" />
-                <span className="mono min-w-0 truncate font-medium"
-                  title={l.artifact}>
-                  {l.kind === 'file' && root ? rel : l.artifact}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[var(--muted)]">{l.why}</span>
-                <TriageBadge state={l.previous.state}
-                  label={TRIAGE_LABEL[l.previous.state]} />
-              </label>
-            )
-          })}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="primary" disabled={!picked.size}
-            onClick={() => onDecide([...picked], 'confirmed')}>
-            <Check size={14} /> {formatCount(picked.size)} als True Positive
-          </Button>
-          <Button variant="danger" disabled={!picked.size}
-            onClick={() => onDecide([...picked], 'dismissed')}>
-            <X size={14} /> {formatCount(picked.size)} als False Positive
-          </Button>
-          <Button variant="ghost" onClick={onClose}>Später</Button>
-        </div>
-      </div>
-    </Modal>
   )
 }
 
@@ -942,397 +744,3 @@ function ArtifactName({ artifact, kind, roots }: {
   )
 }
 
-function MetaCell({ label, children, explain }: {
-  label: string; children: React.ReactNode; explain?: string
-}) {
-  return (
-    <div className="rounded-lg bg-[var(--panel-2)] px-3 py-2">
-      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-        {label}
-        {explain && <InfoDot body={explain} />}
-      </div>
-      <div className="mt-0.5 text-[12px]">{children}</div>
-    </div>
-  )
-}
-
-function Block({ title, children, right }: {
-  title: React.ReactNode; children: React.ReactNode; right?: React.ReactNode
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-          {title}
-        </div>
-        {right}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-/** Das Detail-FENSTER eines Artefakts: alles, was zur Entscheidung nötig
- *  ist, in einer Ansicht.
- *
- *  Zentriert und breit statt als Streifen am Rand — beurteilt wird aus dem
- *  ZUSAMMENHANG, und der entsteht erst, wenn Begründung, Dateiinhalt und die
- *  Clients daran nebeneinander liegen statt hintereinander zu scrollen.
- *  Links steht, was man entscheidet und warum; rechts, was man dafür ansieht.
- *  Die Entscheidung selbst zuoberst, weil sie der Grund ist, aus dem das
- *  Fenster offen ist. */
-function ArtifactWindow({ slug, artifact, roots, collected, onClose, onTriage,
-                          onView, onTrace }: {
-  slug: string
-  artifact: Artifact | null
-  roots: EvidenceRoot[]
-  collected: TriageResult['collected']
-  onClose: () => void
-  onTriage: (state: string, note?: string) => void
-  onView: (path: string, line: number | null) => void
-  onTrace: (ips: string[]) => void
-}) {
-  const [note, setNote] = useState('')
-  useEffect(() => { setNote(artifact?.triage_note ?? '') }, [artifact])
-
-  const { data: ctx } = useQuery({
-    queryKey: ['artifact', slug, artifact?.artifact],
-    queryFn: () => api<ArtifactContext>(
-      `/api/cases/${slug}/artifact?artifact=${encodeURIComponent(artifact!.artifact)}`),
-    enabled: !!artifact,
-  })
-
-  if (!artifact) return null
-  const kind = artifact.artifact_kind
-  const file = ctx?.file
-  const preview = file?.preview
-  const actor = ctx?.actor
-  const findings = ctx?.findings ?? artifact.items
-  const state: TriageState = ctx?.triage ?? artifact.triage
-  const ips = ctx?.related_ips ?? []
-  const { root, rel } = relativeToRoot(artifact.artifact, roots)
-  const Icon = KIND_ICON[kind] ?? Bug
-
-  return (
-    <Modal open onClose={onClose}
-      title={<span className="flex min-w-0 items-center gap-2">
-        <SeverityBadge severity={artifact.worst} />
-        <Icon size={15} className="shrink-0 text-[var(--muted)]" />
-        <span className="mono truncate">{kind === 'file' && root ? rel : artifact.artifact}</span>
-        <TriageBadge state={state} label={TRIAGE_LABEL[state]} />
-      </span>}>
-      <div className="flex flex-col gap-4">
-        {collected.length > 0 && (
-          <div className="rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 animate-fade-up">
-            <div className="mb-1 text-[12px] font-semibold text-[var(--ok)]">
-              In die IOC Box übernommen:
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {collected.map((c, i) => (
-                <Tag key={i} tone="accent">
-                  {c.type}: {c.value.length > 40 ? `…${c.value.slice(-38)}` : c.value}
-                  {c.hits != null && ` (${c.hits}×)`}
-                </Tag>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start">
-          {/* ================= links: entscheiden und warum ================= */}
-          <div className="flex flex-col gap-4">
-            {/* ---- die Entscheidung ---- */}
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-3">
-              <div className="mb-2 text-[12.5px]">
-                Ist {KIND_THIS[kind] ?? 'dieses Artefakt'}{' '}
-                <span className="font-semibold">Teil des Vorfalls?</span>{' '}
-                <span className="text-[var(--muted)]">
-                  Die Entscheidung gilt für das ganze Artefakt — alle{' '}
-                  {formatCount(findings.length)} Finding{findings.length === 1 ? '' : 's'}{' '}
-                  darunter sind die Begründung dafür.
-                </span>
-              </div>
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={2}
-                placeholder="Begründung (wandert mit ins Fall-Archiv)"
-                className="mb-2 w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button variant="primary" onClick={() => onTriage('confirmed', note)}>
-                  <Check size={14} /> True Positive &amp; sammeln
-                </Button>
-                <Button onClick={() => onTriage('reviewed', note)}>
-                  <Eye size={14} /> Gesichtet
-                </Button>
-                <Button variant="danger" onClick={() => onTriage('dismissed', note)}>
-                  <X size={14} /> False Positive
-                </Button>
-                {ctx?.triaged_at && (
-                  <span className="self-center text-[11px] text-[var(--muted)]">
-                    zuletzt entschieden: {absoluteTime(ctx.triaged_at)}
-                  </span>
-                )}
-              </div>
-              <p className="mt-2 text-[11px] text-[var(--muted)]">
-                Nichts wird gelöscht: ein False Positive verschwindet nur aus der
-                Arbeitsliste und bleibt mit deiner Notiz über den Filter erreichbar.
-                True Positive bleibt stehen und legt das Artefakt (+ SHA-256 bei
-                Dateien) in die IOC Box, samt der anfragenden Clients aus dem
-                Log-Index.
-              </p>
-            </div>
-
-            {/* ---- was das Artefakt IST ---- */}
-            <Block title={KIND_LABEL[kind] ?? 'Artefakt'}>
-              <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
-                <span className="min-w-0 flex-1">{artifact.artifact}</span>
-                <button className="shrink-0 cursor-pointer text-[var(--muted)] hover:text-[var(--fg)]"
-                  title="Kopieren"
-                  onClick={() => navigator.clipboard.writeText(artifact.artifact)}>
-                  <Copy size={13} />
-                </button>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {kind === 'file' && file?.exists && (
-                  <Button onClick={() => onView(artifact.artifact,
-                                                findings.find((f) => f.line)?.line ?? null)}>
-                    <FileSearch size={14} /> Datei ansehen (Raw &amp; Hex)
-                  </Button>
-                )}
-                {kind === 'client' && (
-                  <Button onClick={() => onTrace([artifact.artifact])}>
-                    <Crosshair size={14} /> Trace öffnen
-                  </Button>
-                )}
-              </div>
-            </Block>
-
-            {/* ---- Datei-Kontext ---- */}
-            {file && (
-              <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Größe">{file.exists ? formatBytes(file.size) : 'Datei fehlt!'}</MetaCell>
-                <MetaCell label="Geändert"
-                  explain="Änderungszeitpunkt laut Dateisystem — mit Vorsicht: Angreifer können ihn fälschen (Timestomping).">
-                  <Tooltip title={absoluteTime(file.mtime)}>
-                    <span>{relativeTime(file.mtime)}</span>
-                  </Tooltip>
-                </MetaCell>
-                <MetaCell label="CMS-Guard" explain={FIELD_EXPLAIN.cms_guard}>
-                  {file.cms_guard == null ? '—' : file.cms_guard ? (
-                    <span className="flex items-center gap-1 text-[var(--ok)]">
-                      <ShieldCheck size={12} /> vorhanden
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[var(--sev-high)]">
-                      <ShieldOff size={12} /> fehlt
-                    </span>
-                  )}
-                </MetaCell>
-                <MetaCell label="Upload-Ordner" explain={FIELD_EXPLAIN.upload_dir}>
-                  {file.in_upload_dir
-                    ? <span className="text-[var(--sev-medium)]">ja — PHP gehört hier nicht hin</span>
-                    : 'nein'}
-                </MetaCell>
-                {file.sha256 && (
-                  <div className="col-span-2">
-                    <MetaCell label="SHA-256" explain={FIELD_EXPLAIN.sha256}>
-                      <span className="mono flex items-center gap-2 break-all text-[11px]">
-                        <span className="min-w-0 flex-1">{file.sha256}</span>
-                        <button className="shrink-0 cursor-pointer text-[var(--muted)] hover:text-[var(--fg)]"
-                          title="Hash kopieren"
-                          onClick={() => navigator.clipboard.writeText(file.sha256!)}>
-                          <Copy size={12} />
-                        </button>
-                      </span>
-                    </MetaCell>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ---- WARUM es hier steht: jedes Finding auf diesem Artefakt ---- */}
-            <Block title={`Warum dieses Artefakt geflaggt wurde (${formatCount(findings.length)})`}>
-              <div className="flex flex-col gap-1.5">
-                {findings.map((f) => {
-                  const e = explainRule(f.rule)
-                  return (
-                    <div key={f.fingerprint}
-                      className="rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2"
-                      style={{ borderLeftColor: SEVERITY_VAR[f.severity] }}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <SeverityBadge severity={f.severity} />
-                        <span className="text-[12.5px] font-semibold">{f.rule}</span>
-                        {f.line != null && f.line !== 0 && (
-                          <button
-                            className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                            onClick={() => onView(artifact.artifact, f.line)}>
-                            Zeile {f.line}
-                          </button>
-                        )}
-                      </div>
-                      {e && (
-                        <div className="mt-1 text-[12px] leading-snug">
-                          {e.what}
-                          {e.why && <span className="text-[var(--muted)]"> {e.why}</span>}
-                        </div>
-                      )}
-                      {f.evidence && (
-                        <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--code-bg)] px-2 py-1 text-[11px] leading-relaxed text-[#e6edf3]">
-                          {f.evidence}
-                        </pre>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </Block>
-          </div>
-
-          {/* ================= rechts: was man dafür ansieht ================= */}
-          <div className="flex flex-col gap-4">
-            {preview && !preview.error && !preview.binary && preview.lines && (
-              <Block title={<>
-                Dateiinhalt {preview.focus ? `um Zeile ${preview.focus}` : '(Anfang)'}
-                {preview.truncated && ' — Datei gekürzt gelesen'}
-              </>}>
-                <pre className="mono max-h-[26rem] overflow-auto rounded-lg bg-[var(--code-bg)] px-0 py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
-                  {preview.lines.map((l, i) => {
-                    const n = (preview.from_line ?? 1) + i
-                    const hit = n === preview.focus
-                    return (
-                      <div key={n} className={clsx('flex px-3', hit && 'bg-[rgba(208,59,59,0.18)]')}>
-                        <span className={clsx('w-10 shrink-0 select-none pr-3 text-right',
-                          hit ? 'text-[#ff8b8b]' : 'text-[#4b5566]')}>{n}</span>
-                        <span className="whitespace-pre-wrap break-all">{l || ' '}</span>
-                      </div>
-                    )
-                  })}
-                </pre>
-              </Block>
-            )}
-            {preview?.binary && (
-              <div className="text-[12px] text-[var(--muted)]">
-                Binärdatei — kein Text-Preview. Die Hex-Ansicht zeigt sie unverfälscht.
-              </div>
-            )}
-
-            {/* ---- Actor-Kontext ---- */}
-            {kind === 'client' && actor && (
-              <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <MetaCell label="Requests">{formatCount(actor.actor.requests)}</MetaCell>
-                  <MetaCell label="Zeitraum">
-                    {formatDay(actor.actor.first_epoch, actor.actor.tz)} → {formatDay(actor.actor.last_epoch, actor.actor.tz)}
-                  </MetaCell>
-                  <MetaCell label="Fehler 4xx/5xx">
-                    {formatCount(actor.actor.err4 + actor.actor.err5)}
-                  </MetaCell>
-                  <MetaCell label="Login-POSTs">
-                    {formatCount(actor.actor.login_posts)}
-                    {actor.actor.login_redirects > 0 &&
-                      <span className="text-[var(--sev-high)]"> · {actor.actor.login_redirects} Redirects!</span>}
-                  </MetaCell>
-                </div>
-                {actor.alerts.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    {actor.alerts.map((a, i) => (
-                      <div key={i} className="rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
-                        <SeverityBadge severity={a.severity} />{' '}
-                        <span className="ml-1">{a.detail}</span>
-                        {a.example && <div className="mono mt-0.5 truncate text-[11px] text-[var(--muted)]">{a.example}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <Block title="Meistaufgerufene URIs">
-                  <div className="flex flex-col gap-0.5">
-                    {actor.top_paths.map((p) => (
-                      <div key={p.uri} className="flex items-center gap-2 text-[12px]">
-                        <span className="mono min-w-0 flex-1 truncate" title={p.uri}>{p.uri}</span>
-                        <span className="shrink-0 text-[var(--muted)] tabular">{p.n}× · {p.ok}× 2xx</span>
-                      </div>
-                    ))}
-                  </div>
-                </Block>
-                {actor.top_agents.length > 0 && (
-                  <div className="text-[11px] text-[var(--muted)]">
-                    User-Agents: {actor.top_agents.map((a) => `${a.agent || '(leer)'} (${a.n}×)`).join(' · ')}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ---- die IPs an diesem Artefakt, jede sofort als Trace ---- */}
-            <Block
-              title={<span className="flex items-center gap-1.5">
-                <Crosshair size={12} /> Clients an diesem Artefakt ({ips.length})
-              </span>}
-              right={ips.length > 1 && (
-                <button
-                  className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                  onClick={() => onTrace(ips.map((i) => i.ip))}>
-                  alle zusammen tracen
-                </button>
-              )}>
-              {ips.length ? (
-                <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-                  {ips.map((h) => (
-                    <div key={h.ip}
-                      className="flex items-center gap-2 rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
-                      <span className="mono font-medium">{h.ip}</span>
-                      {h.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
-                      <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--muted)]"
-                        title={h.why}>
-                        {h.why}
-                      </span>
-                      {h.hits != null && (
-                        <span className="shrink-0 text-[var(--muted)] tabular">
-                          {formatCount(h.hits)}× · {formatCount(h.ok_hits)}× 2xx
-                        </span>
-                      )}
-                      <Button variant="ghost" className="shrink-0"
-                        onClick={() => onTrace([h.ip])}>
-                        <Crosshair size={12} /> Trace
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[12px] text-[var(--muted)]">
-                  Keine Adresse im Log-Index, die auf dieses Artefakt zeigt.
-                </div>
-              )}
-            </Block>
-
-            {/* ---- Tabellen-/Dump-Kontext ---- */}
-            {ctx?.table && (
-              <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Zeilen im Dump">{formatCount(ctx.table.rows)}</MetaCell>
-                <MetaCell label="Spalten">{ctx.table.columns}</MetaCell>
-                <MetaCell label="Dump-Bytes">{formatBytes(ctx.table.bytes)}</MetaCell>
-                <MetaCell label="CMS">{ctx.table.cms || '—'}</MetaCell>
-                {ctx.table.col_list && (
-                  <div className="col-span-2">
-                    <MetaCell label="Spalten im Dump">
-                      <span className="mono break-all text-[11px]">{ctx.table.col_list}</span>
-                    </MetaCell>
-                  </div>
-                )}
-              </div>
-            )}
-            {ctx?.dump && (
-              <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Statements">{formatCount(ctx.dump.statements)}</MetaCell>
-                <MetaCell label="Größe">{formatBytes(ctx.dump.size)}</MetaCell>
-                <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
-                <MetaCell label="Erstellt">{ctx.dump.meta?.created || '—'}</MetaCell>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </Modal>
-  )
-}

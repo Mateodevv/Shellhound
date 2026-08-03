@@ -1141,11 +1141,18 @@ def create_app(config: Config) -> FastAPI:
         try:
             box_ips = {r["value"] for r in db.rows(
                 conn, "SELECT value FROM iocs WHERE type = 'ip'")}
+            # Die Entscheidung des Client-Artefakts, falls es eines gibt: in
+            # Actors muss sichtbar sein, was in Findings längst entschieden
+            # wurde — sonst bewertet man hier gedanklich neu.
+            triage = {r["artifact"]: r["triage"] for r in db.rows(
+                conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, triage "
+                      f"FROM art WHERE artifact_kind = 'client'")}
         finally:
             conn.close()
         for a in result["actors"]:
             a["sparkline"] = sparks["series"].get(a["ip_id"], [])
             a["in_box"] = a["ip"] in box_ips
+            a["triage"] = triage.get(a["ip"])
         result["span"] = sparks["span"]
         return result
 

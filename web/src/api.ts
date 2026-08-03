@@ -187,6 +187,8 @@ export interface Actor {
   alerts: ActorAlert[]
   sparkline: number[]
   in_box: boolean
+  /** Entscheidung des Client-Artefakts in Findings; null = kein Finding. */
+  triage: TriageState | null
 }
 
 export interface ActorsResponse {
