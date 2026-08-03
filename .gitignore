@@ -76,20 +76,12 @@ web/dist/
 *.tsbuildinfo
 
 # --- Editoren und Betriebssystem ---------------------------------------------
-# Persönliche Editor-Einstellungen bleiben draußen; die beiden Dateien, die
-# beschreiben WIE MAN DIESES PROJEKT STARTET, gehören dagegen dazu — sie sind
-# Dokumentation in ausführbarer Form und enthalten nichts Fallbezogenes.
-.vscode/*
-!.vscode/launch.json
-!.vscode/tasks.json
-!.vscode/extensions.json
+.vscode/
 .idea/
 .DS_Store
 Thumbs.db
 desktop.ini
-# Die launch.json des In-App-Browsers (Werkzeug-Artefakt, siehe unten) --
-# nicht die von VS Code, die steht oben ausdrücklich drin.
-.claude/launch.json
+launch.json
 
 # --- Werkzeug-Artefakte ------------------------------------------------------
 .claude/

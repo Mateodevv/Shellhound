@@ -50,11 +50,19 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 - Der Trace-Drawer ist eine geteilte Komponente (`components/TraceDrawer`)
   und damit überall verfügbar, wo eine IP steht — nicht mehr nur in Actors.
 
-- Das **Artefakt-Detail ist ein zentriertes Fenster** (1280 px) statt eines
-  Drawers am Rand: links die Entscheidung mit Metadaten und jeder Regel, die
-  angesprochen hat, rechts Dateiinhalt, Actor-Profil und die Clients. Beurteilt
-  wird aus dem Zusammenhang — der entsteht nebeneinander, nicht untereinander.
-  Unter 1024 px fällt es auf eine Spalte zurück.
+- **Alle Detailansichten sind zentrierte Fenster** statt Drawer am Rand.
+  Das Artefakt-Detail (1280 px) zweispaltig: links die Entscheidung mit
+  Metadaten und jeder Regel, die angesprochen hat, rechts Dateiinhalt,
+  Actor-Profil und die Clients — beurteilt wird aus dem Zusammenhang, und der
+  entsteht nebeneinander, nicht untereinander. Unter 1024 px eine Spalte.
+  Datei-Viewer und Trace ebenso; sie werden aus dem Artefakt-Fenster geöffnet
+  und sind je Stufe etwas kleiner, damit sichtbar bleibt, wohin man
+  zurückkommt. Die Drawer-Komponente entfällt.
+- **Die Artefakt-Liste zeigt, worum es geht, ohne dass man sie öffnen muss:**
+  Symbol und Farbe für Art und Schweregrad, die Regeln als Chips unter dem
+  Namen, ein Balken für die Verteilung der Findings über die Schweregrade
+  (viermal LOW ist ein anderes Bild als zweimal HIGH) und der Zustand als
+  Pille. Kategorien tragen einen Fortschrittsbalken „x von y entschieden".
 
 ### Behoben
 

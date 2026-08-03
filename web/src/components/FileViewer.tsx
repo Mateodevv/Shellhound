@@ -15,7 +15,7 @@ import clsx from 'clsx'
 import { ChevronLeft, ChevronRight, Copy, FileCode2 } from 'lucide-react'
 import { api, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Drawer, Tag } from './ui'
+import { Button, Modal, Tag } from './ui'
 
 export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   slug: string
@@ -45,7 +45,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   const page = data ? Math.floor(data.offset / data.window) + 1 : 1
 
   return (
-    <Drawer open onClose={onClose} wide layer={layer}
+    <Modal open onClose={onClose} layer={layer}
       title={
         <span className="flex min-w-0 items-center gap-2">
           <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
@@ -152,6 +152,6 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           </p>
         )}
       </div>
-    </Drawer>
+    </Modal>
   )
 }

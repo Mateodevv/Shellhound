@@ -1,21 +1,21 @@
-// TraceDrawer.tsx — was ein Client (oder eine Handvoll davon) getan hat:
+// TraceWindow.tsx — was ein Client (oder eine Handvoll davon) getan hat:
 // jeder Request aus dem Log-Index, älteste zuerst.
 //
 // Der Trace ist eine ABFRAGE gegen den Index, kein Log-Durchlauf — deshalb
 // darf er überall aufgehen, wo eine IP-Adresse steht: in der Actors-Liste,
 // im Artefakt-Detail, neben einem Hunt-Treffer. `layer` entscheidet, auf
-// welcher Ebene er liegt, wenn er AUS einem anderen Drawer geöffnet wird.
+// welcher Ebene er liegt, wenn er AUS einem anderen Fenster geöffnet wird.
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Crosshair, Download } from 'lucide-react'
 import { downloadUrl, post, type TraceRow } from '../api'
 import { formatCount, formatLogTime } from '../format'
-import { Button, Drawer } from './ui'
+import { Button, Modal } from './ui'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
 
-export function TraceDrawer({ slug, ips, onClose, layer = 0 }: {
+export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
   slug: string
   ips: string[] | null
   onClose: () => void
@@ -39,7 +39,7 @@ export function TraceDrawer({ slug, ips, onClose, layer = 0 }: {
 
   if (!ips) return null
   return (
-    <Drawer open onClose={onClose} wide layer={layer}
+    <Modal open onClose={onClose} layer={layer}
       title={<span className="flex items-center gap-2">
         <Crosshair size={16} className="text-[var(--accent)]" />
         Trace: {ips.length === 1 ? ips[0] : `${ips.length} Clients`}
@@ -109,6 +109,6 @@ export function TraceDrawer({ slug, ips, onClose, layer = 0 }: {
           </div>
         )}
       </div>
-    </Drawer>
+    </Modal>
   )
 }
