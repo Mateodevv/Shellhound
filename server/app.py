@@ -486,38 +486,37 @@ def create_app(config: Config) -> FastAPI:
     """
 
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
-    def findings_list(slug: str, severity: str = "", triage: str = "",
-                      source: str = "", kind: str = "", search: str = "",
-                      hide_dismissed: bool = False, hide_info: bool = False,
+    def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
+                      hide_source: str = "", kind: str = "", search: str = "",
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
 
-        Every filter selects ARTIFACTS: `severity` is the artifact's worst
-        finding, `triage` its decision, `search` matches anywhere in it. A
-        selected artifact always arrives COMPLETE -- filtering must never hide
-        part of what a decision is based on.
+        FILTERS HIDE, THEY DO NOT SELECT: every chip in the UI is a toggle
+        that removes its class from view (`hide_severity=3,2` etc.) and
+        brings it back on the next click. Several can stack. Nothing is
+        deleted -- the counts always describe the whole set, and an artifact
+        that IS shown always arrives COMPLETE: filtering must never hide part
+        of what a decision is based on.
 
-        `hide_dismissed` / `hide_info` keep the list free of what is NOT the
-        case: rejected artifacts and pure context (scanner noise) drop out
-        until they are asked for. What was CONFIRMED stays -- it is the
-        result, and a report is written from the list one worked in.
-        Nothing is deleted; the counts always describe the whole set."""
+        `severity` is the artifact's worst finding, `triage` its decision."""
         case_dir = case_dir_or_404(slug)
+
+        def csv_values(raw, allowed):
+            return [v for v in (p.strip() for p in raw.split(",")) if v in allowed]
+
         where, params = [], []
-        if severity != "":
-            where.append("worst = ?")
-            params.append(int(severity))
-        elif hide_info:
-            where.append("worst < ?")
-            params.append(db.SEV_INFO)
-        if triage:
-            where.append("triage = ?")
-            params.append(triage)
-        elif hide_dismissed:
-            where.append("triage != 'dismissed'")
-        if source:
-            where.append("source = ?")
-            params.append(source)
+        sevs = csv_values(hide_severity, {"0", "1", "2", "3"})
+        if sevs:
+            where.append(f"worst NOT IN ({','.join('?' * len(sevs))})")
+            params += [int(s) for s in sevs]
+        triages = csv_values(hide_triage, set(db.TRIAGE_STATES))
+        if triages:
+            where.append(f"triage NOT IN ({','.join('?' * len(triages))})")
+            params += triages
+        sources = csv_values(hide_source, {"webshell", "sqldb", "logs"})
+        if sources:
+            where.append(f"source NOT IN ({','.join('?' * len(sources))})")
+            params += sources
         if kind:
             where.append("artifact_kind = ?")
             params.append(kind)
@@ -1132,9 +1131,12 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/actors", dependencies=[auth])
     def actors(slug: str, search: str = "", sort: str = "requests",
-               flag: str = "", limit: int = 100, offset: int = 0):
+               flag: str = "", hide: str = "", limit: int = 100,
+               offset: int = 0):
         case_dir = case_dir_or_404(slug)
-        result = logindex.actors_list(case_dir, search, sort, flag, limit, offset)
+        hidden = [h.strip() for h in hide.split(",") if h.strip()]
+        result = logindex.actors_list(case_dir, search, sort, flag, hidden,
+                                      limit, offset)
         ids = [a["ip_id"] for a in result["actors"]]
         sparks = logindex.actor_sparklines(case_dir, ids)
         conn = db.connect(case_dir)

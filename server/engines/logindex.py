@@ -600,9 +600,32 @@ def status(case_dir, targets=None):
     return out
 
 
-def actors_list(case_dir, search="", sort="requests", flag="", limit=200,
-                offset=0):
-    """The Actors view: one finished row per client, filter + sort in SQL."""
+# The flag conditions, usable in BOTH directions: `flag=` selects a class,
+# `hide=` removes it from view. One source of truth so the two can never
+# drift apart. "Auffällig" means something happened TO THIS SYSTEM: a client
+# whose only mark is "announced itself as a scanner" is context and belongs
+# under the Scanner flag, not here -- otherwise the useful list is 39 rows of
+# background noise plus 4 real ones.
+def _flag_condition(flag):
+    if flag == "alerted":
+        marks = ",".join("?" * len(INFO_ALERT_KINDS))
+        return (f"ip_id IN (SELECT DISTINCT ip_id FROM alerts "
+                f"WHERE kind NOT IN ({marks}))", list(INFO_ALERT_KINDS))
+    if flag == "scanner":
+        return "scanner_uas != '[]'", []
+    if flag == "bruteforce":
+        return f"login_posts >= {BF_THRESHOLD}", []
+    if flag == "probes":
+        return ("(sqli_attempts > 0 OR traversal_attempts > 0 "
+                "OR upload_php_attempts > 0)", [])
+    return None, []
+
+
+def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
+                limit=200, offset=0):
+    """The Actors view: one finished row per client, filter + sort in SQL.
+    `flag` selects one class; `hide` removes classes -- the UI's chips are
+    hide-toggles, several can stack."""
     conn = _open_ro(case_dir)
     if conn is None:
         return {"total": 0, "actors": []}
@@ -611,22 +634,15 @@ def actors_list(case_dir, search="", sort="requests", flag="", limit=200,
         if search:
             where.append("ip LIKE ?")
             params.append(f"%{search}%")
-        if flag == "alerted":
-            # "Auffällig" means something happened TO THIS SYSTEM. A client
-            # whose only mark is "announced itself as a scanner" is context
-            # and belongs under the Scanner filter, not here -- otherwise the
-            # useful list is 39 rows of background noise plus 4 real ones.
-            marks = ",".join("?" * len(INFO_ALERT_KINDS))
-            where.append(f"ip_id IN (SELECT DISTINCT ip_id FROM alerts "
-                         f"WHERE kind NOT IN ({marks}))")
-            params.extend(INFO_ALERT_KINDS)
-        elif flag == "scanner":
-            where.append("scanner_uas != '[]'")
-        elif flag == "bruteforce":
-            where.append(f"login_posts >= {BF_THRESHOLD}")
-        elif flag == "probes":
-            where.append("(sqli_attempts > 0 OR traversal_attempts > 0 "
-                         "OR upload_php_attempts > 0)")
+        cond, extra = _flag_condition(flag)
+        if cond:
+            where.append(cond)
+            params.extend(extra)
+        for h in hide:
+            cond, extra = _flag_condition(h)
+            if cond:
+                where.append(f"NOT ({cond})")
+                params.extend(extra)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         order = {
             "requests": "requests DESC",
