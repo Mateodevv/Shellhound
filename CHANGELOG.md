@@ -50,11 +50,17 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 - Der Trace-Drawer ist eine geteilte Komponente (`components/TraceDrawer`)
   und damit überall verfügbar, wo eine IP steht — nicht mehr nur in Actors.
 
+- Das **Artefakt-Detail ist ein zentriertes Fenster** (1280 px) statt eines
+  Drawers am Rand: links die Entscheidung mit Metadaten und jeder Regel, die
+  angesprochen hat, rechts Dateiinhalt, Actor-Profil und die Clients. Beurteilt
+  wird aus dem Zusammenhang — der entsteht nebeneinander, nicht untereinander.
+  Unter 1024 px fällt es auf eine Spalte zurück.
+
 ### Behoben
 
-- **Der Datei-Viewer öffnete hinter der Detail-Ansicht.** Drawer haben jetzt
-  Ebenen: was man aus einem Drawer heraus öffnet, liegt davor. `Escape`
-  schließt nur den obersten, statt die ganze Kette abzuräumen.
+- **Der Datei-Viewer öffnete hinter der Detail-Ansicht.** Overlays haben jetzt
+  Ebenen: was man aus dem Artefakt-Fenster heraus öffnet (Datei, Trace), liegt
+  davor. `Escape` schließt nur das oberste, statt die ganze Kette abzuräumen.
 - Ein bestätigtes Datei-Artefakt kam **ohne SHA-256** in die IOC Box, wenn
   der Hash nicht schon aus dem Scan vorlag — obwohl das Detail ihn anzeigte.
   Er wird jetzt an derselben Grenze (32 MB) nachberechnet.
