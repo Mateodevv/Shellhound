@@ -9,6 +9,7 @@ import {
 import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
+import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { Start } from './views/Start'
 import { Dashboard } from './views/Dashboard'
 import { Evidence } from './views/Evidence'
@@ -90,7 +91,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
                 'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
                 'transition-colors duration-150 cursor-pointer',
                 view === id
-                  ? 'bg-[var(--accent-soft)] text-[#bcd7f7]'
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
                   : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
             >
               <Icon size={15} />
@@ -100,9 +101,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
 
         <div className="mt-auto p-3">
+          <div className="mb-1">
+            <ThemeSwitcher up />
+          </div>
           {running.length > 0 && (
             <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3 animate-fade-up">
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-[#bcd7f7]">
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-text)]">
                 <Activity size={12} className="animate-pulse-soft" />
                 {running.length} Job{running.length > 1 ? 's' : ''} läuft…
               </div>

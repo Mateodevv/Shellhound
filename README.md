@@ -27,9 +27,14 @@ liegt per Default unter `~/ShellhoundCases`, überschreibbar mit
    - Webroot → Webshell-Scan (Regeln aus den echten Joomla-Fällen portiert,
      inkl. `_JEXEC`/`ABSPATH`-Guard-Diskriminator) + CMS-Inventar
    - SQL-Dump → Injected Code + Account-/Admin-Inventar (streamend, GB-tauglich)
-3. **Triage** in den Findings (Tastatur: `j`/`k`, `c` bestätigen, `d` False
-   Positive). Bestätigen legt Pfad + SHA-256 in die IOC Box und sammelt die
-   Clients ein, die die Datei laut Index angefragt haben.
+3. **Triage über Artefakte**: entschieden wird über die Sache selbst — diese
+   Datei, diesen Client, diese Tabelle. Die Findings darunter sind die
+   Begründung, keine eigenen Fragen (Tastatur: `j`/`k`, `c` True Positive,
+   `d` False Positive, `Enter` Detail). Das Detail eines Artefakts holt alles
+   zusammen: Metadaten, Dateiinhalt, jede Regel mit ihrer Evidence, das
+   Actor-Profil und jede IP daran — jede davon direkt als Trace zu öffnen.
+   True Positive legt Pfad + SHA-256 in die IOC Box und sammelt die Clients
+   ein, die die Datei laut Index angefragt haben.
 4. **Actors**: jeder Client mit Sparkline und Verhalten (Scanner, Brute-Force,
    Shell-Zugriff 2xx). Beliebig viele Clients markieren → kombinierter Trace
    in Millisekunden, Export als CSV.
@@ -54,6 +59,12 @@ archiviert), Triage-Zustände haben stabile Fingerprints und überleben
 Re-Scans, »dismissed« löscht nie, Probe-Alerts sind outcome-gated (2xx),
 Evidence wird nie ausgeliefert — Findings tragen Text-Exzerpte.
 
+Die **Einheit der Arbeit ist das Artefakt**: Filter, Zähler und Entscheidung
+laufen über das Artefakt (sein schwerster Fund, seine Triage), die einzelnen
+Findings hängen als Begründung darunter und tragen die Entscheidung mit. Ein
+gefiltertes Artefakt kommt immer vollständig — ein Filter darf nie einen Teil
+dessen verstecken, worauf eine Entscheidung beruht.
+
 Ein importiertes Archiv ist eine Datei von außen: das Entpacken weist
 absolute Pfade und `..`-Traversal zurück (statt sie zu bereinigen) und
 überschreibt nie einen bestehenden Fall — ein Slug-Konflikt landet unter
@@ -65,15 +76,6 @@ liest ausschließlich Pfade, die *aufgelöst* innerhalb einer registrierten
 Evidence-Wurzel des Falls liegen, und liefert den Inhalt als JSON-Daten —
 nie als Dokument, das der Browser parsen würde.
 
-## Fall-Daten gehören nicht ins Repository
-
-Dieses Werkzeug arbeitet mit echten Beweismitteln: Webroots mit
-funktionsfähigen Webshells, Access-Logs mit Kunden- und Besucher-IPs,
-Datenbank-Exporte mit Konten und E-Mail-Adressen. Nichts davon darf in die
-Versionsverwaltung — die `.gitignore` ist entsprechend breit gefasst
-(Fall-Ordner, `*.db`, `*.sql`, `*.log`, Archive, `.env`). Der Workspace liegt
-per Default außerhalb des Projektverzeichnisses, damit ein `git add -A` gar
-nicht erst in die Nähe von Fall-Daten kommt.
 
 ## Herkunft
 

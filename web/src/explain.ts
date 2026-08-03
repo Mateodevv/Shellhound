@@ -38,20 +38,23 @@ export const SEVERITY_EXPLAIN: Record<number, Explanation> = {
 
 // --- Triage -----------------------------------------------------------------
 
+// Entschieden wird über das ARTEFAKT — die Datei, den Client, die Tabelle.
+// Die Findings darunter sind die Begründung, keine eigenen Fragen.
+
 export const TRIAGE_EXPLAIN: Record<string, Explanation> = {
   new: {
-    what: 'Noch niemand hat sich das angesehen.',
+    what: 'Noch niemand hat sich dieses Artefakt angesehen.',
   },
   reviewed: {
     what: 'Angesehen, aber noch nicht entschieden.',
     why: 'Für alles, was du später mit mehr Kontext nochmal beurteilen willst.',
   },
   confirmed: {
-    what: 'Real und Teil des Vorfalls.',
-    why: 'Legt Artefakt und Hash in die IOC Box und holt die anfragenden Clients aus dem Log-Index.',
+    what: 'True Positive — das Artefakt ist real und Teil des Vorfalls.',
+    why: 'Legt Artefakt und Hash in die IOC Box und holt die anfragenden Clients aus dem Log-Index. Gilt für alle Findings darauf.',
   },
   dismissed: {
-    what: 'Geprüft und nicht relevant — ein False Positive.',
+    what: 'False Positive — geprüft und nicht relevant.',
     why: 'Wird nie gelöscht: bleibt mit deiner Notiz sichtbar, nur aus den Zählern raus. Eine stillschweigend verschwundene Zeile ist nicht nachvollziehbar.',
   },
 }

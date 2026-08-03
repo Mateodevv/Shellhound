@@ -3,7 +3,15 @@
 /* SHELLHOUND — dark-first forensic workbench theme.
    Chart colors follow the validated dark-mode palette (dataviz reference):
    series-1 blue #3987e5, series-2 orange #d95926; severity uses the fixed
-   status palette (critical/serious/warning) — never the series slots. */
+   status palette (critical/serious/warning) — never the series slots.
+
+   THEMES: every color the UI uses is a variable here; a theme is a
+   [data-theme] block that overrides them. The active theme is set on <html>
+   before first paint (inline script in index.html) and picked in the UI
+   via the ThemeSwitcher component (src/theme.ts holds the registry).
+
+   :root IS the Shellhound theme -- data-theme="shellhound" needs no block of
+   its own, it is the set of values every other theme overrides. */
 :root {
   color-scheme: dark;
   --bg: #0b0e14;
@@ -15,11 +23,43 @@
   --muted: #8b96a8;
   --accent: #3987e5;
   --accent-soft: rgba(57, 135, 229, 0.14);
+  --accent-text: #bcd7f7;      /* readable accent tint for text on dark */
   --series-2: #d95926;
   --sev-high: #d03b3b;
   --sev-medium: #ec835a;
   --sev-low: #fab219;
   --ok: #0ca30c;
+  --danger-text: #ff8b8b;
+  --danger-soft: rgba(208, 59, 59, 0.16);
+  --danger-soft-hover: rgba(208, 59, 59, 0.28);
+  --code-bg: #0d1117;
+  --scroll-thumb: #2a3242;
+  --selection: rgba(57, 135, 229, 0.35);
+}
+
+/* ── Synthwave: violet night, neon pink accent, cyan second series ─────── */
+:root[data-theme="synthwave"] {
+  --bg: #0e0716;
+  --panel: #160b24;
+  --panel-2: #1e1130;
+  --line: #2c1a44;
+  --line-soft: #241538;
+  --fg: #f2e9ff;
+  --muted: #9d8ab8;
+  --accent: #d84df0;
+  --accent-soft: rgba(216, 77, 240, 0.16);
+  --accent-text: #eab8ff;
+  --series-2: #00e0d0;
+  --sev-high: #ff4d6d;
+  --sev-medium: #ff8f5e;
+  --sev-low: #ffd166;
+  --ok: #2fe6a8;
+  --danger-text: #ff9db0;
+  --danger-soft: rgba(255, 77, 109, 0.16);
+  --danger-soft-hover: rgba(255, 77, 109, 0.28);
+  --code-bg: #120a1d;
+  --scroll-thumb: #3a2455;
+  --selection: rgba(216, 77, 240, 0.35);
 }
 
 * { box-sizing: border-box; }
@@ -34,12 +74,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: rgba(57, 135, 229, 0.35); }
+::selection { background: var(--selection); }
 
 /* slim scrollbars */
-* { scrollbar-width: thin; scrollbar-color: #2a3242 transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: #2a3242; border-radius: 4px; }
+*::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
 *::-webkit-scrollbar-track { background: transparent; }
 
 @keyframes fadeUp {

@@ -5,6 +5,21 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SHELLHOUND</title>
+    <script>
+      // Theme vor dem ersten Paint setzen, damit nichts aufblitzt.
+      // Die Liste steht doppelt (hier und in src/theme.ts), weil dieses
+      // Skript vor jedem Modul läuft. Ein unbekannter gespeicherter Wert --
+      // etwa ein Theme, das es nicht mehr gibt -- fällt auf den Standard
+      // zurück, sonst stünde <html> auf einem Theme ohne CSS-Block.
+      try {
+        var THEMES = ['synthwave', 'shellhound']
+        var t = localStorage.getItem('shellhound.theme')
+        document.documentElement.dataset.theme =
+          THEMES.indexOf(t) >= 0 ? t : 'synthwave'
+      } catch (e) {
+        document.documentElement.dataset.theme = 'synthwave'
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

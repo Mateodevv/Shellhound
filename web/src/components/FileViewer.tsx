@@ -17,11 +17,14 @@ import { api, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, Drawer, Tag } from './ui'
 
-export function FileViewer({ slug, path, focusLine, onClose }: {
+export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   slug: string
   path: string | null
   focusLine?: number | null
   onClose: () => void
+  /** Standardmäßig ganz vorne: der Viewer wird fast immer AUS einem
+   *  Artefakt-Detail heraus geöffnet und muss darüber liegen. */
+  layer?: number
 }) {
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
   const [offset, setOffset] = useState(0)
@@ -42,7 +45,7 @@ export function FileViewer({ slug, path, focusLine, onClose }: {
   const page = data ? Math.floor(data.offset / data.window) + 1 : 1
 
   return (
-    <Drawer open onClose={onClose} wide
+    <Drawer open onClose={onClose} wide layer={layer}
       title={
         <span className="flex min-w-0 items-center gap-2">
           <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
@@ -103,13 +106,13 @@ export function FileViewer({ slug, path, focusLine, onClose }: {
         </div>
 
         {isError && (
-          <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[rgba(208,59,59,0.1)] px-3 py-2 text-[13px] text-[#ff8b8b]">
+          <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)]">
             {String((error as Error)?.message ?? error)}
           </div>
         )}
 
         {data?.mode === 'raw' && data.lines && (
-          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[#0d1117] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.lines.map((line, i) => {
               const n = data.from_line != null ? data.from_line + i : null
               const hit = n != null && n === focusLine
@@ -127,7 +130,7 @@ export function FileViewer({ slug, path, focusLine, onClose }: {
         )}
 
         {data?.mode === 'hex' && data.rows && (
-          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[#0d1117] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.rows.map((r) => (
               <div key={r.offset} className="flex gap-4 px-3">
                 <span className="w-20 shrink-0 select-none text-right text-[#4b5566]">
