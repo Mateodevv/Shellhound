@@ -266,6 +266,55 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   )
 }
 
+/** Eine Meldung über etwas, das GERADE PASSIERT IST, ohne den Arbeitsfluss
+ *  zu unterbrechen. Sie liegt über allem (auch über offenen Fenstern), denn
+ *  sie berichtet über die Aktion, die man eben ausgelöst hat.
+ *
+ *  Sie verschwindet nach `timeout` von selbst — aber nur, wenn sie keine
+ *  Aktion trägt: eine Meldung mit »Rückgängig« darf nicht weglaufen, bevor
+ *  man sie gelesen hat. */
+export function Toast({ open, onClose, tone = 'info', title, children, actions,
+                        timeout = 9000 }: {
+  open: boolean
+  onClose: () => void
+  tone?: 'info' | 'ok'
+  title: ReactNode
+  children?: ReactNode
+  actions?: ReactNode
+  timeout?: number
+}) {
+  useEffect(() => {
+    if (!open || !timeout || actions) return
+    const t = setTimeout(onClose, timeout)
+    return () => clearTimeout(t)
+  }, [open, timeout, actions, onClose])
+
+  if (!open) return null
+  const accent = tone === 'ok' ? 'var(--ok)' : 'var(--accent)'
+  return (
+    <div className="fixed bottom-5 right-5 z-[100] w-[min(30rem,92vw)] animate-fade-up">
+      <div className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3 shadow-2xl"
+        style={{ borderLeft: `3px solid ${accent}` }}>
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold">{title}</div>
+            {children && (
+              <div className="mt-1 text-[12px] leading-snug text-[var(--muted)]">
+                {children}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} title="Schließen"
+            className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer">
+            <X size={14} />
+          </button>
+        </div>
+        {actions && <div className="mt-2 flex flex-wrap gap-2">{actions}</div>}
+      </div>
+    </div>
+  )
+}
+
 export function SearchInput({ value, onChange, placeholder }: {
   value: string; onChange: (v: string) => void; placeholder?: string
 }) {

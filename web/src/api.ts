@@ -368,6 +368,27 @@ export interface FilePreview {
   truncated?: boolean
 }
 
+/** Ein Artefakt, das an einer Entscheidung HÄNGT: entweder wurde es
+ *  mitentschieden (`linked`) oder es wird vorgeschlagen (`suggested`).
+ *  `previous` ist der Zustand davor — damit lässt sich die Übernahme
+ *  zurücknehmen, ohne zu raten. */
+export interface TriageLink {
+  artifact: string
+  kind: 'file' | 'table' | 'client' | 'dump'
+  why: string
+  hits: number | null
+  ok_hits: number | null
+  previous: { state: TriageState; note: string }
+}
+
+export interface TriageResult {
+  updated: number
+  artifacts: number
+  collected: { value: string; type: string; hits?: number; ok_hits?: number }[]
+  linked: TriageLink[]
+  suggested: TriageLink[]
+}
+
 /** Eine IP, die an diesem Artefakt hängt — mit dem Grund, warum sie hier
  *  steht. Jede davon lässt sich direkt als Trace öffnen. */
 export interface RelatedIp {

@@ -24,12 +24,12 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code, Copy, Crosshair,
   Database, DoorOpen, Eye, EyeOff, FileCode2, FileCog, FileSearch, KeyRound,
-  Radar, ServerCog, ShieldCheck, ShieldOff, Table2, Users, X,
+  Radar, ServerCog, ShieldCheck, ShieldOff, Table2, Undo2, Users, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
   api, post, type ArtifactContext, type ArtifactRow, type Finding,
-  type FindingsResponse, type TriageState,
+  type FindingsResponse, type TriageLink, type TriageResult, type TriageState,
 } from '../api'
 import {
   SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, absoluteTime,
@@ -37,7 +37,8 @@ import {
   type EvidenceRoot,
 } from '../format'
 import {
-  Button, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag, TriageBadge,
+  Button, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag, Toast,
+  TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
@@ -105,12 +106,6 @@ type Item =
 
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
-interface TriageResult {
-  updated: number
-  artifacts: number
-  collected: { value: string; type: string; hits?: number; ok_hits?: number }[]
-}
-
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const qc = useQueryClient()
   const [severity, setSeverity] = useState('')
@@ -131,6 +126,11 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [lastCollected, setLastCollected] = useState<TriageResult['collected']>([])
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  // Was die letzte Entscheidung nach sich gezogen hat: mitentschieden
+  // (`linked`) und nur vorgeschlagen (`suggested`).
+  const [notice, setNotice] = useState<
+    { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
+  const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
   const [hideConfirmed, setHideConfirmed] = useState(true)
   const [hideInfo, setHideInfo] = useState(true)
 
@@ -205,19 +205,52 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     return out
   }, [categories, expanded, collapsedCats, expandedCats, filtering])
 
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['findings'] })
+    qc.invalidateQueries({ queryKey: ['artifact'] })
+    qc.invalidateQueries({ queryKey: ['dashboard'] })
+    qc.invalidateQueries({ queryKey: ['iocs'] })
+  }
+
   const setTriageState = useMutation({
-    mutationFn: (v: { artifacts: string[]; state: string; note?: string }) =>
-      post<TriageResult>(`/api/cases/${slug}/triage`, v),
+    mutationFn: (v: {
+      artifacts: string[]; state: string; note?: string; propagate?: boolean
+    }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
     onSuccess: (result) => {
       setLastCollected(result.collected)
       setChecked(new Set())
       setBulkNote('')
-      qc.invalidateQueries({ queryKey: ['findings'] })
-      qc.invalidateQueries({ queryKey: ['artifact'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-      qc.invalidateQueries({ queryKey: ['iocs'] })
+      // Mitentschiedenes und Vorschläge sind eine MELDUNG, keine Frage: der
+      // Analyst hat gerade entschieden und soll erfahren, was daraus folgte,
+      // ohne aus seinem Ablauf gerissen zu werden.
+      if (result.linked?.length || result.suggested?.length) {
+        setNotice({ linked: result.linked ?? [], suggested: result.suggested ?? [] })
+      }
+      refresh()
     },
   })
+
+  /** Eine Übernahme zurücknehmen: jedes Artefakt zurück auf den Zustand, den
+   *  es vorher hatte — nach Zustand gruppiert, damit es ein Aufruf je Gruppe
+   *  bleibt. `propagate: false`, sonst löst das Zurücknehmen eine neue Welle
+   *  aus. */
+  const undoLinked = async (links: TriageLink[]) => {
+    const groups = new Map<string, { state: string; note: string; names: string[] }>()
+    for (const l of links) {
+      const key = `${l.previous.state}${l.previous.note}`
+      const g = groups.get(key)
+      if (g) g.names.push(l.artifact)
+      else groups.set(key, { state: l.previous.state, note: l.previous.note,
+                             names: [l.artifact] })
+    }
+    for (const g of groups.values()) {
+      await post(`/api/cases/${slug}/triage`,
+                 { artifacts: g.names, state: g.state, note: g.note,
+                   propagate: false })
+    }
+    setNotice(null)
+    refresh()
+  }
 
   /** Markierte Artefakte, sonst das unter dem Cursor. */
   const bulkTriage = (state: string) => {
@@ -670,7 +703,139 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         layer={2}
         onClose={() => setViewing(null)}
       />
+
+      <SuggestionWindow
+        links={reviewing}
+        roots={roots}
+        onClose={() => setReviewing(null)}
+        onDecide={(names, state) => {
+          setReviewing(null)
+          setNotice(null)
+          // Ein Vorschlag ist bereits das Ergebnis einer Übernahme -- er
+          // zieht keine weitere nach sich.
+          setTriageState.mutate({ artifacts: names, state,
+                                  note: 'aus Vorschlag entschieden',
+                                  propagate: false })
+        }}
+      />
+
+      <Toast
+        open={!!notice}
+        onClose={() => setNotice(null)}
+        tone={notice?.linked.length ? 'ok' : 'info'}
+        title={notice?.linked.length
+          ? `${formatCount(notice.linked.length)} Artefakt${notice.linked.length === 1 ? '' : 'e'} mitentschieden`
+          : `${formatCount(notice?.suggested.length ?? 0)} verknüpfte${(notice?.suggested.length ?? 0) === 1 ? 's' : ''} Artefakt${(notice?.suggested.length ?? 0) === 1 ? '' : 'e'} gefunden`}
+        actions={
+          <>
+            {!!notice?.suggested.length && (
+              <Button onClick={() => setReviewing(notice.suggested)}>
+                {formatCount(notice.suggested.length)} Vorschlag{notice.suggested.length === 1 ? '' : 'e'} prüfen
+              </Button>
+            )}
+            {!!notice?.linked.length && (
+              <Button variant="ghost" onClick={() => undoLinked(notice.linked)}>
+                <Undo2 size={14} /> Rückgängig
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => setNotice(null)}>Schließen</Button>
+          </>
+        }>
+        {!!notice?.linked.length && (
+          <>
+            Das Log belegt, dass diese zum selben Vorfall gehören — sie sind
+            jetzt True Positive, mit Vermerk woraus:
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {notice.linked.slice(0, 4).map((l) => (
+                <li key={l.artifact} className="truncate">
+                  <span className="mono text-[var(--fg)]">{shortArtifact(l.artifact)}</span>
+                  {' — '}{l.why}
+                </li>
+              ))}
+              {notice.linked.length > 4 && <li>… und {notice.linked.length - 4} weitere</li>}
+            </ul>
+          </>
+        )}
+        {!notice?.linked.length && !!notice?.suggested.length && (
+          <>Nur angefragt, nie erfolgreich beantwortet — das entscheidet sich
+            nicht von selbst.</>
+        )}
+      </Toast>
     </div>
+  )
+}
+
+/** Nur der Dateiname bzw. die Adresse — in einer Meldung zählt, WAS gemeint
+ *  ist, nicht der vollständige Pfad. */
+function shortArtifact(artifact: string): string {
+  return artifact.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() ?? artifact
+}
+
+/** Die mittlere Stufe: Artefakte, die an der Entscheidung HÄNGEN, aber nicht
+ *  von ihr FOLGEN — angefragt, nie erfolgreich. Sie werden vorgelegt, nicht
+ *  entschieden: eine Sondierung ins Leere ist etwas anderes als ein Zugriff. */
+function SuggestionWindow({ links, roots, onClose, onDecide }: {
+  links: TriageLink[] | null
+  roots: EvidenceRoot[]
+  onClose: () => void
+  onDecide: (artifacts: string[], state: string) => void
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  useEffect(() => { setPicked(new Set(links?.map((l) => l.artifact) ?? [])) }, [links])
+  if (!links) return null
+  return (
+    <Modal open onClose={onClose} layer={1}
+      title={<span className="flex items-center gap-2">
+        <Crosshair size={16} className="text-[var(--accent)]" />
+        {formatCount(links.length)} verknüpfte{links.length === 1 ? 's' : ''} Artefakt{links.length === 1 ? '' : 'e'} prüfen
+      </span>}>
+      <div className="flex flex-col gap-3">
+        <p className="text-[12.5px] text-[var(--muted)]">
+          Diese hängen an dem, was du gerade entschieden hast — aber der Log
+          zeigt <span className="text-[var(--fg)]">keinen erfolgreichen Zugriff</span>.
+          Ein Versuch ins Leere kann zum Vorfall gehören oder Rauschen sein;
+          deshalb steht die Entscheidung hier bei dir.
+        </p>
+        <div className="flex flex-col gap-1">
+          {links.map((l) => {
+            const Icon = KIND_ICON[l.kind] ?? Bug
+            const { root, rel } = relativeToRoot(l.artifact, roots)
+            return (
+              <label key={l.artifact}
+                className="flex cursor-pointer items-center gap-2.5 rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12.5px]">
+                <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
+                  checked={picked.has(l.artifact)}
+                  onChange={(e) => {
+                    const next = new Set(picked)
+                    if (e.target.checked) next.add(l.artifact)
+                    else next.delete(l.artifact)
+                    setPicked(next)
+                  }} />
+                <Icon size={14} className="shrink-0 text-[var(--muted)]" />
+                <span className="mono min-w-0 truncate font-medium"
+                  title={l.artifact}>
+                  {l.kind === 'file' && root ? rel : l.artifact}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[var(--muted)]">{l.why}</span>
+                <TriageBadge state={l.previous.state}
+                  label={TRIAGE_LABEL[l.previous.state]} />
+              </label>
+            )
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary" disabled={!picked.size}
+            onClick={() => onDecide([...picked], 'confirmed')}>
+            <Check size={14} /> {formatCount(picked.size)} als True Positive
+          </Button>
+          <Button variant="danger" disabled={!picked.size}
+            onClick={() => onDecide([...picked], 'dismissed')}>
+            <X size={14} /> {formatCount(picked.size)} als False Positive
+          </Button>
+          <Button variant="ghost" onClick={onClose}>Später</Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
