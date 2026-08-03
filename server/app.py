@@ -1358,8 +1358,25 @@ def create_app(config: Config) -> FastAPI:
                               f"WITH art AS ({_ART_SQL}) "
                               f"SELECT artifact, worst, triage, findings "
                               f"FROM art WHERE artifact_kind = 'file'")
+            overrides = {(r["scope"], r["key"]): r for r in db.rows(
+                conn, "SELECT * FROM cms_version_overrides")}
         finally:
             conn.close()
+        root_by_id = {i["id"]: i["root"] for i in installs}
+
+        def overlay(row, scope, key):
+            """Die Korrektur des Analysten über den Messwert legen -- ohne
+            ihn zu verlieren: `version_parsed` bleibt daneben stehen, sonst
+            wäre im Bericht nicht mehr erkennbar, was gemessen und was
+            entschieden wurde."""
+            row["version_parsed"] = row["version"]
+            o = overrides.get((scope, key))
+            row["version_set"] = o["version"] if o else ""
+            row["version_note"] = o["note"] if o else ""
+            row["version_set_at"] = o["set_at"] if o else ""
+            if o:
+                row["version"] = o["version"]
+            return row
         arts = [(str(a["artifact"]).replace("\\", "/").lower(), a)
                 for a in flagged]
         by_install = {}
@@ -1375,10 +1392,73 @@ def create_app(config: Config) -> FastAPI:
             hits.sort(key=lambda h: h["worst"])
             item["artifacts"] = hits[:8]
             item["flagged"] = len(hits)
+            overlay(item, "item", _item_key(root_by_id.get(item["install_id"], ""),
+                                            item))
             by_install.setdefault(item["install_id"], []).append(item)
         for inst in installs:
+            overlay(inst, "install", inst["root"])
             inst["items"] = by_install.get(inst["id"], [])
         return {"installs": installs}
+
+    def _item_key(root, item):
+        """Die Identität einer Extension ÜBER RE-ANALYSEN HINWEG. Die id
+        wechselt bei jedem Lauf (die Tabelle wird geleert), Wurzel + Typ +
+        Slug bleiben -- daran hängt die Korrektur des Analysten."""
+        return f"{root}|{item['type']}|{item['slug']}"
+
+    class VersionBody(BaseModel):
+        # Leerer String = Korrektur zurücknehmen, zurück auf den Messwert.
+        version: str = ""
+        note: str = ""
+
+    def _set_version(case_dir, scope, key, body):
+        conn = db.connect(case_dir)
+        try:
+            value = body.version.strip()[:60]
+            if value:
+                conn.execute(
+                    "INSERT INTO cms_version_overrides (scope, key, version,"
+                    " note, set_at) VALUES (?,?,?,?,?) "
+                    "ON CONFLICT(scope, key) DO UPDATE SET "
+                    "version=excluded.version, note=excluded.note, "
+                    "set_at=excluded.set_at",
+                    (scope, key, value, body.note.strip()[:300], db.now()))
+            else:
+                conn.execute("DELETE FROM cms_version_overrides "
+                             "WHERE scope = ? AND key = ?", (scope, key))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": True, "version": body.version.strip()[:60]}
+
+    @app.patch("/api/cases/{slug}/cms/items/{item_id}", dependencies=[auth])
+    def set_item_version(slug: str, item_id: int, body: VersionBody):
+        """Eine Version von Hand setzen -- wenn das Manifest fehlt, gefälscht
+        ist oder der Analyst sie anders belegt hat."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            row = db.one(conn, "SELECT i.*, s.root AS root FROM cms_items i "
+                               "JOIN cms_installs s ON s.id = i.install_id "
+                               "WHERE i.id = ?", (item_id,))
+        finally:
+            conn.close()
+        if row is None:
+            raise HTTPException(404, "unknown extension")
+        return _set_version(case_dir, "item", _item_key(row["root"], row), body)
+
+    @app.patch("/api/cases/{slug}/cms/installs/{install_id}", dependencies=[auth])
+    def set_install_version(slug: str, install_id: int, body: VersionBody):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            row = db.one(conn, "SELECT * FROM cms_installs WHERE id = ?",
+                         (install_id,))
+        finally:
+            conn.close()
+        if row is None:
+            raise HTTPException(404, "unknown install")
+        return _set_version(case_dir, "install", row["root"], body)
 
     # --- database view ------------------------------------------------------
 

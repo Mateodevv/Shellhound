@@ -229,23 +229,33 @@ export interface CmsArtifactHit {
   findings: number
 }
 
-export interface CmsItem {
+/** Was an einer Versionsangabe hängt: der Messwert, die Datei, aus der er
+ *  stammt, und — falls vorhanden — die Korrektur des Analysten. `version`
+ *  ist immer der GELTENDE Wert, `version_parsed` der gemessene. */
+export interface VersionFacts {
+  version: string
+  version_parsed: string
+  version_source: string
+  version_set: string
+  version_note: string
+  version_set_at: string
+}
+
+export interface CmsItem extends VersionFacts {
   id: number
   install_id: number
   type: string
   name: string
   slug: string
-  version: string
   path: string
   artifacts: CmsArtifactHit[]
   flagged: number
 }
 
-export interface CmsInstall {
+export interface CmsInstall extends VersionFacts {
   id: number
   root: string
   cms: string
-  version: string
   items: CmsItem[]
 }
 

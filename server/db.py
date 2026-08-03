@@ -86,7 +86,12 @@ CREATE TABLE IF NOT EXISTS cms_installs (
     id INTEGER PRIMARY KEY,
     root TEXT UNIQUE NOT NULL,
     cms TEXT NOT NULL,
-    version TEXT NOT NULL DEFAULT ''
+    version TEXT NOT NULL DEFAULT '',
+    -- Die Datei, AUS DER die Version gelesen wurde (wp-includes/version.php
+    -- bzw. libraries/.../version.php). Ohne sie ist die Versionsangabe nicht
+    -- nachprüfbar -- und eine Angabe, die man nicht prüfen kann, gehört in
+    -- keinen Bericht.
+    version_source TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS cms_items (
     id INTEGER PRIMARY KEY,
@@ -95,7 +100,27 @@ CREATE TABLE IF NOT EXISTS cms_items (
     name TEXT NOT NULL,
     slug TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL DEFAULT '',
-    path TEXT NOT NULL DEFAULT ''
+    -- Wo die Extension LIEGT (Verzeichnis oder Einzeldatei) ...
+    path TEXT NOT NULL DEFAULT '',
+    -- ... und woraus die Version stammt: Manifest-XML, style.css,
+    -- Plugin-Header. Leer, wenn keine Version zu finden war.
+    version_source TEXT NOT NULL DEFAULT ''
+);
+-- KORREKTUREN DES ANALYSTEN, GETRENNT VON DER MESSUNG.
+-- cms_items/cms_installs sind abgeleitet: jede Analyse löscht und schreibt
+-- sie neu. Eine von Hand gesetzte Version ist das Gegenteil davon -- sie ist
+-- eine Aussage des Analysten und darf durch eine Re-Analyse nicht
+-- verschwinden. Deshalb steht sie in einer eigenen Tabelle und wird beim
+-- Lesen über die gemessene Version gelegt; der Messwert bleibt daneben
+-- sichtbar, damit die Korrektur nachvollziehbar ist.
+CREATE TABLE IF NOT EXISTS cms_version_overrides (
+    id INTEGER PRIMARY KEY,
+    scope TEXT NOT NULL,               -- install | item
+    key TEXT NOT NULL,                 -- install: root; item: root|type|slug
+    version TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    set_at TEXT NOT NULL,
+    UNIQUE(scope, key)
 );
 CREATE TABLE IF NOT EXISTS db_dumps (
     id INTEGER PRIMARY KEY,
@@ -169,6 +194,8 @@ _ADDED_COLUMNS = {
         ("meta_at", "TEXT DEFAULT ''"),
         ("meta_partial", "INTEGER DEFAULT 0"),
     ],
+    "cms_installs": [("version_source", "TEXT NOT NULL DEFAULT ''")],
+    "cms_items": [("version_source", "TEXT NOT NULL DEFAULT ''")],
 }
 
 

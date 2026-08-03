@@ -62,29 +62,37 @@ def parse_joomla_version(text):
 
 
 def find_installs(target_dir):
-    """All CMS installs under target_dir in a SINGLE walk."""
+    """All CMS installs under target_dir in a SINGLE walk.
+
+    Every install carries the FILE its version was read from -- a version one
+    cannot go back and verify has no place in a report."""
     wordpress, joomla4, joomla3 = {}, {}, {}
     for dirpath, _dirnames, filenames in os.walk(target_dir):
         files = {name.lower(): name for name in filenames}
         d = Path(dirpath)
         name = d.name.lower()
         if name == "wp-includes" and "version.php" in files:
+            source = d / files["version.php"]
             wordpress.setdefault(
-                d.parent, parse_wp_version(_read_text(d / files["version.php"])))
+                d.parent, (parse_wp_version(_read_text(source)), source))
         elif (name == "src" and d.parent.name.lower() == "libraries"
                 and "version.php" in files):
+            source = d / files["version.php"]
             joomla4.setdefault(
-                d.parents[1], parse_joomla_version(_read_text(d / files["version.php"])))
+                d.parents[1], (parse_joomla_version(_read_text(source)), source))
         elif (name == "version" and d.parent.name.lower() == "cms"
                 and d.parent.parent.name.lower() == "libraries"
                 and "version.php" in files):
+            source = d / files["version.php"]
             joomla3.setdefault(
-                d.parents[2], parse_joomla_version(_read_text(d / files["version.php"])))
-    installs = [{"type": WORDPRESS, "root": root, "version": version}
-                for root, version in wordpress.items()]
+                d.parents[2], (parse_joomla_version(_read_text(source)), source))
+    installs = [{"type": WORDPRESS, "root": root, "version": found[0],
+                 "source": found[1]}
+                for root, found in wordpress.items()]
     joomla_roots = {**joomla3, **joomla4}
-    installs += [{"type": JOOMLA, "root": root, "version": version}
-                 for root, version in joomla_roots.items()]
+    installs += [{"type": JOOMLA, "root": root, "version": found[0],
+                  "source": found[1]}
+                 for root, found in joomla_roots.items()]
     return sorted(installs, key=lambda i: str(i["root"]))
 
 
@@ -99,6 +107,14 @@ def _wp_plugin_header(php_path):
     return name.group(1), version.group(1) if version else "(unknown)"
 
 
+# Jede Extension liefert (Typ, Name, Slug, Version, PFAD, QUELLE):
+#   PFAD   -- wo die Extension liegt (Verzeichnis oder Einzeldatei). Daran
+#             hängt die Zuordnung geflaggter Dateien.
+#   QUELLE -- die Datei, aus der die VERSION gelesen wurde, oder None.
+# Die beiden fallen auseinander, sobald das Manifest woanders liegt als die
+# Extension: ein WordPress-Theme IST das Verzeichnis, seine Version steht in
+# style.css.
+
 def inventory_wordpress(root):
     plugins_dir = root / "wp-content" / "plugins"
     if plugins_dir.is_dir():
@@ -106,30 +122,32 @@ def inventory_wordpress(root):
             if entry.is_file() and entry.suffix == ".php":
                 header = _wp_plugin_header(entry)
                 if header:
-                    yield "Plugin", header[0], entry.stem, header[1], entry
+                    yield "Plugin", header[0], entry.stem, header[1], entry, entry
             elif entry.is_dir():
                 header = None
                 for php in sorted(entry.glob("*.php")):
                     header = _wp_plugin_header(php)
                     if header:
-                        yield "Plugin", header[0], entry.name, header[1], php
+                        yield "Plugin", header[0], entry.name, header[1], php, php
                         break
                 if header is None:
-                    yield "Plugin", entry.name, entry.name, "(unknown)", entry
+                    yield "Plugin", entry.name, entry.name, "(unknown)", entry, None
 
     themes_dir = root / "wp-content" / "themes"
     if themes_dir.is_dir():
         for entry in sorted(themes_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            head = _read_head(entry / "style.css")
+            style = entry / "style.css"
+            head = _read_head(style)
             name = _WP_HEADER_RES["theme_name"].search(head)
             version = _WP_HEADER_RES["version"].search(head)
             yield ("Theme",
                    name.group(1) if name else entry.name,
                    entry.name,
                    version.group(1) if version else "(unknown)",
-                   entry)
+                   entry,
+                   style if version else None)
 
 
 # --- Joomla -----------------------------------------------------------------
@@ -157,10 +175,10 @@ def _joomla_dir_entries(base_dir, ext_type):
         for xml_file in sorted(entry.glob("*.xml")):
             manifest = _joomla_manifest(xml_file)
             if manifest:
-                yield ext_type, manifest[0], entry.name, manifest[1], xml_file
+                yield ext_type, manifest[0], entry.name, manifest[1], xml_file, xml_file
                 break
         if manifest is None:
-            yield ext_type, entry.name, entry.name, "(unknown)", entry
+            yield ext_type, entry.name, entry.name, "(unknown)", entry, None
 
 
 def inventory_joomla(root):
@@ -182,12 +200,12 @@ def inventory_joomla(root):
         for entry in sorted(tpl_base.iterdir()):
             if not entry.is_dir() or entry.name == "system":
                 continue
-            manifest = (_joomla_manifest(entry / "templateDetails.xml")
-                        if (entry / "templateDetails.xml").is_file() else None)
+            details = entry / "templateDetails.xml"
+            manifest = _joomla_manifest(details) if details.is_file() else None
             if manifest:
-                yield label, manifest[0], entry.name, manifest[1], entry / "templateDetails.xml"
+                yield label, manifest[0], entry.name, manifest[1], details, details
             else:
-                yield label, entry.name, entry.name, "(unknown)", entry
+                yield label, entry.name, entry.name, "(unknown)", entry, None
 
 
 # --- the engine -------------------------------------------------------------
@@ -212,20 +230,23 @@ def scan(case_dir, targets, ctx=None):
                     ctx.progress(0.2 + 0.75 * (n / max(1, len(installs))),
                                  f"Inventarisiere {install['type']} — {root}")
                 cur = conn.execute(
-                    "INSERT OR REPLACE INTO cms_installs (root, cms, version) "
-                    "VALUES (?,?,?)", (root, install["type"], version))
+                    "INSERT OR REPLACE INTO cms_installs (root, cms, version,"
+                    " version_source) VALUES (?,?,?,?)",
+                    (root, install["type"], version,
+                     str(install.get("source") or "")))
                 install_id = cur.lastrowid
                 stats["installs"] += 1
                 if version == "(unknown)":
                     stats["unknown_versions"] += 1
                 inventory_fn = (inventory_wordpress if install["type"] == WORDPRESS
                                 else inventory_joomla)
-                for ext_type, name, slug, ext_version, path in inventory_fn(
+                for ext_type, name, slug, ext_version, path, source in inventory_fn(
                         Path(install["root"])):
                     conn.execute(
                         "INSERT INTO cms_items (install_id, type, name, slug,"
-                        " version, path) VALUES (?,?,?,?,?,?)",
-                        (install_id, ext_type, name, slug, ext_version, str(path)))
+                        " version, path, version_source) VALUES (?,?,?,?,?,?,?)",
+                        (install_id, ext_type, name, slug, ext_version,
+                         str(path), str(source or "")))
                     stats["items"] += 1
                     if ext_version == "(unknown)":
                         stats["unknown_versions"] += 1

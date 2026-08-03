@@ -8,6 +8,11 @@ Diese Datei ist Referenz, keine zweite Quelle: die Regeln stehen in
 [`web/src/explain.ts`](../web/src/explain.ts). Wer eine Regel ändert, ändert
 sie dort und zieht diese Datei nach.
 
+Das **CMS-Inventar** erzeugt keine Findings — es beschreibt, was installiert
+ist. Jede Versionsangabe trägt die Datei mit sich, aus der sie gelesen wurde
+(Manifest, `style.css`, Plugin-Header, `version.php`), und lässt sich im
+Inventar von Hand korrigieren; der gemessene Wert bleibt daneben stehen.
+
 ## Zwei Prinzipien, die überall gelten
 
 **Probe-Regeln sind outcome-gated.** SQL-Injection, Path-Traversal und
