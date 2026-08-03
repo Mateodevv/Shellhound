@@ -94,6 +94,14 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Filter im Ausblende-Schema: Typ-Chips plus »mit/ohne Version«. Die
   Gruppen-Bänder lassen sich zuklappen (ein Filter oder eine Suche klappt
   wieder auf, damit kein Treffer hinter einem Klick verschwindet).
+- Die Kürzel an den Extension-Zeilen **erklären sich**: »Site« und »Admin«
+  sagen, ob der Teil ohne Anmeldung erreichbar ist, die Joomla-Plugin-Gruppe
+  sagt, wann Joomla das Plugin aufruft (`system` läuft bei jedem
+  Seitenaufruf — die begehrteste Gruppe für Persistenz). Dabei behoben: die
+  Engine lässt den Bereich bei Komponenten aus `administrator/components`
+  weg, bei Modulen und Templates dagegen bei den *Site*-Verzeichnissen — ein
+  unbeschriftetes »Component« stand also für Backend, ein unbeschriftetes
+  »Module« für Frontend. Die Ansicht schreibt den stillen Bereich jetzt aus.
 - **Versionen sind prüfbar und korrigierbar.** Die Engine merkt sich, aus
   welcher Datei eine Version gelesen wurde — Manifest-XML, `style.css`,
   Plugin-Header, `version.php` —, und ein Klick auf die Versionszelle öffnet

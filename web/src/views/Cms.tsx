@@ -30,7 +30,7 @@ import {
   Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { FIELD_EXPLAIN } from '../explain'
+import { CMS_SCOPE_EXPLAIN, FIELD_EXPLAIN, explainPluginGroup } from '../explain'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp, useTriage } from '../components/triage'
 import { TraceWindow } from '../components/TraceWindow'
@@ -42,12 +42,26 @@ import type { ViewId } from '../App'
 // die Gliederung — sonst wird jede Plugin-Gruppe eine eigene Tabelle.
 const SCOPES = new Set(['Site', 'Admin'])
 
+// WO DIE ENGINE DEN BEREICH WEGLÄSST, IST ER TROTZDEM FESTGELEGT — nur
+// leider nicht einheitlich: die Engine holt Komponenten unbenannt aus
+// administrator/components (also Backend), Module und Templates dagegen
+// unbenannt aus modules/ bzw. templates/ (also Frontend). Ein „Component"
+// ohne Kennzeichnung neben einem „Module" ohne Kennzeichnung liest sich
+// deshalb falsch. Hier wird der stille Bereich ausgeschrieben; der in der
+// Datenbank gespeicherte Typ bleibt unangetastet, weil an ihm der Schlüssel
+// der Versionskorrekturen hängt.
+const IMPLICIT_SCOPE: Record<string, string> = {
+  Component: 'Admin',
+  Module: 'Site',
+  Template: 'Site',
+}
+
 function splitType(raw: string): { base: string; qualifier?: string; scope?: string } {
   const m = raw.match(/^(.*?)\s*\((.+)\)$/)
-  if (!m) return { base: raw }
+  if (!m) return { base: raw, scope: IMPLICIT_SCOPE[raw] }
   return SCOPES.has(m[2])
     ? { base: m[1], scope: m[2] }
-    : { base: m[1], qualifier: m[2] }
+    : { base: m[1], qualifier: m[2], scope: IMPLICIT_SCOPE[m[1]] }
 }
 
 // Lesereihenfolge: das am häufigsten Manipulierte zuerst.
@@ -332,8 +346,18 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-[13px] font-medium">{item.name}</span>
-                    {qualifier && <Tag>{qualifier}</Tag>}
-                    {scope && <Tag>{scope}</Tag>}
+                    {qualifier && (
+                      <Tag explain={explainPluginGroup(qualifier).what}
+                        hint={explainPluginGroup(qualifier).why}>
+                        {qualifier}
+                      </Tag>
+                    )}
+                    {scope && (
+                      <Tag explain={CMS_SCOPE_EXPLAIN[scope]?.what}
+                        hint={CMS_SCOPE_EXPLAIN[scope]?.why}>
+                        {scope}
+                      </Tag>
+                    )}
                   </div>
                   <div className="mono truncate text-[11px] text-[var(--muted)]" title={item.path}>
                     {item.slug} · {shortPath(item.path, 60)}
