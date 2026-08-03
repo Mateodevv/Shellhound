@@ -17,6 +17,21 @@ Der Browser öffnet sich auf `http://127.0.0.1:8710`. Workspace (Fall-Ordner)
 liegt per Default unter `~/ShellhoundCases`, überschreibbar mit
 `--workspace` oder `SHELLHOUND_WORKSPACE`.
 
+### Aus VS Code / VSCodium
+
+`.vscode/` liegt im Repo:
+
+- **`Strg+Shift+B`** baut das Frontend, **`F5`** startet das Panel im
+  Debugger (Startkonfiguration *Panel starten*). Der Debugger braucht die
+  Erweiterung *Python Debugger* (debugpy) aus dem Open-VSX-Marktplatz.
+- Ohne Erweiterung: **Terminal → Run Task → `panel: bauen und starten`**.
+  Die Tasks laufen im Terminal und brauchen nichts weiter.
+- Für Frontend-Arbeit mit Hot Reload: Task `web: dev (Vite)` starten und
+  dazu die Konfiguration *Panel für Vite-Dev*. Vite läuft auf `5173` und
+  leitet `/api` und `/ws` an den Server weiter. Weil die Seite dann nicht
+  von FastAPI kommt, wird der Token **nicht** in die Seite injiziert — die
+  Konfiguration setzt deshalb einen festen: `http://localhost:5173/?token=dev`.
+
 ## Workflow
 
 1. **Case anlegen** → Evidence registrieren (Webroot-Kopie, Access-Logs,
