@@ -80,6 +80,15 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **Actors ist die Jagd, Findings die Entscheidung** — und beide kennen
+  denselben Stand. Actors öffnet standardmäßig mit **allen** Clients (die
+  Grundgesamtheit ist das, was die Seite einzigartig macht; „Auffällig"
+  bleibt als Chip). Clients mit Findings tragen ihr Triage-Badge direkt in
+  der Zeile und öffnen per **Artefakt**-Knopf dasselbe Detail-Fenster wie in
+  Findings — mit Entscheidung, Übernahme und Meldung. Niemand bewertet in
+  Actors neu, was drüben schon beantwortet ist. Technisch sind
+  Artefakt-Fenster und Triage-Nachsorge jetzt geteilte Komponenten
+  (`ArtifactWindow`, `useTriage`/`TriageFollowUp`).
 - **Die Arbeitsliste blendet jetzt False Positives aus, nicht True
   Positives.** Bestätigte Artefakte bleiben stehen und treten nur optisch
   zurück — sie sind das Ergebnis, und der Bericht entsteht aus derselben

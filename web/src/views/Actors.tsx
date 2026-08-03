@@ -1,23 +1,34 @@
 // Actors.tsx — every client the logs saw, mit Aktivitäts-Sparkline und
 // Klassifikations-Badges. Traces sind Abfragen gegen den Index: 20 Clients
 // auswählen und der kombinierte Trace steht sofort.
+//
+// ARBEITSTEILUNG mit Findings: dort wird entschieden, hier wird GEJAGT —
+// die Grundgesamtheit aller Clients, auch derer, auf die keine Regel
+// angesprochen hat. Was in Findings längst entschieden ist, trägt hier
+// sein Badge und lässt sich im selben Artefakt-Fenster öffnen; niemand
+// soll in dieser Liste neu bewerten, was drüben schon beantwortet ist.
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Box, Crosshair, Download, Users,
+  Box, Crosshair, Download, FileSearch, Users,
 } from 'lucide-react'
 import {
-  api, downloadUrl, post, type Actor, type ActorsResponse,
+  api, downloadUrl, post, type Actor, type ActorsResponse, type CaseDetail,
 } from '../api'
-import { formatCount, formatDay, relativeTime } from '../format'
 import {
-  Button, Chip, EmptyState, SearchInput, Tag,
+  TRIAGE_LABEL, formatCount, formatDay, relativeTime, type EvidenceRoot,
+} from '../format'
+import {
+  Button, Chip, EmptyState, SearchInput, Tag, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
 import { Sparkline } from '../components/Sparkline'
 import { TraceWindow } from '../components/TraceWindow'
+import { FileViewer } from '../components/FileViewer'
+import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
+import { TriageFollowUp, useTriage } from '../components/triage'
 import type { ViewId } from '../App'
 
 const FLAGS = [
@@ -46,16 +57,33 @@ function actorBadges(a: Actor) {
 export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  const [flag, setFlag] = useState<string>('alerted')
+  // Default „Alle": das Einzigartige dieser Seite ist die Grundgesamtheit.
+  // Wer nur die auffälligen Clients will, hat sie drüben in Findings — der
+  // Chip bleibt für den schnellen Schnitt.
+  const [flag, setFlag] = useState<string>('')
   const [sort, setSort] = useState('requests')
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  const [selected, setSelected] = useState<ArtifactStub | null>(null)
+  const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
+
+  const t = useTriage(slug)
 
   const { data } = useQuery({
     queryKey: ['actors', slug, search, flag, sort],
     queryFn: () => api<ActorsResponse>(
       `/api/cases/${slug}/actors?search=${encodeURIComponent(search)}&flag=${flag}&sort=${sort}&limit=200`),
   })
+
+  // Die Evidence-Wurzeln, damit Datei-Pfade in Vorschlägen lesbar sind —
+  // derselbe Query-Key wie in der Shell, also praktisch immer schon geladen.
+  const { data: caseInfo } = useQuery({
+    queryKey: ['case', slug],
+    queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
+  })
+  const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
+    kind: e.kind, path: e.path, label: e.label,
+  }))
 
   const collect = useMutation({
     mutationFn: (ips: string[]) => post(`/api/cases/${slug}/actors/collect`, { ips }),
@@ -169,6 +197,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                     <div className="flex items-center gap-2">
                       <span className="mono font-medium">{a.ip}</span>
                       {a.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
+                      {/* Was in Findings entschieden wurde, gilt auch hier —
+                          sonst bewertet man dieselbe Adresse zweimal. */}
+                      {a.triage && a.triage !== 'new' && (
+                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                      )}
                     </div>
                   </td>
                   <td className="px-2 py-2">
@@ -199,10 +232,27 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                     {formatCount(a.err4 + a.err5)}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Button variant="ghost" className="opacity-0 transition-opacity group-hover:opacity-100"
-                      onClick={() => setTraceIps([a.ip])}>
-                      <Crosshair size={13} /> Trace
-                    </Button>
+                    <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      {/* Nur Clients MIT Findings haben ein Artefakt — für
+                          alle anderen gibt es nichts zu entscheiden. */}
+                      {a.triage && (
+                        <Tooltip hint="Das Artefakt dieses Clients öffnen — dasselbe Fenster wie in Findings, mit Entscheidung.">
+                          <Button variant="ghost"
+                            onClick={() => {
+                              t.clearCollected()
+                              setSelected({
+                                artifact: a.ip, artifact_kind: 'client',
+                                worst: 3, triage: a.triage!, triage_note: '',
+                              })
+                            }}>
+                            <FileSearch size={13} /> Artefakt
+                          </Button>
+                        </Tooltip>
+                      )}
+                      <Button variant="ghost" onClick={() => setTraceIps([a.ip])}>
+                        <Crosshair size={13} /> Trace
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               )
@@ -223,7 +273,31 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       )}
 
-      <TraceWindow slug={slug} ips={traceIps} onClose={() => setTraceIps(null)} />
+      <ArtifactWindow
+        slug={slug}
+        artifact={selected}
+        roots={roots}
+        collected={t.collected}
+        onView={(path, line) => setViewing({ path, line })}
+        onTrace={(ips) => setTraceIps(ips)}
+        onClose={() => { setSelected(null); t.clearCollected() }}
+        onTriage={(state, note) => {
+          if (selected) t.decide([selected.artifact], state, note)
+        }}
+      />
+
+      <TraceWindow slug={slug} ips={traceIps} layer={1}
+        onClose={() => setTraceIps(null)} />
+
+      <FileViewer
+        slug={slug}
+        path={viewing?.path ?? null}
+        focusLine={viewing?.line}
+        layer={2}
+        onClose={() => setViewing(null)}
+      />
+
+      <TriageFollowUp t={t} roots={roots} />
     </div>
   )
 }
