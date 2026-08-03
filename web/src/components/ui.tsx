@@ -192,26 +192,18 @@ export function EmptyState({ icon, title, sub, action }: {
   )
 }
 
-// Welche Drawer gerade offen sind, in der Reihenfolge, in der sie geöffnet
-// wurden. Escape schließt nur den OBERSTEN: sonst räumt ein Tastendruck die
+// Welche Overlays gerade offen sind, in der Reihenfolge, in der sie geöffnet
+// wurden. Escape schließt nur das OBERSTE: sonst räumt ein Tastendruck die
 // ganze Kette ab und man verliert den Kontext, in dem man gerade gearbeitet
 // hat (Datei-Viewer zu, Artefakt-Detail gleich mit).
 const drawerStack: symbol[] = []
 
-export function Drawer({ open, onClose, title, children, wide, layer = 0 }: {
-  open: boolean
-  onClose: () => void
-  title: ReactNode
-  children: ReactNode
-  wide?: boolean
-  /** Stapelebene: 0 ist der Grund-Drawer, höher liegt DAVOR. Ein Viewer,
-   *  den man aus einem Drawer heraus öffnet, gehört nach vorne — sonst
-   *  klickt man auf »Datei ansehen« und es passiert scheinbar nichts. */
-  layer?: number
-}) {
+/** Meldet ein offenes Overlay an und sagt, ob es gerade das oberste ist.
+ *  Drawer und Modal teilen sich diesen Stapel — sie liegen übereinander. */
+function useOverlayEscape(open: boolean, onClose: () => void) {
   useEffect(() => {
     if (!open) return
-    const token = Symbol('drawer')
+    const token = Symbol('overlay')
     drawerStack.push(token)
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -226,7 +218,56 @@ export function Drawer({ open, onClose, title, children, wide, layer = 0 }: {
       window.removeEventListener('keydown', onKey)
     }
   }, [open, onClose])
+}
 
+/** Ein zentriertes Fenster — für Inhalte, die FLÄCHE brauchen und in zwei
+ *  Spalten nebeneinander lesbar sind. Der Drawer darunter bleibt für
+ *  Nachschlage-Ansichten (Trace, Datei), die man neben den Kontext schiebt. */
+export function Modal({ open, onClose, title, children, layer = 0 }: {
+  open: boolean
+  onClose: () => void
+  title: ReactNode
+  children: ReactNode
+  layer?: number
+}) {
+  useOverlayEscape(open, onClose)
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6"
+      style={{ zIndex: 40 + layer * 10 }}>
+      <div className="absolute inset-0 bg-black/60 animate-fade-in" onClick={onClose} />
+      <div className={clsx(
+        'relative flex max-h-[92vh] w-[min(1280px,96vw)] flex-col overflow-hidden',
+        'rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-2xl',
+        'animate-fade-up')}>
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-3">
+          <div className="min-w-0 text-[15px] font-semibold">{title}</div>
+          <button
+            onClick={onClose}
+            title="Schließen (Esc)"
+            className="shrink-0 rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+export function Drawer({ open, onClose, title, children, wide, layer = 0 }: {
+  open: boolean
+  onClose: () => void
+  title: ReactNode
+  children: ReactNode
+  wide?: boolean
+  /** Stapelebene: 0 ist der Grund-Drawer, höher liegt DAVOR. Ein Viewer,
+   *  den man aus einem Drawer heraus öffnet, gehört nach vorne — sonst
+   *  klickt man auf »Datei ansehen« und es passiert scheinbar nichts. */
+  layer?: number
+}) {
+  useOverlayEscape(open, onClose)
   if (!open) return null
   return (
     <div className="fixed inset-0" style={{ zIndex: 40 + layer * 10 }}>
