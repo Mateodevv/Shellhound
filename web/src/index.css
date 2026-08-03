@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/* SHELLHOUND — dark-first forensic workbench theme.
+   Chart colors follow the validated dark-mode palette (dataviz reference):
+   series-1 blue #3987e5, series-2 orange #d95926; severity uses the fixed
+   status palette (critical/serious/warning) — never the series slots. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --panel: #11151d;
+  --panel-2: #161b25;
+  --line: #212836;
+  --line-soft: #1a202c;
+  --fg: #e8edf4;
+  --muted: #8b96a8;
+  --accent: #3987e5;
+  --accent-soft: rgba(57, 135, 229, 0.14);
+  --series-2: #d95926;
+  --sev-high: #d03b3b;
+  --sev-medium: #ec835a;
+  --sev-low: #fab219;
+  --ok: #0ca30c;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: rgba(57, 135, 229, 0.35); }
+
+/* slim scrollbars */
+* { scrollbar-width: thin; scrollbar-color: #2a3242 transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: #2a3242; border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.animate-fade-up { animation: fadeUp 0.28s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.animate-fade-in { animation: fadeIn 0.2s ease both; }
+.animate-pulse-soft { animation: pulseSoft 1.6s ease-in-out infinite; }
+
+.mono { font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace; }
+.tabular { font-variant-numeric: tabular-nums; }
