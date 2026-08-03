@@ -31,10 +31,13 @@ import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp, useTriage } from '../components/triage'
 import type { ViewId } from '../App'
 
+// Jeder Chip ist ein AUSBLENDE-Schalter: Klick versteckt die Klasse, der
+// nächste Klick holt sie zurück, mehrere stapeln sich. So arbeitet man sich
+// durch die Grundgesamtheit: Scanner weg, Brute-Force weg — was übrig
+// bleibt, ist das, was noch keine Regel benannt hat.
 const FLAGS = [
-  { id: '', label: 'Alle', hint: 'Jeder Client, den die Logs gesehen haben.' },
   { id: 'alerted', label: 'Auffällig', hint: 'Clients, bei denen etwas mit DIESEM System passiert ist — Shell-Zugriff, Brute-Force, erfolgreiche Angriffsmuster. Reine Scanner-Besuche zählen hier nicht mit.' },
-  { id: 'scanner', label: 'Scanner', hint: 'Clients, die sich als Scan-Werkzeug ausgegeben haben. Passiert jedem Server rund um die Uhr — hier separat, damit es die echte Arbeit nicht zudeckt.' },
+  { id: 'scanner', label: 'Scanner', hint: 'Clients, die sich als Scan-Werkzeug ausgegeben haben. Passiert jedem Server rund um die Uhr.' },
   { id: 'bruteforce', label: 'Brute-Force', hint: 'Clients mit vielen Login-Versuchen.' },
   { id: 'probes', label: 'Angriffs­muster', hint: 'Clients mit SQL-Injection-, Traversal- oder Upload-PHP-Mustern.' },
 ] as const
@@ -57,10 +60,9 @@ function actorBadges(a: Actor) {
 export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  // Default „Alle": das Einzigartige dieser Seite ist die Grundgesamtheit.
-  // Wer nur die auffälligen Clients will, hat sie drüben in Findings — der
-  // Chip bleibt für den schnellen Schnitt.
-  const [flag, setFlag] = useState<string>('')
+  // Default: nichts ausgeblendet — das Einzigartige dieser Seite ist die
+  // Grundgesamtheit. Ausblenden ist die Handbewegung des Jagens.
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState('requests')
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
@@ -69,10 +71,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
 
   const t = useTriage(slug)
 
+  const hide = [...hidden].join(',')
   const { data } = useQuery({
-    queryKey: ['actors', slug, search, flag, sort],
+    queryKey: ['actors', slug, search, hide, sort],
     queryFn: () => api<ActorsResponse>(
-      `/api/cases/${slug}/actors?search=${encodeURIComponent(search)}&flag=${flag}&sort=${sort}&limit=200`),
+      `/api/cases/${slug}/actors?search=${encodeURIComponent(search)}&hide=${hide}&sort=${sort}&limit=200`),
   })
 
   // Die Evidence-Wurzeln, damit Datei-Pfade in Vorschlägen lesbar sind —
@@ -105,12 +108,21 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Actors"
           body="Jede IP-Adresse, die in den Logs auftaucht — mögliche Angreifer, Scanner und ganz normale Besucher."
-          hint="Auswählen und »Trace« zeigt, was ein Client genau getan hat. Das läuft als Abfrage gegen den Index — auch 20 Clients auf einmal sind sofort da.">
+          hint="Jeder Chip blendet seine Klasse aus, der nächste Klick holt sie zurück — so arbeitest du dich durch: Scanner weg, Brute-Force weg, übrig bleibt das Unerklärte. »Trace« zeigt, was ein Client genau getan hat.">
           <h1 className="mr-2 text-lg font-bold">Actors</h1>
         </Tooltip>
         {FLAGS.map((f) => (
-          <Tooltip key={f.id} hint={f.hint}>
-            <Chip active={flag === f.id} onClick={() => setFlag(f.id)}>
+          <Tooltip key={f.id}
+            hint={hidden.has(f.id)
+              ? `Ausgeblendet — Klick holt diese Clients zurück. ${f.hint}`
+              : `Klick blendet diese Clients aus. ${f.hint}`}>
+            <Chip active={false} dimmed={hidden.has(f.id)}
+              onClick={() => setHidden((prev) => {
+                const next = new Set(prev)
+                if (next.has(f.id)) next.delete(f.id)
+                else next.add(f.id)
+                return next
+              })}>
               {f.label}
             </Chip>
           </Tooltip>
@@ -261,9 +273,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </table>
         {actors.length === 0 && (
           <EmptyState icon={<Users size={36} />}
-            title={flag ? 'Kein Client in diesem Filter' : 'Noch keine Actors'}
-            sub={flag
-              ? 'Für diesen Filter gibt es keinen Treffer. Wechsle auf »Alle«, um jeden gesehenen Client zu sehen.'
+            title={hidden.size ? 'Alles ausgeblendet' : 'Noch keine Actors'}
+            sub={hidden.size
+              ? 'Jeder verbliebene Client fällt unter einen ausgeblendeten Chip. Klick die durchgestrichenen Chips, um sie zurückzuholen.'
               : 'Die Actors kommen aus den Access-Logs. Registriere die Logs als Evidence und starte die Analyse — danach steht hier jeder Client mit seiner Aktivität.'} />
         )}
       </div>

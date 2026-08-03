@@ -87,10 +87,23 @@ type Item =
 
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
+/** Ein Ausblende-Set umschalten: Klick versteckt die Klasse, der nächste
+ *  Klick holt sie zurück. */
+function toggleHidden(set: Set<string>, value: string): Set<string> {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
+}
+
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
-  const [severity, setSeverity] = useState('')
-  const [triage, setTriage] = useState('')
-  const [source, setSource] = useState('')
+  // JEDER Filter-Chip ist ein Ausblende-Schalter: Klick versteckt seine
+  // Klasse, der nächste Klick bringt sie zurück, mehrere stapeln sich.
+  // Standardmäßig ausgeblendet: False Positives (gehören nicht zum Fall)
+  // und Info (Kontext ohne Aussage über dieses System).
+  const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(new Set(['3']))
+  const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(new Set(['dismissed']))
+  const [hiddenSource, setHiddenSource] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
@@ -105,8 +118,6 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  const [hideDismissed, setHideDismissed] = useState(true)
-  const [hideInfo, setHideInfo] = useState(true)
 
   // Entscheidung + Nachsorge (Quittung, Übernahme-Meldung, Vorschläge) —
   // geteilt mit Actors, damit es überall dieselbe Entscheidung ist.
@@ -114,20 +125,13 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
 
   const query = useMemo(() => {
     const p = new URLSearchParams()
-    if (severity !== '') p.set('severity', severity)
-    if (triage) p.set('triage', triage)
-    if (source) p.set('source', source)
+    if (hiddenSeverity.size) p.set('hide_severity', [...hiddenSeverity].join(','))
+    if (hiddenTriage.size) p.set('hide_triage', [...hiddenTriage].join(','))
+    if (hiddenSource.size) p.set('hide_source', [...hiddenSource].join(','))
     if (search) p.set('search', search)
-    // Die Liste zeigt standardmäßig, was zum Fall GEHÖRT: Verworfenes und
-    // reiner Kontext fallen raus, bis man sie anfordert. Bestätigtes bleibt
-    // stehen — es ist das Ergebnis, und der Bericht entsteht aus derselben
-    // Liste, in der man gearbeitet hat. Ein gesetzter Chip hebt das jeweils
-    // auf: wer "False Positive" filtert, will sie sehen.
-    if (hideDismissed && !triage) p.set('hide_dismissed', '1')
-    if (hideInfo && severity === '') p.set('hide_info', '1')
     p.set('limit', '2000')
     return p.toString()
-  }, [severity, triage, source, search, hideDismissed, hideInfo])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, search])
 
   const { data } = useQuery({
     queryKey: ['findings', slug, query],
@@ -167,7 +171,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   // Ein aktiver Filter bedeutet: der Analyst sucht etwas Bestimmtes. Dann
   // stehen die Kategorien offen, sonst wäre die Trefferliste hinter Klicks
   // versteckt. Ohne Filter ist die Übersicht der Zweck — Kategorien zu.
-  const filtering = Boolean(severity !== '' || triage || source || search)
+  // Nur die SUCHE öffnet die Kategorien automatisch — wer sucht, will die
+  // Treffer sehen. Ausblenden ist keine Suche: die Übersicht bleibt zu.
+  const filtering = Boolean(search)
 
   const items = useMemo(() => {
     const out: Item[] = []
@@ -282,70 +288,70 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Artefakte"
           body="Die Dinge selbst: diese Datei, dieser Client, diese Tabelle. Geflaggt wurden sie von den Findings — entschieden wird über das Artefakt."
-          hint="Die Zahlen auf den Chips sind Artefakte, nicht einzelne Regeltreffer.">
+          hint="Jeder Chip ist ein Ausblende-Schalter: Klick versteckt seine Einträge, der nächste Klick holt sie zurück. False Positives und Info starten ausgeblendet.">
           <h1 className="mr-2 text-lg font-bold">Artefakte</h1>
         </Tooltip>
-        <Chip active={severity === '0'} onClick={() => setSeverity(severity === '0' ? '' : '0')}
-          count={counts?.severity['0'] ?? 0}>
-          <span className="h-2 w-2 rounded-full" style={{ background: 'var(--sev-high)' }} /> High
-        </Chip>
-        <Chip active={severity === '1'} onClick={() => setSeverity(severity === '1' ? '' : '1')}
-          count={counts?.severity['1'] ?? 0}>
-          <span className="h-2 w-2 rounded-full" style={{ background: 'var(--sev-medium)' }} /> Medium
-        </Chip>
-        <Chip active={severity === '2'} onClick={() => setSeverity(severity === '2' ? '' : '2')}
-          count={counts?.severity['2'] ?? 0}>
-          <span className="h-2 w-2 rounded-full" style={{ background: 'var(--sev-low)' }} /> Low
-        </Chip>
-        <Tooltip hint="Kontext, keine Aussage über dieses System — z.B. Scanner-Besuche. Standardmäßig ausgeblendet.">
-          <Chip active={severity === '3'} onClick={() => setSeverity(severity === '3' ? '' : '3')}
-            count={counts?.severity['3'] ?? 0}>
-            <span className="h-2 w-2 rounded-full" style={{ background: 'var(--muted)' }} /> Info
-          </Chip>
-        </Tooltip>
+        {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
+           ['2', 'Low', 'var(--sev-low)'], ['3', 'Info', 'var(--muted)']] as const
+        ).map(([s, label, color]) => (
+          <Tooltip key={s}
+            hint={hiddenSeverity.has(s)
+              ? `${label}-Artefakte sind ausgeblendet — Klick holt sie zurück.`
+              : `Klick blendet ${label}-Artefakte aus.`}>
+            <Chip active={false} dimmed={hiddenSeverity.has(s)}
+              onClick={() => setHiddenSeverity((prev) => toggleHidden(prev, s))}
+              count={counts?.severity[s] ?? 0}>
+              <span className="h-2 w-2 rounded-full" style={{ background: color }} /> {label}
+            </Chip>
+          </Tooltip>
+        ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {(['new', 'confirmed', 'dismissed'] as const).map((t) => (
-          <Chip key={t} active={triage === t} onClick={() => setTriage(triage === t ? '' : t)}
-            count={counts?.triage[t] ?? 0}>
-            {TRIAGE_LABEL[t]}
-          </Chip>
+        {(['new', 'confirmed', 'dismissed'] as const).map((state) => (
+          <Tooltip key={state}
+            hint={hiddenTriage.has(state)
+              ? `${TRIAGE_LABEL[state]} ist ausgeblendet — Klick holt sie zurück.`
+              : `Klick blendet »${TRIAGE_LABEL[state]}« aus.`}>
+            <Chip active={false} dimmed={hiddenTriage.has(state)}
+              onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
+              count={counts?.triage[state] ?? 0}>
+              {TRIAGE_LABEL[state]}
+            </Chip>
+          </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
         {Object.entries(SOURCE_LABEL).map(([key, label]) => (
-          <Chip key={key} active={source === key} onClick={() => setSource(source === key ? '' : key)}
-            count={counts?.source[key] ?? 0}>
-            {label}
-          </Chip>
+          <Tooltip key={key}
+            hint={hiddenSource.has(key)
+              ? `${label} ist ausgeblendet — Klick holt die Artefakte zurück.`
+              : `Klick blendet Artefakte aus dieser Quelle aus.`}>
+            <Chip active={false} dimmed={hiddenSource.has(key)}
+              onClick={() => setHiddenSource((prev) => toggleHidden(prev, key))}
+              count={counts?.source[key] ?? 0}>
+              {label}
+            </Chip>
+          </Tooltip>
         ))}
         <div className="ml-auto">
           <SearchInput value={search} onChange={setSearch} placeholder="Regel, Pfad, Evidence…" />
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-[12px] text-[var(--muted)]">
-        <Tooltip hint="Verworfene Artefakte gehören nicht zum Fall — sie verschwinden aus der Liste, bleiben aber mit deiner Notiz über den Filter »False Positive« erreichbar. Bestätigte bleiben stehen, nur abgeblendet: sie sind das Ergebnis.">
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-              checked={hideDismissed} onChange={(e) => setHideDismissed(e.target.checked)} />
-            False Positives ausblenden
-          </label>
-        </Tooltip>
-        <Tooltip hint="Blendet Artefakte aus, deren stärkster Fund reiner Kontext ist (Scanner-Besuche).">
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-              checked={hideInfo} onChange={(e) => setHideInfo(e.target.checked)} />
-            Info ausblenden
-          </label>
-        </Tooltip>
-        {(hideDismissed || hideInfo) && data && (
+      {!search && data && counts != null && counts.total > data.total && (
+        <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
           <span className="opacity-70">
-            {formatCount(
-              (hideDismissed && !triage ? (counts?.triage['dismissed'] ?? 0) : 0) +
-              (hideInfo && severity === '' ? (counts?.severity['3'] ?? 0) : 0))}
-            {' '}ausgeblendet
+            {formatCount(counts.total - data.total)} Artefakt{counts.total - data.total === 1 ? '' : 'e'} ausgeblendet
           </span>
-        )}
-      </div>
+          <button
+            className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
+            onClick={() => {
+              setHiddenSeverity(new Set())
+              setHiddenTriage(new Set())
+              setHiddenSource(new Set())
+            }}>
+            alles einblenden
+          </button>
+        </div>
+      )}
 
       {checked.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">

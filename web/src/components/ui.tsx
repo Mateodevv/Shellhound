@@ -115,8 +115,15 @@ export function IocTag({ tag, tone }: {
   return <Tag tone={tone} explain={e?.what} hint={e?.why}>{tag}</Tag>
 }
 
-export function Chip({ active, onClick, children, count }: {
-  active: boolean; onClick: () => void; children: ReactNode; count?: number
+export function Chip({ active, onClick, children, count, dimmed }: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+  count?: number
+  /** Ausblende-Logik: dieser Chip ist gerade AUSGEBLENDET — durchgestrichen
+   *  und zurückgenommen, aber klickbar, denn der nächste Klick holt die
+   *  Einträge zurück. `active` und `dimmed` schließen einander aus. */
+  dimmed?: boolean
 }) {
   return (
     <button
@@ -124,9 +131,11 @@ export function Chip({ active, onClick, children, count }: {
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
         'transition-colors duration-150 cursor-pointer',
-        active
-          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
-          : 'border-[var(--line)] bg-transparent text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--fg)]')}
+        dimmed
+          ? 'border-[var(--line)] bg-transparent text-[var(--muted)] opacity-50 line-through hover:opacity-80'
+          : active
+            ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+            : 'border-[var(--line)] bg-transparent text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--fg)]')}
     >
       {children}
       {count != null && (

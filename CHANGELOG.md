@@ -80,6 +80,16 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **Alle Filter-Chips sind Ausblende-Schalter.** Ein Klick versteckt die
+  Klasse (durchgestrichener Chip), der nächste holt sie zurück; beliebig
+  viele stapeln sich — Scanner weg, Brute-Force weg, übrig bleibt das
+  Unerklärte. Gilt für Schweregrade, Triage-Zustände und Quellen in
+  Findings, die Verhaltens-Flags in Actors und Typen/Tags in der IOC Box.
+  Die Checkboxen »False Positives/Info ausblenden« gehen darin auf (beide
+  Klassen starten ausgeblendet); »x Artefakte ausgeblendet« mit
+  »alles einblenden« steht unter der Chip-Leiste. In der IOC Box
+  verschwindet ein Eintrag erst, wenn *alle* seine Tags ausgeblendet sind —
+  ein sichtbares Tag genügt zum Bleiben.
 - **Actors ist die Jagd, Findings die Entscheidung** — und beide kennen
   denselben Stand. Actors öffnet standardmäßig mit **allen** Clients (die
   Grundgesamtheit ist das, was die Seite einzigartig macht; „Auffällig"

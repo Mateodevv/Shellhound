@@ -31,8 +31,10 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     queryKey: ['iocs', slug],
     queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`),
   })
-  const [typeFilter, setTypeFilter] = useState('')
-  const [tagFilter, setTagFilter] = useState('')
+  // Ausblende-Schalter wie überall: Klick versteckt Typ bzw. Tag, der
+  // nächste Klick holt sie zurück, mehrere stapeln sich.
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
+  const [hiddenTags, setHiddenTags] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [newValue, setNewValue] = useState('')
   const [newNote, setNewNote] = useState('')
@@ -57,12 +59,16 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     onSuccess: invalidate,
   })
 
+  // Ein IOC verschwindet, wenn sein Typ ausgeblendet ist oder JEDES seiner
+  // Tags — ein Eintrag mit einem sichtbaren Tag bleibt stehen, sonst würde
+  // »hunt« ausblenden auch die bestätigten Funde mitreißen, die zufällig
+  // beides tragen.
   const filtered = useMemo(() => (iocs ?? []).filter((i) =>
-    (!typeFilter || i.type === typeFilter) &&
-    (!tagFilter || i.tags.includes(tagFilter)) &&
+    !hiddenTypes.has(i.type) &&
+    !(i.tags.length > 0 && i.tags.every((tg) => hiddenTags.has(tg))) &&
     (!search || i.value.toLowerCase().includes(search.toLowerCase()) ||
       i.note.toLowerCase().includes(search.toLowerCase()))),
-    [iocs, typeFilter, tagFilter, search])
+    [iocs, hiddenTypes, hiddenTags, search])
 
   const typeCounts = useMemo(() => {
     const out: Record<string, number> = {}
@@ -85,9 +91,16 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           <h1 className="mr-2 text-lg font-bold">IOC Box</h1>
         </Tooltip>
         {Object.entries(typeCounts).map(([t, n]) => (
-          <Tooltip key={t} body={IOC_TYPE_EXPLAIN[t]}>
-            <Chip active={typeFilter === t}
-              onClick={() => setTypeFilter(typeFilter === t ? '' : t)} count={n}>
+          <Tooltip key={t} body={IOC_TYPE_EXPLAIN[t]}
+            hint={hiddenTypes.has(t) ? 'Ausgeblendet — Klick holt sie zurück.'
+                                     : 'Klick blendet diesen Typ aus.'}>
+            <Chip active={false} dimmed={hiddenTypes.has(t)}
+              onClick={() => setHiddenTypes((prev) => {
+                const next = new Set(prev)
+                if (next.has(t)) next.delete(t)
+                else next.add(t)
+                return next
+              })} count={n}>
               {t}
             </Chip>
           </Tooltip>
@@ -115,10 +128,20 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">Tags:</span>
           {Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-            <Chip key={t} active={tagFilter === t}
-              onClick={() => setTagFilter(tagFilter === t ? '' : t)} count={n}>
-              {t}
-            </Chip>
+            <Tooltip key={t}
+              hint={hiddenTags.has(t)
+                ? 'Ausgeblendet — Klick holt Einträge mit diesem Tag zurück.'
+                : 'Klick blendet Einträge aus, deren Tags alle ausgeblendet sind.'}>
+              <Chip active={false} dimmed={hiddenTags.has(t)}
+                onClick={() => setHiddenTags((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(t)) next.delete(t)
+                  else next.add(t)
+                  return next
+                })} count={n}>
+                {t}
+              </Chip>
+            </Tooltip>
           ))}
         </div>
       )}
