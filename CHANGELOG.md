@@ -91,7 +91,18 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Erweiterung ist kompromittiert?" und öffnet das Artefakt-Fenster direkt.
   Einzeldatei-Extensions (hello.php) erben dabei nie ihren Container, sonst
   würde jede Shell im plugins-Ordner jedem Einzeldatei-Plugin zugerechnet.
-  Filter im Ausblende-Schema: Typ-Chips plus »mit/ohne Version«.
+  Filter im Ausblende-Schema: Typ-Chips plus »mit/ohne Version«. Die
+  Gruppen-Bänder lassen sich zuklappen (ein Filter oder eine Suche klappt
+  wieder auf, damit kein Treffer hinter einem Klick verschwindet).
+- **Versionen sind prüfbar und korrigierbar.** Die Engine merkt sich, aus
+  welcher Datei eine Version gelesen wurde — Manifest-XML, `style.css`,
+  Plugin-Header, `version.php` —, und ein Klick auf die Versionszelle öffnet
+  ein Fenster, das die Quelle nennt und die Datei aufmacht. Dort lässt sich
+  die Version von Hand setzen (mit Begründung), wenn das Manifest fehlt oder
+  gefälscht ist. Die Korrektur **ersetzt den Messwert nicht**, sondern legt
+  sich darüber: beides bleibt nebeneinander sichtbar, und weil die Korrektur
+  in einer eigenen Tabelle liegt, überlebt sie jede Re-Analyse — anders als
+  das Inventar selbst, das bei jedem Lauf neu geschrieben wird.
 - **Alle Filter-Chips sind Ausblende-Schalter.** Ein Klick versteckt die
   Klasse (durchgestrichener Chip), der nächste holt sie zurück; beliebig
   viele stapeln sich — Scanner weg, Brute-Force weg, übrig bleibt das
