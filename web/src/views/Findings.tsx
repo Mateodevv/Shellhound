@@ -22,8 +22,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  Bug, Check, ChevronDown, ChevronRight, Copy, Crosshair, Eye, FileCode2,
-  FileSearch, ServerCog, ShieldCheck, ShieldOff, Table2, Users, X,
+  Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code, Copy, Crosshair,
+  Database, DoorOpen, Eye, EyeOff, FileCode2, FileCog, FileSearch, KeyRound,
+  Radar, ServerCog, ShieldCheck, ShieldOff, Table2, Users, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -48,6 +49,22 @@ import type { ViewId } from '../App'
 
 const KIND_ICON: Record<string, typeof Bug> = {
   file: FileCode2, table: Table2, client: Users, dump: ServerCog,
+}
+
+// Ein Symbol je Kategorie. Die Kategorie ist die Gliederung, mit der man
+// anfängt — sie soll auf einen Blick unterscheidbar sein und nicht als
+// weitere Textzeile in einer Textliste stehen.
+const CATEGORY_ICON: Record<string, typeof Bug> = {
+  webshell: Bug,
+  obfuscation: EyeOff,
+  htaccess: FileCog,
+  db_injected: Database,
+  db_markup: Code,
+  shell_access: DoorOpen,
+  bruteforce: KeyRound,
+  probes: Crosshair,
+  scanner: Radar,
+  other: CircleDashed,
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -416,8 +433,12 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       )}
 
+      {/* Kein `flex-1`: die Box ist so hoch wie ihr Inhalt und schrumpft
+          erst, wenn die Liste länger wird als der Platz. Gestreckt auf die
+          volle Höhe stand unter der letzten Zeile sonst eine leere Fläche,
+          die aussah, als fehle da etwas. */}
       <div ref={parentRef}
-        className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
+        className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
           <EmptyState icon={<Bug size={36} />} title="Keine Artefakte"
             sub={data ? 'Kein Treffer für die aktuellen Filter — oder die Analyse lief noch nicht.' : 'Lade…'} />
@@ -437,48 +458,66 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                 ? !collapsedCats.has(c.cat.id)
                 : expandedCats.has(c.cat.id)
               const decided = c.confirmed + c.dismissed
+              const tint = SEVERITY_VAR[c.worst]
+              const CatIcon = CATEGORY_ICON[c.cat.id] ?? Bug
               return (
                 <div key={'c' + c.cat.id}
-                  className="absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line)] bg-[var(--panel-2)] pr-4"
-                  style={style}>
-                  {/* Der Farbbalken ist der Schweregrad der Kategorie — beim
-                      Scrollen erkennt man die schweren Blöcke am Rand, ohne
-                      eine Zeile zu lesen. */}
-                  <span className="h-full w-1 shrink-0"
-                    style={{ background: SEVERITY_VAR[c.worst] }} />
-                  <input type="checkbox" className="ml-1.5 cursor-pointer accent-[var(--accent)]"
+                  className={clsx(
+                    'absolute left-0 top-0 flex w-full items-center gap-3 pr-4',
+                    'border-y border-[var(--line)]',
+                    // Der Trennstrich nach oben nur, wenn eine Kategorie
+                    // gerade ZU ist -- offen geht sie in ihre Artefakte über.
+                    open ? 'border-b-transparent' : '')}
+                  style={{
+                    ...style,
+                    // Ein Hauch des Schweregrads, der nach rechts ausläuft:
+                    // die Kategorie hebt sich vom Rest ab, ohne dass eine
+                    // volle Farbfläche die Namen darunter erschlägt.
+                    background:
+                      `linear-gradient(90deg, color-mix(in srgb, ${tint} 13%, var(--panel-2)) 0%,` +
+                      ' var(--panel-2) 55%)',
+                  }}>
+                  <span className="h-full w-1 shrink-0" style={{ background: tint }} />
+                  <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)]"
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
                     onChange={() => toggleCategoryChecked(c)}
                     title="Alle Artefakte dieser Kategorie markieren" />
                   <button onClick={() => toggleCategory(c)}
-                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left">
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
                     {open
                       ? <ChevronDown size={16} className="shrink-0 text-[var(--muted)]" />
                       : <ChevronRight size={16} className="shrink-0 text-[var(--muted)]" />}
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                      style={{ background: `color-mix(in srgb, ${tint} 20%, transparent)`,
+                               color: tint }}>
+                      <CatIcon size={17} />
+                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-[14px] font-semibold">{c.cat.label}</span>
+                        <span className="truncate text-[14.5px] font-semibold tracking-tight">
+                          {c.cat.label}
+                        </span>
                         <InfoDot body={c.cat.what} wide />
-                        <SeverityBadge severity={c.worst} />
                       </div>
                       <div className="truncate text-[11.5px] text-[var(--muted)]">
-                        {formatCount(c.artifacts.length)}{' '}
-                        {artifactNoun(c.kind, c.artifacts.length)}
-                        {' · '}
+                        <span className="font-medium text-[var(--fg)]">
+                          {formatCount(c.artifacts.length)}{' '}
+                          {artifactNoun(c.kind, c.artifacts.length)}
+                        </span>
+                        {' aus '}
                         {formatCount(c.findings)} Finding{c.findings === 1 ? '' : 's'}
+                        {decided > 0 && ` · ${decided} entschieden`}
                       </div>
                     </div>
                   </button>
+                  <SeverityBadge severity={c.worst} />
                   {/* Fortschritt: wie viel dieser Kategorie ist entschieden? */}
                   <Tooltip
                     title={`${decided} von ${c.artifacts.length} entschieden`}
                     hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${c.artifacts.length - decided} offen`}>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="hidden text-[11px] text-[var(--muted)] tabular sm:inline">
-                        {decided}/{c.artifacts.length}
-                      </span>
-                      <span className="flex h-1.5 w-20 overflow-hidden rounded-full bg-[var(--panel)]">
+                    <div className="flex w-24 shrink-0 items-center gap-2">
+                      <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)]">
                         {c.confirmed > 0 && (
                           <span style={{ width: `${(c.confirmed / c.artifacts.length) * 100}%`,
                                          background: 'var(--sev-high)' }} />
@@ -487,6 +526,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                           <span style={{ width: `${(c.dismissed / c.artifacts.length) * 100}%`,
                                          background: 'var(--muted)' }} />
                         )}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-[var(--muted)] tabular">
+                        {decided}/{c.artifacts.length}
                       </span>
                     </div>
                   </Tooltip>
