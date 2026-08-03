@@ -790,6 +790,43 @@ def who_requested(case_dir, names, limit=200):
         conn.close()
 
 
+def requests_for_names(case_dir, names, limit=20000):
+    """Every (client, URI) pair that requested one of these FILE NAMES, with
+    hit counts and how many of them were answered 2xx.
+
+    The name is only the PREFILTER -- it hits the index on requests(leaf).
+    The caller compares the full URI against the path it actually means,
+    because a name alone is not an identity: a shell called `index.php`
+    shares its name with every landing page on the server, and collecting
+    those visitors would put unrelated people in a case file.
+    """
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return []
+    try:
+        wanted = [_leaf(n) for n in names if str(n).strip()]
+        wanted = [w for w in dict.fromkeys(wanted) if w]
+        if not wanted:
+            return []
+        marks = ",".join("?" * len(wanted))
+        rows = conn.execute(
+            f"""SELECT i.ip AS ip, u.text AS uri, s.text AS name,
+                       count(*) AS hits,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299
+                           THEN 1 ELSE 0 END) AS ok_hits
+                FROM requests r
+                JOIN ips i ON i.id = r.ip
+                JOIN strings s ON s.id = r.leaf
+                JOIN strings u ON u.id = r.uri
+                WHERE r.leaf IN (SELECT id FROM strings WHERE text IN ({marks}))
+                GROUP BY i.ip, u.text
+                ORDER BY ok_hits DESC, hits DESC LIMIT ?""",
+            wanted + [limit]).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def timeline(case_dir):
     """Requests/errors/new clients per day -- the dashboard's coverage chart."""
     conn = _open_ro(case_dir)

@@ -37,6 +37,21 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 
 ### Hinzugefügt
 
+- **Eine Entscheidung wird nicht zweimal getroffen.** Wer eine Webshell als
+  True Positive entscheidet, hat damit auch über die Clients entschieden, die
+  sie geladen haben — bisher standen die als eigene Artefakte nochmal zur
+  Bewertung an. Jetzt wandert die Entscheidung **einen Schritt** entlang
+  dessen, was der Log-Index belegen kann, in beide Richtungen (Datei →
+  Clients und Client → Dateien):
+  - **stark** (der Client hat genau diese Datei geladen und 2xx bekommen):
+    wird mitentschieden, mit Vermerk „übernommen: hat *x* geladen (n× 2xx)".
+    Eine Meldung nennt jedes mitentschiedene Artefakt und bietet
+    **Rückgängig** — das den Zustand von davor exakt wiederherstellt.
+  - **mittel** (gleicher Pfad, nie erfolgreich): wird **vorgeschlagen**, nicht
+    entschieden. Eine Sondierung ins Leere ist etwas anderes als ein Zugriff.
+  - Von Hand vergebene Entscheidungen werden nie überschrieben, und die
+    Übernahme geht genau einen Schritt weit — sonst stünde am Ende ein ganzer
+    Fall auf einer einzigen Entscheidung.
 - **Artefakt-Detail** (`GET /api/cases/{slug}/artifact`): eine Antwort mit
   allem, was zur Entscheidung nötig ist — jede Regel mit Erklärung und
   Evidence, Dateimetadaten (Größe, mtime, SHA-256, CMS-Guard, Upload-Ordner),
@@ -77,6 +92,11 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 - Ein bestätigtes Datei-Artefakt kam **ohne SHA-256** in die IOC Box, wenn
   der Hash nicht schon aus dem Scan vorlag — obwohl das Detail ihn anzeigte.
   Er wird jetzt an derselben Grenze (32 MB) nachberechnet.
+- **Der Hunt verglich nur den Dateinamen, nicht den Pfad.** Eine Shell namens
+  `index.php` sammelte damit jeden Besucher jeder beliebigen Startseite als
+  IOC in den Fall — Menschen, die mit dem Vorfall nichts zu tun haben.
+  Verglichen wird jetzt der Pfad unterhalb der Evidence-Wurzel; das gilt für
+  die IOC-Sammlung, die Client-Liste im Artefakt-Detail und die Übernahme.
 - Die Sammel-Quittung nach dem Bestätigen zeigte denselben Indikator mehrfach,
   einmal je Regel des Artefakts.
 

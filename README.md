@@ -44,7 +44,11 @@ python -m server.main --no-browser --token dev
    zusammen: Metadaten, Dateiinhalt, jede Regel mit ihrer Evidence, das
    Actor-Profil und jede IP daran — jede davon direkt als Trace zu öffnen.
    True Positive legt Pfad + SHA-256 in die IOC Box und sammelt die Clients
-   ein, die die Datei laut Index angefragt haben.
+   ein, die die Datei laut Index angefragt haben. Die Entscheidung wandert
+   dabei **einen Schritt** entlang dessen, was der Log-Index belegt: Clients,
+   die genau diese Datei mit 2xx geladen haben, werden mitentschieden (mit
+   Vermerk und Rückgängig); wer sie nur erfolglos angefragt hat, wird
+   vorgeschlagen statt entschieden. Dasselbe in der Gegenrichtung.
 4. **Actors**: jeder Client mit Sparkline und Verhalten (Scanner, Brute-Force,
    Shell-Zugriff 2xx). Beliebig viele Clients markieren → kombinierter Trace
    in Millisekunden, Export als CSV.

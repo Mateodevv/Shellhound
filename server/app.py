@@ -591,6 +591,10 @@ def create_app(config: Config) -> FastAPI:
         fingerprints: list[str] = []
         state: str
         note: str = ""
+        # Whether a confirmation may travel along proven links (see
+        # _propagate). Off for undo and for applying a suggestion -- those
+        # must not start a second wave.
+        propagate: bool = True
 
     @app.post("/api/cases/{slug}/triage", dependencies=[auth])
     def set_triage(slug: str, body: TriageBody):
@@ -614,7 +618,9 @@ def create_app(config: Config) -> FastAPI:
                 f"WHERE artifact IN ({marks})",
                 [body.state, body.note, db.now()] + artifacts)
             # Confirming collects the artifact into the IOC box -- provenance
-            # is written at the moment of collection.
+            # is written at the moment of collection -- and travels one step
+            # along the links the log index can PROVE.
+            linked, suggested = [], []
             if body.state == "confirmed":
                 hashes = {}
                 meta = db.one(conn, "SELECT value FROM meta WHERE key = 'webshell_hashes'")
@@ -623,15 +629,21 @@ def create_app(config: Config) -> FastAPI:
                 by_artifact = {}
                 for f in rows:
                     by_artifact.setdefault(f["artifact"], []).append(f)
+                touches = _touches(conn, case_dir, by_artifact)
                 for artifact, findings in by_artifact.items():
                     collected += _collect_confirmed(conn, case_dir, artifact,
-                                                    findings, hashes)
+                                                    findings, hashes,
+                                                    touches.get(artifact, []))
+                if body.propagate:
+                    linked, suggested = _propagate(conn, case_dir,
+                                                   set(artifacts), touches)
             conn.commit()
         finally:
             conn.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
         return {"updated": len(rows), "artifacts": len(artifacts),
-                "collected": _dedupe_collected(collected)}
+                "collected": _dedupe_collected(collected),
+                "linked": linked, "suggested": suggested}
 
     # Groesser als das rechnet niemand nebenbei durch: ein Hash ueber eine
     # 2-GB-Datei laesst den Request haengen. Dieselbe Grenze wie im Detail.
@@ -647,6 +659,158 @@ def create_app(config: Config) -> FastAPI:
         except OSError:
             return ""
 
+    # --- was an einem Artefakt hängt -------------------------------------
+    #
+    # EINE ENTSCHEIDUNG SOLL NICHT ZWEIMAL GETROFFEN WERDEN. Wer eine Datei
+    # als True Positive entscheidet, hat damit auch über die Clients
+    # entschieden, die sie nachweislich geladen haben -- und umgekehrt. Was
+    # fehlte, war der Beleg dafür, WELCHE Clients das sind.
+    #
+    # Der Beleg steht im Log-Index: die vollständige URI plus Status. Daraus
+    # ergeben sich zwei Stufen, und nur die erste entscheidet mit:
+    #   stark  -- der Client hat GENAU diese Datei geladen und 2xx bekommen.
+    #             Er hat sie benutzt; das ist derselbe Vorfall.
+    #   mittel -- gleicher Pfad, aber nie erfolgreich. Eine Sondierung ins
+    #             Leere ist etwas anderes als ein Zugriff, also wird sie
+    #             vorgeschlagen und nicht entschieden.
+    # Der reine Namensvergleich („irgendein index.php") ist KEIN Beleg und
+    # taucht hier gar nicht mehr auf.
+
+    def _uri_path(uri):
+        """Der Pfadteil einer URI, klein geschrieben, ohne Query."""
+        return str(uri or "").split("?", 1)[0].split("#", 1)[0].strip().lower()
+
+    def _web_path(conn, artifact):
+        """Die Datei so, wie sie in einer URL stünde: der Pfad unterhalb der
+        Evidence-Wurzel, unter der sie liegt. Fällt auf den Dateinamen
+        zurück, wenn keine Wurzel passt."""
+        target = str(artifact).replace("\\", "/")
+        best = ""
+        for row in db.rows(conn, "SELECT path FROM evidence"):
+            root = str(row["path"]).replace("\\", "/").rstrip("/")
+            if root and target.lower().startswith(root.lower() + "/") \
+                    and len(root) > len(best):
+                best = root
+        rel = target[len(best) + 1:] if best else os.path.basename(target)
+        return rel.strip("/").lower()
+
+    def _touches(conn, case_dir, by_artifact):
+        """artifact -> [{ip, hits, ok_hits, uri}] für die Datei-Artefakte
+        darin. Eine Abfrage für alle Namen, der Pfadvergleich danach."""
+        files = {a: _web_path(conn, a) for a, findings in by_artifact.items()
+                 if findings and findings[0]["artifact_kind"] == "file"}
+        if not files:
+            return {}
+        names = [os.path.basename(p) for p in files.values()]
+        rows = logindex.requests_for_names(case_dir, names)
+        out = {}
+        for artifact, rel in files.items():
+            tail = "/" + rel
+            hits = {}
+            for r in rows:
+                if not _uri_path(r["uri"]).endswith(tail):
+                    continue
+                agg = hits.setdefault(r["ip"], {"ip": r["ip"], "hits": 0,
+                                                "ok_hits": 0, "uri": r["uri"]})
+                agg["hits"] += r["hits"]
+                agg["ok_hits"] += r["ok_hits"]
+            out[artifact] = sorted(hits.values(),
+                                   key=lambda h: (-h["ok_hits"], -h["hits"]))
+        return out
+
+    def _propagate(conn, case_dir, decided, touches):
+        """Eine Entscheidung wandert GENAU EINEN SCHRITT weit.
+
+        Zurück kommt (linked, suggested): was mitentschieden wurde -- mit dem
+        Zustand davor, damit die Oberfläche es zurücknehmen kann -- und was
+        nur vorgeschlagen wird. Ein Schritt, nicht mehr: sonst zieht eine
+        bestätigte Datei Clients nach, die weitere Dateien nachziehen, und am
+        Ende steht ein Fall auf einer Entscheidung."""
+        # Welche Artefakte gibt es überhaupt, und wie stehen sie? Ein Client
+        # ohne eigenes Finding ist kein Artefakt -- er landet wie bisher nur
+        # in der IOC Box.
+        known = {r["artifact"]: r for r in db.rows(
+            conn, f"WITH art AS ({_ART_SQL}) "
+                  f"SELECT artifact, artifact_kind, triage, triage_note FROM art")}
+        # Eine Übernahme fasst nur an, was noch NICHT entschieden ist. Ein
+        # von Hand vergebenes False Positive darf eine Automatik niemals
+        # überschreiben -- und ein bereits bestätigtes Artefakt braucht
+        # weder neue Notiz noch neuen Zeitstempel.
+        open_states = ("new", "reviewed")
+        linked, suggested, seen = [], [], set(decided)
+
+        def entry(artifact, why, hits=None, ok_hits=None):
+            row = known[artifact]
+            return {"artifact": artifact, "kind": row["artifact_kind"],
+                    "why": why, "hits": hits, "ok_hits": ok_hits,
+                    "previous": {"state": row["triage"],
+                                 "note": row["triage_note"] or ""}}
+
+        # --- Datei bestätigt -> die Clients, die sie geladen haben ---------
+        for artifact, hits in touches.items():
+            label = os.path.basename(str(artifact).replace("\\", "/"))
+            for h in hits:
+                if h["ip"] in seen or h["ip"] not in known:
+                    continue
+                if known[h["ip"]]["artifact_kind"] != "client":
+                    continue
+                if known[h["ip"]]["triage"] not in open_states:
+                    continue
+                if h["ok_hits"] > 0:
+                    seen.add(h["ip"])
+                    linked.append(entry(
+                        h["ip"], f"hat {label} geladen ({h['ok_hits']}× 2xx)",
+                        h["hits"], h["ok_hits"]))
+                else:
+                    suggested.append(entry(
+                        h["ip"], f"hat {label} angefragt, nie erfolgreich "
+                                 f"({h['hits']}×)", h["hits"], h["ok_hits"]))
+
+        # --- Client bestätigt -> die Dateien, die er geladen hat -----------
+        clients = [a for a in decided
+                   if known.get(a, {}).get("artifact_kind") == "client"]
+        if clients:
+            file_paths = {a: _web_path(conn, a) for a, r in known.items()
+                          if r["artifact_kind"] == "file"
+                          and r["triage"] in open_states}
+            if file_paths:
+                rows = logindex.requests_for_names(
+                    case_dir, [os.path.basename(p) for p in file_paths.values()])
+                by_ip = {}
+                for r in rows:
+                    by_ip.setdefault(r["ip"], []).append(r)
+                for ip in clients:
+                    for artifact, rel in file_paths.items():
+                        if artifact in seen:
+                            continue
+                        tail = "/" + rel
+                        hit = [r for r in by_ip.get(ip, [])
+                               if _uri_path(r["uri"]).endswith(tail)]
+                        if not hit:
+                            continue
+                        ok = sum(r["ok_hits"] for r in hit)
+                        n = sum(r["hits"] for r in hit)
+                        label = os.path.basename(str(artifact).replace("\\", "/"))
+                        if ok > 0:
+                            seen.add(artifact)
+                            linked.append(entry(
+                                artifact, f"wurde von {ip} geladen ({ok}× 2xx)",
+                                n, ok))
+                        else:
+                            suggested.append(entry(
+                                artifact,
+                                f"wurde von {ip} angefragt, nie erfolgreich ({n}×)",
+                                n, ok))
+
+        # Die Übernahme selbst: eigener Vermerk, damit im Fall steht, WORAUS
+        # die Entscheidung folgt und dass sie nicht von Hand getroffen wurde.
+        for item in linked:
+            conn.execute(
+                "UPDATE findings SET triage = 'confirmed', triage_note = ?, "
+                "triaged_at = ? WHERE artifact = ?",
+                (f"übernommen: {item['why']}", db.now(), item["artifact"]))
+        return linked, suggested
+
     def _dedupe_collected(items):
         """One line per indicator in the confirmation receipt -- an artifact
         with six rules must not report the same IP six times."""
@@ -659,10 +823,16 @@ def create_app(config: Config) -> FastAPI:
             out.append(item)
         return out
 
-    def _collect_confirmed(conn, case_dir, artifact, findings, hashes):
+    def _collect_confirmed(conn, case_dir, artifact, findings, hashes,
+                           touches=()):
         """The confirm chain for ONE artifact: the artifact into the box, plus
         the instant hunts that used to be follow-up jobs. Tags come from every
-        rule that fired on it -- the decision was about all of them."""
+        rule that fired on it -- the decision was about all of them.
+
+        `touches` are the clients that requested THIS PATH (see _touches).
+        Earlier this matched the file NAME, which put every visitor of any
+        `index.php` into the case file as soon as a shell happened to be
+        called that."""
         out = []
         kind = findings[0]["artifact_kind"]
         rules = ", ".join(dict.fromkeys(f["rule"] for f in findings))[:200]
@@ -684,11 +854,15 @@ def create_app(config: Config) -> FastAPI:
                            [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
                            origin=f"sha-256 of {os.path.basename(artifact)}")
                 out.append({"value": digest, "type": "hash"})
-            # instant hunt: who requested this file name?
+            # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))
-            for hit in logindex.who_requested(case_dir, [name], limit=25):
-                db.add_ioc(conn, hit["ip"], "ip", [ioclib.TAG_HUNT],
-                           origin=f"requested {hit['name']} ({hit['hits']}×)")
+            for hit in list(touches)[:25]:
+                tags = [ioclib.TAG_HUNT]
+                if hit["ok_hits"] > 0:
+                    tags.append(ioclib.TAG_SUCCESS)
+                db.add_ioc(conn, hit["ip"], "ip", tags,
+                           origin=f"requested {name} ({hit['hits']}×, "
+                                  f"{hit['ok_hits']}× 2xx)")
                 out.append({"value": hit["ip"], "type": "ip",
                             "hits": hit["hits"], "ok_hits": hit["ok_hits"]})
         elif kind == "client":
@@ -807,8 +981,11 @@ def create_app(config: Config) -> FastAPI:
                         info["cms_guard"] = None
                     info["preview"] = _file_preview(path, focus)
                 out["file"] = info
+                # Wer hat GENAU diese Datei angefragt -- Pfad, nicht Name.
                 name = os.path.basename(path.replace("\\", "/"))
-                hunt = logindex.who_requested(case_dir, [name], limit=15)
+                hunt = [dict(h, name=name) for h in
+                        _touches(conn, case_dir, {artifact: findings}).get(
+                            artifact, [])[:15]]
                 out["hunt"] = hunt
             elif kind == "client":
                 out["actor"] = logindex.actor_profile(case_dir, artifact)
@@ -846,7 +1023,10 @@ def create_app(config: Config) -> FastAPI:
         if kind == "client":
             add(artifact, "Dieser Client")
         for hit in hunt:
-            add(hit["ip"], f"hat {hit['name']} angefragt",
+            add(hit["ip"],
+                (f"hat {hit['name']} geladen ({hit['ok_hits']}× 2xx)"
+                 if hit["ok_hits"] else f"hat {hit['name']} angefragt, "
+                                        f"nie erfolgreich"),
                 hit["hits"], hit["ok_hits"])
         for f in findings:
             for ip in ioclib.IP_RE.findall(f["evidence"] or "")[:10]:
