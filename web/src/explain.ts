@@ -51,11 +51,11 @@ export const TRIAGE_EXPLAIN: Record<string, Explanation> = {
   },
   confirmed: {
     what: 'True Positive — das Artefakt ist real und Teil des Vorfalls.',
-    why: 'Legt Artefakt und Hash in die IOC Box und holt die anfragenden Clients aus dem Log-Index. Gilt für alle Findings darauf.',
+    why: 'Bleibt in der Liste stehen, nur abgeblendet: es ist das Ergebnis, aus dem der Bericht entsteht. Legt Artefakt und Hash in die IOC Box und holt die anfragenden Clients aus dem Log-Index.',
   },
   dismissed: {
     what: 'False Positive — geprüft und nicht relevant.',
-    why: 'Wird nie gelöscht: bleibt mit deiner Notiz sichtbar, nur aus den Zählern raus. Eine stillschweigend verschwundene Zeile ist nicht nachvollziehbar.',
+    why: 'Wird nie gelöscht, nur ausgeblendet: über den Filter »False Positive« bleibt es mit deiner Notiz jederzeit erreichbar. Eine stillschweigend verschwundene Zeile ist nicht nachvollziehbar.',
   },
 }
 
