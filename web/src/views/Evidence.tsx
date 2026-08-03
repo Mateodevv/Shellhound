@@ -153,7 +153,7 @@ export function Evidence({ slug, onClosed }: {
         </div>
         {detected && (
           <div className="mt-3 flex flex-col gap-2 animate-fade-up">
-            {detected.error && <div className="text-[13px] text-[#ff8b8b]">{detected.error}</div>}
+            {detected.error && <div className="text-[13px] text-[var(--danger-text)]">{detected.error}</div>}
             {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) =>
               detected.candidates[kind]?.slice(0, 4).map((c) => (
                 <Card key={kind + c.path} className="flex items-center gap-3 px-4 py-2.5">
@@ -199,7 +199,7 @@ export function Evidence({ slug, onClosed }: {
         />
       )}
       {addEvidence.isError && (
-        <div className="text-[13px] text-[#ff8b8b]">{String(addEvidence.error)}</div>
+        <div className="text-[13px] text-[var(--danger-text)]">{String(addEvidence.error)}</div>
       )}
     </div>
   )
@@ -368,7 +368,7 @@ function CloseCase({ slug, caseName, onClosed }: {
             <Button variant="ghost" onClick={() => setAsking(false)}>Abbrechen</Button>
           </div>
           {close.isError && (
-            <div className="text-[12px] text-[#ff8b8b]">
+            <div className="text-[12px] text-[var(--danger-text)]">
               {String((close.error as Error)?.message ?? close.error)}
             </div>
           )}
@@ -426,7 +426,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
             <div className="mt-0.5 truncate text-[11px] text-[var(--muted)]">{summary}</div>
           )}
           {job.state === 'failed' && (
-            <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-[#ff8b8b]">
+            <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-[var(--danger-text)]">
               {job.error}
             </pre>
           )}
@@ -468,7 +468,7 @@ function PathBrowser({ kind, onClose, onPick }: {
               .. (übergeordnet)
             </button>
           )}
-          {isError && <div className="px-3 py-2 text-[13px] text-[#ff8b8b]">{String(error)}</div>}
+          {isError && <div className="px-3 py-2 text-[13px] text-[var(--danger-text)]">{String(error)}</div>}
           {data?.dirs.map((d) => (
             <button
               key={d.path}

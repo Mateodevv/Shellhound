@@ -5,9 +5,13 @@ Same shape as the legacy toolkit: a case is a directory, so two
 investigations cannot bleed into each other, and closing a case produces one
 archive file to hand over.
 """
+import gc
 import json
+import os
 import re
 import shutil
+import stat
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -69,8 +73,13 @@ def case_info(case_dir):
         try:
             info["findings"] = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
+            # Artifacts, not findings: the case card should say how much WORK
+            # a case is, and the unit of work is the artifact (see app.py).
+            info["artifacts"] = conn.execute(
+                "SELECT count(DISTINCT artifact) FROM findings").fetchone()[0]
             info["confirmed"] = conn.execute(
-                "SELECT count(*) FROM findings WHERE triage='confirmed'").fetchone()[0]
+                "SELECT count(DISTINCT artifact) FROM findings "
+                "WHERE triage='confirmed'").fetchone()[0]
             info["iocs"] = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
             info["evidence"] = conn.execute(
                 "SELECT count(*) FROM evidence").fetchone()[0]
@@ -117,20 +126,27 @@ def case_summary(case_dir):
     out = {"name": info["name"], "reference": info.get("reference", ""),
            "slug": case_dir.name, "created": info.get("created", ""),
            "closed": datetime.now().isoformat(timespec="seconds"),
-           "findings": 0, "confirmed": 0, "dismissed": 0, "iocs": 0,
-           "evidence": [], "severity": {}}
+           "findings": 0, "artifacts": 0, "confirmed": 0, "dismissed": 0,
+           "iocs": 0, "evidence": [], "severity": {}}
     if not db.case_db_path(case_dir).is_file():
         return out
     conn = db.connect(case_dir)
     try:
         out["findings"] = conn.execute("SELECT count(*) FROM findings").fetchone()[0]
+        out["artifacts"] = conn.execute(
+            "SELECT count(DISTINCT artifact) FROM findings").fetchone()[0]
+        # Decisions are counted in artifacts -- that is what was decided.
         for state in ("confirmed", "dismissed"):
             out[state] = conn.execute(
-                "SELECT count(*) FROM findings WHERE triage = ?", (state,)).fetchone()[0]
+                "SELECT count(DISTINCT artifact) FROM findings WHERE triage = ?",
+                (state,)).fetchone()[0]
         out["iocs"] = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
-        out["severity"] = {str(r["severity"]): r["n"] for r in db.rows(
-            conn, "SELECT severity, count(*) n FROM findings "
-                  "WHERE triage != 'dismissed' GROUP BY severity")}
+        # Severity per artifact: its worst finding, dismissed ones left out.
+        out["severity"] = {str(r["worst"]): r["n"] for r in db.rows(
+            conn, "SELECT worst, count(*) n FROM ("
+                  "  SELECT artifact, MIN(severity) AS worst FROM findings"
+                  "  WHERE triage != 'dismissed' GROUP BY artifact"
+                  ") GROUP BY worst")}
         out["evidence"] = [{"kind": r["kind"], "path": r["path"]}
                            for r in db.rows(conn, "SELECT kind, path FROM evidence")]
     except Exception:
@@ -156,8 +172,12 @@ def archive_case(workspace, case_dir):
     # would come back missing them.
     try:
         conn = db.connect(case_dir)
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.close()
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            # Close in a finally: a connection left open here would keep
+            # case.db locked on Windows and make the rmtree below fail.
+            conn.close()
     except Exception:
         pass
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -168,8 +188,36 @@ def archive_case(workspace, case_dir):
                 continue
             if path.is_file():
                 zf.write(path, path.relative_to(case_dir))
-    shutil.rmtree(case_dir)
+    _remove_case_dir(case_dir)
     return zip_path, summary
+
+
+def _remove_case_dir(case_dir, attempts=10, delay=0.25):
+    """Delete the working copy -- robust against Windows file locking.
+
+    On Windows, deleting a file that any handle still has open fails with
+    PermissionError (WinError 32): a SQLite handle a worker thread has not
+    released yet, an antivirus scan, an Explorer preview. Rather than let
+    the whole close-case operation fall over on a lock that is gone half a
+    second later, clear read-only bits, nudge the GC (closes abandoned
+    in-process SQLite handles) and retry briefly. If the folder still
+    cannot be removed, the last error is raised -- silently keeping the
+    working copy after handing out the archive would leave the case in
+    both places."""
+    def _onerror(func, path, exc_info):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+    last_error = None
+    for _ in range(attempts):
+        try:
+            shutil.rmtree(case_dir, onerror=_onerror)
+            return
+        except OSError as e:
+            last_error = e
+            gc.collect()
+            time.sleep(delay)
+    raise last_error
 
 
 def list_archives(workspace):

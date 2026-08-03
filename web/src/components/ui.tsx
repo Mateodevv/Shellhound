@@ -69,8 +69,8 @@ export function SeverityBadge({ severity, plain }: { severity: number; plain?: b
 
 const TRIAGE_STYLE: Record<string, string> = {
   new: 'text-[var(--muted)] bg-[var(--panel-2)]',
-  reviewed: 'text-[#9ec5f4] bg-[rgba(57,135,229,0.12)]',
-  confirmed: 'text-[#ff8b8b] bg-[rgba(208,59,59,0.16)]',
+  reviewed: 'text-[var(--accent-text)] bg-[var(--accent-soft)]',
+  confirmed: 'text-[var(--danger-text)] bg-[var(--danger-soft)]',
   dismissed: 'text-[var(--muted)] bg-[var(--panel-2)] line-through',
 }
 
@@ -95,9 +95,9 @@ export function Tag({ children, tone, explain, hint }: {
   const badge = (
     <span className={clsx(
       'inline-flex items-center gap-1 rounded-md px-1.5 py-px text-[11px] font-medium',
-      tone === 'danger' && 'bg-[rgba(208,59,59,0.16)] text-[#ff8b8b]',
+      tone === 'danger' && 'bg-[var(--danger-soft)] text-[var(--danger-text)]',
       tone === 'warn' && 'bg-[rgba(250,178,25,0.12)] text-[var(--sev-low)]',
-      tone === 'accent' && 'bg-[var(--accent-soft)] text-[#9ec5f4]',
+      tone === 'accent' && 'bg-[var(--accent-soft)] text-[var(--accent-text)]',
       !tone && 'bg-[var(--panel-2)] text-[var(--muted)]',
     )}>
       {children}
@@ -125,7 +125,7 @@ export function Chip({ active, onClick, children, count }: {
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
         'transition-colors duration-150 cursor-pointer',
         active
-          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[#bcd7f7]'
+          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
           : 'border-[var(--line)] bg-transparent text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--fg)]')}
     >
       {children}
@@ -157,7 +157,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
         variant === 'primary' &&
           'bg-[var(--accent)] text-white hover:brightness-110 active:scale-[0.98]',
         variant === 'danger' &&
-          'bg-[rgba(208,59,59,0.16)] text-[#ff8b8b] hover:bg-[rgba(208,59,59,0.28)]',
+          'bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
         variant === 'default' &&
           'border border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60',
         variant === 'ghost' && 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]',
@@ -192,19 +192,44 @@ export function EmptyState({ icon, title, sub, action }: {
   )
 }
 
-export function Drawer({ open, onClose, title, children, wide }: {
-  open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; wide?: boolean
+// Welche Drawer gerade offen sind, in der Reihenfolge, in der sie geöffnet
+// wurden. Escape schließt nur den OBERSTEN: sonst räumt ein Tastendruck die
+// ganze Kette ab und man verliert den Kontext, in dem man gerade gearbeitet
+// hat (Datei-Viewer zu, Artefakt-Detail gleich mit).
+const drawerStack: symbol[] = []
+
+export function Drawer({ open, onClose, title, children, wide, layer = 0 }: {
+  open: boolean
+  onClose: () => void
+  title: ReactNode
+  children: ReactNode
+  wide?: boolean
+  /** Stapelebene: 0 ist der Grund-Drawer, höher liegt DAVOR. Ein Viewer,
+   *  den man aus einem Drawer heraus öffnet, gehört nach vorne — sonst
+   *  klickt man auf »Datei ansehen« und es passiert scheinbar nichts. */
+  layer?: number
 }) {
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const token = Symbol('drawer')
+    drawerStack.push(token)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (drawerStack[drawerStack.length - 1] !== token) return
+      e.stopPropagation()
+      onClose()
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      const i = drawerStack.indexOf(token)
+      if (i >= 0) drawerStack.splice(i, 1)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [open, onClose])
 
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-40">
+    <div className="fixed inset-0" style={{ zIndex: 40 + layer * 10 }}>
       <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} />
       <div
         className={clsx(

@@ -30,7 +30,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
           </div>
           <button
             onClick={() => gotoView('evidence')}
-            className="inline-flex shrink-0 items-center gap-1 text-[13px] font-semibold text-[#bcd7f7] hover:underline cursor-pointer"
+            className="inline-flex shrink-0 items-center gap-1 text-[13px] font-semibold text-[var(--accent-text)] hover:underline cursor-pointer"
           >
             Zu Evidence <ArrowRight size={14} />
           </button>
@@ -52,19 +52,20 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         </Card>
       )}
 
-      <Section title="Findings" sub="Nach Schweregrad, ohne False Positives. Klick auf eine Kachel öffnet die gefilterte Liste.">
+      <Section title="Artefakte"
+        sub={`Gezählt wird, worüber entschieden wird: Dateien, Clients, Tabellen — nach ihrem schwersten Fund, ohne False Positives. Aus ${formatCount(data.findings_total)} Findings. Klick auf eine Kachel öffnet die gefilterte Liste.`}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
           <StatTile label="High" value={formatCount(sev['0'] ?? 0)}
             info="Kaum harmlos erklärbar — zuerst ansehen."
-            tone="var(--sev-high)" onClick={() => gotoView('findings')} />
+            sub="Artefakte" tone="var(--sev-high)" onClick={() => gotoView('findings')} />
           <StatTile label="Medium" value={formatCount(sev['1'] ?? 0)}
             info="Auffällig, kann aber legitim sein — braucht Kontext."
-            tone="var(--sev-medium)" onClick={() => gotoView('findings')} />
+            sub="Artefakte" tone="var(--sev-medium)" onClick={() => gotoView('findings')} />
           <StatTile label="Low" value={formatCount(sev['2'] ?? 0)}
             info="Schwaches Signal, meist nur im Zusammenhang interessant."
-            tone="var(--sev-low)" onClick={() => gotoView('findings')} />
-          <StatTile label="Bestätigt" value={formatCount(triage['confirmed'] ?? 0)}
-            info="Findings, die du als real und Teil des Vorfalls markiert hast."
+            sub="Artefakte" tone="var(--sev-low)" onClick={() => gotoView('findings')} />
+          <StatTile label="True Positive" value={formatCount(triage['confirmed'] ?? 0)}
+            info="Artefakte, die du als real und Teil des Vorfalls entschieden hast."
             sub="Teil des Vorfalls" onClick={() => gotoView('findings')} />
           <StatTile label="IOCs" value={formatCount(data.iocs)}
             info="Indikatoren in der IOC Box — Adressen, Hashes, Pfade, Domains."
@@ -82,7 +83,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
           sub={`${formatCount(data.logs.lines)} indizierte Requests von ${formatCount(data.logs.clients)} Clients — ${formatDay(data.logs.first_epoch)} bis ${formatDay(data.logs.last_epoch)}${data.logs.unparsed ? ` · ${formatCount(data.logs.unparsed)} Zeilen nicht parsebar` : ''}`}
           right={
             <button onClick={() => gotoView('actors')}
-              className="inline-flex items-center gap-1 text-[13px] font-medium text-[#bcd7f7] hover:underline cursor-pointer">
+              className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--accent-text)] hover:underline cursor-pointer">
               {formatCount(data.logs.alerted_clients)} auffällige Clients <ArrowRight size={14} />
             </button>
           }

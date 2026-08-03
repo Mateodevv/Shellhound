@@ -60,6 +60,7 @@ export interface CaseInfo {
   notes: string
   created: string
   findings?: number
+  artifacts?: number
   confirmed?: number
   iocs?: number
   evidence?: number
@@ -125,13 +126,36 @@ export interface Finding {
   triaged_at?: string
 }
 
+export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
+
+/** Ein Artefakt (Datei, Client, Tabelle, Dump) mit dem, was der Server über
+ *  seine Findings aggregiert hat. DAS ist die Einheit, über die entschieden
+ *  wird — die Findings darunter sind die Begründung. */
+export interface ArtifactRow {
+  artifact: string
+  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  worst: 0 | 1 | 2 | 3
+  source: 'webshell' | 'sqldb' | 'logs'
+  findings: number
+  triage: TriageState
+  triage_note: string
+  triaged_at: string | null
+  last_seen: string
+}
+
 export interface FindingsResponse {
+  /** Anzahl Artefakte im aktuellen Filter. */
   total: number
+  artifacts: ArtifactRow[]
+  /** Alle Findings der gelieferten Artefakte. */
   findings: Finding[]
+  /** Alle Findings im Fall, ungefiltert — nur als Größenangabe. */
+  findings_total: number
   counts: {
     severity: Record<string, number>
     triage: Record<string, number>
     source: Record<string, number>
+    total: number
   }
   roots: { kind: string; path: string; label: string }[]
 }
@@ -245,8 +269,11 @@ export interface DbAccount {
 }
 
 export interface Dashboard {
+  /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
   severity: Record<string, number>
+  /** Artefakte je Entscheidung. */
   triage: Record<string, number>
+  findings_total: number
   iocs: number
   accounts: number
   admins: number
@@ -271,6 +298,8 @@ export interface CaseSummary {
   created: string
   closed?: string
   findings: number
+  /** Fehlt in Archiven, die vor der Artefakt-Triage geschlossen wurden. */
+  artifacts?: number
   confirmed: number
   dismissed: number
   iocs: number
@@ -339,16 +368,27 @@ export interface FilePreview {
   truncated?: boolean
 }
 
-export interface SiblingFinding {
-  fingerprint: string
-  severity: number
-  rule: string
-  line: number | null
-  triage: string
+/** Eine IP, die an diesem Artefakt hängt — mit dem Grund, warum sie hier
+ *  steht. Jede davon lässt sich direkt als Trace öffnen. */
+export interface RelatedIp {
+  ip: string
+  why: string
+  hits: number | null
+  ok_hits: number | null
+  in_box: boolean
 }
 
-export interface FindingContext {
-  siblings: SiblingFinding[]
+/** Alles über EIN Artefakt: die Antwort, aus der entschieden wird. */
+export interface ArtifactContext {
+  artifact: string
+  kind: 'file' | 'table' | 'client' | 'dump'
+  findings: Finding[]
+  triage: TriageState
+  triage_note: string
+  triaged_at: string
+  worst: number
+  sources: string[]
+  related_ips: RelatedIp[]
   file?: {
     exists: boolean
     size?: number
@@ -372,6 +412,14 @@ export interface FindingContext {
     bytes: number
     col_list: string
     dump_path: string
+    cms: string
+  } | null
+  dump?: {
+    id: number
+    path: string
+    meta: Record<string, string>
+    statements: number
+    size: number
     cms: string
   } | null
 }

@@ -49,6 +49,16 @@ _FILENAME_RE = re.compile(r"^[\w.\- ()\[\]{}@#%+~!$]{1,255}\.[A-Za-z0-9]{1,12}$"
 # names an attacker-controlled domain worth keeping.
 HOST_RE = re.compile(r"(?:https?:)?//([A-Za-z0-9][A-Za-z0-9.\-]{1,250}\.[A-Za-z]{2,24})")
 
+# Client addresses inside a finding's evidence, so the UI can offer a trace
+# for them. IPv4 is octet-checked; the IPv6 forms deliberately require either
+# a full eight groups or a `::` -- the loose form would read the 12:34:56 of
+# every log timestamp as an address.
+IP_RE = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}"
+    r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b"
+    r"|\b(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}\b"
+    r"|\b(?:[0-9A-Fa-f]{1,4}:){1,6}:(?:[0-9A-Fa-f]{1,4})?\b")
+
 
 def classify(value):
     v = str(value).strip()

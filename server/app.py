@@ -178,7 +178,15 @@ def create_app(config: Config) -> FastAPI:
         for job_id in live:
             manager.cancel(job_id)
         if live:
-            manager.wait_for(live, timeout=20)
+            still_running = manager.wait_for(live, timeout=20)
+            if still_running:
+                # An engine that is still running holds an open handle on
+                # case.db -- on Windows the delete of the working copy would
+                # fail with WinError 32. Refuse cleanly instead.
+                raise HTTPException(
+                    409, "Es laufen noch Jobs, die nicht rechtzeitig beendet "
+                         "werden konnten. Bitte kurz warten und den Fall "
+                         "erneut schließen.")
         zip_path, summary = workspace.archive_case(config.workspace, case_dir)
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"archive": str(zip_path), "file": zip_path.name,
@@ -408,11 +416,15 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
-            severity = {r["severity"]: r["n"] for r in db.rows(
-                conn, "SELECT severity, count(*) n FROM findings "
-                      "WHERE triage != 'dismissed' GROUP BY severity")}
-            triage = {r["triage"]: r["n"] for r in db.rows(
-                conn, "SELECT triage, count(*) n FROM findings GROUP BY triage")}
+            # Counted in ARTIFACTS -- the same unit the findings view works
+            # in. "14 Dateien" is the size of the job; the 119 rules that
+            # fired on them are the evidence, not the workload.
+            severity = {r["worst"]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({_ART_SQL}) SELECT worst, count(*) n "
+                      f"FROM art WHERE triage != 'dismissed' GROUP BY worst")}
+            triage = _artifact_counts(conn)["triage"]
+            findings_total = conn.execute(
+                "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
             admins = conn.execute(
                 "SELECT count(*) FROM db_accounts WHERE admin = 1").fetchone()[0]
@@ -428,6 +440,7 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
         return {
             "severity": severity, "triage": triage, "iocs": ioc_count,
+            "findings_total": findings_total,
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
@@ -436,23 +449,65 @@ def create_app(config: Config) -> FastAPI:
         }
 
     # --- findings -----------------------------------------------------------
+    #
+    # THE UNIT OF WORK IS THE ARTIFACT, NOT THE SINGLE FINDING.
+    #
+    # Eight rules firing on one dropped shell are eight observations about ONE
+    # file, and the analyst decides about the file: is this thing part of the
+    # incident or not? Asking the same question eight times produced eight
+    # answers that could contradict each other and a count that overstated the
+    # case ("119 Findings" reads like 119 problems; it was 14 files).
+    #
+    # So severity, triage state and every filter below are computed PER
+    # ARTIFACT: its worst severity, its decision. The individual findings
+    # travel along as the evidence FOR that decision.
+
+    # The aggregate every artifact query starts from. `state` folds the rows
+    # of one artifact into one decision -- confirmed wins (one real hit makes
+    # the artifact real), dismissed only counts when it is unanimous. Legacy
+    # cases triaged per finding therefore stay readable instead of showing a
+    # state their rows do not agree on.
+    _ART_SQL = """
+        SELECT artifact,
+               MIN(artifact_kind) AS artifact_kind,
+               MIN(severity)      AS worst,
+               MIN(source)        AS source,
+               COUNT(*)           AS findings,
+               MAX(triaged_at)    AS triaged_at,
+               MAX(triage_note)   AS triage_note,
+               MAX(last_seen)     AS last_seen,
+               CASE
+                 WHEN SUM(triage = 'confirmed') > 0 THEN 'confirmed'
+                 WHEN SUM(triage = 'dismissed') = COUNT(*) THEN 'dismissed'
+                 WHEN SUM(triage = 'reviewed') > 0 THEN 'reviewed'
+                 ELSE 'new'
+               END AS triage
+        FROM findings GROUP BY artifact
+    """
 
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, severity: str = "", triage: str = "",
                       source: str = "", kind: str = "", search: str = "",
                       hide_confirmed: bool = False, hide_info: bool = False,
                       limit: int = 500, offset: int = 0):
-        """The findings list. `hide_confirmed` / `hide_info` are what makes the
-        default view the REMAINING WORK: decided findings and pure context
-        (scanner noise) drop out until they are asked for. Nothing is deleted
-        -- the counts below always describe the whole set."""
+        """The artifact list with the findings of every artifact attached.
+
+        Every filter selects ARTIFACTS: `severity` is the artifact's worst
+        finding, `triage` its decision, `search` matches anywhere in it. A
+        selected artifact always arrives COMPLETE -- filtering must never hide
+        part of what a decision is based on.
+
+        `hide_confirmed` / `hide_info` are what makes the default view the
+        REMAINING WORK: decided artifacts and pure context (scanner noise)
+        drop out until they are asked for. Nothing is deleted -- the counts
+        always describe the whole set."""
         case_dir = case_dir_or_404(slug)
         where, params = [], []
         if severity != "":
-            where.append("severity = ?")
+            where.append("worst = ?")
             params.append(int(severity))
         elif hide_info:
-            where.append("severity < ?")
+            where.append("worst < ?")
             params.append(db.SEV_INFO)
         if triage:
             where.append("triage = ?")
@@ -466,74 +521,98 @@ def create_app(config: Config) -> FastAPI:
             where.append("artifact_kind = ?")
             params.append(kind)
         if search:
-            where.append("(rule LIKE ? OR artifact LIKE ? OR evidence LIKE ?)")
+            # An artifact matches when ANY of its findings matches -- and then
+            # shows all of them. A hit on one rule is a reason to look at the
+            # file, not a reason to see only that rule.
+            where.append("artifact IN (SELECT artifact FROM findings "
+                         "WHERE rule LIKE ? OR artifact LIKE ? OR evidence LIKE ?)")
             like = f"%{search}%"
             params += [like, like, like]
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         conn = db.connect(case_dir)
         try:
             total = conn.execute(
-                f"SELECT count(*) FROM findings {clause}", params).fetchone()[0]
-            rows = db.rows(conn,
-                           f"SELECT * FROM findings {clause} "
-                           f"ORDER BY severity, artifact, line "
-                           f"LIMIT ? OFFSET ?", params + [min(limit, 2000), offset])
-            counts = {
-                "severity": {r["severity"]: r["n"] for r in db.rows(
-                    conn, "SELECT severity, count(*) n FROM findings GROUP BY severity")},
-                "triage": {r["triage"]: r["n"] for r in db.rows(
-                    conn, "SELECT triage, count(*) n FROM findings GROUP BY triage")},
-                "source": {r["source"]: r["n"] for r in db.rows(
-                    conn, "SELECT source, count(*) n FROM findings GROUP BY source")},
-            }
+                f"WITH art AS ({_ART_SQL}) SELECT count(*) FROM art {clause}",
+                params).fetchone()[0]
+            artifacts = db.rows(
+                conn,
+                f"WITH art AS ({_ART_SQL}) SELECT * FROM art {clause} "
+                f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
+                params + [min(limit, 2000), offset])
+            rows = []
+            if artifacts:
+                names = [a["artifact"] for a in artifacts]
+                marks = ",".join("?" * len(names))
+                rows = db.rows(conn,
+                               f"SELECT * FROM findings WHERE artifact IN ({marks}) "
+                               f"ORDER BY severity, artifact, line", names)
+            counts = _artifact_counts(conn)
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
             # under a named webroot, not 90 characters of absolute path.
             roots = db.rows(conn, "SELECT kind, path, label FROM evidence")
-            return {"total": total, "findings": rows, "counts": counts,
-                    "roots": roots}
+            return {"total": total, "artifacts": artifacts, "findings": rows,
+                    "findings_total": conn.execute(
+                        "SELECT count(*) FROM findings").fetchone()[0],
+                    "counts": counts, "roots": roots}
         finally:
             conn.close()
 
+    def _artifact_counts(conn):
+        """The chip counts -- artifacts, not findings, in every dimension."""
+        def group(column):
+            return {r[column]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({_ART_SQL}) "
+                      f"SELECT {column}, count(*) n FROM art GROUP BY {column}")}
+        sev = group("worst")
+        return {"severity": sev, "triage": group("triage"),
+                "source": group("source"),
+                "total": sum(sev.values())}
+
+    def _artifacts_of(conn, artifacts, fingerprints):
+        """Resolve a triage request to the set of artifacts it touches. A
+        fingerprint is accepted as a POINTER TO ITS ARTIFACT -- the decision
+        belongs to the file, whichever of its rules the analyst clicked."""
+        names = {str(a) for a in artifacts if str(a).strip()}
+        fps = [str(f) for f in fingerprints if str(f).strip()]
+        if fps:
+            marks = ",".join("?" * len(fps))
+            names |= {r["artifact"] for r in db.rows(
+                conn, f"SELECT DISTINCT artifact FROM findings "
+                      f"WHERE fingerprint IN ({marks})", fps)}
+        return sorted(names)
+
     class TriageBody(BaseModel):
-        fingerprints: list[str]
+        # THE DECISION BELONGS TO THE ARTIFACT. Either name the artifacts
+        # directly, or send fingerprints -- they are read as pointers to their
+        # artifact, so an older client keeps working and gets the new
+        # semantics: the whole file is decided, not one of its rules.
+        artifacts: list[str] = []
+        fingerprints: list[str] = []
         state: str
         note: str = ""
-        # CONFIRMING SPREADS ALONG THE ARTIFACT, dismissing does not. The
-        # asymmetry is the point: deciding a file IS a webshell makes every
-        # rule that fired on it a true observation about a malicious file.
-        # Deciding that ONE rule was a false positive says nothing about the
-        # others -- so that decision stays where the analyst put it.
-        cascade: bool = True
 
     @app.post("/api/cases/{slug}/triage", dependencies=[auth])
     def set_triage(slug: str, body: TriageBody):
+        """Decide about artifacts. Every finding of an artifact carries the
+        decision -- they are the evidence for it, not separate questions."""
         case_dir = case_dir_or_404(slug)
         if body.state not in db.TRIAGE_STATES:
             raise HTTPException(400, f"state must be one of {db.TRIAGE_STATES}")
         conn = db.connect(case_dir)
         collected = []
         try:
-            fingerprints = list(body.fingerprints)
-            if body.state == "confirmed" and body.cascade and fingerprints:
-                marks = ",".join("?" * len(fingerprints))
-                artifacts = [r["artifact"] for r in db.rows(
-                    conn, f"SELECT DISTINCT artifact FROM findings "
-                          f"WHERE fingerprint IN ({marks})", fingerprints)]
-                if artifacts:
-                    amarks = ",".join("?" * len(artifacts))
-                    fingerprints = [r["fingerprint"] for r in db.rows(
-                        conn, f"SELECT fingerprint FROM findings "
-                              f"WHERE artifact IN ({amarks})", artifacts)]
-            body = body.model_copy(update={"fingerprints": fingerprints})
-            marks = ",".join("?" * len(body.fingerprints))
+            artifacts = _artifacts_of(conn, body.artifacts, body.fingerprints)
+            if not artifacts:
+                return {"updated": 0, "artifacts": 0, "collected": []}
+            marks = ",".join("?" * len(artifacts))
             rows = db.rows(conn,
-                           f"SELECT * FROM findings WHERE fingerprint IN ({marks})",
-                           body.fingerprints)
+                           f"SELECT * FROM findings WHERE artifact IN ({marks}) "
+                           f"ORDER BY severity, line", artifacts)
             conn.execute(
                 f"UPDATE findings SET triage = ?, triage_note = ?, triaged_at = ? "
-                f"WHERE fingerprint IN ({marks})",
-                [body.state, body.note, db.now()] + body.fingerprints)
+                f"WHERE artifact IN ({marks})",
+                [body.state, body.note, db.now()] + artifacts)
             # Confirming collects the artifact into the IOC box -- provenance
             # is written at the moment of collection.
             if body.state == "confirmed":
@@ -541,29 +620,65 @@ def create_app(config: Config) -> FastAPI:
                 meta = db.one(conn, "SELECT value FROM meta WHERE key = 'webshell_hashes'")
                 if meta:
                     hashes = json.loads(meta["value"] or "{}")
+                by_artifact = {}
                 for f in rows:
-                    collected += _collect_confirmed(conn, case_dir, f, hashes)
+                    by_artifact.setdefault(f["artifact"], []).append(f)
+                for artifact, findings in by_artifact.items():
+                    collected += _collect_confirmed(conn, case_dir, artifact,
+                                                    findings, hashes)
             conn.commit()
         finally:
             conn.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
-        return {"updated": len(body.fingerprints), "collected": collected}
+        return {"updated": len(rows), "artifacts": len(artifacts),
+                "collected": _dedupe_collected(collected)}
 
-    def _collect_confirmed(conn, case_dir, finding, hashes):
-        """The confirm chain: artifact into the box, plus the instant hunts
-        that used to be follow-up jobs."""
+    # Groesser als das rechnet niemand nebenbei durch: ein Hash ueber eine
+    # 2-GB-Datei laesst den Request haengen. Dieselbe Grenze wie im Detail.
+    _HASH_MAX_BYTES = 32 * 1024 * 1024
+
+    def _sha256_of(path):
+        """SHA-256 einer Evidence-Datei, oder '' wenn zu gross/unlesbar."""
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) > _HASH_MAX_BYTES:
+                return ""
+            from server.engines.fsutil import sha256_of
+            return sha256_of(path) or ""
+        except OSError:
+            return ""
+
+    def _dedupe_collected(items):
+        """One line per indicator in the confirmation receipt -- an artifact
+        with six rules must not report the same IP six times."""
+        seen, out = set(), []
+        for item in items:
+            key = (item["type"], item["value"])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    def _collect_confirmed(conn, case_dir, artifact, findings, hashes):
+        """The confirm chain for ONE artifact: the artifact into the box, plus
+        the instant hunts that used to be follow-up jobs. Tags come from every
+        rule that fired on it -- the decision was about all of them."""
         out = []
-        kind = finding["artifact_kind"]
-        artifact = finding["artifact"]
-        rule = finding["rule"].lower()
+        kind = findings[0]["artifact_kind"]
+        rules = ", ".join(dict.fromkeys(f["rule"] for f in findings))[:200]
+        rule_text = " ".join(f["rule"].lower() for f in findings)
+        sources = {f["source"] for f in findings}
+        origin = f"confirmed: {rules}"
         if kind == "file":
             tags = [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED]
-            if finding["source"] == "webshell":
+            if "webshell" in sources:
                 tags.append(ioclib.TAG_WEBSHELL)
-            db.add_ioc(conn, artifact, "path", tags,
-                       origin=f"confirmed: {finding['rule']}")
+            db.add_ioc(conn, artifact, "path", tags, origin=origin)
             out.append({"value": artifact, "type": "path"})
-            digest = hashes.get(artifact)
+            # Der Hash aus dem Scan, sonst jetzt berechnet: das Detail zeigt
+            # ihn ohnehin an, und ein bestaetigtes Artefakt ohne seinen
+            # SHA-256 in der Box waere im Bericht eine Luecke.
+            digest = hashes.get(artifact) or _sha256_of(artifact)
             if digest:
                 db.add_ioc(conn, digest, "hash",
                            [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
@@ -578,26 +693,26 @@ def create_app(config: Config) -> FastAPI:
                             "hits": hit["hits"], "ok_hits": hit["ok_hits"]})
         elif kind == "client":
             tags = [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED]
-            if "scanner" in rule:
+            if "scanner" in rule_text:
                 tags.append(ioclib.TAG_SCANNER)
-            if "flood" in rule or "brute" in rule:
+            if "flood" in rule_text or "brute" in rule_text:
                 tags.append(ioclib.TAG_BRUTE)
-            if "successful" in rule:
+            if "successful" in rule_text:
                 tags.append(ioclib.TAG_SUCCESS)
-            db.add_ioc(conn, artifact, "ip", tags,
-                       origin=f"confirmed: {finding['rule']}")
+            db.add_ioc(conn, artifact, "ip", tags, origin=origin)
             out.append({"value": artifact, "type": "ip"})
         elif kind == "table":
             db.add_ioc(conn, artifact, "other",
                        [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED, ioclib.TAG_INJECTED],
-                       origin=f"confirmed: {finding['rule']}")
+                       origin=origin)
             out.append({"value": artifact, "type": "other"})
-            hosts = list(dict.fromkeys(
-                ioclib.HOST_RE.findall(finding["evidence"] or "")))[:5]
-            for host in hosts:
+            hosts = []
+            for f in findings:
+                hosts += ioclib.HOST_RE.findall(f["evidence"] or "")
+            for host in list(dict.fromkeys(hosts))[:5]:
                 db.add_ioc(conn, host, "domain",
                            [ioclib.TAG_DERIVED, ioclib.TAG_INJECTED],
-                           origin=f"host in evidence of: {finding['rule']}")
+                           origin=f"host in evidence of: {rules}")
                 out.append({"value": host, "type": "domain"})
         return out
 
@@ -628,27 +743,48 @@ def create_app(config: Config) -> FastAPI:
                 "lines": [l[:_PREVIEW_LINE_CAP] for l in lines[lo:hi]],
                 "total_lines": len(lines), "truncated": truncated}
 
-    @app.get("/api/cases/{slug}/findings/{fingerprint}/context",
-             dependencies=[auth])
-    def finding_context(slug: str, fingerprint: str):
-        """Everything needed to judge ONE finding in place: file metadata +
-        code preview, the actor's profile for client findings, table facts
-        for dump findings -- plus every sibling finding on the same artifact."""
+    @app.get("/api/cases/{slug}/artifact", dependencies=[auth])
+    def artifact_context(slug: str, artifact: str):
+        """EVERYTHING about one artifact, in one answer -- this is the view an
+        analyst decides from.
+
+        Whatever the artifact is, the reply carries: every finding on it with
+        its rule and evidence, the decision and its note, and the context that
+        fits its kind (file metadata + code preview around the strongest hit,
+        the actor profile of a client, the table behind a dump finding).
+
+        `related_ips` is the pivot back into the logs: every address this
+        artifact touches -- who requested the file, the client itself, any
+        address left in the evidence -- with the note whether it is already in
+        the IOC box. The UI turns each of them into a trace."""
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
-            f = db.one(conn, "SELECT * FROM findings WHERE fingerprint = ?",
-                       (fingerprint,))
-            if f is None:
-                raise HTTPException(404, "unknown finding")
-            siblings = db.rows(conn,
-                               "SELECT fingerprint, severity, rule, line, triage "
-                               "FROM findings WHERE artifact = ? AND fingerprint != ? "
-                               "ORDER BY severity, line", (f["artifact"], fingerprint))
-            out = {"siblings": siblings}
-            kind = f["artifact_kind"]
+            findings = db.rows(conn,
+                               "SELECT * FROM findings WHERE artifact = ? "
+                               "ORDER BY severity, line", (artifact,))
+            if not findings:
+                raise HTTPException(404, "unknown artifact")
+            kind = findings[0]["artifact_kind"]
+            states = {f["triage"] for f in findings}
+            state = ("confirmed" if "confirmed" in states
+                     else "dismissed" if states == {"dismissed"}
+                     else "reviewed" if "reviewed" in states else "new")
+            notes = [f["triage_note"] for f in findings if f["triage_note"]]
+            out = {
+                "artifact": artifact, "kind": kind, "findings": findings,
+                "triage": state, "triage_note": notes[0] if notes else "",
+                "triaged_at": max((f["triaged_at"] or "" for f in findings),
+                                  default=""),
+                "worst": min(f["severity"] for f in findings),
+                "sources": sorted({f["source"] for f in findings}),
+            }
+            # The preview focuses the line of the STRONGEST finding that named
+            # one -- that is the line the analyst came here to read.
+            focus = next((f["line"] for f in findings if f["line"]), None)
+            hunt = []
             if kind == "file":
-                path = f["artifact"]
+                path = artifact
                 info = {"exists": os.path.isfile(path)}
                 if info["exists"]:
                     try:
@@ -661,11 +797,7 @@ def create_app(config: Config) -> FastAPI:
                     meta = db.one(conn, "SELECT value FROM meta "
                                         "WHERE key = 'webshell_hashes'")
                     hashes = json.loads(meta["value"] or "{}") if meta else {}
-                    digest = hashes.get(path)
-                    if not digest and info.get("size", 0) <= 32 * 1024 * 1024:
-                        from server.engines.fsutil import sha256_of
-                        digest = sha256_of(path)
-                    info["sha256"] = digest or ""
+                    info["sha256"] = hashes.get(path) or _sha256_of(path)
                     info["in_upload_dir"] = webshell.in_upload_dir(path)
                     try:
                         with open(path, "rb") as fh:
@@ -673,20 +805,53 @@ def create_app(config: Config) -> FastAPI:
                         info["cms_guard"] = bool(webshell.CMS_GUARD_RE.search(head))
                     except OSError:
                         info["cms_guard"] = None
-                    info["preview"] = _file_preview(path, f["line"])
+                    info["preview"] = _file_preview(path, focus)
                 out["file"] = info
                 name = os.path.basename(path.replace("\\", "/"))
-                out["hunt"] = logindex.who_requested(case_dir, [name], limit=15)
+                hunt = logindex.who_requested(case_dir, [name], limit=15)
+                out["hunt"] = hunt
             elif kind == "client":
-                out["actor"] = logindex.actor_profile(case_dir, f["artifact"])
+                out["actor"] = logindex.actor_profile(case_dir, artifact)
             elif kind == "table":
                 out["table"] = db.one(conn,
                                       "SELECT t.*, d.path AS dump_path, d.cms "
                                       "FROM db_tables t JOIN db_dumps d ON d.id = t.dump_id "
-                                      "WHERE t.name = ?", (f["artifact"],))
+                                      "WHERE t.name = ?", (artifact,))
+            elif kind == "dump":
+                out["dump"] = db.one(conn, "SELECT * FROM db_dumps WHERE path = ?",
+                                     (artifact,))
+                if out["dump"]:
+                    out["dump"]["meta"] = json.loads(out["dump"]["meta"] or "{}")
+            out["related_ips"] = _related_ips(conn, kind, artifact, findings, hunt)
             return out
         finally:
             conn.close()
+
+    def _related_ips(conn, kind, artifact, findings, hunt):
+        """Every client address this artifact points at, with WHY it is here.
+        Ordered by how much it says: the client itself first, then whoever
+        requested the file most often, then addresses left in the evidence."""
+        box = {r["value"] for r in db.rows(
+            conn, "SELECT value FROM iocs WHERE type = 'ip'")}
+        out, seen = [], set()
+
+        def add(ip, why, hits=None, ok_hits=None):
+            ip = str(ip).strip()
+            if not ip or ip in seen:
+                return
+            seen.add(ip)
+            out.append({"ip": ip, "why": why, "hits": hits, "ok_hits": ok_hits,
+                        "in_box": ip in box})
+
+        if kind == "client":
+            add(artifact, "Dieser Client")
+        for hit in hunt:
+            add(hit["ip"], f"hat {hit['name']} angefragt",
+                hit["hits"], hit["ok_hits"])
+        for f in findings:
+            for ip in ioclib.IP_RE.findall(f["evidence"] or "")[:10]:
+                add(ip, f"steht in der Evidence von: {f['rule']}")
+        return out[:40]
 
     # --- looking at an evidence file ---------------------------------------
     # THE GUARD: a path from the client is only ever read when it resolves

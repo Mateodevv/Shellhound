@@ -10,6 +10,7 @@ import {
 } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, Card, EmptyState, Tag } from '../components/ui'
+import { ThemeSwitcher } from '../components/ThemeSwitcher'
 
 interface State { workspace: string; cases: CaseInfo[] }
 
@@ -61,6 +62,9 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
             Webserver-Forensik — Findings · Actors · IOC Box · CMS · Database
           </p>
         </div>
+        <div className="ml-auto">
+          <ThemeSwitcher />
+        </div>
       </div>
 
       {data && (
@@ -87,8 +91,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular">
-                <span>{c.findings ?? 0} Findings</span>
-                <span className="text-[#ff8b8b]">{c.confirmed ?? 0} bestätigt</span>
+                <span>{c.artifacts ?? 0} Artefakte</span>
+                <span className="text-[var(--danger-text)]">{c.confirmed ?? 0} bestätigt</span>
                 <span>{c.iocs ?? 0} IOCs</span>
               </div>
             </button>
@@ -132,7 +136,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 <Button variant="ghost" onClick={() => setCreating(false)}>Abbrechen</Button>
               </div>
               {create.isError && (
-                <div className="text-xs text-[#ff8b8b]">{String(create.error)}</div>
+                <div className="text-xs text-[var(--danger-text)]">{String(create.error)}</div>
               )}
             </div>
           </Card>
@@ -169,7 +173,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
       )}
 
       {importCase.isError && (
-        <div className="mt-2 rounded-lg border border-[var(--sev-high)]/40 bg-[rgba(208,59,59,0.1)] px-3 py-2 text-[13px] text-[#ff8b8b] animate-fade-up">
+        <div className="mt-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)] animate-fade-up">
           Import fehlgeschlagen: {String((importCase.error as Error)?.message ?? importCase.error)}
         </div>
       )}
@@ -209,8 +213,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 </div>
                 {a.summary && (
                   <div className="hidden shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular sm:flex">
-                    <span>{formatCount(a.summary.findings)} Findings</span>
-                    <span className="text-[#ff8b8b]">
+                    <span>{formatCount(a.summary.artifacts ?? a.summary.findings)} Artefakte</span>
+                    <span className="text-[var(--danger-text)]">
                       {formatCount(a.summary.confirmed)} bestätigt
                     </span>
                     <span>{formatCount(a.summary.iocs)} IOCs</span>
