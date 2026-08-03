@@ -147,19 +147,23 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   )
 }
 
-export function Button({ children, onClick, variant = 'default', disabled, className, title }: {
+export function Button({ children, onClick, variant = 'default', disabled, className, title, style }: {
   children: ReactNode
   onClick?: () => void
   variant?: 'default' | 'primary' | 'danger' | 'ghost'
   disabled?: boolean
   className?: string
   title?: string
+  /** Für den Fall, dass ein Knopf sich vom Untergrund abheben muss, auf dem
+   *  er sitzt — eine Utility-Klasse würde gegen die Variante verlieren. */
+  style?: React.CSSProperties
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
+      style={style}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',
         'transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40',
