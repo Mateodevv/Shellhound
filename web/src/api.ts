@@ -220,6 +220,15 @@ export interface Ioc {
   added: string
 }
 
+/** Ein geflaggtes Artefakt unterhalb einer Extension — der Fall-Bezug des
+ *  Inventars: DIESE Erweiterung enthält etwas, das die Regeln benannt haben. */
+export interface CmsArtifactHit {
+  artifact: string
+  worst: number
+  triage: TriageState
+  findings: number
+}
+
 export interface CmsItem {
   id: number
   install_id: number
@@ -228,6 +237,8 @@ export interface CmsItem {
   slug: string
   version: string
   path: string
+  artifacts: CmsArtifactHit[]
+  flagged: number
 }
 
 export interface CmsInstall {

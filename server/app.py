@@ -1324,17 +1324,57 @@ def create_app(config: Config) -> FastAPI:
 
     # --- CMS inventory ------------------------------------------------------
 
+    def _ext_scope(item):
+        """Worauf sich eine Extension im Dateisystem erstreckt.
+
+        Der gespeicherte Pfad zeigt mal auf das Verzeichnis, mal auf das
+        Manifest darin, mal auf eine Einzeldatei-Extension (WPs hello.php).
+        Der Slug entscheidet: heißt das Verzeichnis im Pfad wie der Slug,
+        gehört der ganze Baum dazu — sonst nur die Datei selbst. Eine
+        Einzeldatei darf nie ihren Container erben, sonst „enthält" hello.php
+        jede Shell im plugins-Ordner."""
+        s = str(item["path"]).replace("\\", "/").rstrip("/").lower()
+        parts = s.split("/")
+        slug = str(item["slug"]).strip().lower()
+        if parts and parts[-1] == slug:
+            return "dir", s
+        if len(parts) >= 2 and parts[-2] == slug:
+            return "dir", "/".join(parts[:-1])
+        if "." in parts[-1]:
+            return "file", s
+        return "dir", s
+
     @app.get("/api/cases/{slug}/cms", dependencies=[auth])
     def cms_view(slug: str):
+        """Das Inventar, verknüpft mit dem Fall: jede Extension weiß, ob
+        unter ihrem Pfad geflaggte Artefakte liegen. Das ist die Frage, wegen
+        der man die Seite im Vorfall öffnet — welche Erweiterung ist es?"""
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
             installs = db.rows(conn, "SELECT * FROM cms_installs ORDER BY root")
             items = db.rows(conn, "SELECT * FROM cms_items ORDER BY type, name")
+            flagged = db.rows(conn,
+                              f"WITH art AS ({_ART_SQL}) "
+                              f"SELECT artifact, worst, triage, findings "
+                              f"FROM art WHERE artifact_kind = 'file'")
         finally:
             conn.close()
+        arts = [(str(a["artifact"]).replace("\\", "/").lower(), a)
+                for a in flagged]
         by_install = {}
         for item in items:
+            kind, scope = _ext_scope(item)
+            hits = []
+            for norm, a in arts:
+                if (norm == scope if kind == "file"
+                        else norm == scope or norm.startswith(scope + "/")):
+                    hits.append({"artifact": a["artifact"], "worst": a["worst"],
+                                 "triage": a["triage"],
+                                 "findings": a["findings"]})
+            hits.sort(key=lambda h: h["worst"])
+            item["artifacts"] = hits[:8]
+            item["flagged"] = len(hits)
             by_install.setdefault(item["install_id"], []).append(item)
         for inst in installs:
             inst["items"] = by_install.get(inst["id"], [])

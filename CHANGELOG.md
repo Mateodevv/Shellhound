@@ -80,6 +80,18 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **CMS Inventory neu aufgebaut.** Statt eines Kachel-Mosaiks aus 10–15
+  Typ-Tabellen (Joomla machte jede Plugin-Gruppe zur eigenen Karte) zeigt
+  jede Installation EINE durchgehende Liste mit Gruppen-Bändern; die Typen
+  falten sich auf Plugin/Theme/Template/Component/Module zusammen —
+  Plugin-Gruppe und Site/Admin stehen als Tag an der Zeile. Der Install-Kopf
+  ist eine Karte mit der Version als wichtigster Zahl. Neu ist der
+  Fall-Bezug: der Server verknüpft jede Erweiterung mit den geflaggten
+  Dateien unter ihrem Pfad — ein Badge »n Artefakte« beantwortet „welche
+  Erweiterung ist kompromittiert?" und öffnet das Artefakt-Fenster direkt.
+  Einzeldatei-Extensions (hello.php) erben dabei nie ihren Container, sonst
+  würde jede Shell im plugins-Ordner jedem Einzeldatei-Plugin zugerechnet.
+  Filter im Ausblende-Schema: Typ-Chips plus »mit/ohne Version«.
 - **Alle Filter-Chips sind Ausblende-Schalter.** Ein Klick versteckt die
   Klasse (durchgestrichener Chip), der nächste holt sie zurück; beliebig
   viele stapeln sich — Scanner weg, Brute-Force weg, übrig bleibt das
