@@ -488,7 +488,7 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, severity: str = "", triage: str = "",
                       source: str = "", kind: str = "", search: str = "",
-                      hide_confirmed: bool = False, hide_info: bool = False,
+                      hide_dismissed: bool = False, hide_info: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
 
@@ -497,10 +497,11 @@ def create_app(config: Config) -> FastAPI:
         selected artifact always arrives COMPLETE -- filtering must never hide
         part of what a decision is based on.
 
-        `hide_confirmed` / `hide_info` are what makes the default view the
-        REMAINING WORK: decided artifacts and pure context (scanner noise)
-        drop out until they are asked for. Nothing is deleted -- the counts
-        always describe the whole set."""
+        `hide_dismissed` / `hide_info` keep the list free of what is NOT the
+        case: rejected artifacts and pure context (scanner noise) drop out
+        until they are asked for. What was CONFIRMED stays -- it is the
+        result, and a report is written from the list one worked in.
+        Nothing is deleted; the counts always describe the whole set."""
         case_dir = case_dir_or_404(slug)
         where, params = [], []
         if severity != "":
@@ -512,8 +513,8 @@ def create_app(config: Config) -> FastAPI:
         if triage:
             where.append("triage = ?")
             params.append(triage)
-        elif hide_confirmed:
-            where.append("triage != 'confirmed'")
+        elif hide_dismissed:
+            where.append("triage != 'dismissed'")
         if source:
             where.append("source = ?")
             params.append(source)

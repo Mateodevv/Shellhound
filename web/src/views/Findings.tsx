@@ -131,7 +131,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [notice, setNotice] = useState<
     { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
   const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
-  const [hideConfirmed, setHideConfirmed] = useState(true)
+  const [hideDismissed, setHideDismissed] = useState(true)
   const [hideInfo, setHideInfo] = useState(true)
 
   const query = useMemo(() => {
@@ -140,14 +140,16 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     if (triage) p.set('triage', triage)
     if (source) p.set('source', source)
     if (search) p.set('search', search)
-    // Die Liste zeigt standardmäßig, was noch ARBEIT ist: Entschiedenes und
-    // reiner Kontext fallen raus, bis man sie anfordert. Ein gesetzter Chip
-    // hebt das jeweils auf — wer "Bestätigt" filtert, will sie sehen.
-    if (hideConfirmed && !triage) p.set('hide_confirmed', '1')
+    // Die Liste zeigt standardmäßig, was zum Fall GEHÖRT: Verworfenes und
+    // reiner Kontext fallen raus, bis man sie anfordert. Bestätigtes bleibt
+    // stehen — es ist das Ergebnis, und der Bericht entsteht aus derselben
+    // Liste, in der man gearbeitet hat. Ein gesetzter Chip hebt das jeweils
+    // auf: wer "False Positive" filtert, will sie sehen.
+    if (hideDismissed && !triage) p.set('hide_dismissed', '1')
     if (hideInfo && severity === '') p.set('hide_info', '1')
     p.set('limit', '2000')
     return p.toString()
-  }, [severity, triage, source, search, hideConfirmed, hideInfo])
+  }, [severity, triage, source, search, hideDismissed, hideInfo])
 
   const { data } = useQuery({
     queryKey: ['findings', slug, query],
@@ -389,11 +391,11 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[12px] text-[var(--muted)]">
-        <Tooltip hint="Bestätigte Artefakte sind abgearbeitet — sie verschwinden aus der Liste, bleiben aber im Fall und im Bericht.">
+        <Tooltip hint="Verworfene Artefakte gehören nicht zum Fall — sie verschwinden aus der Liste, bleiben aber mit deiner Notiz über den Filter »False Positive« erreichbar. Bestätigte bleiben stehen, nur abgeblendet: sie sind das Ergebnis.">
           <label className="flex cursor-pointer items-center gap-1.5">
             <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-              checked={hideConfirmed} onChange={(e) => setHideConfirmed(e.target.checked)} />
-            Bestätigte ausblenden
+              checked={hideDismissed} onChange={(e) => setHideDismissed(e.target.checked)} />
+            False Positives ausblenden
           </label>
         </Tooltip>
         <Tooltip hint="Blendet Artefakte aus, deren stärkster Fund reiner Kontext ist (Scanner-Besuche).">
@@ -403,10 +405,10 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
             Info ausblenden
           </label>
         </Tooltip>
-        {(hideConfirmed || hideInfo) && data && (
+        {(hideDismissed || hideInfo) && data && (
           <span className="opacity-70">
             {formatCount(
-              (hideConfirmed && !triage ? (counts?.triage['confirmed'] ?? 0) : 0) +
+              (hideDismissed && !triage ? (counts?.triage['dismissed'] ?? 0) : 0) +
               (hideInfo && severity === '' ? (counts?.severity['3'] ?? 0) : 0))}
             {' '}ausgeblendet
           </span>
@@ -581,7 +583,10 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     'group absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-3',
                     'transition-colors hover:bg-[var(--panel-2)]',
                     vi.index === cursor && 'bg-[var(--accent-soft)]',
-                    a.triage === 'dismissed' && 'opacity-45')}
+                    // Abgeblendet heißt ABGEARBEITET, nicht unwichtig: ein
+                    // bestätigtes Artefakt bleibt stehen, tritt aber optisch
+                    // zurück, damit das Offene die Liste führt.
+                    a.triage === 'confirmed' && 'opacity-45')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
                   <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
@@ -656,7 +661,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               <div key={f.fingerprint}
                 className={clsx(
                   'absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-4',
-                  item.a.triage === 'dismissed' && 'opacity-45')}
+                  item.a.triage === 'confirmed' && 'opacity-45')}
                 style={style}>
                 {/* Die Führungslinie hält die Findings sichtbar an ihrem
                     Artefakt — eingerückter Text allein verliert den Bezug. */}
@@ -1071,9 +1076,11 @@ function ArtifactWindow({ slug, artifact, roots, collected, onClose, onTriage,
                 )}
               </div>
               <p className="mt-2 text-[11px] text-[var(--muted)]">
-                Nichts wird gelöscht: ein False Positive bleibt mit deiner Notiz sichtbar
-                und filterbar. True Positive legt das Artefakt (+ SHA-256 bei Dateien) in
-                die IOC Box und sammelt die anfragenden Clients aus dem Log-Index ein.
+                Nichts wird gelöscht: ein False Positive verschwindet nur aus der
+                Arbeitsliste und bleibt mit deiner Notiz über den Filter erreichbar.
+                True Positive bleibt stehen und legt das Artefakt (+ SHA-256 bei
+                Dateien) in die IOC Box, samt der anfragenden Clients aus dem
+                Log-Index.
               </p>
             </div>
 

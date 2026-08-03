@@ -80,6 +80,12 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **Die Arbeitsliste blendet jetzt False Positives aus, nicht True
+  Positives.** Bestätigte Artefakte bleiben stehen und treten nur optisch
+  zurück — sie sind das Ergebnis, und der Bericht entsteht aus derselben
+  Liste, in der gearbeitet wurde. Verworfene verschwinden aus der
+  Arbeitsliste und bleiben über den Filter »False Positive« mit ihrer Notiz
+  erreichbar. Der Parameter heißt entsprechend `hide_dismissed`.
 - Die **Listenbox umschließt ihren Inhalt**, statt immer die volle Fensterhöhe
   zu füllen. Unter der letzten Zeile stand sonst eine leere Fläche, die
   aussah, als fehle dort etwas.
