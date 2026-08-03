@@ -325,6 +325,67 @@ export function artifactNoun(kind: string, n: number): string {
   return n === 1 ? 'Artefakt' : 'Artefakte'
 }
 
+// --- CMS-Inventar -----------------------------------------------------------
+// Joomla trennt jede Erweiterung in einen öffentlichen und einen
+// Backend-Teil und sortiert Plugins in Gruppen. Beides steht als Kürzel an
+// der Zeile — und ein Kürzel ohne Erklärung ist für den, der Joomla nicht
+// täglich anfasst, nur ein Wort.
+
+export const CMS_SCOPE_EXPLAIN: Record<string, Explanation> = {
+  Site: {
+    what: 'Der öffentliche Teil — das, was Besucher ohne Anmeldung erreichen.',
+    why: 'Hier liegt die Angriffsfläche: eine Lücke im Site-Teil ist von außen erreichbar, ohne dass jemand ein Passwort braucht.',
+  },
+  Admin: {
+    what: 'Der Backend-Teil unter /administrator — nur nach Anmeldung erreichbar.',
+    why: 'Setzt einen Zugang voraus. Nach einem geglückten Login ist das aber genau der Ort, über den weiterer Code eingebracht wird.',
+  },
+}
+
+// Was eine Joomla-Plugin-Gruppe bedeutet. Die Gruppe entscheidet, WANN das
+// Plugin läuft — und damit, was ein manipuliertes Plugin dort anrichten kann.
+const PLUGIN_GROUP_EXPLAIN: Record<string, Explanation> = {
+  system: {
+    what: 'Läuft bei JEDEM Seitenaufruf mit, noch bevor die Seite aufgebaut wird.',
+    why: 'Die begehrteste Gruppe für Persistenz: hier untergebrachter Code läuft immer, unabhängig davon, welche Seite jemand aufruft.',
+  },
+  authentication: {
+    what: 'Entscheidet, wer sich anmelden darf.',
+    why: 'Ein manipuliertes Plugin dieser Gruppe kann eine Hintertür ins Login legen, ohne dass ein Passwort geändert werden muss.',
+  },
+  user: {
+    what: 'Reagiert auf Konto-Ereignisse (anlegen, ändern, löschen).',
+    why: 'Ein Ansatzpunkt, um sich still Rechte zu geben oder neue Konten mitlaufen zu lassen.',
+  },
+  content: {
+    what: 'Greift in die Darstellung von Inhalten ein.',
+    why: 'Klassischer Ort für untergeschobene Weiterleitungen und eingebettete Skripte auf jeder Seite.',
+  },
+  editors: {
+    what: 'Der Editor im Backend.',
+    why: 'Läuft nur für angemeldete Redakteure — nach einem Login aber mit deren Rechten.',
+  },
+  quickicon: {
+    what: 'Die Kacheln im Administrator-Dashboard.',
+    why: 'Läuft bei jedem Aufruf des Backends; wird gelegentlich für Update-Meldungen missbraucht.',
+  },
+  captcha: { what: 'Prüft Formulare gegen automatisierte Eingaben.' },
+  search: { what: 'Liefert Treffer für die Suchfunktion.' },
+  finder: { what: 'Der Suchindex („Smart Search").' },
+  fields: { what: 'Zusätzliche Felder an Inhalten und Konten.' },
+  webservices: {
+    what: 'Schaltet API-Endpunkte frei.',
+    why: 'Erweitert die von außen erreichbare Oberfläche — lohnt einen Blick, was hier aktiv ist.',
+  },
+}
+
+export function explainPluginGroup(group: string): Explanation {
+  return PLUGIN_GROUP_EXPLAIN[group.toLowerCase()] ?? {
+    what: `Joomla-Plugin der Gruppe »${group}«.`,
+    why: 'Die Gruppe entscheidet, an welcher Stelle Joomla das Plugin aufruft.',
+  }
+}
+
 // --- Actor-Badges -----------------------------------------------------------
 
 export const BADGE_EXPLAIN: Record<string, Explanation> = {
