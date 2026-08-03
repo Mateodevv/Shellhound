@@ -65,6 +65,7 @@ python -m server.main --no-browser --token dev
 server/            FastAPI + stdlib-SQLite (pro Fall: case.db + logindex.db)
   engines/         accesslog, logindex, webshell, cmsinventory, sqldump, detect
 web/               Vite + React + TS + Tailwind (Build wird vom Server serviert)
+docs/rules.md      jede Detektionsregel: Auslöser, Aussage, Grenzen
 ```
 
 Grundsätze aus dem Legacy-Projekt, die strukturell übernommen sind: ein Fall
