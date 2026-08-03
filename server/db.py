@@ -149,7 +149,14 @@ CREATE TABLE IF NOT EXISTS db_accounts (
     email TEXT NOT NULL DEFAULT '',
     registered TEXT NOT NULL DEFAULT '',
     hash_type TEXT NOT NULL DEFAULT '',
-    admin INTEGER NOT NULL DEFAULT 0
+    admin INTEGER NOT NULL DEFAULT 0,
+    -- Leer heißt NICHT "nie angemeldet", sondern "der Dump sagt es nicht":
+    -- Joomla führt lastvisitDate im Schema, WordPress im Kern gar nicht.
+    last_login TEXT NOT NULL DEFAULT '',
+    blocked INTEGER NOT NULL DEFAULT 0,
+    -- Eine offene Sitzung im Dump: das Konto war zum Zeitpunkt des Exports
+    -- angemeldet.
+    sessions INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS inert_php (
     id INTEGER PRIMARY KEY, path TEXT NOT NULL, reason TEXT NOT NULL DEFAULT ''
@@ -196,6 +203,11 @@ _ADDED_COLUMNS = {
     ],
     "cms_installs": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "cms_items": [("version_source", "TEXT NOT NULL DEFAULT ''")],
+    "db_accounts": [
+        ("last_login", "TEXT NOT NULL DEFAULT ''"),
+        ("blocked", "INTEGER NOT NULL DEFAULT 0"),
+        ("sessions", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 

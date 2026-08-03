@@ -80,6 +80,25 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **Database neu aufgebaut.** Die Seite war ein Stapel aus vier
+  unverbundenen Tabellen; sie beantwortet jetzt die Frage, wegen der man sie
+  öffnet — was hat der Angreifer in der Datenbank hinterlassen?
+  - Oben steht der **Export selbst**: Datenbankname, Server, Werkzeug und vor
+    allem der **Erstellungszeitpunkt** — ein Dump von vor dem Vorfall zeigt
+    einen anderen Zustand als einer von danach.
+  - **Konten stehen nach Auffälligkeit**, mit benannten Beobachtungen statt
+    einer Punktzahl: Admin, kurz vor dem Export angelegt, schwacher Hash, nie
+    angemeldet, offene Sitzung, gesperrt. Die Engine liest dafür neu den
+    letzten Login und den Sperrstatus (Joomla: `lastvisitDate`/`block`;
+    WordPress: `user_status` und, falls ein Plugin sie schreibt, Login-Meta
+    bzw. offene Sitzungen). Fehlt die Angabe, steht »nicht im Dump« — das
+    heißt ausdrücklich nicht »nie angemeldet«.
+  - **Eingeschleuster Code ist anklickbar** und öffnet die Tabelle im
+    Artefakt-Fenster; die Seite ist damit Arbeitsort statt Anzeigeort.
+  - **Tabellen kennen ihre Findings** und markieren leere Tabellen sichtbar.
+  - **CSV-Export der Konten** (alle oder nur Admins) für die Reset-Liste —
+    ausdrücklich **ohne Passwort-Hashes**: das Werkzeug dokumentiert einen
+    Vorfall, es bereitet keinen Angriff vor.
 - **CMS Inventory neu aufgebaut.** Statt eines Kachel-Mosaiks aus 10–15
   Typ-Tabellen (Joomla machte jede Plugin-Gruppe zur eigenen Karte) zeigt
   jede Installation EINE durchgehende Liste mit Gruppen-Bändern; die Typen

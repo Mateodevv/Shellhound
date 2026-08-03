@@ -8,6 +8,11 @@ Diese Datei ist Referenz, keine zweite Quelle: die Regeln stehen in
 [`web/src/explain.ts`](../web/src/explain.ts). Wer eine Regel ändert, ändert
 sie dort und zieht diese Datei nach.
 
+Die **Konto-Beobachtungen** der Database-Ansicht (Admin, kurz vor dem Export
+angelegt, schwacher Hash, nie angemeldet, offene Sitzung, gesperrt) sind
+ebenfalls keine Findings, sondern eine Sortierhilfe: ein Dump kann nicht
+sagen, dass ein Konto bösartig ist — nur, was an ihm auffällt.
+
 Das **CMS-Inventar** erzeugt keine Findings — es beschreibt, was installiert
 ist. Jede Versionsangabe trägt die Datei mit sich, aus der sie gelesen wurde
 (Manifest, `style.css`, Plugin-Header, `version.php`), und lässt sich im

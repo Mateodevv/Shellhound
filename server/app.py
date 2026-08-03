@@ -1462,9 +1462,65 @@ def create_app(config: Config) -> FastAPI:
 
     # --- database view ------------------------------------------------------
 
-    @app.get("/api/cases/{slug}/database", dependencies=[auth])
-    def database_view(slug: str):
-        case_dir = case_dir_or_404(slug)
+    # Wie lange vor dem Export ein Konto angelegt worden sein muss, damit es
+    # als "jung" auffällt. Kein Urteil -- eine Sortierhilfe: bei einem
+    # Vorfall ist ein zwei Tage alter Administrator die erste Zeile, die man
+    # ansieht, und in 400 Konten findet man sie sonst nicht.
+    _YOUNG_DAYS = 30
+
+    _STAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d",
+                      "%d.%m.%Y %H:%M:%S", "%d.%m.%Y")
+
+    def _parse_stamp(text):
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        for fmt in _STAMP_FORMATS:
+            try:
+                return datetime.strptime(raw[:len(fmt) + 6].strip(), fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _account_signals(acc, reference):
+        """Was an diesem Konto AUFFÄLLT -- als benannte Beobachtungen, nicht
+        als Punktzahl. Ein Dump kann nicht sagen, dass ein Admin bösartig
+        ist; er kann sagen, dass einer gestern angelegt wurde und sich nie
+        angemeldet hat. Die Bewertung bleibt beim Analysten, die Reihenfolge
+        macht sie nur auffindbar."""
+        out = []
+        registered = _parse_stamp(acc["registered"])
+        if acc["admin"]:
+            out.append({"id": "admin", "label": "Admin",
+                        "why": "Konto mit vollen Rechten."})
+        if registered and reference and 0 <= (reference - registered).days <= _YOUNG_DAYS:
+            days = (reference - registered).days
+            out.append({"id": "young",
+                        "label": ("am Tag des Exports angelegt" if days == 0
+                                  else f"vor {days} Tag{'' if days == 1 else 'en'} angelegt"),
+                        "why": "Kurz vor dem Export registriert — bei einem "
+                               "Vorfall die erste Frage: wer war das?"})
+        if "weak" in (acc["hash_type"] or ""):
+            out.append({"id": "weak_hash", "label": "schwacher Hash",
+                        "why": "MD5 ohne Salt — solche Passwörter sind schnell "
+                               "zu knacken."})
+        if acc["admin"] and not acc["last_login"] and acc["cms"] == "Joomla":
+            out.append({"id": "never", "label": "nie angemeldet",
+                        "why": "Ein Administrator, der sich nie angemeldet hat, "
+                               "wurde für etwas anderes angelegt."})
+        if acc["sessions"]:
+            out.append({"id": "session", "label": "offene Sitzung",
+                        "why": "Beim Export war dieses Konto angemeldet."})
+        if acc["blocked"]:
+            out.append({"id": "blocked", "label": "gesperrt",
+                        "why": "Vom CMS deaktiviert."})
+        return out
+
+    # Reihenfolge der Auffälligkeit -- nur fürs Sortieren.
+    _SIGNAL_WEIGHT = {"admin": 4, "young": 3, "never": 2, "session": 2,
+                      "weak_hash": 1, "blocked": 0}
+
+    def _database_data(case_dir):
         conn = db.connect(case_dir)
         try:
             dumps = db.rows(conn, "SELECT * FROM db_dumps ORDER BY path")
@@ -1472,16 +1528,81 @@ def create_app(config: Config) -> FastAPI:
                 d["meta"] = json.loads(d["meta"] or "{}")
             tables = db.rows(conn,
                              "SELECT * FROM db_tables ORDER BY rows DESC, name")
-            accounts = db.rows(conn,
-                               "SELECT * FROM db_accounts "
-                               "ORDER BY admin DESC, cms, login")
+            accounts = db.rows(conn, "SELECT * FROM db_accounts")
             findings = db.rows(conn,
                                "SELECT * FROM findings WHERE source = 'sqldb' "
                                "ORDER BY severity, artifact LIMIT 500")
+            flagged = db.rows(conn,
+                              f"WITH art AS ({_ART_SQL}) "
+                              f"SELECT artifact, worst, triage, findings FROM art "
+                              f"WHERE artifact_kind = 'table'")
         finally:
             conn.close()
+
+        # Bezugspunkt für "jung": wann wurde exportiert? Der Kopf des Dumps
+        # sagt es meist; sonst das jüngste Konto darin. Ohne Bezug wird
+        # nichts als jung markiert -- lieber kein Signal als ein erfundenes.
+        reference = None
+        for d in dumps:
+            reference = reference or _parse_stamp(d["meta"].get("created"))
+        if reference is None:
+            stamps = [s for s in (_parse_stamp(a["registered"]) for a in accounts) if s]
+            reference = max(stamps) if stamps else None
+
+        for a in accounts:
+            a["signals"] = _account_signals(a, reference)
+            a["rank"] = sum(_SIGNAL_WEIGHT.get(s["id"], 0) for s in a["signals"])
+        accounts.sort(key=lambda a: (-a["rank"], a["cms"], a["login"].lower()))
+
+        by_table = {}
+        for f in flagged:
+            by_table[f["artifact"]] = f
+        for t in tables:
+            hit = by_table.get(t["name"])
+            t["flagged"] = hit["findings"] if hit else 0
+            t["worst"] = hit["worst"] if hit else None
+            t["triage"] = hit["triage"] if hit else None
         return {"dumps": dumps, "tables": tables, "accounts": accounts,
-                "findings": findings}
+                "findings": findings, "reference": reference.isoformat(sep=" ")
+                if reference else ""}
+
+    @app.get("/api/cases/{slug}/database", dependencies=[auth])
+    def database_view(slug: str):
+        """Was der Dump hergibt — mit dem Fall verknüpft: Tabellen wissen,
+        ob auf ihnen Findings sitzen, Konten tragen ihre auffälligen
+        Merkmale und stehen danach sortiert."""
+        return _database_data(case_dir_or_404(slug))
+
+    @app.get("/api/cases/{slug}/database/accounts.csv", dependencies=[auth])
+    def accounts_csv(slug: str, only: str = ""):
+        """Die Konten als Tabelle — für die Passwort-Reset-Liste, die nach
+        jedem Vorfall ansteht. `only=admins` schneidet auf die zu, die
+        volle Rechte haben. Passwort-Hashes stehen NICHT drin: dieses
+        Werkzeug dokumentiert einen Vorfall, es bereitet keinen Angriff
+        vor."""
+        case_dir = case_dir_or_404(slug)
+        data = _database_data(case_dir)
+        rows = [a for a in data["accounts"]
+                if only != "admins" or a["admin"]]
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(["Login", "E-Mail", "Rolle", "CMS", "Tabelle", "Registriert",
+                    "Letzter Login", "Hash-Verfahren", "Gesperrt", "Auffällig"])
+        for a in rows:
+            value = a["login"] or ""
+            if value[:1] in ("=", "+", "-", "@"):
+                value = "'" + value
+            w.writerow([
+                value, a["email"],
+                "Administrator" if a["admin"] else "User",
+                a["cms"], a["tbl"], a["registered"], a["last_login"] or "",
+                a["hash_type"], "ja" if a["blocked"] else "nein",
+                ", ".join(s["label"] for s in a["signals"]),
+            ])
+        stem = "admins" if only == "admins" else "accounts"
+        return Response(buf.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition":
+                                 f"attachment; filename={stem}_{slug}.csv"})
 
     # --- websocket ----------------------------------------------------------
 

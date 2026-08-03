@@ -276,6 +276,19 @@ export interface DbTable {
   rows: number
   bytes: number
   col_list: string
+  /** Findings auf dieser Tabelle — 0, wenn keine. */
+  flagged: number
+  worst: number | null
+  triage: TriageState | null
+}
+
+/** Eine benannte Beobachtung an einem Konto. Bewusst kein Punktwert: ein
+ *  Dump kann nicht sagen, dass ein Admin bösartig ist — nur, was an ihm
+ *  auffällt. */
+export interface AccountSignal {
+  id: string
+  label: string
+  why: string
 }
 
 export interface DbAccount {
@@ -289,6 +302,12 @@ export interface DbAccount {
   registered: string
   hash_type: string
   admin: number
+  /** Leer heißt „der Dump sagt es nicht", nicht „nie angemeldet". */
+  last_login: string
+  blocked: number
+  sessions: number
+  signals: AccountSignal[]
+  rank: number
 }
 
 export interface Dashboard {
