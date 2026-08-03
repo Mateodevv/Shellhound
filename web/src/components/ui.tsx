@@ -220,9 +220,13 @@ function useOverlayEscape(open: boolean, onClose: () => void) {
   }, [open, onClose])
 }
 
-/** Ein zentriertes Fenster — für Inhalte, die FLÄCHE brauchen und in zwei
- *  Spalten nebeneinander lesbar sind. Der Drawer darunter bleibt für
- *  Nachschlage-Ansichten (Trace, Datei), die man neben den Kontext schiebt. */
+/** Ein zentriertes Fenster — die Standard-Ansicht für alles, was FLÄCHE
+ *  braucht: Artefakt-Detail, Datei-Viewer, Trace.
+ *
+ *  Fenster, die aus einem anderen heraus geöffnet werden (`layer` > 0),
+ *  sind jede Stufe etwas kleiner. Das ist keine Dekoration: man sieht am
+ *  Rand, dass darunter noch etwas liegt, zu dem man zurückkommt — sonst
+ *  wirkt ein Trace wie ein Themenwechsel statt wie ein Blick zur Seite. */
 export function Modal({ open, onClose, title, children, layer = 0 }: {
   open: boolean
   onClose: () => void
@@ -232,14 +236,20 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
 }) {
   useOverlayEscape(open, onClose)
   if (!open) return null
+  const inset = Math.min(layer, 3)
   return (
     <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6"
       style={{ zIndex: 40 + layer * 10 }}>
-      <div className="absolute inset-0 bg-black/60 animate-fade-in" onClick={onClose} />
+      <div className={clsx('absolute inset-0 animate-fade-in',
+        layer > 0 ? 'bg-black/35' : 'bg-black/60')} onClick={onClose} />
       <div className={clsx(
-        'relative flex max-h-[92vh] w-[min(1280px,96vw)] flex-col overflow-hidden',
+        'relative flex flex-col overflow-hidden',
         'rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-2xl',
-        'animate-fade-up')}>
+        'animate-fade-up')}
+        style={{
+          width: `min(${1280 - inset * 70}px, ${96 - inset * 3}vw)`,
+          maxHeight: `${92 - inset * 3}vh`,
+        }}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-3">
           <div className="min-w-0 text-[15px] font-semibold">{title}</div>
           <button
@@ -251,43 +261,6 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-      </div>
-    </div>
-  )
-}
-
-export function Drawer({ open, onClose, title, children, wide, layer = 0 }: {
-  open: boolean
-  onClose: () => void
-  title: ReactNode
-  children: ReactNode
-  wide?: boolean
-  /** Stapelebene: 0 ist der Grund-Drawer, höher liegt DAVOR. Ein Viewer,
-   *  den man aus einem Drawer heraus öffnet, gehört nach vorne — sonst
-   *  klickt man auf »Datei ansehen« und es passiert scheinbar nichts. */
-  layer?: number
-}) {
-  useOverlayEscape(open, onClose)
-  if (!open) return null
-  return (
-    <div className="fixed inset-0" style={{ zIndex: 40 + layer * 10 }}>
-      <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} />
-      <div
-        className={clsx(
-          'absolute right-0 top-0 h-full overflow-y-auto border-l border-[var(--line)]',
-          'bg-[var(--panel)] shadow-2xl animate-fade-up',
-          wide ? 'w-[min(960px,92vw)]' : 'w-[min(560px,92vw)]')}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--panel)]/95 px-5 py-3 backdrop-blur">
-          <div className="min-w-0 text-[15px] font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="px-5 py-4">{children}</div>
       </div>
     </div>
   )

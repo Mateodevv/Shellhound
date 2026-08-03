@@ -17,7 +17,7 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
 import { Sparkline } from '../components/Sparkline'
-import { TraceDrawer } from '../components/TraceDrawer'
+import { TraceWindow } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 
 const FLAGS = [
@@ -223,7 +223,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       )}
 
-      <TraceDrawer slug={slug} ips={traceIps} onClose={() => setTraceIps(null)} />
+      <TraceWindow slug={slug} ips={traceIps} onClose={() => setTraceIps(null)} />
     </div>
   )
 }

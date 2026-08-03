@@ -10,9 +10,14 @@
 // Deshalb: markiert, gezählt und als True/False Positive entschieden wird
 // das Artefakt. Die Liste hat zwei Ebenen — Kategorie („Webshells &
 // Backdoors") und darunter die Artefakte. Die Findings eines Artefakts
-// stehen aufgeklappt darunter und im Detail-Drawer, der alles zusammenholt,
+// stehen aufgeklappt darunter und im Detail-Fenster, das alles zusammenholt,
 // was zur Beurteilung nötig ist: Metadaten, Dateiinhalt, Actor-Profil und
 // jede IP, die daran hängt — jede davon direkt als Trace zu öffnen.
+//
+// Die Zeile selbst soll SO VIEL SAGEN, dass man sie meistens nicht öffnen
+// muss: Symbol und Farbe für Art und Schweregrad, die Regeln als Chips, ein
+// Balken für die Verteilung der Findings, der Zustand als Pille. Eine Liste
+// aus lauter gleich aussehenden Zeilen zwingt zum Lesen jeder einzelnen.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -26,8 +31,8 @@ import {
   type FindingsResponse, type TriageState,
 } from '../api'
 import {
-  SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, absoluteTime, formatBytes,
-  formatCount, formatDay, relativeTime, relativeToRoot, shortPath,
+  SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, absoluteTime,
+  formatBytes, formatCount, formatDay, relativeTime, relativeToRoot, shortPath,
   type EvidenceRoot,
 } from '../format'
 import {
@@ -35,7 +40,7 @@ import {
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
-import { TraceDrawer } from '../components/TraceDrawer'
+import { TraceWindow } from '../components/TraceWindow'
 import {
   FIELD_EXPLAIN, artifactNoun, categorize, explainRule, type Category,
 } from '../explain'
@@ -212,7 +217,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     getScrollElement: () => parentRef.current,
     estimateSize: (i) => {
       const t = items[i]?.t
-      return t === 'c' ? 56 : t === 'a' ? 48 : 38
+      return t === 'c' ? 62 : t === 'a' ? 68 : 34
     },
     overscan: 20,
   })
@@ -431,11 +436,17 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               const open = filtering
                 ? !collapsedCats.has(c.cat.id)
                 : expandedCats.has(c.cat.id)
+              const decided = c.confirmed + c.dismissed
               return (
                 <div key={'c' + c.cat.id}
-                  className="absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line)] bg-[var(--panel-2)] px-3"
+                  className="absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line)] bg-[var(--panel-2)] pr-4"
                   style={style}>
-                  <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
+                  {/* Der Farbbalken ist der Schweregrad der Kategorie — beim
+                      Scrollen erkennt man die schweren Blöcke am Rand, ohne
+                      eine Zeile zu lesen. */}
+                  <span className="h-full w-1 shrink-0"
+                    style={{ background: SEVERITY_VAR[c.worst] }} />
+                  <input type="checkbox" className="ml-1.5 cursor-pointer accent-[var(--accent)]"
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
                     onChange={() => toggleCategoryChecked(c)}
@@ -445,11 +456,11 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     {open
                       ? <ChevronDown size={16} className="shrink-0 text-[var(--muted)]" />
                       : <ChevronRight size={16} className="shrink-0 text-[var(--muted)]" />}
-                    <SeverityBadge severity={c.worst} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[14px] font-semibold">{c.cat.label}</span>
                         <InfoDot body={c.cat.what} wide />
+                        <SeverityBadge severity={c.worst} />
                       </div>
                       <div className="truncate text-[11.5px] text-[var(--muted)]">
                         {formatCount(c.artifacts.length)}{' '}
@@ -458,9 +469,27 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                         {formatCount(c.findings)} Finding{c.findings === 1 ? '' : 's'}
                       </div>
                     </div>
-                    {c.confirmed > 0 && <Tag tone="danger">{c.confirmed} bestätigt</Tag>}
-                    {c.dismissed > 0 && <Tag>{c.dismissed} FP</Tag>}
                   </button>
+                  {/* Fortschritt: wie viel dieser Kategorie ist entschieden? */}
+                  <Tooltip
+                    title={`${decided} von ${c.artifacts.length} entschieden`}
+                    hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${c.artifacts.length - decided} offen`}>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="hidden text-[11px] text-[var(--muted)] tabular sm:inline">
+                        {decided}/{c.artifacts.length}
+                      </span>
+                      <span className="flex h-1.5 w-20 overflow-hidden rounded-full bg-[var(--panel)]">
+                        {c.confirmed > 0 && (
+                          <span style={{ width: `${(c.confirmed / c.artifacts.length) * 100}%`,
+                                         background: 'var(--sev-high)' }} />
+                        )}
+                        {c.dismissed > 0 && (
+                          <span style={{ width: `${(c.dismissed / c.artifacts.length) * 100}%`,
+                                         background: 'var(--muted)' }} />
+                        )}
+                      </span>
+                    </div>
+                  </Tooltip>
                 </div>
               )
             }
@@ -470,15 +499,17 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               const a = item.a
               const Icon = KIND_ICON[a.artifact_kind] ?? Bug
               const open = expanded.has(a.artifact)
+              const tint = SEVERITY_VAR[a.worst]
               return (
                 <div key={'a' + a.artifact}
                   className={clsx(
-                    'absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pl-8 pr-3',
+                    'group absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-3',
                     'transition-colors hover:bg-[var(--panel-2)]',
                     vi.index === cursor && 'bg-[var(--accent-soft)]',
                     a.triage === 'dismissed' && 'opacity-45')}
                   style={style}>
-                  <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
+                  <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
+                  <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
                     checked={checked.has(a.artifact)}
                     onChange={(e) => {
                       const next = new Set(checked)
@@ -493,7 +524,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     </button>
                   </Tooltip>
                   <button
-                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                     onClick={() => {
                       setCursor(vi.index)
                       // Das Sammel-Ergebnis gehört zu DER Aktion, die es
@@ -503,32 +534,43 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       setLastCollected([])
                       setSelected(a)
                     }}>
-                    <SeverityBadge severity={a.worst} />
-                    <Icon size={13} className="shrink-0 text-[var(--muted)]" />
-                    <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
-                    <span className="shrink-0 rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[11px] text-[var(--muted)] tabular">
-                      {a.findings} Finding{a.findings === 1 ? '' : 's'}
+                    {/* Die Art des Artefakts als Symbol, eingefärbt nach dem
+                        Schweregrad: eine Datei sieht anders aus als ein
+                        Client, und Rot sticht aus einer Liste heraus. */}
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                      style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`,
+                               color: tint }}>
+                      <Icon size={15} />
                     </span>
-                    <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
+                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                      </div>
+                      <RuleChips items={a.items} />
+                    </div>
+                    <SeverityMeter items={a.items} total={a.findings} />
                   </button>
-                  {a.artifact_kind === 'file' && (
-                    <Tooltip hint="Die Datei im Original ansehen — als Text und als Hex-Dump.">
-                      <button
-                        className="shrink-0 cursor-pointer rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
-                        onClick={() => setViewing({ path: a.artifact, line: a.items[0]?.line ?? null })}>
-                        <FileSearch size={14} />
-                      </button>
-                    </Tooltip>
-                  )}
-                  {a.artifact_kind === 'client' && (
-                    <Tooltip hint="Jeden Request dieses Clients ansehen.">
-                      <button
-                        className="shrink-0 cursor-pointer rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
-                        onClick={() => setTraceIps([a.artifact])}>
-                        <Crosshair size={14} />
-                      </button>
-                    </Tooltip>
-                  )}
+                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    {a.artifact_kind === 'file' && (
+                      <Tooltip hint="Die Datei im Original ansehen — als Text und als Hex-Dump.">
+                        <button
+                          className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
+                          onClick={() => setViewing({ path: a.artifact, line: a.items[0]?.line ?? null })}>
+                          <FileSearch size={15} />
+                        </button>
+                      </Tooltip>
+                    )}
+                    {a.artifact_kind === 'client' && (
+                      <Tooltip hint="Jeden Request dieses Clients ansehen.">
+                        <button
+                          className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
+                          onClick={() => setTraceIps([a.artifact])}>
+                          <Crosshair size={15} />
+                        </button>
+                      </Tooltip>
+                    )}
+                  </div>
                 </div>
               )
             }
@@ -538,14 +580,21 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
             return (
               <div key={f.fingerprint}
                 className={clsx(
-                  'absolute left-0 top-0 flex w-full items-center gap-3 border-b border-[var(--line-soft)] pl-[4.5rem] pr-4',
+                  'absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-4',
                   item.a.triage === 'dismissed' && 'opacity-45')}
                 style={style}>
-                <SeverityBadge severity={f.severity} plain />
-                <RuleName rule={f.rule} className="w-[32%] min-w-0 shrink-0" />
+                {/* Die Führungslinie hält die Findings sichtbar an ihrem
+                    Artefakt — eingerückter Text allein verliert den Bezug. */}
+                <span className="ml-[3.25rem] h-full w-px shrink-0 bg-[var(--line)]" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ background: SEVERITY_VAR[f.severity] }} />
+                <RuleName rule={f.rule} className="w-[30%] min-w-0 shrink-0" />
+                {f.line != null && f.line !== 0 && (
+                  <span className="shrink-0 text-[11px] text-[var(--muted)] tabular">Z. {f.line}</span>
+                )}
                 <span className="mono min-w-0 flex-1 truncate text-[11.5px] text-[var(--muted)]"
                   title={f.evidence}>
-                  {f.line != null && f.line !== 0 ? `Zeile ${f.line} — ` : ''}{f.evidence}
+                  {f.evidence}
                 </span>
               </div>
             )
@@ -553,10 +602,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       </div>
 
-      {/* Das Artefakt-Fenster liegt hinten, Trace und Viewer davor: was man
-          AUS dem Detail heraus öffnet, muss davor stehen. Sie kommen als
-          Drawer von rechts — so bleibt sichtbar, dass sie zu dem Fenster
-          gehören, das darunter liegt. */}
+      {/* Alle drei sind zentrierte Fenster; die Ebene sagt, was davor liegt.
+          Trace und Datei-Viewer werden AUS dem Artefakt-Fenster geöffnet und
+          sind eine Stufe kleiner — man sieht am Rand, wohin man zurückkommt. */}
       <ArtifactWindow
         slug={slug}
         artifact={selected}
@@ -570,7 +618,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         }}
       />
 
-      <TraceDrawer slug={slug} ips={traceIps} layer={1}
+      <TraceWindow slug={slug} ips={traceIps} layer={1}
         onClose={() => setTraceIps(null)} />
 
       <FileViewer
@@ -581,6 +629,65 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         onClose={() => setViewing(null)}
       />
     </div>
+  )
+}
+
+/** Die Regeln eines Artefakts als Chips unter seinem Namen — man sieht in
+ *  der Liste, WORUM es geht, ohne aufzuklappen oder zu öffnen. Mehr als drei
+ *  wären eine zweite Liste in der Liste; der Rest steht als Zahl daneben. */
+function RuleChips({ items }: { items: Finding[] }) {
+  if (!items.length) return null
+  const shown = items.slice(0, 3)
+  const rest = items.length - shown.length
+  return (
+    <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
+      {shown.map((f) => {
+        const e = explainRule(f.rule)
+        return (
+          <Tooltip key={f.fingerprint} title={f.rule} body={e?.what} hint={e?.why} wide>
+            <span className="max-w-[15rem] truncate rounded bg-[var(--panel-2)] px-1.5 py-px text-[10.5px] text-[var(--muted)]"
+              style={{ boxShadow: `inset 2px 0 0 ${SEVERITY_VAR[f.severity]}` }}>
+              {f.rule}
+            </span>
+          </Tooltip>
+        )
+      })}
+      {rest > 0 && (
+        <span className="shrink-0 text-[10.5px] text-[var(--muted)]">+{rest}</span>
+      )}
+    </div>
+  )
+}
+
+/** Wie sich die Findings eines Artefakts auf die Schweregrade verteilen.
+ *  Zwei Artefakte mit „4 Findings" sind nicht dasselbe: viermal LOW ist ein
+ *  anderes Bild als zweimal HIGH — und genau das soll man sehen, ohne die
+ *  Zeile aufzuklappen. */
+function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
+  const counts = [0, 1, 2, 3].map((s) => items.filter((f) => f.severity === s).length)
+  const sum = counts.reduce((a, b) => a + b, 0)
+  if (!sum) {
+    return (
+      <span className="shrink-0 text-[11px] text-[var(--muted)] tabular">
+        {formatCount(total)}
+      </span>
+    )
+  }
+  return (
+    <Tooltip
+      title={`${formatCount(sum)} Finding${sum === 1 ? '' : 's'} auf diesem Artefakt`}
+      hint={counts
+        .map((n, s) => (n ? `${n}× ${SEVERITY_LABEL[s]}` : null))
+        .filter(Boolean).join(' · ')}>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="flex h-1.5 w-16 overflow-hidden rounded-full bg-[var(--panel-2)]">
+          {counts.map((n, s) => n > 0 && (
+            <span key={s} style={{ width: `${(n / sum) * 100}%`, background: SEVERITY_VAR[s] }} />
+          ))}
+        </span>
+        <span className="w-4 text-right text-[11px] text-[var(--muted)] tabular">{sum}</span>
+      </div>
+    </Tooltip>
   )
 }
 
