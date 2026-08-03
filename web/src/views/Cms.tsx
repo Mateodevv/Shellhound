@@ -266,8 +266,12 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
+          {/* Kein `ghost`: auf dem ohnehin panel-2-farbenen Kopf wäre ein
+              Knopf aus gedämpftem Text unsichtbar, bis man ihn zufällig
+              überfährt. Ein Rahmen sagt „hier kann man klicken". */}
           <Tooltip hint="Version prüfen: zeigt die Datei, aus der sie gelesen wurde, und lässt sie von Hand setzen.">
-            <Button variant="ghost"
+            <Button className="text-[var(--fg)]"
+              style={{ background: 'var(--panel)' }}
               onClick={() => onEditVersion({
                 kind: 'install', id: install.id, label: install.cms,
                 version: install.version, version_parsed: install.version_parsed,
@@ -367,6 +371,11 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                     ? `Gemessen war: ${item.version_parsed}. Klick zum Ändern oder Zurücksetzen.`
                     : 'Klick öffnet die Quelldatei und lässt die Version von Hand setzen.'}
                   wide>
+                  {/* Die Zelle sieht aus wie ein Eingabefeld, nicht wie
+                      Text: Rahmen und Stift stehen IMMER da. Eine Fläche,
+                      die sich erst beim Überfahren zu erkennen gibt, findet
+                      man nur, wenn man ohnehin schon weiß, dass es sie
+                      gibt. */}
                   <button
                     onClick={() => onEditVersion({
                       kind: 'item', id: item.id, label: item.name,
@@ -376,12 +385,16 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                       version_note: item.version_note,
                       version_set_at: item.version_set_at,
                     })}
-                    className="flex w-32 shrink-0 cursor-pointer items-center justify-end gap-1.5 rounded px-1 py-0.5 hover:bg-[var(--panel)]">
-                    {item.version_set && (
-                      <PencilLine size={11} className="shrink-0 text-[var(--accent)]" />
-                    )}
+                    className={clsx(
+                      'flex w-36 shrink-0 cursor-pointer items-center justify-between gap-1.5',
+                      'rounded-lg border px-2 py-1 transition-colors',
+                      'border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60',
+                      item.version_set && 'border-[var(--accent)]/50')}>
+                    <PencilLine size={11}
+                      className={clsx('shrink-0',
+                        item.version_set ? 'text-[var(--accent)]' : 'text-[var(--muted)]')} />
                     {item.version === '(unknown)'
-                      ? <Tag tone="warn">unbekannt</Tag>
+                      ? <span className="text-[11px] text-[var(--sev-low)]">unbekannt</span>
                       : <span className="mono truncate text-[12px]">{item.version}</span>}
                   </button>
                 </Tooltip>
