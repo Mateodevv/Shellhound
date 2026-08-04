@@ -1,19 +1,41 @@
 // Dashboard.tsx — the case at a glance: severity tiles, coverage chart,
 // live jobs, evidence status.
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Server } from 'lucide-react'
-import { api, type Dashboard as DashboardData } from '../api'
-import { formatCount, formatDay } from '../format'
+import { api, type CaseDetail, type Dashboard as DashboardData } from '../api'
+import { formatCount, formatDay, type EvidenceRoot } from '../format'
 import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
+import { CaseChain } from '../components/CaseChain'
+import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
+import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
+import { FileViewer } from '../components/FileViewer'
+import { TriageFollowUp, useTriage } from '../components/triage'
 import type { ViewId } from '../App'
 
 export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
+  // Aus der Chronologie heraus soll man dasselbe tun können wie überall: das
+  // Artefakt aufmachen, den Client tracen. Eine Zeitleiste, aus der man
+  // nicht in den Beleg springen kann, ist eine Behauptungsliste.
+  const [selected, setSelected] = useState<ArtifactStub | null>(null)
+  const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
+  const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
+  const t = useTriage(slug)
+
   const { data } = useQuery({
     queryKey: ['dashboard', slug],
     queryFn: () => api<DashboardData>(`/api/cases/${slug}/dashboard`),
     refetchInterval: 10000,
   })
+  const { data: caseInfo } = useQuery({
+    queryKey: ['case', slug],
+    queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
+  })
+  const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
+    kind: e.kind, path: e.path, label: e.label,
+  }))
   if (!data) return <div className="py-16 text-center text-[var(--muted)] animate-pulse-soft">Lade Dashboard…</div>
 
   const sev = data.severity
@@ -77,6 +99,16 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         </div>
       </Section>
 
+      <CaseChain slug={slug}
+        onOpen={(artifact, kind) => setSelected({
+          artifact,
+          artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
+          // Die Kette zeigt ausschließlich Bestätigtes; alles Weitere holt
+          // das Fenster selbst über den Kontext-Endpoint nach.
+          worst: 0, triage: 'confirmed', triage_note: '',
+        })}
+        onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
+
       {data.logs && (
         <Section
           title="Log-Abdeckung"
@@ -117,6 +149,29 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
           </div>
         </Section>
       )}
+
+      <ArtifactWindow
+        slug={slug}
+        artifact={selected}
+        roots={roots}
+        collected={t.collected}
+        onView={(path, line) => setViewing({ path, line })}
+        onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
+        onClose={() => { setSelected(null); t.clearCollected() }}
+        onTriage={(state, note) => {
+          if (selected) t.decide([selected.artifact], state, note)
+        }}
+      />
+      <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
+        onClose={() => setTraceIps(null)} />
+      <FileViewer
+        slug={slug}
+        path={viewing?.path ?? null}
+        focusLine={viewing?.line ?? null}
+        layer={2}
+        onClose={() => setViewing(null)}
+      />
+      <TriageFollowUp t={t} roots={roots} />
     </div>
   )
 }
