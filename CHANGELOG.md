@@ -15,11 +15,15 @@ VPNs, Proxys, Tor und Botnetz-Knoten stehen woanders.
 - **Vollständig offline.** Gelesen wird eine lokale MMDB aus dem Workspace
   (`SHELLHOUND_GEOIP` oder `*.mmdb` im Workspace-Ordner). Fall-IPs verlassen
   den Rechner nie.
-- **Ein Klick zur Datenbank:** fehlt sie, bietet die Actors-Ansicht an, die
-  frei lizenzierte **DB-IP Country Lite** (CC BY 4.0, ~8 MB) zu laden — der
-  einzige Netz-Kontakt des ganzen Werkzeugs, nur auf diesen Klick, und es
-  gehen dabei keine Falldaten hinaus. Alternativ eine GeoLite2-Country.mmdb
-  von Hand hineinlegen.
+- **Banner statt Suchen:** fehlt die Datenbank, sagt es ein Banner im
+  Dashboard — wie beim fehlenden Evidence. Der Download startet nicht auf
+  den ersten Klick: ein Bestätigungsfenster sagt vorher, **was gleich
+  passiert** (eine Datei von download.db-ip.com, DB-IP Country Lite,
+  CC BY 4.0, ~8 MB, keine Falldaten) — der einzige Netz-Kontakt des ganzen
+  Werkzeugs, und wer auf einer abgeschotteten Maschine arbeitet, kann Nein
+  sagen, bevor irgendetwas den Rechner verlässt. Alternativ eine
+  GeoLite2-Country.mmdb von Hand hineinlegen. „Nicht mehr zeigen" bleibt
+  gemerkt.
 - **Sonderbereiche kommen ohne Datenbank:** private Netze (RFC 1918),
   Loopback, Dokumentations-Bereiche tragen ein gestricheltes Kürzel statt
   einer Flagge — im Log ist „die Quell-IP ist privat" oft die wichtigere
