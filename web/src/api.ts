@@ -488,6 +488,44 @@ export interface HuntResult {
   clients: HuntClient[]
   /** Das Muster traf mehr distinkte URIs, als eingesammelt wurden. */
   truncated: boolean
+  /** Die Kennzahlen der Suche. `ok_clients` ist die Zahl fürs Protokoll:
+   *  wie viele Adressen kamen durch, nicht wie oft geklopft wurde.
+   *  `uri_total` zählt ALLE getroffenen URLs — `uris` ist nur die Stichprobe. */
+  clients_total: number
+  ok_clients: number
+  uri_total: number
+  first_epoch: number | null
+  last_epoch: number | null
+  tz: number
+}
+
+/** Ein Ereignis der Fall-Chronologie. `at` ist eine NAIVE ORTSZEIT in
+ *  Sekunden — die Logzeile trägt ihre Serverzeit, der Kontozeitstempel die
+ *  des Datenbankservers, und beide werden verglichen, wie sie dastehen.
+ *  Darum immer mit tz = 0 formatieren. */
+export interface ChainEvent {
+  at: number
+  kind: 'erstkontakt' | 'versuch' | 'erfolg' | 'alarm' | 'letzter-zugriff' | 'konto'
+  title: string
+  detail: string
+  /** Woraus die Zeit stammt: aus dem Access-Log oder aus dem SQL-Export. */
+  source: 'log' | 'dump'
+  artifact: string
+  artifact_kind: '' | 'file' | 'table' | 'client' | 'dump'
+  ip: string
+  severity: number | null
+}
+
+/** Die Chronologie: geordnete gemessene Tatsachen, keine Kausalaussagen.
+ *  `gaps` sagt, was der Fall NICHT belegt — das gehört genauso in den
+ *  Bericht wie die Ereignisse selbst. */
+export interface CaseChain {
+  span: { first: number | null; last: number | null }
+  events: ChainEvent[]
+  gaps: string[]
+  undated: { artifact: string; artifact_kind: string; why: string }[]
+  confirmed: number
+  truncated: boolean
 }
 
 /** Das Protokoll des Falls: wonach gesucht wurde — auch erfolglos. */
@@ -498,6 +536,11 @@ export interface HuntRun {
   hits: number
   ok_hits: number
   clients: number
+  ok_clients: number
+  uris: number
+  first_epoch: number | null
+  last_epoch: number | null
+  tz: number
 }
 
 export interface FilePreview {
