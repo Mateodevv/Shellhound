@@ -74,12 +74,17 @@ export const EVIDENCE_EXPLAIN: Record<string, Explanation> = {
     what: 'Ein Datenbank-Export des CMS (mysqldump, .sql/.sql.gz).',
     why: 'Liefert Accounts inklusive Admins sowie Code, der in Datenspalten eingeschleust wurde.',
   },
+  reference: {
+    what: 'Eine bekannt saubere Kopie zum Vergleichen — z.B. das offizielle CMS-Release in derselben Version, entpackt.',
+    why: 'Der Webroot-Vergleich (Dateien-Ansicht) zeigt, was abweicht: zusätzliche Dateien, veränderte, gelöschte. Die Referenz wird nicht gescannt — sie ist der Maßstab, nicht Evidence.',
+  },
 }
 
 export const EVIDENCE_LABEL: Record<string, string> = {
   webroot: 'Webroot',
   access_logs: 'Access-Logs',
   sql_dump: 'SQL-Dump',
+  reference: 'Referenzkopie',
 }
 
 // --- Regeln -----------------------------------------------------------------

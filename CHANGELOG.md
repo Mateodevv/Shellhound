@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Hinzugefügt — Webroot-Diff gegen eine Referenzkopie
+
+Die klassische Handarbeit nach jedem Webserver-Vorfall, als Abfrage: das
+kompromittierte Webroot neben ein bekannt sauberes Release derselben
+CMS-Version legen und fragen, was abweicht.
+
+- Neue Evidence-Art **Referenzkopie** — sie ist der Maßstab, nicht Evidence:
+  die Engines scannen sie nicht.
+- Der Vergleich läuft als Job (Dateien-Ansicht): **zusätzlich** (hier wohnen
+  abgelegte Shells), **verändert** (eingeschleuster Code in legitimen
+  Dateien, per Größe und SHA-256), **fehlt** (oft die Spur eines
+  Aufräumversuchs). Gleiche Größe über der Hash-Grenze wird als
+  **ungeprüft** gemeldet statt still als gleich durchgewunken.
+- Jede Abweichung lässt sich ansehen und direkt als IOC flaggen; was schon
+  in der Box liegt, trägt ein Abzeichen. Ein Treffer ist ein **Kandidat,
+  kein Fund** — die Bewertung bleibt beim Analysten.
+
+### Hinzugefügt — Globale Suche (Strg+K)
+
+Ein Feld über den ganzen Fall: Artefakte, Indikatoren, Actors und Konten.
+Ein Treffer öffnet das Artefakt-Fenster direkt — egal, welche Ansicht
+gerade offen ist. Die Palette ist ein Sprungbrett, keine Ergebnisliste:
+jede Gruppe ist hart gedeckelt, für mehr sind die Ansichten mit ihren
+Filtern da.
+
+### Hinzugefügt — Uhren-Abgleich Log ↔ Datenbank-Export
+
+Log-Server und Datenbank-Server können verschiedene Uhren führen, und ein
+Versatz kann die Reihenfolge der Chronologie drehen. Der Analyst kann je
+Quelle einen Versatz setzen (am Chronologie-Kopf); er wird im Fall
+gespeichert, auf alle Ketten-Zeiten angewendet und **in der Kette
+ausgewiesen** — eine Aussage des Analysten, keine Vermutung des Werkzeugs.
+
+### Geändert — Exporte belegen sich selbst
+
+- Der **Trace-Export** ist jetzt ein ZIP aus `trace.csv` und `MANIFEST.txt`:
+  Fall, Abfrage (Clients **und aktive Filter**), Zeilenzahl und SHA-256 der
+  CSV samt Prüfbefehl. Damit ist er zitierfähig — jeder Empfänger kann die
+  Unversehrtheit nachrechnen. Vorher ignorierte der Export die Filter der
+  Ansicht.
+- Der **JSON-Export** trägt die Chronologie mit (`chain`): Ereignisse,
+  Lücken, undatierte Artefakte und gesetzte Uhren-Versätze. Die Reihenfolge
+  ist die Aussage, die den Fall ausmacht — sie stand bisher nur im
+  Dashboard.
+
+### Aufgeräumt
+
+- Verirrte leere `package-lock.json` aus dem Repo-Wurzelverzeichnis
+  entfernt.
+- Konstanten und Hooks aus Komponenten-Dateien gelöst
+  (`artifactKinds.ts`, `useTriage.ts`, `copy.ts`) — oxlint ist wieder
+  still, und Fast Refresh funktioniert überall.
+
 ### Hinzugefügt — Bedienbarkeit quer durch die Ansichten
 
 - **IOC Box: Kopier-Knopf an jedem Indikator**, mit Quittung (Häkchen) und

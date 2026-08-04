@@ -191,12 +191,23 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
             </Button>
           </Tooltip>
         )}
-        <a
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
-          href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${ips.join(',')}`)}
-        >
-          <Download size={14} /> Vollständig als CSV
-        </a>
+        {/* Der Export nimmt die AKTIVEN Filter mit — was man gefiltert vor
+            sich hat, ist das, was man belegen will. Das ZIP trägt neben der
+            CSV ein Manifest: Abfrage, Zeilenzahl, SHA-256. */}
+        <Tooltip title="Trace als Beleg exportieren"
+          body="Ein ZIP aus der CSV und einem Manifest mit Abfrage, Zeilenzahl und SHA-256-Prüfsumme."
+          hint={filtering
+            ? 'Die aktiven Filter gelten auch für den Export — das Manifest hält sie fest.'
+            : 'Damit ist der Export zitierfähig: jeder Empfänger kann die Prüfsumme nachrechnen.'}>
+          <a
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
+            href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${ips.join(',')}`
+              + `&search=${encodeURIComponent(search)}&status=${status}`
+              + `&method=${encodeURIComponent(method)}&sort=${sort}`)}
+          >
+            <Download size={14} /> Export mit Prüfsumme
+          </a>
+        </Tooltip>
       </div>
 
       {data && data.total > pageSize && (

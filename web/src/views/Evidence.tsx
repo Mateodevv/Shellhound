@@ -22,6 +22,7 @@ const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
   access_logs: FileText,
   sql_dump: HardDrive,
+  reference: Server,
 }
 
 export function Evidence({ slug, onClosed }: {
@@ -40,7 +41,7 @@ export function Evidence({ slug, onClosed }: {
     refetchInterval: 4000,
   })
 
-  const [browsing, setBrowsing] = useState<null | 'webroot' | 'access_logs' | 'sql_dump'>(null)
+  const [browsing, setBrowsing] = useState<null | 'webroot' | 'access_logs' | 'sql_dump' | 'reference'>(null)
   const [detectFolder, setDetectFolder] = useState('')
   const [detected, setDetected] = useState<DetectResult | null>(null)
 
@@ -106,7 +107,7 @@ export function Evidence({ slug, onClosed }: {
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) => (
+          {(['webroot', 'access_logs', 'sql_dump', 'reference'] as const).map((kind) => (
             <Tooltip key={kind} title={EVIDENCE_EXPLAIN[kind]?.what}
               hint={EVIDENCE_EXPLAIN[kind]?.why} wide>
               <Button onClick={() => setBrowsing(kind)}>

@@ -14,10 +14,12 @@ attack surface the legacy file manager had to sandbox.
 """
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import os
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,13 +30,14 @@ from pydantic import BaseModel
 
 from server import db, iocs as ioclib, patterns as patternlib, workspace
 from server.config import Config
-from server.engines import cmsinventory, detect, logindex, sqldump, webshell
+from server.engines import (cmsinventory, detect, logindex, sqldump,
+                            webrootdiff, webshell)
 from server.events import hub
 from server.jobs import manager
 
 WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
 
-EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump")
+EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump", "reference")
 
 
 def create_app(config: Config) -> FastAPI:
@@ -529,9 +532,26 @@ def create_app(config: Config) -> FastAPI:
                 continue
         return None
 
-    @app.get("/api/cases/{slug}/chain", dependencies=[auth])
-    def chain(slug: str):
-        case_dir = case_dir_or_404(slug)
+    # Der vom Analysten gesetzte UHREN-VERSATZ je Quelle, in Sekunden.
+    # Log-Server und Datenbank-Server können verschiedene Uhren führen
+    # (Zeitzone, driftende VM) -- und bei "Konto 03:17, Erstkontakt 09:12"
+    # kann ein 6-Stunden-Versatz die Reihenfolge der Geschichte drehen.
+    # Deshalb ist der Versatz eine AUSSAGE DES ANALYSTEN, gespeichert im
+    # Fall und in der Chronologie ausgewiesen -- nicht etwas, das das
+    # Werkzeug still errät.
+    def _clock_offsets(conn):
+        row = db.one(conn, "SELECT value FROM meta WHERE key = 'clock_offsets'")
+        try:
+            raw = json.loads(row["value"]) if row else {}
+        except (ValueError, TypeError):
+            raw = {}
+        return {"logs": int(raw.get("logs", 0) or 0),
+                "dump": int(raw.get("dump", 0) or 0)}
+
+    def _case_chain(case_dir):
+        """Die Chronologie als Daten -- geteilt von der Route und den
+        Exporten: was der Analyst im Dashboard liest, muss dasselbe sein
+        wie das, was der Fall hinausgibt."""
         conn = db.connect(case_dir)
         try:
             confirmed = db.rows(
@@ -546,18 +566,34 @@ def create_app(config: Config) -> FastAPI:
             accounts = db.rows(
                 conn, "SELECT login, registered, admin, last_login, tbl "
                       "FROM db_accounts WHERE registered != ''")
+            offsets = _clock_offsets(conn)
         finally:
             conn.close()
 
+        off_logs, off_dump = offsets["logs"], offsets["dump"]
         overview = logindex.overview(case_dir) or {}
         span_first = _local(overview.get("first_epoch"))
+        if span_first is not None:
+            span_first += off_logs
         span_last = _local(overview.get("last_epoch"))
+        if span_last is not None:
+            span_last += off_logs
         facts = logindex.chain_facts(
             case_dir,
             leaves=[os.path.basename(p) for p in files.values()],
             ips=clients)
 
         events, undated, gaps = [], [], []
+
+        # Alle Log-Zeiten durch EINEN Trichter, alle Dump-Zeiten durch den
+        # anderen -- so kann keine einzelne Stelle den Versatz vergessen.
+        def _log_at(epoch, tz=0):
+            at = _local(epoch, tz)
+            return None if at is None else at + off_logs
+
+        def _dump_at(text):
+            at = _stamp_to_local(text)
+            return None if at is None else at + off_dump
 
         dated = set()
 
@@ -598,19 +634,19 @@ def create_app(config: Config) -> FastAPI:
                                 if h["first_epoch"] == first_any), "")
                     von = f" von {who}" if who else ""
                     detail += (f". Eine Anfrage darauf{von} lief um "
-                               f"{_iso(_local(first_any, tz))} noch ins Leere "
+                               f"{_iso(_log_at(first_any, tz))} noch ins Leere "
                                f"— die Datei entstand also dazwischen")
-                add(_local(first_ok, tz), "erfolg",
+                add(_log_at(first_ok, tz), "erfolg",
                     f"Erster erfolgreicher Abruf von {name}", detail, "log",
                     artifact, "file", severity=row["worst"])
             else:
-                add(_local(first_any, tz), "versuch",
+                add(_log_at(first_any, tz), "versuch",
                     f"Erste Anfrage auf {name}",
                     f"{total}× angefragt, nie mit 2xx beantwortet — ein "
                     f"erfolgreicher Zugriff ist im Log nicht belegt", "log",
                     artifact, "file", severity=row["worst"])
             if last_any and last_any != (min(oks) if oks else first_any):
-                add(_local(last_any, tz), "letzter-zugriff",
+                add(_log_at(last_any, tz), "letzter-zugriff",
                     f"Letzter Abruf von {name}",
                     f"insgesamt {total} Anfrage(n), davon {ok_total}× 2xx",
                     "log", artifact, "file", severity=row["worst"])
@@ -622,17 +658,17 @@ def create_app(config: Config) -> FastAPI:
             if actor is None:
                 continue
             tz = actor["tz"] or 0
-            add(_local(actor["first_epoch"], tz), "erstkontakt",
+            add(_log_at(actor["first_epoch"], tz), "erstkontakt",
                 f"Erste Anfrage von {ip}",
                 f"{actor['requests']} Anfrage(n) insgesamt", "log",
                 ip, "client", ip, row["worst"])
             for a in actor["alerts"]:
                 if a["severity"] >= db.SEV_INFO or not a["epoch"]:
                     continue
-                add(_local(a["epoch"], tz), "alarm", a["detail"],
+                add(_log_at(a["epoch"], tz), "alarm", a["detail"],
                     f"ausgelöst durch: {a['example']}", "log",
                     ip, "client", ip, a["severity"])
-            add(_local(actor["last_epoch"], tz), "letzter-zugriff",
+            add(_log_at(actor["last_epoch"], tz), "letzter-zugriff",
                 f"Letzte Anfrage von {ip}", "", "log", ip, "client", ip,
                 row["worst"])
 
@@ -641,11 +677,11 @@ def create_app(config: Config) -> FastAPI:
         # von 2026. Der Zeitraum des Logs ist das ehrlichste Fenster, das der
         # Fall dafür hat.
         for acc in accounts:
-            at = _stamp_to_local(acc["registered"])
+            at = _dump_at(acc["registered"])
             if at is None or span_first is None or not (span_first <= at <= span_last):
                 continue
             detail = f"in {acc['tbl'] or 'der Benutzertabelle'} angelegt"
-            last = _stamp_to_local(acc["last_login"])
+            last = _dump_at(acc["last_login"])
             if last and span_first <= last <= span_last:
                 detail += f"; letzte Anmeldung laut Export {_iso(last)}"
             title = f"Konto {acc['login']} angelegt"
@@ -700,12 +736,98 @@ def create_app(config: Config) -> FastAPI:
         if truncated:
             gaps.append(f"Mehr als {_CHAIN_EVENT_CAP} Ereignisse; die "
                         f"Chronologie zeigt die frühesten.")
+        # Ein gesetzter Versatz ist Teil der Aussage und steht deshalb bei
+        # den Einschränkungen -- wer die Kette liest, muss wissen, dass an
+        # den Uhren gedreht wurde und von wem.
+        for quelle, off in (("Log", off_logs), ("Datenbank-Export", off_dump)):
+            if off:
+                std = f"{abs(off) / 3600:g}"
+                gaps.append(
+                    f"Uhren-Abgleich: die Zeiten aus dem {quelle} sind um "
+                    f"{std} Stunde(n) {'vor' if off > 0 else 'zurück'}gestellt "
+                    f"— vom Analysten gesetzt.")
 
         return {
             "span": {"first": span_first, "last": span_last},
             "events": events, "gaps": gaps, "undated": undated,
             "confirmed": len(confirmed), "truncated": truncated,
+            "offsets": offsets,
         }
+
+    @app.get("/api/cases/{slug}/chain", dependencies=[auth])
+    def chain(slug: str):
+        return _case_chain(case_dir_or_404(slug))
+
+    class ClockBody(BaseModel):
+        # Sekunden, je Quelle. 0 = Uhren gelten, wie sie dastehen.
+        logs: int = 0
+        dump: int = 0
+
+    @app.post("/api/cases/{slug}/clock", dependencies=[auth])
+    def set_clock(slug: str, body: ClockBody):
+        """Den Uhren-Versatz setzen. Begrenzung ±26h: mehr als eine
+        Zeitzonen-Spanne plus Drift ist kein Abgleich mehr, sondern ein
+        Tippfehler."""
+        case_dir = case_dir_or_404(slug)
+        limit = 26 * 3600
+        if abs(body.logs) > limit or abs(body.dump) > limit:
+            raise HTTPException(400, "offset beyond ±26h")
+        conn = db.connect(case_dir)
+        try:
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('clock_offsets', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps({"logs": body.logs, "dump": body.dump}),))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"ok": True, "logs": body.logs, "dump": body.dump}
+
+    # --- die globale Suche ---------------------------------------------------
+
+    _SEARCH_CAP = 8
+
+    @app.get("/api/cases/{slug}/search", dependencies=[auth])
+    def global_search(slug: str, q: str = ""):
+        """EIN Feld über den ganzen Fall: Artefakte, Indikatoren, Actors,
+        Konten. Mit neun Ansichten wird „wo war nochmal…" sonst zur echten
+        Reibung -- und die Antwort liegt immer in genau einer davon.
+
+        Jede Gruppe ist hart gedeckelt: die Palette ist ein Sprungbrett,
+        keine Ergebnisliste. Wer mehr als acht Treffer braucht, ist in der
+        jeweiligen Ansicht mit ihren Filtern besser aufgehoben."""
+        case_dir = case_dir_or_404(slug)
+        term = q.strip()
+        if len(term) < 2:
+            return {"artifacts": [], "iocs": [], "actors": [], "accounts": []}
+        like = "%" + (term.replace("\\", "\\\\").replace("%", "\\%")
+                      .replace("_", "\\_")) + "%"
+        conn = db.connect(case_dir)
+        try:
+            artifacts = db.rows(
+                conn, f"WITH art AS ({_ART_SQL}) "
+                      f"SELECT artifact, artifact_kind, worst, triage, findings "
+                      f"FROM art WHERE artifact LIKE ? ESCAPE '\\' "
+                      f"ORDER BY worst LIMIT ?", (like, _SEARCH_CAP))
+            iocs = db.rows(
+                conn, "SELECT id, value, type, note FROM iocs "
+                      "WHERE value LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\' "
+                      "ORDER BY added DESC LIMIT ?", (like, like, _SEARCH_CAP))
+            accounts = db.rows(
+                conn, "SELECT id, login, email, admin, tbl FROM db_accounts "
+                      "WHERE login LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\' "
+                      "LIMIT ?", (like, like, _SEARCH_CAP))
+        finally:
+            conn.close()
+        # Actors aus dem Log-Index -- die Grundgesamtheit, auch Clients ohne
+        # jedes Finding. Wer eine IP sucht, sucht meist genau die.
+        listed = logindex.actors_list(case_dir, search=term, limit=_SEARCH_CAP)
+        actors = [{"ip": a["ip"], "requests": a["requests"],
+                   "first_epoch": a["first_epoch"], "last_epoch": a["last_epoch"],
+                   "tz": a["tz"], "alerts": len(a["alerts"])}
+                  for a in listed["actors"]]
+        return {"artifacts": artifacts, "iocs": iocs, "actors": actors,
+                "accounts": accounts}
 
     # --- findings -----------------------------------------------------------
     #
@@ -1639,6 +1761,93 @@ def create_app(config: Config) -> FastAPI:
         hub.publish({"type": "invalidate", "scope": "iocs"})
         return {"added": added}
 
+    # --- Webroot-Diff --------------------------------------------------------
+
+    class DiffBody(BaseModel):
+        webroot_id: int
+        reference_id: int
+
+    @app.post("/api/cases/{slug}/diff/run", dependencies=[auth])
+    def diff_run(slug: str, body: DiffBody):
+        """Webroot gegen Referenzkopie, als Job -- zwei CMS-Bäume sind
+        zehntausende Dateien, das gehört nicht in einen Request."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            rows = {r["id"]: r for r in db.rows(conn, "SELECT * FROM evidence")}
+        finally:
+            conn.close()
+        webroot = rows.get(body.webroot_id)
+        reference = rows.get(body.reference_id)
+        if webroot is None or reference is None:
+            raise HTTPException(404, "evidence not found")
+        if body.webroot_id == body.reference_id:
+            raise HTTPException(400, "ein Baum verglichen mit sich selbst sagt nichts")
+        for e in (webroot, reference):
+            if not os.path.isdir(e["path"]):
+                raise HTTPException(400, f"kein Verzeichnis: {e['path']}")
+
+        wid, wpath = webroot["id"], webroot["path"]
+        rid, rpath = reference["id"], reference["path"]
+
+        def run(ctx):
+            return webrootdiff.run(ctx, wid, wpath, rid, rpath)
+
+        return {"job": manager.submit(case_dir, "webroot_diff", run)}
+
+    @app.get("/api/cases/{slug}/diff", dependencies=[auth])
+    def diff_list(slug: str, hide_status: str = "", search: str = "",
+                  limit: int = 500, offset: int = 0):
+        """Das Ergebnis des letzten Vergleichs. Filter sind Ausblende-Schalter
+        wie überall (`hide_status=extra,missing`)."""
+        case_dir = case_dir_or_404(slug)
+        hidden = [h.strip() for h in hide_status.split(",") if h.strip()]
+        conn = db.connect(case_dir)
+        try:
+            where, params = [], []
+            if hidden:
+                marks = ",".join("?" * len(hidden))
+                where.append(f"status NOT IN ({marks})")
+                params += hidden
+            if search.strip():
+                where.append("path LIKE ? ESCAPE '\\'")
+                params.append("%" + (search.strip().replace("\\", "\\\\")
+                                     .replace("%", "\\%").replace("_", "\\_")) + "%")
+            clause = ("WHERE " + " AND ".join(where)) if where else ""
+            total = conn.execute(
+                f"SELECT count(*) FROM webroot_diff {clause}", params).fetchone()[0]
+            counts = {r["status"]: r["n"] for r in db.rows(
+                conn, "SELECT status, count(*) n FROM webroot_diff GROUP BY status")}
+            rows = db.rows(
+                conn,
+                f"SELECT * FROM webroot_diff {clause} "
+                f"ORDER BY CASE status WHEN 'modified' THEN 0 WHEN 'extra' THEN 1 "
+                f"WHEN 'too_big' THEN 2 ELSE 3 END, path "
+                f"LIMIT ? OFFSET ?", params + [min(limit, 2000), offset])
+            roots = {r["id"]: r for r in db.rows(
+                conn, "SELECT id, path, label, kind FROM evidence")}
+            ran_at = rows[0]["ran_at"] if rows else (db.one(
+                conn, "SELECT ran_at FROM webroot_diff LIMIT 1") or {}).get("ran_at", "")
+            # Welche IOC-Pfade schon in der Box liegen -- der Knopf soll nicht
+            # anbieten, was erledigt ist. Vergleich über den fallrelativen Pfad.
+            flagged = {r["value"] for r in db.rows(
+                conn, "SELECT value FROM iocs WHERE type = 'path'")}
+            webroot_row = next((roots.get(r["webroot_id"]) for r in rows), None)
+            for r in rows:
+                root = roots.get(r["webroot_id"])
+                if root and r["status"] != "missing":
+                    absolute = os.path.join(root["path"], r["path"].replace("/", os.sep))
+                    r["absolute"] = absolute
+                    r["in_box"] = db.case_relative_path(conn, absolute) in flagged
+                else:
+                    r["absolute"] = ""
+                    r["in_box"] = False
+            return {"total": total, "counts": counts, "rows": rows,
+                    "ran_at": ran_at,
+                    "webroot": dict(webroot_row) if webroot_row else None}
+        finally:
+            conn.close()
+
     class HuntBody(BaseModel):
         names: list[str]
 
@@ -1713,10 +1922,26 @@ def create_app(config: Config) -> FastAPI:
         return {"timeline": logindex.timeline_for_ips(case_dir, body.ips)}
 
     @app.get("/api/cases/{slug}/trace.csv", dependencies=[auth])
-    def trace_csv(slug: str, ips: str):
+    def trace_csv(slug: str, ips: str, search: str = "", status: str = "",
+                  method: str = "", sort: str = "time"):
+        """Der Trace als Beleg: ein ZIP aus der CSV und einem Manifest.
+
+        Ein Trace-Export wandert als Beweisstück in Berichte und Übergaben.
+        Zitierfähig ist er erst mit dreierlei: WAS abgefragt wurde (Clients
+        und Filter -- derselbe Export mit anderem Filter ist ein anderes
+        Beweisstück), WIE VIEL herauskam, und einer Prüfsumme, an der jeder
+        Empfänger die Unversehrtheit prüfen kann. In die CSV selbst gehört
+        davon nichts: Kommentarzeilen brechen jeden Import, und eine
+        Prüfsumme IN der Datei kann die Datei nicht belegen.
+
+        Der Export nimmt dieselben Filter wie die Ansicht: was man
+        gefiltert vor sich hat, ist das, was man exportieren will."""
         case_dir = case_dir_or_404(slug)
+        info = workspace.case_info(case_dir)
         wanted = [p.strip() for p in ips.split(",") if p.strip()]
-        result = logindex.trace(case_dir, wanted, limit=200000)
+        result = logindex.trace(case_dir, wanted, limit=200000,
+                                search=search, status=status,
+                                method=method, sort=sort)
         buf = io.StringIO()
         w = csv.writer(buf, lineterminator="\n")
         w.writerow(["Client", "Time", "Method", "URI", "Status", "Size",
@@ -1732,10 +1957,45 @@ def create_app(config: Config) -> FastAPI:
                 uri = "'" + uri
             w.writerow([r["client"], stamp, r["method"], uri, r["status"],
                         r["size"], r["referrer"], r["agent"], r["source"]])
+        csv_bytes = buf.getvalue().encode("utf-8")
+        digest = hashlib.sha256(csv_bytes).hexdigest()
+
+        filters = [f"Clients: {', '.join(wanted)}"]
+        if search.strip():
+            filters.append(f"Suche: {search.strip()}")
+        if status.strip():
+            filters.append(f"Status: {status.strip()}")
+        if method.strip():
+            filters.append(f"Methode: {method.strip()}")
+        filters.append(f"Sortierung: {sort}")
+        truncated = result["total"] > len(result["rows"])
+        manifest = "\n".join([
+            "SHELLHOUND Trace-Export",
+            f"Fall: {info['name']} ({info['slug']})",
+            f"Exportiert: {db.now()}",
+            "",
+            "Abfrage:",
+            *(f"  {line}" for line in filters),
+            "",
+            f"Zeilen: {len(result['rows'])} von {result['total']}"
+            + (" — ABGESCHNITTEN am Export-Limit" if truncated else ""),
+            "Zeiten in der Zeitzone der jeweiligen Logzeile.",
+            "",
+            f"SHA-256 (trace.csv): {digest}",
+            "",
+            "Prüfung:  certutil -hashfile trace.csv SHA256",
+            "     bzw. sha256sum trace.csv",
+        ]) + "\n"
+
+        zbuf = io.BytesIO()
+        with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("trace.csv", csv_bytes)
+            zf.writestr("MANIFEST.txt", manifest)
+        stem = f"trace_{info['slug']}_{len(wanted)}_clients"
         return Response(
-            buf.getvalue(), media_type="text/csv",
-            headers={"Content-Disposition":
-                     f"attachment; filename=trace_{len(wanted)}_clients.csv"})
+            zbuf.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={stem}.zip",
+                     "X-Content-SHA256": digest})
 
     class CollectBody(BaseModel):
         ips: list[str]
@@ -1888,7 +2148,8 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
         stem = f"iocs_{info['slug']}"
         if format == "json":
-            return Response(ioclib.to_json(rows, info["name"], links),
+            return Response(ioclib.to_json(rows, info["name"], links,
+                                           chain=_case_chain(case_dir)),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}.json"})
