@@ -8,6 +8,7 @@ import { formatCount, formatDay, type EvidenceRoot } from '../format'
 import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
 import { CaseChain } from '../components/CaseChain'
+import { GeoBanner } from '../components/GeoBanner'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
@@ -59,6 +60,10 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
           </button>
         </Card>
       )}
+
+      {/* Wie das Evidence-Banner: sichtbar, solange etwas fehlt, weg,
+          sobald es erledigt ist. */}
+      <GeoBanner />
 
       {data.jobs_running.length > 0 && (
         <Card className="px-4 py-3 animate-fade-up">

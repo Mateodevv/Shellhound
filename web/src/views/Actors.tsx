@@ -27,7 +27,6 @@ import { InfoDot, Tooltip } from '../components/Tooltip'
 import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
 import { Sparkline } from '../components/Sparkline'
 import { IpFlag } from '../components/IpFlag'
-import { GeoHint } from '../components/GeoHint'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
@@ -150,9 +149,6 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       </div>
 
-      {/* Warum hier: die Actors-Liste ist die Ansicht, in der die fehlenden
-          Flaggen als Erstes auffallen würden. */}
-      <GeoHint />
 
       {checked.size > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
