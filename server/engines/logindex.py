@@ -626,6 +626,15 @@ def _flag_condition(flag):
     if flag == "probes":
         return ("(sqli_attempts > 0 OR traversal_attempts > 0 "
                 "OR upload_php_attempts > 0)", [])
+    if flag == "quiet":
+        # "Unauffällig" ist genau das Gegenteil dessen, was in der Liste ein
+        # Abzeichen erzeugt -- die Bedingung spiegelt actorBadges() in der
+        # Oberfläche, damit „unauffällig ausblenden" exakt die Zeilen
+        # entfernt, an denen „unauffällig" steht.
+        return ("NOT ((login_redirects > 0 AND login_posts >= "
+                f"{BF_THRESHOLD}) OR upload_php_ok > 0 OR login_posts >= "
+                f"{BF_THRESHOLD} OR scanner_uas != '[]' OR sqli_ok > 0 "
+                "OR sqli_attempts > 0 OR traversal_ok > 0)", [])
     return None, []
 
 
@@ -669,15 +678,18 @@ def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
         if ids:
             marks = ",".join("?" * len(ids))
             for r in conn.execute(
-                    f"SELECT ip_id, kind, severity, detail FROM alerts "
+                    f"SELECT ip_id, kind, severity, detail, example FROM alerts "
                     f"WHERE ip_id IN ({marks})", ids):
                 # Same normalisation as the filter: the KIND decides, so an
                 # index from an earlier version does not show a scanner
                 # sighting in warning colours.
                 sev = 3 if r["kind"] in INFO_ALERT_KINDS else r["severity"]
+                # `example` reist mit: es ist die URI, DIE DEN ALARM AUSGELÖST
+                # hat, und der Trace kann sie damit rot markieren -- sonst
+                # sucht man die auslösende Zeile unter tausenden von Hand.
                 alerts_by_ip.setdefault(r["ip_id"], []).append(
                     {"kind": r["kind"], "severity": sev,
-                     "detail": r["detail"]})
+                     "detail": r["detail"], "example": r["example"] or ""})
         for r in rows:
             r["alerts"] = alerts_by_ip.get(r["ip_id"], [])
         return {"total": total, "actors": rows}

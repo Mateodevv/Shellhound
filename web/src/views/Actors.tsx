@@ -36,6 +36,7 @@ import type { ViewId } from '../App'
 // durch die Grundgesamtheit: Scanner weg, Brute-Force weg — was übrig
 // bleibt, ist das, was noch keine Regel benannt hat.
 const FLAGS = [
+  { id: 'quiet', label: 'Unauffällig', hint: 'Clients ohne jedes Abzeichen — ganz normale Besucher. Ausblenden lässt genau die übrig, an denen etwas dran ist.' },
   { id: 'alerted', label: 'Auffällig', hint: 'Clients, bei denen etwas mit DIESEM System passiert ist — Shell-Zugriff, Brute-Force, erfolgreiche Angriffsmuster. Reine Scanner-Besuche zählen hier nicht mit.' },
   { id: 'scanner', label: 'Scanner', hint: 'Clients, die sich als Scan-Werkzeug ausgegeben haben. Passiert jedem Server rund um die Uhr.' },
   { id: 'bruteforce', label: 'Brute-Force', hint: 'Clients mit vielen Login-Versuchen.' },
@@ -66,6 +67,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [sort, setSort] = useState('requests')
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  // Die URIs, die bei DIESEN Clients den Alarm ausgelöst haben — der Trace
+  // markiert sie rot, damit man die auslösende Zeile nicht sucht.
+  const [traceMarks, setTraceMarks] = useState<string[]>([])
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
 
@@ -145,7 +149,12 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       {checked.size > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">{checked.size} ausgewählt</span>
-          <Button variant="primary" onClick={() => setTraceIps([...checked])}>
+          <Button variant="primary"
+            onClick={() => {
+              setTraceMarks(actors.filter((a) => checked.has(a.ip))
+                .flatMap((a) => a.alerts.map((al) => al.example)).filter(Boolean))
+              setTraceIps([...checked])
+            }}>
             <Crosshair size={14} /> Trace ({checked.size} Clients)
           </Button>
           <Tooltip hint="Übernimmt die Adressen als Indikatoren — getaggt mit dem, was die Logs sie tun gesehen haben (Scanner, Brute-Force, erfolgreich).">
@@ -261,7 +270,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                           </Button>
                         </Tooltip>
                       )}
-                      <Button variant="ghost" onClick={() => setTraceIps([a.ip])}>
+                      <Button variant="ghost"
+                        onClick={() => {
+                          setTraceMarks(a.alerts.map((al) => al.example).filter(Boolean))
+                          setTraceIps([a.ip])
+                        }}>
                         <Crosshair size={13} /> Trace
                       </Button>
                     </div>
@@ -299,6 +312,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       />
 
       <TraceWindow slug={slug} ips={traceIps} layer={1}
+        highlight={traceMarks}
+        highlightReason="dieser Aufruf hat den Alarm ausgelöst"
         onClose={() => setTraceIps(null)} />
 
       <FileViewer

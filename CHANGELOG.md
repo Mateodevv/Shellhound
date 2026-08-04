@@ -35,8 +35,33 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   zählt nur einstimmig), damit auch per-Finding triagierte Altfälle lesbar
   bleiben.
 
+### Geändert
+
+- **IOC-Pfade sind fallrelativ statt absolut** (`webroot/images/shell.php`
+  statt `D:/Arbeit/real-world-data/…/webroot/images/shell.php`). Der absolute
+  Pfad beschreibt, wo die *Kopie* auf der Forensik-Maschine liegt — eine
+  Angabe, die in einem Bericht niemandem hilft, auf einem anderen Rechner
+  falsch ist und beim Export die eigene Verzeichnisstruktur mit hinausträgt.
+  Der Name der Evidence-Wurzel bleibt enthalten, weil er sagt, um welche
+  Evidence es geht. Gilt für die Bestätigungs-Kette *und* das manuelle
+  Flaggen; **auch die Herkunft trägt keinen absoluten Pfad mehr**, und
+  bestehende Einträge werden beim Öffnen des Falls mitgezogen (Konflikte
+  bleiben unangetastet).
+- **Reihenfolge im Menü:** IOC Box → Database → CMS Inventory → Dateien →
+  Evidence & Jobs.
+
 ### Hinzugefügt
 
+- **Actors: „Unauffällig" ausblenden.** Der Chip entfernt genau die Zeilen,
+  an denen „unauffällig" steht — die Bedingung spiegelt exakt die Regeln, die
+  ein Abzeichen erzeugen. Übrig bleibt, woran etwas dran ist.
+- **Der Trace markiert die auslösende Zeile rot.** Aus Actors sind das die
+  Beispiel-URIs der Alarme, aus der Muster-Jagd die tatsächlich getroffenen
+  URLs; eine Legende sagt, was markiert ist und warum. Ohne das sucht man
+  den einen Aufruf, um den es geht, unter tausenden von Hand — im Testfall
+  6 markierte Zeilen unter 56.
+- **Einzelne Treffer-Adressen in die IOC Box**: neben dem Sammelknopf steht
+  der Knopf jetzt auch an jeder Client-Zeile der Muster-Ergebnisse.
 - **Dateien** (neuer Menüpunkt): durch die registrierte Evidence klicken und
   markieren, was den Regeln entgangen ist — die Datei, die am falschen Ort
   liegt, deren Name nicht passt, deren Änderungsdatum in die Nacht des

@@ -160,7 +160,13 @@ export interface FindingsResponse {
   roots: { kind: string; path: string; label: string }[]
 }
 
-export interface ActorAlert { kind: string; severity: number; detail: string }
+export interface ActorAlert {
+  kind: string
+  severity: number
+  detail: string
+  /** Die URI, die den Alarm ausgelöst hat — der Trace markiert sie rot. */
+  example: string
+}
 
 export interface Actor {
   ip_id: number
@@ -407,6 +413,9 @@ export interface PickPath {
 export interface BrowseFile {
   name: string
   path: string
+  /** Pfad relativ zur Evidence-Wurzel (inkl. deren Ordnername) — die Form,
+   *  in der die IOC Box ihn führt. */
+  relative: string
   size: number
   in_box: boolean
   flagged: number

@@ -250,6 +250,31 @@ def _migrate(conn):
         "UPDATE findings SET severity = ? "
         "WHERE source = 'logs' AND rule LIKE 'Scanner tool User-Agent%' "
         "AND severity != ?", (SEV_INFO, SEV_INFO))
+    _relativize_ioc_paths(conn)
+
+
+def _relativize_ioc_paths(conn):
+    """Pfad-IOCs aus früheren Läufen auf die fallrelative Form bringen.
+
+    Ein Fall soll nicht halb absolute, halb relative Pfade führen. Läuft
+    idempotent (ein bereits relativer Pfad passt auf keine Wurzel mehr) und
+    weicht jedem Konflikt aus: existiert der Zielwert schon, bleibt der alte
+    Eintrag, wie er ist -- ein Datenverlust wäre schlimmer als zwei
+    Schreibweisen."""
+    try:
+        rows = conn.execute(
+            "SELECT id, value FROM iocs WHERE type = 'path'").fetchall()
+    except Exception:
+        return
+    for ioc_id, value in rows:
+        relative = case_relative_path(conn, value)
+        if relative == value:
+            continue
+        exists = conn.execute("SELECT 1 FROM iocs WHERE value = ?",
+                              (relative,)).fetchone()
+        if exists:
+            continue
+        conn.execute("UPDATE iocs SET value = ? WHERE id = ?", (relative, ioc_id))
 
 
 def connect(case_dir):
@@ -296,6 +321,45 @@ def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
         (fp, source, int(severity), rule, artifact_kind, artifact, line,
          evidence, ts, ts))
     return fp
+
+
+def _norm(path):
+    return str(path).replace("\\", "/").rstrip("/")
+
+
+def evidence_bases(conn):
+    """Je registrierter Evidence-Wurzel: (Wurzel, Basis).
+
+    Die BASIS ist der Ordner ÜBER der Wurzel -- so bleibt deren eigener Name
+    im relativen Pfad stehen (`webroot/images/shell.php`, nicht
+    `images/shell.php`). Der Ordnername sagt, um welche Evidence es geht,
+    und bei zwei Webroots im selben Fall ist er der Unterschied."""
+    out = []
+    for row in conn.execute("SELECT path FROM evidence"):
+        root = _norm(row[0])
+        if not root:
+            continue
+        base = root.rsplit("/", 1)[0] if "/" in root else ""
+        out.append((root, base))
+    # Längste Wurzel zuerst: liegt ein Webroot IN einem anderen Pfad, gewinnt
+    # der spezifischere.
+    return sorted(out, key=lambda p: -len(p[0]))
+
+
+def case_relative_path(conn, path):
+    """`webroot/images/shell.php` statt `D:/Arbeit/Kopien/webroot/images/…`.
+
+    Der absolute Pfad beschreibt, wo die KOPIE auf dem Rechner des Analysten
+    liegt -- eine Angabe, die in einem Bericht niemandem hilft und die auf
+    einem anderen Rechner falsch ist. Relevant ist, wo die Datei im Webroot
+    lag. Passt keine Evidence-Wurzel, bleibt der Wert unverändert: lieber ein
+    absoluter Pfad als ein erfundener."""
+    norm = _norm(path)
+    low = norm.lower()
+    for root, base in evidence_bases(conn):
+        if low == root.lower() or low.startswith(root.lower() + "/"):
+            return norm[len(base) + 1:] if base else norm
+    return str(path)
 
 
 def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
