@@ -26,6 +26,7 @@ import {
 } from '../format'
 import { Button, CopyButton, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
+import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
 import { FIELD_EXPLAIN, explainRule } from '../explain'
 
@@ -386,6 +387,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                   {ips.map((h) => (
                     <div key={h.ip}
                       className="flex items-center gap-2 rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
+                      <IpFlag ip={h.ip} />
                       <span className="mono font-medium">{h.ip}</span>
                       {h.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
                       <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--muted)]"

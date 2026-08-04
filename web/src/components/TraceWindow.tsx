@@ -22,6 +22,7 @@ import { downloadUrl, post, type TraceRow } from '../api'
 import { formatCount, formatLogTime } from '../format'
 import { Button, Modal, SearchInput } from './ui'
 import { Tooltip } from './Tooltip'
+import { IpFlag } from './IpFlag'
 import { TimelineChart, type TimelinePoint } from './TimelineChart'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
@@ -123,7 +124,9 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
     <Modal open onClose={onClose} layer={layer}
       title={<span className="flex items-center gap-2">
         <Crosshair size={16} className="text-[var(--accent)]" />
-        Trace: {ips.length === 1 ? ips[0] : `${ips.length} Clients`}
+        Trace: {ips.length === 1
+          ? <span className="inline-flex items-center gap-1.5"><IpFlag ip={ips[0]} />{ips[0]}</span>
+          : `${ips.length} Clients`}
         {data && <span className="text-[12px] font-normal text-[var(--muted)]">
           {formatCount(data.total)} Requests {isFetching && '· lädt…'}
         </span>}

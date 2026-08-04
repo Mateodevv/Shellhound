@@ -5,6 +5,30 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Hinzugefügt — Länderflaggen an IP-Adressen
+
+Jede IP in Actors, Muster-Jagd, IOC Box, Trace, Artefakt-Fenster und
+Chronologie trägt ihre Länderflagge — mit einem Tooltip, der sagt, was
+GeoIP ist: **eine Schätzung der Registrierung, kein Aufenthaltsort.**
+VPNs, Proxys, Tor und Botnetz-Knoten stehen woanders.
+
+- **Vollständig offline.** Gelesen wird eine lokale MMDB aus dem Workspace
+  (`SHELLHOUND_GEOIP` oder `*.mmdb` im Workspace-Ordner). Fall-IPs verlassen
+  den Rechner nie.
+- **Ein Klick zur Datenbank:** fehlt sie, bietet die Actors-Ansicht an, die
+  frei lizenzierte **DB-IP Country Lite** (CC BY 4.0, ~8 MB) zu laden — der
+  einzige Netz-Kontakt des ganzen Werkzeugs, nur auf diesen Klick, und es
+  gehen dabei keine Falldaten hinaus. Alternativ eine GeoLite2-Country.mmdb
+  von Hand hineinlegen.
+- **Sonderbereiche kommen ohne Datenbank:** private Netze (RFC 1918),
+  Loopback, Dokumentations-Bereiche tragen ein gestricheltes Kürzel statt
+  einer Flagge — im Log ist „die Quell-IP ist privat" oft die wichtigere
+  Aussage als jedes Land (Proxy davor oder Verkehr aus dem eigenen Netz).
+- Flaggen sind lokal gebündelte SVGs (flag-icons, MIT): Windows rendert
+  Flaggen-Emojis nicht, und ein Forensik-Werkzeug lädt nichts von CDNs.
+- Abfragen laufen gebündelt (ein Batch je Ansicht) gegen `POST /api/geo`,
+  mit modulweitem Cache.
+
 ### Hinzugefügt — Webroot-Diff gegen eine Referenzkopie
 
 Die klassische Handarbeit nach jedem Webserver-Vorfall, als Abfrage: das
