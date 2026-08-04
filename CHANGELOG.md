@@ -52,6 +52,23 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 
 ### Hinzugefügt
 
+- **Beispiel-Fall zum Ausprobieren** (`tools/sample_case.py`): baut einen
+  vollständigen erfundenen Fall — WordPress + Joomla im Webroot, zwei Wochen
+  Access-Logs, ein Datenbank-Export — und lässt die **normalen Engines**
+  darüber laufen. Nichts wird in die Datenbank geschrieben, was die Erkennung
+  nicht selbst gefunden hat; das Beispiel ist damit zugleich ein
+  End-to-End-Test. Der Fall erzählt eine Geschichte (Abklopfen → Shell
+  abgelegt → benutzt, daneben Brute-Force und normaler Verkehr), sodass jede
+  Ansicht etwas zu zeigen hat, und druckt am Ende einen Rundgang.
+  Alle Adressen stammen aus den Dokumentations-Bereichen (RFC 5737), Domains
+  enden auf `.test`, und die »Webshells« sind die kürzestmöglichen
+  Prüfmuster — kein funktionsfähiges Werkzeug.
+- In [`docs/rules.md`](docs/rules.md) dokumentiert, dass „could not be read"
+  in der Praxis meist der **Virenscanner der Analyse-Maschine** ist: er
+  blockiert den Zugriff auf genau die eindeutigsten Funde. Der Generator
+  prüft seine eigenen Dateien nach dem Schreiben und sagt es, statt still
+  einen halben Fall zu bauen.
+
 - **Actors: „Unauffällig" ausblenden.** Der Chip entfernt genau die Zeilen,
   an denen „unauffällig" steht — die Bedingung spiegelt exakt die Regeln, die
   ein Abzeichen erzeugen. Übrig bleibt, woran etwas dran ist.

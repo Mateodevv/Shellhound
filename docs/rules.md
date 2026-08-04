@@ -140,6 +140,14 @@ Uploads, die an einer Bildprüfung vorbeigeschmuggelt wurden.
 **Warum es zählt:** Ein nicht geprüfter Fund wird gemeldet statt verschwiegen.
 Rechte prüfen und erneut sichern.
 
+**Häufigste Ursache in der Praxis:** der **Virenscanner der Analyse-Maschine**.
+Er greift beim ZUGRIFF ein, nicht beim Kopieren — die Datei liegt also im
+Webroot-Abbild, lässt sich aber nicht öffnen (unter Windows Defender als
+`[Errno 22] Invalid argument`), oder verschwindet in die Quarantäne. Betroffen
+sind ausgerechnet die eindeutigsten Funde, etwa `eval()` auf Request-Eingaben.
+Wer eine echte Webroot-Kopie untersucht, nimmt den Evidence-Ordner deshalb von
+der Echtzeitprüfung aus — sonst fehlt genau das, wonach man sucht.
+
 ### PHP in writable upload directory (too large to inspect) — HIGH
 
 **Auslöser:** PHP im Upload-Verzeichnis, größer als 5 MB.
