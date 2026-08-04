@@ -11,6 +11,7 @@ import {
   Button, Chip, Card, CopyButton, EmptyState, IocTag, SearchInput,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
+import { IpFlag } from '../components/IpFlag'
 import { IOC_TYPE_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
@@ -216,8 +217,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-              <span className="mono min-w-0 flex-1 truncate text-[13px]" title={ioc.value}>
-                {ioc.value}
+              <span className="mono flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px]" title={ioc.value}>
+                {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
+                <span className="min-w-0 truncate">{ioc.value}</span>
               </span>
               {/* Der Wert wandert von hier in ein Ticket, eine Firewall-Regel
                   oder eine Suchmaske. Abtippen wäre bei einem SHA-256 eine

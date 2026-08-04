@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import db, iocs as ioclib, patterns as patternlib, workspace
+from server import db, geoip, iocs as ioclib, patterns as patternlib, workspace
 from server.config import Config
 from server.engines import (cmsinventory, detect, logindex, sqldump,
                             webrootdiff, webshell)
@@ -276,6 +276,35 @@ def create_app(config: Config) -> FastAPI:
             return {"ok": True}
         finally:
             conn.close()
+
+    class GeoBody(BaseModel):
+        ips: list[str]
+
+    @app.post("/api/geo", dependencies=[auth])
+    def geo(body: GeoBody):
+        """Länder zu IPs, gebündelt -- OFFLINE aus der Workspace-MMDB.
+
+        Fallunabhängig: die Zuordnung einer Adresse hängt nicht am Fall.
+        Sonderbereiche (privat, Loopback, Dokumentation) kommen auch OHNE
+        Datenbank -- das weiß die Standardbibliothek, und im Log ist »die
+        Quell-IP ist privat« oft die wichtigere Aussage als jedes Land."""
+        out = {}
+        for ip in list(dict.fromkeys(body.ips))[:500]:
+            info = geoip.lookup(config.workspace, ip)
+            if info is not None:
+                out[ip] = info
+        return {**geoip.status(config.workspace), "results": out}
+
+    @app.post("/api/geo/download", dependencies=[auth])
+    def geo_download():
+        """Die DB-IP Country Lite in den Workspace laden -- die EINZIGE
+        Stelle, an der dieses Werkzeug nach draußen spricht, und nur auf
+        expliziten Klick. Es gehen keine Falldaten hinaus: der Request ist
+        ein einzelner Datei-Download von download.db-ip.com."""
+        result = geoip.download(config.workspace)
+        if not result.get("ok"):
+            raise HTTPException(502, result.get("error", "Download fehlgeschlagen"))
+        return result
 
     class DetectBody(BaseModel):
         folder: str

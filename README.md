@@ -71,9 +71,14 @@ kein funktionsfähiges Werkzeug.
    die genau diese Datei mit 2xx geladen haben, werden mitentschieden (mit
    Vermerk und Rückgängig); wer sie nur erfolglos angefragt hat, wird
    vorgeschlagen statt entschieden. Dasselbe in der Gegenrichtung.
-4. **Actors**: jeder Client mit Sparkline und Verhalten (Scanner, Brute-Force,
-   Shell-Zugriff 2xx). Beliebig viele Clients markieren → kombinierter Trace
-   in Millisekunden, Export als CSV.
+4. **Actors**: jeder Client mit Sparkline, Verhalten (Scanner, Brute-Force,
+   Shell-Zugriff 2xx) und **Länderflagge** — offline aus einer lokalen
+   GeoIP-Datenbank (ein Klick lädt die freie DB-IP Country Lite, CC BY 4.0,
+   in den Workspace; alternativ eine GeoLite2-Country.mmdb hineinlegen oder
+   `SHELLHOUND_GEOIP` setzen — Fall-IPs verlassen den Rechner nie). Private
+   und reservierte Bereiche tragen ein Kürzel statt einer Flagge. Beliebig
+   viele Clients markieren → kombinierter Trace in Millisekunden, Export als
+   CSV.
 5. **Muster-Jagd**: eigene URL-Muster hinterlegen (die Aufrufe eines bekannten
    Exploits) — das Werkzeug sagt, wer sie abgerufen hat, und schreibt Treffer
    als Findings auf den Client. Über jedem Ergebnis stehen die Kennzahlen der

@@ -26,6 +26,8 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
 import { Sparkline } from '../components/Sparkline'
+import { IpFlag } from '../components/IpFlag'
+import { GeoHint } from '../components/GeoHint'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
@@ -148,6 +150,10 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       </div>
 
+      {/* Warum hier: die Actors-Liste ist die Ansicht, in der die fehlenden
+          Flaggen als Erstes auffallen würden. */}
+      <GeoHint />
+
       {checked.size > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">{checked.size} ausgewählt</span>
@@ -226,6 +232,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   </td>
                   <td className="px-2 py-2">
                     <div className="flex items-center gap-2">
+                      <IpFlag ip={a.ip} />
                       <span className="mono font-medium">{a.ip}</span>
                       {a.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
                       {/* Was in Findings entschieden wurde, gilt auch hier —

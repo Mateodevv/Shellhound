@@ -25,6 +25,7 @@ import {
   Button, Card, EmptyState, SeverityBadge, Tag,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
+import { IpFlag } from '../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FIELD_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
@@ -590,7 +591,10 @@ function ResultCard({ slug, result, onTrace }: {
             <tr key={c.ip}
               className="group border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]">
               <td className="px-4 py-1.5">
-                <span className="mono font-medium">{c.ip}</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <IpFlag ip={c.ip} />
+                  <span className="mono font-medium">{c.ip}</span>
+                </span>
                 {c.ok_hits > 0 && (
                   <Tag tone="danger"
                     hint="Der Server hat auf diesen Aufruf mit Erfolg geantwortet — nicht nur ein Versuch ins Leere.">

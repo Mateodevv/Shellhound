@@ -2,3 +2,7 @@
 # (main.py + core/ + modules/) stays stdlib-only and does not need these.
 fastapi>=0.115
 uvicorn[standard]>=0.30
+# Länderzuordnung für IPs — liest eine LOKALE MMDB aus dem Workspace
+# (DB-IP Lite per Knopf in der Oberfläche oder GeoLite2 von Hand).
+# Ohne das Paket läuft alles, nur ohne Flaggen.
+maxminddb>=2.5

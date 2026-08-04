@@ -21,6 +21,7 @@ import { api, post, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
 import { Button, Card, Collapsible, SeverityBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
+import { IpFlag } from './IpFlag'
 
 const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   erstkontakt: DoorOpen,
@@ -190,6 +191,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                 </Tooltip>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
+                    {e.ip && <IpFlag ip={e.ip} />}
                     <span className="text-[13px] font-medium">{e.title}</span>
                     {e.severity != null && e.severity <= 1 && (
                       <SeverityBadge severity={e.severity} />
