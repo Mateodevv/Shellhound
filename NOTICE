@@ -1,0 +1,49 @@
+SHELLHOUND
+Copyright 2026 SHELLHOUND contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+================================================================================
+Third-party components
+================================================================================
+
+BUNDLED IN THE BUILT FRONTEND (web/dist)
+----------------------------------------
+
+  react, react-dom .............. MIT      https://react.dev
+  @tanstack/react-query ......... MIT      https://tanstack.com/query
+  @tanstack/react-virtual ....... MIT      https://tanstack.com/virtual
+  recharts ...................... MIT      https://recharts.org
+  lucide-react .................. ISC      https://lucide.dev
+  clsx .......................... MIT      https://github.com/lukeed/clsx
+  tailwindcss ................... MIT      https://tailwindcss.com
+  flag-icons .................... MIT      https://flagicons.lipis.dev
+      The country flag SVGs shown next to IP addresses.
+
+PYTHON RUNTIME DEPENDENCIES
+---------------------------
+
+  fastapi ....................... MIT      https://fastapi.tiangolo.com
+  uvicorn ....................... BSD-3    https://www.uvicorn.org
+  maxminddb ..................... Apache-2.0
+      Reads the local GeoIP database. Optional: without it everything
+      works, only the country flags are missing.
+
+DATA NOT SHIPPED WITH THIS SOFTWARE
+-----------------------------------
+
+  DB-IP Country Lite ............ CC BY 4.0
+      https://db-ip.com/db/download/ip-to-country-lite
+      SHELLHOUND can download this database into your workspace on an
+      explicit click. It is NOT redistributed as part of this repository.
+      If you publish results derived from it, DB-IP asks for attribution:
+      "IP Geolocation by DB-IP" with a link to https://db-ip.com.
+
+  MaxMind GeoLite2-Country ...... alternative, requires a MaxMind account
+      https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+      Supported as a drop-in alternative; not downloaded automatically and
+      not redistributed here.
+
+No sample data in this repository is taken from a real incident. The
+example case (tools/sample_case.py) uses documentation-reserved addresses
+(RFC 5737), .test domains (RFC 6761) and minimal detection-test files.
