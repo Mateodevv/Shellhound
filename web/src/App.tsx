@@ -3,8 +3,8 @@ import { useMemo, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, Box, Bug, Database, FolderCog, LayoutDashboard,
-  Puzzle, Radar, Users,
+  Activity, ArrowLeft, Box, Bug, Database, FolderCog, FolderTree,
+  LayoutDashboard, Puzzle, Radar, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
@@ -16,6 +16,7 @@ import { Evidence } from './views/Evidence'
 import { Findings } from './views/Findings'
 import { Actors } from './views/Actors'
 import { Hunt } from './views/Hunt'
+import { Files } from './views/Files'
 import { IocBox } from './views/IocBox'
 import { Cms } from './views/Cms'
 import { DatabaseView } from './views/Database'
@@ -25,8 +26,8 @@ const qc = new QueryClient({
 })
 
 export type ViewId =
-  | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'cms' | 'database'
-  | 'evidence'
+  | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
+  | 'database' | 'evidence'
 
 const NAV: { id: ViewId; label: string; icon: typeof Bug }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,6 +35,7 @@ const NAV: { id: ViewId; label: string; icon: typeof Bug }[] = [
   { id: 'actors', label: 'Actors', icon: Users },
   { id: 'hunt', label: 'Muster-Jagd', icon: Radar },
   { id: 'iocbox', label: 'IOC Box', icon: Box },
+  { id: 'files', label: 'Dateien', icon: FolderTree },
   { id: 'cms', label: 'CMS Inventory', icon: Puzzle },
   { id: 'database', label: 'Database', icon: Database },
   { id: 'evidence', label: 'Evidence & Jobs', icon: FolderCog },
@@ -133,6 +135,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           {view === 'actors' && <Actors {...props} />}
           {view === 'hunt' && <Hunt {...props} />}
           {view === 'iocbox' && <IocBox {...props} />}
+          {view === 'files' && <Files {...props} />}
           {view === 'cms' && <Cms {...props} />}
           {view === 'database' && <DatabaseView {...props} />}
           {view === 'evidence' && <Evidence {...props} onClosed={onBack} />}

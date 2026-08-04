@@ -37,6 +37,26 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 
 ### Hinzugefügt
 
+- **Dateien** (neuer Menüpunkt): durch die registrierte Evidence klicken und
+  markieren, was den Regeln entgangen ist — die Datei, die am falschen Ort
+  liegt, deren Name nicht passt, deren Änderungsdatum in die Nacht des
+  Vorfalls fällt. Aufgenommen wird **Pfad und SHA-256**: der Pfad sagt, wo
+  etwas auf diesem Server lag, der Hash erkennt dieselbe Datei überall
+  wieder. Einzeln oder gesammelt, mit Notiz. Jeder Eintrag zeigt gleich, was
+  der Fall über ihn schon weiß (Findings, bereits in der IOC Box), damit man
+  nicht von Hand markiert, was längst erfasst ist. Man beginnt bei den
+  Evidence-Wurzeln, und tiefer geht es nur innerhalb davon — dieselbe
+  Schranke wie beim Datei-Viewer, auf dem *aufgelösten* Pfad.
+- **Der Pfad-Dialog zeigt Dateien**, nicht nur Ordner — mit Größe und direkt
+  auswählbar. Nicht jede Evidence ist ein Ordner: ein SQL-Dump ist eine
+  einzelne Datei, und wer sie nicht sieht, kann sie nicht registrieren.
+- **Muster lassen sich nachträglich bearbeiten** (Pfad, Name, Notiz). Die
+  Änderung gilt für alle Fälle; bereits geschriebene Findings bleiben stehen
+  — sie halten fest, was zum Zeitpunkt der Suche galt.
+- **Treffer-Adressen gesammelt in die IOC Box**: ein Knopf je Muster-Ergebnis
+  übernimmt alle gefundenen Clients, mit dem Muster als Herkunft — „hat den
+  Exploit-Pfad abgerufen" ist die Angabe, die im Bericht zählt, nicht „aus
+  einer Liste eingesammelt".
 - **Der Verlauf zeigt jetzt drei Reihen:** Balken für alle Anfragen, dazu
   Kurven für die **beantworteten (2xx)** und die **abgewiesenen (4xx/5xx)**.
   Die Gesamtzahl sagt, wie viel los war; das Verhältnis sagt, *was* los war —

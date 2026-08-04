@@ -396,6 +396,31 @@ export interface PickPath {
   path: string
   parent: string | null
   dirs: { name: string; path: string }[]
+  /** Dateien im Verzeichnis — nicht jede Evidence ist ein Ordner: ein
+   *  SQL-Dump ist eine einzelne Datei. */
+  files: { name: string; path: string; size: number }[]
+  truncated: boolean
+}
+
+/** Ein Eintrag im Evidence-Browser, angereichert um das, was der Fall über
+ *  ihn schon weiß. */
+export interface BrowseFile {
+  name: string
+  path: string
+  size: number
+  in_box: boolean
+  flagged: number
+  worst: number | null
+  triage: TriageState | null
+}
+
+export interface BrowseResponse {
+  path: string
+  parent: string | null
+  roots: { kind: string; path: string; label: string }[]
+  dirs: { name: string; path: string }[]
+  files: BrowseFile[]
+  truncated: boolean
 }
 
 export interface DetectResult {
