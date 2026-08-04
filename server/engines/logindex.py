@@ -638,6 +638,64 @@ def _flag_condition(flag):
     return None, []
 
 
+# SQLite bindet nur eine begrenzte Zahl von Variablen pro Anweisung (999 in
+# älteren Builds). Eine IN-Liste, deren Länge von den DATEN abhängt statt von
+# einer Auswahl, läuft damit irgendwann in "too many SQL variables" -- auf
+# einem Testfall nie, auf einem echten mit zehntausenden Adressen sofort.
+_VAR_CHUNK = 500
+
+
+def _alerts_by_ip(conn, ip_ids):
+    """Die Alarme zu diesen Clients, stückweise abgefragt.
+
+    Die Normalisierung steht hier und nicht bei den Aufrufern: der KIND
+    entscheidet über den Schweregrad, damit ein Index aus einer früheren
+    Version eine Scanner-Sichtung nicht in Warnfarben zeigt.
+
+    `example` reist mit: es ist die URI, DIE DEN ALARM AUSGELÖST hat, und der
+    Trace kann sie damit rot markieren -- sonst sucht man die auslösende
+    Zeile unter tausenden von Hand."""
+    out = {}
+    for chunk in _chunks(list(ip_ids), _VAR_CHUNK):
+        marks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+                f"SELECT ip_id, kind, severity, detail, example FROM alerts "
+                f"WHERE ip_id IN ({marks})", chunk):
+            sev = 3 if r["kind"] in INFO_ALERT_KINDS else r["severity"]
+            out.setdefault(r["ip_id"], []).append(
+                {"kind": r["kind"], "severity": sev,
+                 "detail": r["detail"], "example": r["example"] or ""})
+    return out
+
+
+def actors_by_ip(case_dir, ips):
+    """Die Actor-Zeilen zu GENAU diesen Adressen.
+
+    Wer nur ein paar ausgewählte Clients nachschlagen will, hat vorher die
+    ganze Tabelle geholt und darin gesucht. Auf einem echten Fall sind das
+    zehntausende Zeilen für eine Handvoll Treffer -- und die Alarm-Abfrage
+    darüber sprengte SQLites Variablen-Limit."""
+    wanted = [w for w in dict.fromkeys(str(i).strip() for i in ips) if w]
+    conn = _open_ro(case_dir)
+    if conn is None or not wanted:
+        if conn is not None:
+            conn.close()
+        return {}
+    try:
+        out = {}
+        for chunk in _chunks(wanted, _VAR_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                    f"SELECT * FROM actors WHERE ip IN ({marks})", chunk):
+                out[r["ip"]] = dict(r)
+        alerts = _alerts_by_ip(conn, [r["ip_id"] for r in out.values()])
+        for r in out.values():
+            r["alerts"] = alerts.get(r["ip_id"], [])
+        return out
+    finally:
+        conn.close()
+
+
 def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
                 limit=200, offset=0):
     """The Actors view: one finished row per client, filter + sort in SQL.
@@ -673,23 +731,7 @@ def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
         rows = [dict(r) for r in conn.execute(
             f"SELECT * FROM actors {clause} ORDER BY {order} LIMIT ? OFFSET ?",
             params + [limit, offset])]
-        ids = [r["ip_id"] for r in rows]
-        alerts_by_ip = {}
-        if ids:
-            marks = ",".join("?" * len(ids))
-            for r in conn.execute(
-                    f"SELECT ip_id, kind, severity, detail, example FROM alerts "
-                    f"WHERE ip_id IN ({marks})", ids):
-                # Same normalisation as the filter: the KIND decides, so an
-                # index from an earlier version does not show a scanner
-                # sighting in warning colours.
-                sev = 3 if r["kind"] in INFO_ALERT_KINDS else r["severity"]
-                # `example` reist mit: es ist die URI, DIE DEN ALARM AUSGELÖST
-                # hat, und der Trace kann sie damit rot markieren -- sonst
-                # sucht man die auslösende Zeile unter tausenden von Hand.
-                alerts_by_ip.setdefault(r["ip_id"], []).append(
-                    {"kind": r["kind"], "severity": sev,
-                     "detail": r["detail"], "example": r["example"] or ""})
+        alerts_by_ip = _alerts_by_ip(conn, [r["ip_id"] for r in rows])
         for r in rows:
             r["alerts"] = alerts_by_ip.get(r["ip_id"], [])
         return {"total": total, "actors": rows}
@@ -710,13 +752,14 @@ def actor_sparklines(case_dir, ip_ids, buckets=48):
             return {"span": None, "series": {}}
         lo, hi = span
         width = max(1, hi - lo + 1)
-        marks = ",".join("?" * len(ip_ids))
         series = {int(i): [0] * buckets for i in ip_ids}
-        for ip_id, hour, n in conn.execute(
-                f"SELECT ip_id, hour, n FROM actor_hours WHERE ip_id IN ({marks})",
-                list(ip_ids)):
-            idx = min(buckets - 1, (hour - lo) * buckets // width)
-            series[int(ip_id)][idx] += n
+        for chunk in _chunks(list(ip_ids), _VAR_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            for ip_id, hour, n in conn.execute(
+                    f"SELECT ip_id, hour, n FROM actor_hours "
+                    f"WHERE ip_id IN ({marks})", chunk):
+                idx = min(buckets - 1, (hour - lo) * buckets // width)
+                series[int(ip_id)][idx] += n
         return {"span": {"from_hour": lo * 3600, "to_hour": (hi + 1) * 3600},
                 "series": series}
     finally:
