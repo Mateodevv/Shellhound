@@ -335,7 +335,11 @@ export interface Dashboard {
     first_epoch: number | null
     last_epoch: number | null
   } | null
-  timeline: { day: string; requests: number; errors: number; new_clients: number }[]
+  timeline: {
+    day: string; requests: number; errors: number; new_clients: number
+    /** Mit 2xx beantwortet; null bei einem Index vor Schema 3. */
+    ok: number | null
+  }[]
 }
 
 export interface CaseSummary {

@@ -1285,6 +1285,10 @@ def create_app(config: Config) -> FastAPI:
         to_epoch: int | None = None
         limit: int = 2000
         offset: int = 0
+        search: str = ""
+        status: str = ""          # 2xx | 3xx | 4xx | 5xx | err
+        method: str = ""
+        sort: str = "time"
 
     @app.post("/api/cases/{slug}/trace", dependencies=[auth])
     def trace(slug: str, body: TraceBody):
@@ -1292,7 +1296,21 @@ def create_app(config: Config) -> FastAPI:
         if not body.ips:
             raise HTTPException(400, "no client addresses given")
         return logindex.trace(case_dir, body.ips, body.from_epoch,
-                              body.to_epoch, min(body.limit, 10000), body.offset)
+                              body.to_epoch, min(body.limit, 10000),
+                              body.offset, body.search, body.status,
+                              body.method, body.sort)
+
+    class TraceTimelineBody(BaseModel):
+        ips: list[str]
+
+    @app.post("/api/cases/{slug}/trace/timeline", dependencies=[auth])
+    def trace_timeline(slug: str, body: TraceTimelineBody):
+        """Der Verlauf DIESER Clients — dieselbe Kurve wie im Dashboard, nur
+        auf die Auswahl eingeschränkt. Bewusst getrennt vom Trace selbst:
+        die Kurve beschreibt den GANZEN Zeitraum, nicht die gerade
+        angezeigte Seite, und darf sich beim Blättern nicht ändern."""
+        case_dir = case_dir_or_404(slug)
+        return {"timeline": logindex.timeline_for_ips(case_dir, body.ips)}
 
     @app.get("/api/cases/{slug}/trace.csv", dependencies=[auth])
     def trace_csv(slug: str, ips: str):

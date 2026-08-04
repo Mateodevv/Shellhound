@@ -37,6 +37,30 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 
 ### Hinzugefügt
 
+- **Der Verlauf zeigt jetzt drei Reihen:** Balken für alle Anfragen, dazu
+  Kurven für die **beantworteten (2xx)** und die **abgewiesenen (4xx/5xx)**.
+  Die Gesamtzahl sagt, wie viel los war; das Verhältnis sagt, *was* los war —
+  500 Anfragen mit 20 Erfolgen sind ein Abklopfen, 500 mit 480 sind Betrieb,
+  und eine Erfolgskurve, die mitten in einer Fehlerwelle nach oben geht, ist
+  der Moment, in dem etwas funktioniert hat, das vorher nicht funktionierte.
+  Dafür führt der Log-Index eine neue Spalte (`days.ok`, Schema 3) — **offene
+  Fälle melden ihren Index als veraltet und wollen einmal neu gebaut werden.**
+  Ohne Neubau fehlt nur die Erfolgskurve, nichts stürzt ab.
+- **Der Trace bringt den Verlauf seiner Auswahl mit** — dieselbe Kurve, nur
+  auf die getracten Clients eingeschränkt. Erst daran sieht man, ob 185
+  Requests über zwei Wochen verteilt sind oder an einem Nachmittag passiert
+  sind. Sie beschreibt immer den ganzen Zeitraum und ändert sich beim
+  Blättern oder Filtern nicht.
+- **Der Trace lässt sich filtern und sortieren:** Suche über URI und
+  User-Agent, Statusklasse (2xx/3xx/4xx/5xx), HTTP-Methode (angeboten werden
+  nur die vorkommenden), Sortierung nach Zeit (vorwärts/rückwärts), Status,
+  Größe oder URI. Beides läuft in SQL über den ganzen Trace — eine Suche, die
+  nur die angezeigten 500 Zeilen durchsucht, hätte alles davor und danach
+  übersehen.
+- Die Diagramme folgen dem **Theme** statt in fest verdrahtetem Blau zu
+  stehen; 2xx trägt die OK-Farbe, Fehler die Warnfarbe — dieselbe Bedeutung
+  wie überall sonst in der Oberfläche.
+
 - **Muster-Jagd** (neuer Menüpunkt): eigene URL-Muster hinterlegen — die
   Aufrufe, die zu einem bekannten Exploit gehören — und das Werkzeug sagt,
   welche Clients sie abgerufen haben. Die Gegenrichtung zum Rest: nicht was

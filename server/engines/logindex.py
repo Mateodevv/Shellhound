@@ -34,7 +34,8 @@ from server.engines import accesslog
 from server.engines.fsutil import (get_files_recursive, is_compressed,
                                    is_scannable_text, open_text_auto)
 
-SCHEMA_VERSION = "2"
+# 3: days.ok (mit 2xx beantwortete Anfragen je Tag) für die Verlaufskurven.
+SCHEMA_VERSION = "3"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -111,7 +112,11 @@ CREATE TABLE alerts (
     detail TEXT, example TEXT DEFAULT ''
 );
 CREATE TABLE days (
-    day TEXT PRIMARY KEY, requests INTEGER, errors INTEGER, new_clients INTEGER
+    day TEXT PRIMARY KEY, requests INTEGER, errors INTEGER, new_clients INTEGER,
+    -- Mit 2xx beantwortet. Getrennt von `requests`, weil erst das Verhältnis
+    -- etwas sagt: 500 Anfragen mit 20 Erfolgen sind ein Abklopfen, 500 mit
+    -- 480 Erfolgen sind Betrieb.
+    ok INTEGER
 );
 """
 
@@ -358,10 +363,13 @@ def build(case_dir, targets, ctx=None):
                             day = (epoch + tz) // 86400
                             d = days.get(day)
                             if d is None:
-                                d = days[day] = [0, 0, 0]
+                                # [requests, errors, new_clients, ok]
+                                d = days[day] = [0, 0, 0, 0]
                             d[0] += 1
                             if status >= 400:
                                 d[1] += 1
+                            elif 200 <= status <= 299:
+                                d[3] += 1
 
                         chars += len(line)
                         if len(batch) >= _BATCH:
@@ -435,8 +443,8 @@ def build(case_dir, targets, ctx=None):
             "INSERT INTO actor_hours VALUES (?,?,?)",
             ((ip_id, hour, n) for (ip_id, hour), n in hours.items()))
         conn.executemany(
-            "INSERT INTO days VALUES (?,?,?,?)",
-            ((_day_iso(day), v[0], v[1], v[2])
+            "INSERT INTO days VALUES (?,?,?,?,?)",
+            ((_day_iso(day), v[0], v[1], v[2], v[3])
              for day, v in sorted(days.items())))
 
         # --- alerts (outcome-gated, see module docstring) ----------------
@@ -738,17 +746,42 @@ def actor_profile(case_dir, ip):
         conn.close()
 
 
+# Sortierungen des Trace. Der Zeitverlauf ist die Voreinstellung, weil ein
+# Trace eine GESCHICHTE ist -- die anderen Ordnungen beantworten Fragen
+# ("was war erfolgreich?", "was war groß?"), die man im Verlauf sonst suchen
+# müsste. Feste Liste statt durchgereichtem SQL: der Sortierschlüssel geht in
+# die Abfrage ein und darf deshalb nie vom Client bestimmt werden.
+TRACE_SORTS = {
+    "time": "r.epoch ASC, r.rowid ASC",
+    "time_desc": "r.epoch DESC, r.rowid DESC",
+    "status": "r.status DESC, r.epoch ASC",
+    "size": "r.size DESC, r.epoch ASC",
+    "uri": "uri ASC, r.epoch ASC",
+}
+
+# Statusklassen als Filter: "2xx" ist die Frage "was hat der Server
+# ausgeliefert?", "err" fasst 4xx und 5xx zusammen.
+_STATUS_RANGES = {
+    "2xx": (200, 299), "3xx": (300, 399), "4xx": (400, 499),
+    "5xx": (500, 599), "err": (400, 599),
+}
+
+
 def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
-          offset=0):
-    """Every request of these clients, oldest first -- THE instant trace.
-    Twenty clients cost one indexed query, not twenty log passes."""
+          offset=0, search="", status="", method="", sort="time"):
+    """Every request of these clients -- THE instant trace. Twenty clients
+    cost one indexed query, not twenty log passes.
+
+    `search` sucht in URI und User-Agent, `status` filtert eine Statusklasse,
+    `method` die HTTP-Methode. Gefiltert wird in SQL, damit auch der zwölfte
+    Blättern-Klick noch dieselbe Antwortzeit hat wie der erste."""
     conn = _open_ro(case_dir)
     if conn is None:
-        return {"total": 0, "rows": []}
+        return {"total": 0, "rows": [], "methods": []}
     try:
         wanted = [str(ip).strip() for ip in ips if str(ip).strip()]
         if not wanted:
-            return {"total": 0, "rows": []}
+            return {"total": 0, "rows": [], "methods": []}
         marks = ",".join("?" * len(wanted))
         where = [f"r.ip IN (SELECT id FROM ips WHERE ip IN ({marks}))"]
         params = list(wanted)
@@ -758,9 +791,25 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
         if to_epoch:
             where.append("r.epoch <= ?")
             params.append(int(to_epoch))
+        if status in _STATUS_RANGES:
+            lo, hi = _STATUS_RANGES[status]
+            where.append("r.status BETWEEN ? AND ?")
+            params += [lo, hi]
+        if method.strip():
+            where.append("r.method = ?")
+            params.append(method.strip().upper())
+        if search.strip():
+            where.append("(u.text LIKE ? ESCAPE '\\' OR a.text LIKE ? ESCAPE '\\')")
+            like = "%" + (search.strip().replace("\\", "\\\\")
+                          .replace("%", "\\%").replace("_", "\\_")) + "%"
+            params += [like, like]
         clause = " AND ".join(where)
+        # Die Joins auf u/a stehen auch in der COUNT-Abfrage, weil `search`
+        # auf ihnen filtert -- sonst zählte sie etwas anderes als die Liste.
+        joins = ("LEFT JOIN strings u ON u.id = r.uri "
+                 "LEFT JOIN strings a ON a.id = r.agent")
         total = conn.execute(
-            f"SELECT count(*) FROM requests r WHERE {clause}", params
+            f"SELECT count(*) FROM requests r {joins} WHERE {clause}", params
         ).fetchone()[0]
         rows = conn.execute(
             f"""SELECT i.ip AS client, r.epoch, r.tz, r.method,
@@ -768,14 +817,21 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
                        f.text AS referrer, a.text AS agent, s.text AS source
                 FROM requests r
                 JOIN ips i ON i.id = r.ip
-                LEFT JOIN strings u ON u.id = r.uri
+                {joins}
                 LEFT JOIN strings f ON f.id = r.referrer
-                LEFT JOIN strings a ON a.id = r.agent
                 LEFT JOIN strings s ON s.id = r.source
                 WHERE {clause}
-                ORDER BY r.epoch LIMIT ? OFFSET ?""",
+                ORDER BY {TRACE_SORTS.get(sort, TRACE_SORTS['time'])}
+                LIMIT ? OFFSET ?""",
             params + [limit, offset]).fetchall()
-        return {"total": total, "rows": [dict(r) for r in rows]}
+        # Welche Methoden überhaupt vorkommen -- der Filter soll nur
+        # anbieten, was es hier auch gibt.
+        methods = [r[0] for r in conn.execute(
+            f"SELECT DISTINCT r.method FROM requests r "
+            f"WHERE r.ip IN (SELECT id FROM ips WHERE ip IN ({marks})) "
+            f"ORDER BY r.method", wanted) if r[0]]
+        return {"total": total, "rows": [dict(r) for r in rows],
+                "methods": methods}
     finally:
         conn.close()
 
@@ -942,13 +998,52 @@ def requests_for_names(case_dir, names, limit=20000):
 
 
 def timeline(case_dir):
-    """Requests/errors/new clients per day -- the dashboard's coverage chart."""
+    """Requests/2xx/Fehler/neue Clients je Tag -- die Verlaufskurve.
+
+    Ein Index aus einer älteren Version kennt `days.ok` noch nicht. Das darf
+    das Dashboard nicht sprengen: dann fehlt eben die Erfolgskurve, bis der
+    Index neu gebaut ist (worauf die Evidence-Ansicht ohnehin hinweist)."""
     conn = _open_ro(case_dir)
     if conn is None:
         return []
     try:
+        have_ok = any(r[1] == "ok" for r in conn.execute("PRAGMA table_info(days)"))
+        ok_col = "ok" if have_ok else "NULL AS ok"
         return [dict(r) for r in conn.execute(
-            "SELECT day, requests, errors, new_clients FROM days ORDER BY day")]
+            f"SELECT day, requests, errors, new_clients, {ok_col} "
+            f"FROM days ORDER BY day")]
+    finally:
+        conn.close()
+
+
+def timeline_for_ips(case_dir, ips):
+    """Dieselbe Auswertung, aber nur für diese Clients -- der Verlauf, den
+    man beim Tracen sehen will: wann war dieser Client aktiv, und hat der
+    Server ihm geantwortet?
+
+    Läuft über idx_req_ip(ip, epoch), ist also eine indizierte Abfrage und
+    kein Durchlauf durch das Log."""
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return []
+    try:
+        wanted = [str(ip).strip() for ip in ips if str(ip).strip()]
+        if not wanted:
+            return []
+        marks = ",".join("?" * len(wanted))
+        rows = conn.execute(
+            f"""SELECT (r.epoch + r.tz) / 86400 AS d,
+                       count(*) AS requests,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299
+                           THEN 1 ELSE 0 END) AS ok,
+                       sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) AS errors
+                FROM requests r
+                WHERE r.ip IN (SELECT id FROM ips WHERE ip IN ({marks}))
+                  AND r.epoch IS NOT NULL
+                GROUP BY d ORDER BY d""", wanted).fetchall()
+        return [{"day": _day_iso(r["d"]), "requests": r["requests"],
+                 "ok": r["ok"], "errors": r["errors"], "new_clients": 0}
+                for r in rows]
     finally:
         conn.close()
 
