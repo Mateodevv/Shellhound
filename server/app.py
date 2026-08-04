@@ -877,16 +877,20 @@ def create_app(config: Config) -> FastAPI:
             # der Forensik-Maschine liegt, gehört niemandem außerhalb dieser
             # Maschine -- und ein Export trägt es sonst mit hinaus.
             value = db.case_relative_path(conn, artifact)
-            db.add_ioc(conn, value, "path", tags, origin=origin)
+            path_id = db.add_ioc(conn, value, "path", tags, origin=origin)
             out.append({"value": value, "type": "path"})
             # Der Hash aus dem Scan, sonst jetzt berechnet: das Detail zeigt
             # ihn ohnehin an, und ein bestaetigtes Artefakt ohne seinen
             # SHA-256 in der Box waere im Bericht eine Luecke.
             digest = hashes.get(artifact) or _sha256_of(artifact)
             if digest:
-                db.add_ioc(conn, digest, "hash",
-                           [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
-                           origin=f"sha-256 of {os.path.basename(artifact)}")
+                hash_id = db.add_ioc(conn, digest, "hash",
+                                     [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
+                                     origin=f"sha-256 of {os.path.basename(artifact)}")
+                # Pfad und Hash beschreiben DIESELBE Datei. Nur hier ist das
+                # noch bekannt: in der Box stehen danach zwei Zeilen, denen
+                # man es nicht mehr ansieht.
+                db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
                 out.append({"value": digest, "type": "hash"})
             # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))
@@ -894,9 +898,11 @@ def create_app(config: Config) -> FastAPI:
                 tags = [ioclib.TAG_HUNT]
                 if hit["ok_hits"] > 0:
                     tags.append(ioclib.TAG_SUCCESS)
-                db.add_ioc(conn, hit["ip"], "ip", tags,
-                           origin=f"requested {name} ({hit['hits']}×, "
-                                  f"{hit['ok_hits']}× 2xx)")
+                ip_id = db.add_ioc(conn, hit["ip"], "ip", tags,
+                                   origin=f"requested {name} ({hit['hits']}×, "
+                                          f"{hit['ok_hits']}× 2xx)")
+                db.link_iocs(conn, ip_id, path_id, ioclib.LINK_REQUESTED,
+                             f"{hit['hits']}× angefragt, {hit['ok_hits']}× 2xx")
                 out.append({"value": hit["ip"], "type": "ip",
                             "hits": hit["hits"], "ok_hits": hit["ok_hits"]})
         elif kind == "client":
@@ -910,17 +916,22 @@ def create_app(config: Config) -> FastAPI:
             db.add_ioc(conn, artifact, "ip", tags, origin=origin)
             out.append({"value": artifact, "type": "ip"})
         elif kind == "table":
-            db.add_ioc(conn, artifact, "other",
-                       [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED, ioclib.TAG_INJECTED],
-                       origin=origin)
+            table_id = db.add_ioc(
+                conn, artifact, "other",
+                [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED, ioclib.TAG_INJECTED],
+                origin=origin)
             out.append({"value": artifact, "type": "other"})
             hosts = []
             for f in findings:
                 hosts += ioclib.HOST_RE.findall(f["evidence"] or "")
             for host in list(dict.fromkeys(hosts))[:5]:
-                db.add_ioc(conn, host, "domain",
-                           [ioclib.TAG_DERIVED, ioclib.TAG_INJECTED],
-                           origin=f"host in evidence of: {rules}")
+                host_id = db.add_ioc(conn, host, "domain",
+                                     [ioclib.TAG_DERIVED, ioclib.TAG_INJECTED],
+                                     origin=f"host in evidence of: {rules}")
+                # WO die Domain stand, ist die halbe Aussage: eine Domain
+                # ohne Fundort ist im Bericht nur eine Behauptung.
+                db.link_iocs(conn, host_id, table_id, ioclib.LINK_HOST_IN,
+                             rules[:120])
                 out.append({"value": host, "type": "domain"})
         return out
 
@@ -1373,16 +1384,19 @@ def create_app(config: Config) -> FastAPI:
         try:
             for path in targets:
                 value = db.case_relative_path(conn, path)
-                db.add_ioc(conn, value, "path",
-                           [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
-                           note=body.note,
-                           origin="vom Analysten im Datei-Browser markiert")
+                path_id = db.add_ioc(
+                    conn, value, "path",
+                    [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
+                    note=body.note,
+                    origin="vom Analysten im Datei-Browser markiert")
                 added.append({"value": value, "type": "path"})
                 digest = _sha256_of(path)
                 if digest:
-                    db.add_ioc(conn, digest, "hash",
-                               [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
-                               origin=f"sha-256 von {os.path.basename(path)}")
+                    hash_id = db.add_ioc(
+                        conn, digest, "hash",
+                        [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
+                        origin=f"sha-256 von {os.path.basename(path)}")
+                    db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
                     added.append({"value": digest, "type": "hash"})
             conn.commit()
         finally:
@@ -1540,6 +1554,26 @@ def create_app(config: Config) -> FastAPI:
             rows = db.rows(conn, "SELECT * FROM iocs ORDER BY added DESC, id DESC")
             for r in rows:
                 r["tags"] = json.loads(r["tags"] or "[]")
+                r["links"] = []
+            # Jede Kante hängt an BEIDEN Enden, mit der jeweiligen Leserichtung.
+            # Sonst müsste der Analyst wissen, an welchem der zwei Indikatoren
+            # die Beziehung "gespeichert" ist -- eine Frage, die ihn nichts
+            # angeht.
+            by_id = {r["id"]: r for r in rows}
+            for link in db.ioc_links(conn):
+                out, back = ioclib.LINK_LABELS.get(
+                    link["kind"], (link["kind"], link["kind"]))
+                src, dst = by_id.get(link["src_id"]), by_id.get(link["dst_id"])
+                if src is not None:
+                    src["links"].append({
+                        "kind": link["kind"], "label": out, "note": link["note"],
+                        "value": link["dst_value"], "type": link["dst_type"],
+                        "id": link["dst_id"]})
+                if dst is not None:
+                    dst["links"].append({
+                        "kind": link["kind"], "label": back, "note": link["note"],
+                        "value": link["src_value"], "type": link["src_type"],
+                        "id": link["src_id"]})
             return rows
         finally:
             conn.close()
@@ -1592,6 +1626,12 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
+            # Die Kanten mit: SQLite erzwingt Fremdschlüssel nur mit
+            # eingeschaltetem PRAGMA, und das global zu setzen würde jeden
+            # anderen Löschpfad dieser Datenbank mitbetreffen. Hier reicht
+            # die eine Zeile.
+            conn.execute("DELETE FROM ioc_links WHERE src = ? OR dst = ?",
+                         (ioc_id, ioc_id))
             conn.execute("DELETE FROM iocs WHERE id = ?", (ioc_id,))
             conn.commit()
             return {"ok": True}
@@ -1605,20 +1645,21 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn, "SELECT * FROM iocs ORDER BY type, value")
+            links = db.ioc_links(conn)
         finally:
             conn.close()
         stem = f"iocs_{info['slug']}"
         if format == "json":
-            return Response(ioclib.to_json(rows, info["name"]),
+            return Response(ioclib.to_json(rows, info["name"], links),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}.json"})
         if format == "stix":
-            return Response(ioclib.to_stix(rows, info["name"]),
+            return Response(ioclib.to_stix(rows, info["name"], links),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}_stix.json"})
-        return Response(ioclib.to_csv(rows), media_type="text/csv",
+        return Response(ioclib.to_csv(rows, links), media_type="text/csv",
                         headers={"Content-Disposition":
                                  f"attachment; filename={stem}.csv"})
 

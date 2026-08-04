@@ -2,8 +2,8 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  AtSign, Box, Download, FileDigit, Fingerprint, Globe, Link2, Plus,
-  Trash2, User,
+  AtSign, Box, ChevronDown, ChevronRight, Download, FileDigit, Fingerprint,
+  Globe, Link2, Plus, Share2, Trash2, User,
 } from 'lucide-react'
 import { api, del, downloadUrl, patch, post, type Ioc } from '../api'
 import { formatCount } from '../format'
@@ -38,6 +38,27 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [search, setSearch] = useState('')
   const [newValue, setNewValue] = useState('')
   const [newNote, setNewNote] = useState('')
+  // Aufgeklappte Nachbarschaften und der kurz hervorgehobene Eintrag, zu dem
+  // gerade gesprungen wurde.
+  const [opened, setOpened] = useState<Set<number>>(new Set())
+  const [flash, setFlash] = useState<number | null>(null)
+
+  // Ein Sprung ist nur dann einer, wenn man am Ziel merkt, dass man da ist:
+  // in einer Liste aus 40 gleich aussehenden Zeilen wäre ein stiller Scroll
+  // dasselbe wie gar nichts.
+  const jumpTo = (id: number) => {
+    setFlash(id)
+    document.getElementById(`ioc-${id}`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    window.setTimeout(() => setFlash((cur) => (cur === id ? null : cur)), 1800)
+  }
+
+  const toggleOpen = (id: number) => setOpened((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['iocs'] })
   const add = useMutation({
@@ -87,7 +108,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="IOC Box — die Indikatoren dieses Falls"
           body="Alles, woran man den Vorfall wiedererkennt: Angreifer-IPs, Datei-Hashes, Shell-Pfade, eingeschleuste Domains."
-          hint="Bestätigte Findings landen automatisch hier. Am Ende exportierst du die Liste für den Bericht oder ein SIEM.">
+          hint="Bestätigte Findings landen automatisch hier, samt ihrer Verknüpfungen (Hash ↔ Pfad, wer ihn abrief). Am Ende exportierst du die Liste für den Bericht oder ein SIEM.">
           <h1 className="mr-2 text-lg font-bold">IOC Box</h1>
         </Tooltip>
         {Object.entries(typeCounts).map(([t, n]) => (
@@ -170,8 +191,13 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       <div className="flex flex-col gap-1.5">
         {filtered.map((ioc) => {
           const Icon = TYPE_ICON[ioc.type] ?? Box
+          const links = ioc.links ?? []
+          const open = opened.has(ioc.id)
           return (
-            <Card key={ioc.id} className="group flex items-center gap-3 px-4 py-2.5 animate-fade-in">
+            <Card key={ioc.id} id={`ioc-${ioc.id}`}
+              className={`group flex flex-col animate-fade-in transition-shadow ${
+                flash === ioc.id ? 'ring-2 ring-[var(--accent)]' : ''}`}>
+            <div className="flex items-center gap-3 px-4 py-2.5">
               <Icon size={15} className="shrink-0 text-[var(--muted)]" />
               <select
                 value={ioc.type}
@@ -185,6 +211,21 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               <span className="mono min-w-0 flex-1 truncate text-[13px]" title={ioc.value}>
                 {ioc.value}
               </span>
+              {links.length > 0 && (
+                <Tooltip title="Verknüpfte Indikatoren"
+                  body={links.map((l) => `${l.label} ${l.value}`).join(' · ')}
+                  hint="Entstehen beim Einsammeln — Klick zeigt sie unter dem Eintrag.">
+                  <button
+                    onClick={() => toggleOpen(ioc.id)}
+                    className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors ${
+                      open ? 'border-[var(--accent)]/60 text-[var(--fg)]'
+                           : 'border-[var(--line)] text-[var(--muted)] hover:border-[var(--accent)]/60'}`}
+                  >
+                    {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    <Share2 size={11} /> {links.length}
+                  </button>
+                </Tooltip>
+              )}
               <div className="flex max-w-[280px] flex-wrap justify-end gap-1">
                 {ioc.tags.map((t) => <IocTag key={t} tag={t} tone={TAG_TONE[t]} />)}
               </div>
@@ -204,6 +245,31 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 onClick={() => remove.mutate(ioc.id)}>
                 <Trash2 size={13} />
               </Button>
+            </div>
+            {open && (
+              <div className="flex flex-col gap-1 border-t border-[var(--line)] px-4 py-2">
+                {links.map((l) => {
+                  const LinkIcon = TYPE_ICON[l.type] ?? Box
+                  return (
+                    <button key={`${l.kind}-${l.id}`} onClick={() => jumpTo(l.id)}
+                      className="flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[var(--panel-2)]">
+                      <LinkIcon size={12} className="shrink-0 text-[var(--muted)]" />
+                      <span className="shrink-0 text-[12px] text-[var(--muted)]">
+                        {l.label}
+                      </span>
+                      <span className="mono min-w-0 truncate text-[12px]" title={l.value}>
+                        {l.value}
+                      </span>
+                      {l.note && (
+                        <span className="shrink-0 text-[11px] text-[var(--muted)]">
+                          — {l.note}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             </Card>
           )
         })}

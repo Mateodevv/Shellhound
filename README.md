@@ -79,7 +79,14 @@ kein funktionsfähiges Werkzeug.
    als Findings auf den Client. Die Bibliothek liegt im **Workspace**
    (`hunt_patterns.json`) und gilt damit für alle Fälle darin; der einzelne
    Fall protokolliert, wonach gesucht wurde — auch erfolglos.
-6. **IOC Box** exportiert CSV / JSON / STIX 2.1.
+6. **IOC Box** hält die Indikatoren **mit ihren Beziehungen**: ein Hash und
+   der Pfad, dessen Datei er beschreibt, entstehen aus demselben Fund und
+   bleiben verknüpft; dazu die Clients, die den Pfad abgerufen haben, und die
+   Domains samt der Stelle, an der sie im eingeschleusten Code standen. Die
+   Kanten entstehen beim Einsammeln — es gibt bewusst kein Verknüpfen von
+   Hand. Export als CSV / JSON / STIX 2.1; das STIX-Bundle trägt sie als
+   `relationship`-Objekte mit hinaus, statt unverbundene Indicators
+   abzuliefern.
 7. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
    ZIP unter `<workspace>/archive/` und entfernt die Arbeitskopie — der Fall
    ist aus der Plattform raus. Zurückholen über „Fall importieren" auf der

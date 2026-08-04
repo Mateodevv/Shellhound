@@ -5,6 +5,37 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Hinzugefügt — Indikatoren tragen ihre Beziehungen
+
+Ein Hash und der Pfad, dessen Datei er beschreibt, entstehen im selben
+Moment aus demselben Fund. Davon überlebte bisher nur ein Satz im
+`origin`-Feld („sha-256 of kb-media.php"): gut lesbar, nicht auswertbar, und
+im Export gar nicht vorhanden. Wer den Pfad später verwarf, ließ seinen Hash
+verwaist stehen. Die IOC Box hielt eine flache Liste, obwohl die Daten eine
+Kette hergeben — *diese IP rief diese Shell auf, die diesen Hash hat*.
+
+- Neue Tabelle `ioc_links`. Drei Arten, alle **automatisch beim Einsammeln**:
+  `hash-of` (Hash ↔ Pfad, aus dem Bestätigen und aus dem Datei-Browser),
+  `requested` (Client ↔ abgerufener Pfad, mit Trefferzahl und 2xx-Anteil) und
+  `host-in` (eingeschleuste Domain ↔ Fundort). Bestehende Fälle bekommen die
+  Tabelle beim Öffnen; alte Einträge bleiben unverknüpft, weil die
+  Zusammengehörigkeit nachträglich nicht mehr feststellbar ist.
+- **Kein Verknüpfen von Hand.** Eine Kante, die der Analyst pflegen muss,
+  wird nach dem dritten Fall nicht mehr gepflegt. Und sie trägt nur
+  Information, wenn sie spezifisch ist — „gehört zum selben Fall" gilt für
+  jedes Paar in der Box.
+- Die Box zeigt sie am Eintrag: ein Zähler klappt die Nachbarn auf, jeder in
+  der Leserichtung dieses Eintrags (am Pfad „hat den SHA-256", am Hash „ist
+  der SHA-256 von"), Klick springt zum Nachbarn und hebt ihn kurz hervor.
+  Keine eigene Ansicht und kein Graph: bei 40 Knoten aus einem Fall ist ein
+  Graph hübsch und unlesbar.
+- **Export.** CSV bekommt eine Spalte `Related`, JSON ein Feld `related`, und
+  das STIX-Bundle echte `relationship`-Objekte — bisher empfing ein SIEM eine
+  Handvoll unverbundener Indicators. Kanten auf Indikatoren ohne
+  STIX-Pattern (Tabellennamen etwa) entfallen, statt das Bundle ungültig zu
+  machen.
+- Löschen räumt die Kanten mit ab.
+
 ### Geändert — Triage läuft über Artefakte, nicht über einzelne Findings
 
 Die Einheit der Arbeit ist jetzt das **Artefakt**: diese Datei, dieser

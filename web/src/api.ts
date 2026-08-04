@@ -216,6 +216,18 @@ export interface TraceRow {
   source: string
 }
 
+/** Ein Nachbar dieses Indikators, aus Sicht DIESES Eintrags gelesen: `label`
+ *  ist bereits die richtige Leserichtung ("hat den SHA-256" am Pfad, "ist der
+ *  SHA-256 von" am Hash). */
+export interface IocLink {
+  id: number
+  kind: string
+  label: string
+  note: string
+  value: string
+  type: string
+}
+
 export interface Ioc {
   id: number
   value: string
@@ -224,6 +236,7 @@ export interface Ioc {
   tags: string[]
   origin: string
   added: string
+  links: IocLink[]
 }
 
 /** Ein geflaggtes Artefakt unterhalb einer Extension — der Fall-Bezug des
