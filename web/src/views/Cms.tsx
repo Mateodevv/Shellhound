@@ -12,6 +12,7 @@
 // darunter tragen ein Badge und öffnen das Artefakt-Fenster — die Frage
 // „welche Erweiterung ist es?" beantwortet die Seite selbst, statt den
 // Pfad-Abgleich dem Kopf des Analysten zu überlassen.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -30,7 +31,7 @@ import {
   Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { CMS_SCOPE_EXPLAIN, FIELD_EXPLAIN, explainPluginGroup } from '../explain'
+import { explain, explainPluginGroup } from '../explain'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
@@ -79,6 +80,7 @@ interface VersionTarget extends VersionFacts {
 }
 
 export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const { data } = useQuery({
     queryKey: ['cms', slug],
     queryFn: () => api<{ installs: CmsInstall[] }>(`/api/cases/${slug}/cms`),
@@ -174,7 +176,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
             mit Version
           </Chip>
         </Tooltip>
-        <Tooltip hint={FIELD_EXPLAIN.unknown_version}>
+        <Tooltip hint={tr('field.unknown_version')}>
           <Chip active={false} dimmed={hiddenVersion.has('unknown')}
             onClick={() => toggle(setHiddenVersion, 'unknown')} count={versionCounts.unknown}>
             <TriangleAlert size={12} /> ohne Version
@@ -232,6 +234,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
   onOpenArtifact: (stub: ArtifactStub) => void
   onEditVersion: (t: VersionTarget) => void
 }) {
+  const tr = useT()
   const unknown = install.items.filter((i) => i.version === '(unknown)').length
   const flagged = install.items.filter((i) => i.flagged > 0).length
   // Zugeklappte Gruppen. Ein Filter oder eine Suche klappt alles auf — sonst
@@ -303,7 +306,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           </Tooltip>
           <span>{formatCount(install.items.length)} Erweiterung{install.items.length === 1 ? '' : 'en'}</span>
           {unknown > 0 && (
-            <Tag tone="warn" hint={FIELD_EXPLAIN.unknown_version}>{unknown} ohne Version</Tag>
+            <Tag tone="warn" hint={tr('field.unknown_version')}>{unknown} ohne Version</Tag>
           )}
           {flagged > 0 && (
             <Tag tone="danger"
@@ -351,14 +354,14 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-[13px] font-medium">{item.name}</span>
                     {qualifier && (
-                      <Tag explain={explainPluginGroup(qualifier).what}
-                        hint={explainPluginGroup(qualifier).why}>
+                      <Tag explain={explainPluginGroup(tr, qualifier).what}
+                        hint={explainPluginGroup(tr, qualifier).why}>
                         {qualifier}
                       </Tag>
                     )}
                     {scope && (
-                      <Tag explain={CMS_SCOPE_EXPLAIN[scope]?.what}
-                        hint={CMS_SCOPE_EXPLAIN[scope]?.why}>
+                      <Tag explain={explain(tr, `cmsScope.${scope}`)?.what}
+                        hint={explain(tr, `cmsScope.${scope}`)?.why}>
                         {scope}
                       </Tag>
                     )}

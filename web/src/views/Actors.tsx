@@ -7,6 +7,7 @@
 // angesprochen hat. Was in Findings längst entschieden ist, trägt hier
 // sein Badge und lässt sich im selben Artefakt-Fenster öffnen; niemand
 // soll in dieser Liste neu bewerten, was drüben schon beantwortet ist.
+import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -17,14 +18,14 @@ import {
   api, downloadUrl, post, type Actor, type ActorsResponse, type CaseDetail,
 } from '../api'
 import {
-  TRIAGE_LABEL, formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
+  formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
   type EvidenceRoot,
 } from '../format'
 import {
   Button, Chip, EmptyState, SearchInput, Tag, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
-import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import { Sparkline } from '../components/Sparkline'
 import { IpFlag } from '../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
@@ -62,6 +63,7 @@ function actorBadges(a: Actor) {
 }
 
 export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   // Default: nichts ausgeblendet — das Einzigartige dieser Seite ist die
@@ -190,22 +192,22 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               </th>
               <th className="px-2 py-2">Client</th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Aktivität <InfoDot body={FIELD_EXPLAIN.sparkline} /></span>
+                <span className="inline-flex items-center gap-1">Aktivität <InfoDot body={tr('field.sparkline')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Requests <InfoDot body={FIELD_EXPLAIN.requests} /></span>
+                <span className="inline-flex items-center gap-1">Requests <InfoDot body={tr('field.requests')} /></span>
               </th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Zeitraum <InfoDot body={FIELD_EXPLAIN.timespan} /></span>
+                <span className="inline-flex items-center gap-1">Zeitraum <InfoDot body={tr('field.timespan')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">
-                  Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+                  Dauer <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
                 </span>
               </th>
               <th className="px-2 py-2">Verhalten</th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Fehler <InfoDot body={FIELD_EXPLAIN.errors} /></span>
+                <span className="inline-flex items-center gap-1">Fehler <InfoDot body={tr('field.errors')} /></span>
               </th>
               <th className="w-24 px-3 py-2" />
             </tr>
@@ -234,7 +236,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       {/* Was in Findings entschieden wurde, gilt auch hier —
                           sonst bewertet man dieselbe Adresse zweimal. */}
                       {a.triage && a.triage !== 'new' && (
-                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                        <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                       )}
                     </div>
                   </td>
@@ -255,7 +257,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   <td className="mono px-2 py-2 text-right text-[12px] tabular text-[var(--muted)]">
                     <Tooltip title="Dauer der Aktivität"
                       body={`${formatLogTime(a.first_epoch, a.tz)} bis ${formatLogTime(a.last_epoch, a.tz)}`}
-                      hint={FIELD_EXPLAIN.duration_why}>
+                      hint={tr('field.duration_why')}>
                       <span>{formatSpan(a.first_epoch, a.last_epoch)}</span>
                     </Tooltip>
                   </td>
@@ -264,7 +266,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       {badges.length
                         ? badges.slice(0, 3).map((b, i) => (
                           <Tag key={i} tone={b.tone}
-                            explain={BADGE_EXPLAIN[b.key]?.what} hint={BADGE_EXPLAIN[b.key]?.why}>
+                            explain={explain(tr, `badge.${b.key}`)?.what} hint={explain(tr, `badge.${b.key}`)?.why}>
                             {b.label}
                           </Tag>
                         ))

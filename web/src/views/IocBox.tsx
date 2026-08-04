@@ -1,4 +1,5 @@
 // IocBox.tsx — die Fall-Indikatoren: sammeln, taggen, annotieren, exportieren.
+import { useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -12,7 +13,6 @@ import {
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
-import { IOC_TYPE_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
@@ -29,6 +29,7 @@ const TAG_TONE: Record<string, 'danger' | 'warn' | 'accent' | undefined> = {
 }
 
 export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data: iocs } = useQuery({
     queryKey: ['iocs', slug],
@@ -116,7 +117,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             hint="Bestätigte Findings landen automatisch hier, samt ihrer Verknüpfungen (Hash ↔ Pfad, wer ihn abrief). Am Ende exportierst du die Liste für den Bericht oder ein SIEM." />
         </h1>
         {Object.entries(typeCounts).map(([t, n]) => (
-          <Tooltip key={t} body={IOC_TYPE_EXPLAIN[t]}
+          <Tooltip key={t} body={tr(`iocType.${t}`)}
             hint={hiddenTypes.has(t) ? 'Ausgeblendet — Klick holt sie zurück.'
                                      : 'Klick blendet diesen Typ aus.'}>
             <Chip active={false} dimmed={hiddenTypes.has(t)}

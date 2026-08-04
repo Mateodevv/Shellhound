@@ -10,6 +10,7 @@ import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
+import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { CommandPalette } from './components/CommandPalette'
 import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from './components/TraceWindow'
@@ -148,7 +149,8 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
 
         <div className="mt-auto p-3">
-          <div className="mb-1">
+          <div className="mb-1 flex flex-col gap-1">
+            <LanguageSwitcher up />
             <ThemeSwitcher up />
           </div>
           {running.length > 0 && (
