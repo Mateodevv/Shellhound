@@ -806,6 +806,104 @@ def who_requested(case_dir, names, limit=200):
         conn.close()
 
 
+# --- Muster-Jagd ------------------------------------------------------------
+# Der Analyst hinterlegt URL-Pfade, von denen er weiß, dass sie zu einem
+# Exploit gehören; das Werkzeug sagt, WER sie abgerufen hat.
+#
+# Das läuft in zwei Stufen, damit es auch auf einem 10-Millionen-Zeilen-Log
+# eine Abfrage bleibt und keinen neuen Index braucht:
+#   1. Das Muster wird gegen die DISTINKTEN URIs geprüft (Tabelle `strings`) --
+#      einmal je eindeutiger Zeichenkette, nicht je Logzeile.
+#   2. Die Requests dazu holt der BESTEHENDE leaf-Index: aus jeder getroffenen
+#      URI ergibt sich ihr Dateiname, und `requests(leaf)` ist indiziert. Die
+#      volle URI entscheidet dann, welche Zeile wirklich zählt.
+
+# Wie viele DISTINKTE URIs ein Muster höchstens einsammelt. Wer ein Muster
+# schreibt, das mehr trifft, hat kein Muster, sondern eine Suche -- das sagt
+# die Antwort dann auch (`truncated`), statt stillschweigend zu kürzen.
+_PATTERN_URI_CAP = 4000
+
+
+def _like_from_pattern(pattern):
+    """Teilstring, Groß-/Kleinschreibung egal, `*` als Platzhalter.
+
+    Bewusst kein Regex: was ein Muster trifft, muss man in einem Bericht
+    erklären können. %/_ werden entwertet, sonst wäre jedes `_` im Pfad
+    ein stiller Platzhalter."""
+    esc = (str(pattern).replace("\\", "\\\\")
+           .replace("%", "\\%").replace("_", "\\_"))
+    return "%" + esc.replace("*", "%") + "%"
+
+
+def match_pattern(case_dir, pattern, limit=200):
+    """Wer hat URIs abgerufen, auf die dieses Muster passt?
+
+    Liefert die getroffenen URIs (damit sichtbar ist, ob das Muster zu weit
+    greift) und je Client Trefferzahl, davon 2xx, sowie erste/letzte Anfrage."""
+    empty = {"pattern": pattern, "uris": [], "clients": [], "hits": 0,
+             "ok_hits": 0, "truncated": False}
+    conn = _open_ro(case_dir)
+    if conn is None or not str(pattern).strip():
+        if conn is not None:
+            conn.close()
+        return empty
+    try:
+        rows = conn.execute(
+            "SELECT id, text FROM strings WHERE text LIKE ? ESCAPE '\\' "
+            "LIMIT ?", (_like_from_pattern(pattern), _PATTERN_URI_CAP + 1)
+        ).fetchall()
+        truncated = len(rows) > _PATTERN_URI_CAP
+        rows = rows[:_PATTERN_URI_CAP]
+        if not rows:
+            return empty
+
+        # `strings` interniert AUCH User-Agents und Referrer. Erst der Join
+        # über requests.uri entscheidet, was wirklich eine abgerufene URI war.
+        conn.execute("CREATE TEMP TABLE want_uri (id INTEGER PRIMARY KEY)")
+        conn.executemany("INSERT OR IGNORE INTO want_uri VALUES (?)",
+                         [(r["id"],) for r in rows])
+        leaves = {_leaf(r["text"]) for r in rows}
+        conn.execute("CREATE TEMP TABLE want_leaf (id INTEGER PRIMARY KEY)")
+        for chunk in _chunks(sorted(leaves), 800):
+            marks = ",".join("?" * len(chunk))
+            conn.execute(
+                f"INSERT OR IGNORE INTO want_leaf "
+                f"SELECT id FROM strings WHERE text IN ({marks})", chunk)
+
+        clients = [dict(r) for r in conn.execute(
+            """SELECT i.ip AS ip, count(*) AS hits,
+                      sum(CASE WHEN r.status BETWEEN 200 AND 299
+                          THEN 1 ELSE 0 END) AS ok_hits,
+                      min(r.epoch) AS first_epoch, max(r.epoch) AS last_epoch,
+                      max(r.tz) AS tz
+               FROM requests r
+               JOIN want_leaf wl ON wl.id = r.leaf
+               JOIN want_uri wu ON wu.id = r.uri
+               JOIN ips i ON i.id = r.ip
+               GROUP BY i.ip
+               ORDER BY ok_hits DESC, hits DESC LIMIT ?""", (limit,))]
+        uris = [dict(r) for r in conn.execute(
+            """SELECT s.text AS uri, count(*) AS hits,
+                      sum(CASE WHEN r.status BETWEEN 200 AND 299
+                          THEN 1 ELSE 0 END) AS ok_hits
+               FROM requests r
+               JOIN want_leaf wl ON wl.id = r.leaf
+               JOIN want_uri wu ON wu.id = r.uri
+               JOIN strings s ON s.id = r.uri
+               GROUP BY s.text ORDER BY hits DESC LIMIT 50""")]
+        return {"pattern": pattern, "uris": uris, "clients": clients,
+                "hits": sum(c["hits"] for c in clients),
+                "ok_hits": sum(c["ok_hits"] for c in clients),
+                "truncated": truncated}
+    finally:
+        conn.close()
+
+
+def _chunks(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
 def requests_for_names(case_dir, names, limit=20000):
     """Every (client, URI) pair that requested one of these FILE NAMES, with
     hit counts and how many of them were answered 2xx.

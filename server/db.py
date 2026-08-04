@@ -166,6 +166,21 @@ CREATE TABLE IF NOT EXISTS db_accounts (
     -- angemeldet.
     sessions INTEGER NOT NULL DEFAULT 0
 );
+-- Wonach in DIESEM Fall gesucht wurde. Die Muster selbst leben im Workspace
+-- (server/patterns.py) und gelten fallübergreifend; hier steht das Protokoll:
+-- welches Muster wann lief und was es fand. Ein Lauf OHNE Treffer ist dabei
+-- die wertvollere Zeile -- "wir haben darauf geprüft, es war nichts" steht
+-- sonst nirgends, weil Findings nur Funde festhalten.
+CREATE TABLE IF NOT EXISTS hunt_runs (
+    id INTEGER PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    ran_at TEXT NOT NULL,
+    hits INTEGER NOT NULL DEFAULT 0,
+    ok_hits INTEGER NOT NULL DEFAULT 0,
+    clients INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(pattern)
+);
 CREATE TABLE IF NOT EXISTS inert_php (
     id INTEGER PRIMARY KEY, path TEXT NOT NULL, reason TEXT NOT NULL DEFAULT ''
 );

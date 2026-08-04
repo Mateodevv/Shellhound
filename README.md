@@ -52,8 +52,13 @@ python -m server.main --no-browser --token dev
 4. **Actors**: jeder Client mit Sparkline und Verhalten (Scanner, Brute-Force,
    Shell-Zugriff 2xx). Beliebig viele Clients markieren → kombinierter Trace
    in Millisekunden, Export als CSV.
-5. **IOC Box** exportiert CSV / JSON / STIX 2.1.
-6. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
+5. **Muster-Jagd**: eigene URL-Muster hinterlegen (die Aufrufe eines bekannten
+   Exploits) — das Werkzeug sagt, wer sie abgerufen hat, und schreibt Treffer
+   als Findings auf den Client. Die Bibliothek liegt im **Workspace**
+   (`hunt_patterns.json`) und gilt damit für alle Fälle darin; der einzelne
+   Fall protokolliert, wonach gesucht wurde — auch erfolglos.
+6. **IOC Box** exportiert CSV / JSON / STIX 2.1.
+7. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
    ZIP unter `<workspace>/archive/` und entfernt die Arbeitskopie — der Fall
    ist aus der Plattform raus. Zurückholen über „Fall importieren" auf der
    Startseite (aus dem Archiv-Ordner oder von einem beliebigen Pfad, z.B.
@@ -62,6 +67,7 @@ python -m server.main --no-browser --token dev
 ## Architektur
 
 ```
+<workspace>/       hunt_patterns.json (Muster-Bibliothek, fallübergreifend)
 server/            FastAPI + stdlib-SQLite (pro Fall: case.db + logindex.db)
   engines/         accesslog, logindex, webshell, cmsinventory, sqldump, detect
 web/               Vite + React + TS + Tailwind (Build wird vom Server serviert)

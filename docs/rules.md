@@ -75,6 +75,7 @@ Ein nicht geprüfter Fund wird gemeldet, nicht verschwiegen.
 | Logs | CMS login POST flood | MEDIUM |
 | Logs | SQL injection patterns in URIs answered 2xx | MEDIUM |
 | Logs | Path traversal patterns answered 2xx | MEDIUM |
+| Logs | Aufruf eines hinterlegten Musters | HIGH / LOW |
 | Logs | Scanner tool User-Agent | INFO |
 
 ---
@@ -439,6 +440,26 @@ wurden erfolgreich beantwortet.
 
 **Warum es zählt:** Kann das Auslesen fremder Dateien bedeuten. Welche URLs
 betroffen sind, steht im Trace.
+
+### Aufruf eines hinterlegten Musters — HIGH / LOW
+
+**Auslöser:** Ein URL-Muster aus der **Muster-Bibliothek** des Analysten
+(Ansicht *Muster-Jagd*) passt auf eine abgerufene URI. Mit 2xx beantwortet →
+HIGH, nur Versuche → LOW.
+
+**Was es sagt:** Dieser Client hat einen Pfad abgerufen, von dem *du*
+festgelegt hast, dass er zu einem Exploit gehört.
+
+**Warum es zählt:** Die einzige Regel, deren Aussagekraft von deiner Eingabe
+abhängt — sie ist so gut wie das Muster. Deshalb zeigt die Ansicht immer die
+tatsächlich getroffenen URLs mit an: ein Muster, das zu weit greift, erkennt
+man nur daran, *was* es getroffen hat.
+
+**Besonderheit:** Die Bibliothek gehört dem **Workspace**, nicht dem Fall —
+einmal angelegt, steht ein Muster in jedem weiteren Fall bereit. Der Fall
+protokolliert, wonach in ihm gesucht wurde, **auch erfolglos**: „wir haben
+darauf geprüft, es war nichts" steht sonst nirgends, weil Findings nur Funde
+festhalten.
 
 ### Scanner tool User-Agent — INFO
 

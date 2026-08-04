@@ -405,6 +405,50 @@ export interface DetectResult {
 
 export interface HuntHit { ip: string; name: string; hits: number; ok_hits: number }
 
+/** Ein Muster aus der Bibliothek. Sie liegt im WORKSPACE, nicht im Fall —
+ *  einmal angelegt, steht es in jedem weiteren Fall bereit. */
+export interface HuntPattern {
+  id: string
+  pattern: string
+  label: string
+  note: string
+  added: string
+}
+
+export interface HuntClient {
+  ip: string
+  hits: number
+  ok_hits: number
+  first_epoch: number | null
+  last_epoch: number | null
+  tz: number
+}
+
+export interface HuntResult {
+  id: string
+  pattern: string
+  label: string
+  note: string
+  hits: number
+  ok_hits: number
+  /** Die tatsächlich getroffenen URIs — damit sichtbar ist, ob das Muster
+   *  zu weit greift. */
+  uris: { uri: string; hits: number; ok_hits: number }[]
+  clients: HuntClient[]
+  /** Das Muster traf mehr distinkte URIs, als eingesammelt wurden. */
+  truncated: boolean
+}
+
+/** Das Protokoll des Falls: wonach gesucht wurde — auch erfolglos. */
+export interface HuntRun {
+  pattern: string
+  label: string
+  ran_at: string
+  hits: number
+  ok_hits: number
+  clients: number
+}
+
 export interface FilePreview {
   error?: string
   binary?: boolean

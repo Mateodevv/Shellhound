@@ -37,6 +37,29 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 
 ### Hinzugefügt
 
+- **Muster-Jagd** (neuer Menüpunkt): eigene URL-Muster hinterlegen — die
+  Aufrufe, die zu einem bekannten Exploit gehören — und das Werkzeug sagt,
+  welche Clients sie abgerufen haben. Die Gegenrichtung zum Rest: nicht was
+  die mitgelieferten Regeln finden, sondern was *du* suchst.
+  - **Die Bibliothek gehört dem Workspace**, nicht dem Fall (`hunt_patterns.json`
+    neben den Fällen): einmal angelegt, steht ein Muster in jedem weiteren
+    Fall bereit. Als lesbares JSON, das zugleich das Austauschformat ist —
+    Import (auch als einfache Zeilenliste mit `Muster | Name | Notiz`) und
+    Export lesen dieselbe Datei.
+  - **Treffer werden Findings** auf dem Client-Artefakt: mit 2xx beantwortet
+    HIGH, reine Versuche LOW — damit laufen Triage, Übernahme auf Dateien
+    und IOC-Sammlung unverändert weiter, statt eine zweite Arbeitsliste
+    aufzumachen.
+  - **Der Fall protokolliert auch die Fehlschläge** (`hunt_runs`): „wir haben
+    darauf geprüft, es war nichts" steht sonst nirgends, weil Findings nur
+    Funde festhalten.
+  - Matching ist Teilstring mit `*` als Platzhalter, nicht Regex — was ein
+    Muster trifft, muss man in einem Bericht erklären können. Die getroffenen
+    URLs stehen im Ergebnis, damit ein zu weites Muster auffällt.
+  - Läuft ohne Neu-Indizierung: das Muster wird gegen die *distinkten* URIs
+    geprüft, die Requests holt der bestehende `leaf`-Index als Vorfilter.
+    Bewusst **kein** Online-Abgleich gegen CVE-Datenbanken.
+
 - **Eine Entscheidung wird nicht zweimal getroffen.** Wer eine Webshell als
   True Positive entscheidet, hat damit auch über die Clients entschieden, die
   sie geladen haben — bisher standen die als eigene Artefakte nochmal zur
