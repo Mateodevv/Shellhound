@@ -1523,11 +1523,13 @@ def create_app(config: Config) -> FastAPI:
     def _database_data(case_dir):
         conn = db.connect(case_dir)
         try:
-            dumps = db.rows(conn, "SELECT * FROM db_dumps ORDER BY path")
-            for d in dumps:
+            all_dumps = db.rows(conn, "SELECT * FROM db_dumps ORDER BY path")
+            for d in all_dumps:
                 d["meta"] = json.loads(d["meta"] or "{}")
             tables = db.rows(conn,
-                             "SELECT * FROM db_tables ORDER BY rows DESC, name")
+                             "SELECT t.*, d.kind AS dump_kind FROM db_tables t "
+                             "JOIN db_dumps d ON d.id = t.dump_id "
+                             "ORDER BY t.rows DESC, t.name")
             accounts = db.rows(conn, "SELECT * FROM db_accounts")
             findings = db.rows(conn,
                                "SELECT * FROM findings WHERE source = 'sqldb' "
@@ -1538,6 +1540,12 @@ def create_app(config: Config) -> FastAPI:
                               f"WHERE artifact_kind = 'table'")
         finally:
             conn.close()
+
+        # Mitgelieferte Schema-Dateien (install/uninstall/updates einer
+        # Erweiterung) sind keine Evidence über die Datenbank -- sie stehen
+        # getrennt, damit sie den einen echten Export nicht verschütten.
+        dumps = [d for d in all_dumps if d["kind"] != "schema"]
+        schema_files = [d for d in all_dumps if d["kind"] == "schema"]
 
         # Bezugspunkt für "jung": wann wurde exportiert? Der Kopf des Dumps
         # sagt es meist; sonst das jüngste Konto darin. Ohne Bezug wird
@@ -1562,9 +1570,19 @@ def create_app(config: Config) -> FastAPI:
             t["flagged"] = hit["findings"] if hit else 0
             t["worst"] = hit["worst"] if hit else None
             t["triage"] = hit["triage"] if hit else None
-        return {"dumps": dumps, "tables": tables, "accounts": accounts,
-                "findings": findings, "reference": reference.isoformat(sep=" ")
-                if reference else ""}
+        # Findings je Schema-Datei: eine manipulierte install.sql ist der
+        # Grund, warum diese Dateien überhaupt noch gescannt werden.
+        by_dump = {}
+        for t in tables:
+            if t["flagged"]:
+                by_dump[t["dump_id"]] = by_dump.get(t["dump_id"], 0) + t["flagged"]
+        for d in schema_files:
+            d["flagged"] = by_dump.get(d["id"], 0)
+        return {"dumps": dumps, "schema_files": schema_files,
+                "tables": [t for t in tables if t["dump_kind"] != "schema"],
+                "schema_tables": sum(1 for t in tables if t["dump_kind"] == "schema"),
+                "accounts": accounts, "findings": findings,
+                "reference": reference.isoformat(sep=" ") if reference else ""}
 
     @app.get("/api/cases/{slug}/database", dependencies=[auth])
     def database_view(slug: str):

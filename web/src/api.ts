@@ -266,6 +266,11 @@ export interface DbDump {
   statements: number
   size: number
   cms: string
+  /** `schema` = mit einer Erweiterung ausgelieferte install/uninstall/
+   *  update-SQL, kein Datenbank-Export. */
+  kind: 'export' | 'schema'
+  /** Nur bei Schema-Dateien gefüllt: Findings auf ihren Tabellen. */
+  flagged?: number
 }
 
 export interface DbTable {

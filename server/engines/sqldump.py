@@ -17,12 +17,17 @@ _STREAM_CHUNK = 1 << 20
 
 SQL_EXTS = (".sql", ".sql.gz", ".sql.bz2")
 
+# `#` gehört in die Zeichenklasse: Joomla-Erweiterungen liefern ihr SQL mit
+# dem Platzhalter-Präfix `#__` aus. Ohne ihn greift keine der beiden Regeln,
+# und eingeschleuster Code in einer manipulierten install.sql wäre für den
+# Scanner unsichtbar -- genau in der Datei, die bei der nächsten
+# Installation wieder anläuft.
 INSERT_RE = re.compile(
-    r"INSERT\s+(?:IGNORE\s+)?INTO\s+`?(?P<table>[A-Za-z0-9_$]+)`?\s*"
+    r"INSERT\s+(?:IGNORE\s+)?INTO\s+`?(?P<table>[A-Za-z0-9_$#]+)`?\s*"
     r"(?:\((?P<cols>[^)]*)\))?\s+VALUES",
     re.IGNORECASE)
 CREATE_RE = re.compile(
-    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?P<table>[A-Za-z0-9_$]+)`?\s*\(",
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?P<table>[A-Za-z0-9_$#]+)`?\s*\(",
     re.IGNORECASE)
 _COL_RE = re.compile(r"^\s*`(?P<name>[^`]+)`\s+(?P<type>[A-Za-z]+)")
 _NOT_A_COLUMN = re.compile(
@@ -50,6 +55,41 @@ RULES = [
     (1, "document.write (script injection)",
      re.compile(r"(?i)document\s*\.\s*write\s*\(")),
 ]
+
+# --- Export oder mitgelieferte Schema-Datei? --------------------------------
+# Ein Webroot enthält Dutzende .sql-Dateien, die KEINE Datenbank-Exports sind:
+# jede Joomla-Erweiterung bringt install/uninstall/updates mit. Sie haben
+# keinen Export-Kopf, keine Daten und keine Konten -- in der Datenbank-Ansicht
+# verschütten sie den einen echten Export.
+#
+# Der verlässlichste Unterschied steht im Inhalt: Joomla schreibt in
+# Schema-Dateien den PLATZHALTER-PRÄFIX `#__`, den der Installer erst durch
+# das echte Tabellen-Präfix ersetzt. In einem mysqldump kommt er nie vor.
+# Der Pfad (.../<erweiterung>/sql/...) stützt das, entscheidet aber nicht
+# allein -- jemand kann einen echten Export dort ablegen.
+_PREFIX_PLACEHOLDER = "#__"
+_SCHEMA_DIR_RE = re.compile(r"(?i)[\\/]sql[\\/]")
+_SCHEMA_NAME_RE = re.compile(
+    r"(?i)^(install|uninstall|schema|updates?)\b|^\d+[\d.]*\.sql$")
+
+
+def classify_dump(path, meta, placeholder_seen, data_rows):
+    """'export' oder 'schema'. Im Zweifel 'export': eine Datei fälschlich als
+    Beiwerk einzustufen würde echte Evidence verstecken, umgekehrt steht sie
+    nur an der falschen Stelle."""
+    if any(meta.get(k) for k in ("tool", "database", "server", "created")):
+        return "export"
+    if placeholder_seen:
+        return "schema"
+    name = os.path.basename(path)
+    if _SCHEMA_DIR_RE.search(path) and _SCHEMA_NAME_RE.match(name):
+        return "schema"
+    if not data_rows:
+        # Nur CREATE/DROP, keine einzige Datenzeile -- ein Export ohne Daten
+        # ist möglich, aber selten; ein Installationsskript ist genau das.
+        return "schema"
+    return "export"
+
 
 _WP_SUFFIXES = ("options", "posts", "postmeta", "usermeta", "users", "comments")
 _JOOMLA_SUFFIXES = ("extensions", "content", "user_usergroup_map", "usergroups",
@@ -397,8 +437,8 @@ def scan(case_dir, targets, ctx=None):
             if p.lower().endswith(SQL_EXTS):
                 files.append(p)
     files = list(dict.fromkeys(files))
-    stats = {"dumps": 0, "findings": 0, "accounts": 0, "admins": 0,
-             "tables": 0, "rows": 0, "skipped": 0}
+    stats = {"dumps": 0, "schema_files": 0, "findings": 0, "accounts": 0,
+             "admins": 0, "tables": 0, "rows": 0, "skipped": 0}
     total_size = sum(os.path.getsize(p) for p in files if os.path.isfile(p)) or 1
 
     conn = db.connect(case_dir)
@@ -427,10 +467,10 @@ def scan(case_dir, targets, ctx=None):
             cms_label = ", ".join(sorted(result["cms"])) or ""
             conn.execute("DELETE FROM db_dumps WHERE path = ?", (abs_path,))
             cur = conn.execute(
-                "INSERT INTO db_dumps (path, meta, statements, size, cms) "
-                "VALUES (?,?,?,?,?)",
+                "INSERT INTO db_dumps (path, meta, statements, size, cms, kind) "
+                "VALUES (?,?,?,?,?,?)",
                 (abs_path, _json.dumps(result["meta"]), result["statements"],
-                 size, cms_label))
+                 size, cms_label, result["kind"]))
             dump_id = cur.lastrowid
             conn.execute("DELETE FROM db_tables WHERE dump_id = ?", (dump_id,))
             conn.execute("DELETE FROM db_accounts WHERE dump_id = ?", (dump_id,))
@@ -457,7 +497,10 @@ def scan(case_dir, targets, ctx=None):
                 db.upsert_finding(conn, "sqldb", sev, rule, "table", table,
                                   line=row_no, evidence=evidence)
                 stats["findings"] += 1
-            stats["dumps"] += 1
+            if result["kind"] == "schema":
+                stats["schema_files"] += 1
+            else:
+                stats["dumps"] += 1
             conn.commit()
         conn.commit()
     finally:
@@ -470,6 +513,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     tables_seen = []
     wp_admin_ids, joomla_super_ids = set(), set()
     wp_meta = {}                 # user_id -> letzter Login / aktive Sitzung
+    placeholder_seen = False     # `#__` -> mitgelieferte Schema-Datei
+    data_rows = 0
     user_tables = []
     row_offsets = {}
     inv = {}
@@ -492,6 +537,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                 ctx.progress(0.02 + frac * 0.93,
                              f"{name}: {statements:,} Statements, "
                              f"{sum(t['rows'] for t in inv.values()):,} Zeilen")
+            if not placeholder_seen and _PREFIX_PLACEHOLDER in stmt:
+                placeholder_seen = True
             created = parse_create(stmt)
             if created:
                 tname, cols = created
@@ -506,6 +553,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
             entry = inv.setdefault(table, _blank_table())
             entry["rows"] += len(rows)
             entry["bytes"] += len(stmt)
+            data_rows += len(rows)
             if not entry["columns"]:
                 named = insert_columns(m)
                 if named:
@@ -560,7 +608,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                                      blocked, signals.get("sessions", 0)))
 
     return {"meta": meta, "tables": inv, "statements": statements,
-            "findings": findings, "accounts": accounts, "cms": cms}
+            "findings": findings, "accounts": accounts, "cms": cms,
+            "kind": classify_dump(path, meta, placeholder_seen, data_rows)}
 
 
 def _blank_table():
