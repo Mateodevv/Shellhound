@@ -13,6 +13,7 @@
 // Jeder Eintrag zeigt gleich, was der Fall über ihn schon weiß — schon in der
 // IOC Box, Findings darauf —, damit man nicht von Hand markiert, was längst
 // erfasst ist.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -22,7 +23,7 @@ import {
 } from 'lucide-react'
 import { api, post, type BrowseResponse, type CaseDetail } from '../api'
 import {
-  TRIAGE_LABEL, formatBytes, formatCount, type EvidenceRoot,
+  formatBytes, formatCount, type EvidenceRoot,
 } from '../format'
 import {
   Button, Card, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge,
@@ -34,10 +35,10 @@ import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { EVIDENCE_LABEL } from '../explain'
 import type { ViewId } from '../App'
 
 export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [path, setPath] = useState('')
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -179,7 +180,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-semibold">
-                    {r.label?.trim() || EVIDENCE_LABEL[r.kind] || r.kind}
+                    {r.label?.trim() || tr(`evidence.${r.kind}`) || r.kind}
                   </div>
                   <div className="mono truncate text-[11px] text-[var(--muted)]" title={r.path}>
                     {r.path}
@@ -263,7 +264,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
                 </Tooltip>
               )}
               {f.triage && f.triage !== 'new' && (
-                <TriageBadge state={f.triage} label={TRIAGE_LABEL[f.triage]} />
+                <TriageBadge state={f.triage} label={tr(`triage.${f.triage}`)} />
               )}
               {f.in_box && (
                 <Tag tone="accent" explain="Diese Datei liegt bereits in der IOC Box.">IOC</Tag>
