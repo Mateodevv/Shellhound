@@ -36,6 +36,22 @@ Kette hergeben — *diese IP rief diese Shell auf, die diesen Hash hat*.
   machen.
 - Löschen räumt die Kanten mit ab.
 
+### Behoben — IPs einsammeln scheiterte auf großen Fällen
+
+`POST /actors/collect` (aus der Muster-Jagd und aus Actors) holte die
+**gesamte** Actor-Tabelle, um darin die paar ausgewählten Adressen zu
+suchen. Die Alarm-Abfrage darüber band eine SQL-Variable pro Client — auf
+einem echten Fall mit zehntausenden Adressen brach das mit
+`sqlite3.OperationalError: too many SQL variables` ab, und zwar schon beim
+Aufnehmen einer **einzelnen** IP.
+
+- Neu `logindex.actors_by_ip()`: schlägt gezielt die angefragten Adressen
+  nach, in Blöcken von 500.
+- Die Alarm- und Sparkline-Abfragen gehen durch dieselbe Blockbildung, damit
+  eine datenabhängige Listenlänge das nicht wieder auslösen kann.
+- Geprüft mit 3.185 Adressen in einem Aufruf: keine Ausnahme, echte
+  Adressen behalten ihre Verhaltens-Tags.
+
 ### Geändert — Triage läuft über Artefakte, nicht über einzelne Findings
 
 Die Einheit der Arbeit ist jetzt das **Artefakt**: diese Datei, dieser

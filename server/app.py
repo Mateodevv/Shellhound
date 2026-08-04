@@ -1513,8 +1513,11 @@ def create_app(config: Config) -> FastAPI:
     def collect_actors(slug: str, body: CollectBody):
         """Actors into the IOC box, tagged with what the logs saw them do."""
         case_dir = case_dir_or_404(slug)
-        listed = logindex.actors_list(case_dir, limit=100000)
-        by_ip = {a["ip"]: a for a in listed["actors"]}
+        # Gezielt nachschlagen statt die ganze Actor-Tabelle zu holen: der
+        # Aufrufer will eine Handvoll Adressen aufnehmen, nicht zehntausende
+        # lesen -- und genau das lief auf einem echten Fall in "too many SQL
+        # variables".
+        by_ip = logindex.actors_by_ip(case_dir, body.ips)
         conn = db.connect(case_dir)
         added = 0
         try:
