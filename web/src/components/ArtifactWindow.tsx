@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Bug, Check, Copy, Crosshair, Eye, FileCode2, FileSearch, ServerCog,
+  Bug, Check, Crosshair, Eye, FileCode2, FileSearch, ServerCog,
   ShieldCheck, ShieldOff, Table2, Users, X,
 } from 'lucide-react'
 import {
@@ -24,7 +24,7 @@ import {
   SEVERITY_VAR, TRIAGE_LABEL, absoluteTime, formatBytes, formatCount,
   formatDay, relativeTime, relativeToRoot, type EvidenceRoot,
 } from '../format'
-import { Button, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
+import { Button, CopyButton, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
 import type { TraceMarks } from './TraceWindow'
 import { FIELD_EXPLAIN, explainRule } from '../explain'
@@ -207,11 +207,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             <Block title={KIND_LABEL[kind] ?? 'Artefakt'}>
               <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
                 <span className="min-w-0 flex-1">{artifact.artifact}</span>
-                <button className="shrink-0 cursor-pointer text-[var(--muted)] hover:text-[var(--fg)]"
-                  title="Kopieren"
-                  onClick={() => navigator.clipboard.writeText(artifact.artifact)}>
-                  <Copy size={13} />
-                </button>
+                <CopyButton value={artifact.artifact} label="Pfad kopieren"
+                  className="shrink-0" />
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {kind === 'file' && file?.exists && (
@@ -259,11 +256,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     <MetaCell label="SHA-256" explain={FIELD_EXPLAIN.sha256}>
                       <span className="mono flex items-center gap-2 break-all text-[11px]">
                         <span className="min-w-0 flex-1">{file.sha256}</span>
-                        <button className="shrink-0 cursor-pointer text-[var(--muted)] hover:text-[var(--fg)]"
-                          title="Hash kopieren"
-                          onClick={() => navigator.clipboard.writeText(file.sha256!)}>
-                          <Copy size={12} />
-                        </button>
+                        <CopyButton value={file.sha256} label="Hash kopieren"
+                          className="shrink-0" />
                       </span>
                     </MetaCell>
                   </div>

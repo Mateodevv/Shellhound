@@ -7,8 +7,10 @@ import {
 } from 'lucide-react'
 import { api, del, downloadUrl, patch, post, type Ioc } from '../api'
 import { formatCount } from '../format'
-import { Button, Chip, Card, EmptyState, IocTag, SearchInput } from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
+import {
+  Button, Chip, Card, CopyButton, EmptyState, IocTag, SearchInput,
+} from '../components/ui'
+import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IOC_TYPE_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
@@ -106,11 +108,12 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="IOC Box — die Indikatoren dieses Falls"
-          body="Alles, woran man den Vorfall wiedererkennt: Angreifer-IPs, Datei-Hashes, Shell-Pfade, eingeschleuste Domains."
-          hint="Bestätigte Findings landen automatisch hier, samt ihrer Verknüpfungen (Hash ↔ Pfad, wer ihn abrief). Am Ende exportierst du die Liste für den Bericht oder ein SIEM.">
-          <h1 className="mr-2 text-lg font-bold">IOC Box</h1>
-        </Tooltip>
+        <h1 className="mr-1 flex items-center gap-1.5 text-lg font-bold">
+          IOC Box
+          <InfoDot title="IOC Box — die Indikatoren dieses Falls"
+            body="Alles, woran man den Vorfall wiedererkennt: Angreifer-IPs, Datei-Hashes, Shell-Pfade, eingeschleuste Domains."
+            hint="Bestätigte Findings landen automatisch hier, samt ihrer Verknüpfungen (Hash ↔ Pfad, wer ihn abrief). Am Ende exportierst du die Liste für den Bericht oder ein SIEM." />
+        </h1>
         {Object.entries(typeCounts).map(([t, n]) => (
           <Tooltip key={t} body={IOC_TYPE_EXPLAIN[t]}
             hint={hiddenTypes.has(t) ? 'Ausgeblendet — Klick holt sie zurück.'
@@ -147,7 +150,12 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
 
       {Object.keys(tagCounts).length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">Tags:</span>
+          <span className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted)]">
+            Tags:
+            <InfoDot title="Die Tags eines Indikators"
+              body="Woher er stammt (analyst, finding, hunt, actor, derived), was für einer er ist (webshell, injected-code, account) und was der Fall an ihm beobachtet hat (scanner, brute-force, successful)."
+              hint="Klick auf einen Tag blendet die Einträge aus, deren Tags ALLE ausgeblendet sind — ein Eintrag mit einem noch sichtbaren Tag bleibt stehen." />
+          </span>
           {Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
             <Tooltip key={t}
               hint={hiddenTags.has(t)
@@ -211,6 +219,11 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               <span className="mono min-w-0 flex-1 truncate text-[13px]" title={ioc.value}>
                 {ioc.value}
               </span>
+              {/* Der Wert wandert von hier in ein Ticket, eine Firewall-Regel
+                  oder eine Suchmaske. Abtippen wäre bei einem SHA-256 eine
+                  Fehlerquelle, und Markieren scheitert am truncate. */}
+              <CopyButton value={ioc.value} label="Indikator kopieren"
+                className="shrink-0" />
               {links.length > 0 && (
                 <Tooltip title="Verknüpfte Indikatoren"
                   body={links.map((l) => `${l.label} ${l.value}`).join(' · ')}

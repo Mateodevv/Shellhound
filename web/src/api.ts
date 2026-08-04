@@ -332,6 +332,8 @@ export interface DbAccount {
   sessions: number
   signals: AccountSignal[]
   rank: number
+  /** Der Login liegt bereits als Indikator in der IOC Box. */
+  in_box: boolean
 }
 
 export interface Dashboard {

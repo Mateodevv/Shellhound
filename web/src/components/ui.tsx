@@ -1,7 +1,7 @@
 // ui.tsx — the small building blocks: cards, badges, chips, drawer, progress.
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
 import { SEVERITY_EXPLAIN, TAG_EXPLAIN, TRIAGE_EXPLAIN } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
@@ -181,6 +181,110 @@ export function Button({ children, onClick, variant = 'default', disabled, class
     >
       {children}
     </button>
+  )
+}
+
+/** In die Zwischenablage, mit Rückfallweg.
+ *
+ *  `navigator.clipboard` gibt es nur in einem "secure context". Localhost
+ *  zählt dazu, ein LAN-Bind über http NICHT -- und genau den unterstützt
+ *  dieses Werkzeug (`--host 0.0.0.0 --token …`, wenn die Forensik-VM von
+ *  einem anderen Rechner aus bedient wird). Ohne den Rückfallweg täte der
+ *  Knopf dort wortlos nichts. */
+export async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return true
+    }
+  } catch {
+    // weiter zum alten Weg -- auch ein verweigertes Recht landet hier
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = value
+    ta.setAttribute('readonly', '')
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** Kopieren mit Quittung. Ohne die kurze Bestätigung weiß niemand, ob der
+ *  Klick angekommen ist — und man klickt ein zweites Mal, was nichts ändert,
+ *  aber Zweifel lässt. Ein FEHLSCHLAG wird ebenso gezeigt: still nichts zu
+ *  tun ist die schlechteste der drei Möglichkeiten. */
+export function CopyButton({ value, label = 'Kopieren', className }: {
+  value: string; label?: string; className?: string
+}) {
+  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const copy = () => {
+    copyText(value).then((ok) => {
+      setState(ok ? 'ok' : 'fail')
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setState('idle'), ok ? 1400 : 2600)
+    })
+  }
+  return (
+    <Tooltip hint={state === 'fail'
+      ? 'Die Zwischenablage ist hier nicht verfügbar — den Wert bitte von Hand markieren.'
+      : `${label} — legt den Wert in die Zwischenablage.`}>
+      <button onClick={copy} aria-label={label}
+        className={clsx(
+          'cursor-pointer rounded-md border border-transparent p-1 transition-colors',
+          state === 'ok' ? 'text-[var(--ok)]'
+            : state === 'fail' ? 'text-[var(--danger-text)]'
+              : 'text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]',
+          className)}>
+        {state === 'ok' ? <Check size={13} />
+          : state === 'fail' ? <X size={13} /> : <Copy size={13} />}
+      </button>
+    </Tooltip>
+  )
+}
+
+/** Ein Abschnitt, den man zuklappen kann. Der Zustand gehört dem Aufrufer,
+ *  damit er ihn merken oder von außen setzen kann. */
+export function Collapsible({ open, onToggle, title, sub, right, count, children }: {
+  open: boolean
+  onToggle: () => void
+  title: ReactNode
+  sub?: ReactNode
+  right?: ReactNode
+  count?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section className="animate-fade-up">
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <button onClick={onToggle}
+          className="group flex min-w-0 cursor-pointer items-start gap-2 text-left">
+          <span className="mt-0.5 shrink-0 text-[var(--muted)] transition-colors group-hover:text-[var(--fg)]">
+            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-2 text-[15px] font-semibold">
+              {title}
+              {count != null && (
+                <span className="rounded-full border border-[var(--line)] px-1.5 text-[11px] font-medium tabular text-[var(--muted)]">
+                  {count}
+                </span>
+              )}
+            </span>
+            {sub && <p className="mt-0.5 text-xs text-[var(--muted)]">{sub}</p>}
+          </span>
+        </button>
+        {right}
+      </div>
+      {open && children}
+    </section>
   )
 }
 

@@ -45,11 +45,13 @@ TAGS = (TAG_ANALYST, TAG_FINDING, TAG_CONFIRMED, TAG_HUNT, TAG_ACTOR,
 LINK_HASH_OF = "hash-of"
 LINK_REQUESTED = "requested"
 LINK_HOST_IN = "host-in"
+LINK_ACCOUNT_OF = "account-of"
 
 LINK_LABELS = {
     LINK_HASH_OF: ("ist der SHA-256 von", "hat den SHA-256"),
     LINK_REQUESTED: ("hat abgerufen", "wurde abgerufen von"),
     LINK_HOST_IN: ("steht im Code von", "verweist auf"),
+    LINK_ACCOUNT_OF: ("ist die E-Mail von", "hat die E-Mail"),
 }
 LINK_KINDS = tuple(LINK_LABELS)
 
@@ -165,6 +167,10 @@ def _stix_pattern(value, ioc_type):
         return f"[url:value = '{esc}']"
     if ioc_type == "email":
         return f"[email-addr:value = '{esc}']"
+    if ioc_type == "user":
+        # Ein untergeschobenes Konto ist genau das, was man teilt: unter
+        # demselben Namen meldet es sich im nächsten System wieder an.
+        return f"[user-account:account_login = '{esc}']"
     if ioc_type == "hash":
         kind = _STIX_HASH_KIND.get(len(str(value)), "SHA-256")
         return f"[file:hashes.'{kind}' = '{esc}']"

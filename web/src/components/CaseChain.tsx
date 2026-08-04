@@ -10,6 +10,7 @@
 // auseinander folgt, entscheidet der Analyst. Deshalb steht an jeder Zeile,
 // WORAUS die Zeit stammt, und deshalb stehen die Lücken so sichtbar wie die
 // Ereignisse: „dazwischen ist nichts belegt" ist eine Aussage des Falls.
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
@@ -18,8 +19,8 @@ import {
 } from 'lucide-react'
 import { api, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
-import { Card, Section, SeverityBadge } from './ui'
-import { Tooltip } from './Tooltip'
+import { Card, Collapsible, SeverityBadge } from './ui'
+import { InfoDot, Tooltip } from './Tooltip'
 
 const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   erstkontakt: DoorOpen,
@@ -50,6 +51,10 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   onOpen: (artifact: string, kind: string) => void
   onTrace: (ip: string) => void
 }) {
+  // Sie steht offen, weil sie der erste Absatz des Berichts ist. Zuklappen
+  // ist für die Fälle, in denen man die Kennzahlen darüber vergleichen will,
+  // ohne 40 Zeilen dazwischen.
+  const [open, setOpen] = useState(true)
   const { data } = useQuery({
     queryKey: ['chain', slug],
     queryFn: () => api<ChainData>(`/api/cases/${slug}/chain`),
@@ -61,8 +66,19 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   const last = data.events[data.events.length - 1]?.at ?? null
 
   return (
-    <Section
-      title="Chronologie"
+    <Collapsible
+      open={open}
+      onToggle={() => setOpen(!open)}
+      count={data.events.length || undefined}
+      title={
+        <>
+          Chronologie
+          <InfoDot
+            title="Chronologie des Falls"
+            body="Die bestätigten Artefakte in ihrer zeitlichen Abfolge — der erste Absatz des Berichts."
+            hint="Sie ordnet GEMESSENE Tatsachen und behauptet keine Ursache: an jeder Zeile steht, ob die Zeit aus dem Access-Log oder aus dem Datenbank-Export stammt. Welche Beobachtung aus welcher folgt, entscheidest du." />
+        </>
+      }
       sub={data.events.length
         ? `${data.events.length} datierte Beobachtung(en) aus ${data.confirmed} bestätigten Artefakten, über ${formatSpan(first, last)}. Geordnet wird, was gemessen wurde — welche Beobachtung aus welcher folgt, entscheidest du.`
         : 'Sobald Artefakte als True Positive bestätigt sind, steht hier ihre zeitliche Abfolge.'}
@@ -161,6 +177,6 @@ export function CaseChain({ slug, onOpen, onTrace }: {
           ))}
         </div>
       )}
-    </Section>
+    </Collapsible>
   )
 }

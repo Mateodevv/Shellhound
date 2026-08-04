@@ -5,6 +5,33 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Hinzugefügt — Bedienbarkeit quer durch die Ansichten
+
+- **IOC Box: Kopier-Knopf an jedem Indikator**, mit Quittung (Häkchen) und
+  sichtbarem Fehlschlag (rotes ×). Der Rückfallweg über ein verstecktes
+  Textfeld deckt den LAN-Bind ohne HTTPS ab, wo `navigator.clipboard` gar
+  nicht existiert — vorher hätte der Knopf dort wortlos nichts getan. Die
+  bestehenden Kopier-Knöpfe (Artefakt-Pfad, SHA-256, Datei-Viewer) nutzen
+  denselben Weg.
+- **Dauer-Spalte in Actors und Muster-Jagd**: erster bis letzter Treffer in
+  einer Zeiteinheit („4 Minuten", „3 Tage"). 40 Aufrufe in zwei Minuten sind
+  ein Werkzeuglauf, 40 über drei Wochen ein Dauergast — dieselbe Requestzahl
+  bedeutet zweierlei. In der Muster-Jagd sortierbar.
+- **Chronologie zuklappbar** (Zustand: offen), mit Zähler im Kopf.
+- **Muster-Bibliothek zuklappbar**: sie wächst mit jedem Fall, und beim
+  Auswerten will man die Ergebnisse sehen, nicht die Liste, aus der sie
+  stammen.
+- **Rogue-Konto als IOC** (Database): ein Knopf an jeder Konto-Zeile nimmt
+  den **Login** in die Box (`user`, im STIX-Export als
+  `user-account:account_login`) und die **E-Mail** als eigenen, verknüpften
+  Eintrag (`account-of`-Kante). Die Bewertung bleibt beim Analysten — ein
+  Dump kann nicht sagen, dass ein Admin bösartig ist, deshalb ist es ein
+  Knopf und keine Regel. Bereits aufgenommene Konten zeigen ein Abzeichen
+  statt des Knopfs.
+- **Sichtbare Erklär-Punkte** überall dort, wo Tooltips bisher unsichtbar
+  waren: Muster-Summary, Chronologie-Titel, IOC-Tags-Zeile, Dauer-Spalten.
+  Ohne sichtbare Einladung hovert niemand über einer Kennzahl.
+
 ### Geändert — Database: Konten zuerst, Export-Summary erklärt sich
 
 - **Eingeschleuster Code steht jetzt nach den Konten.** Wer diese Ansicht

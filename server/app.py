@@ -2110,6 +2110,10 @@ def create_app(config: Config) -> FastAPI:
                              "JOIN db_dumps d ON d.id = t.dump_id "
                              "ORDER BY t.rows DESC, t.name")
             accounts = db.rows(conn, "SELECT * FROM db_accounts")
+            # Welche Konten schon in der Box liegen -- damit der Knopf nicht
+            # anbietet, was längst erledigt ist.
+            in_box = {r["value"] for r in db.rows(
+                conn, "SELECT value FROM iocs WHERE type IN ('user','email')")}
             findings = db.rows(conn,
                                "SELECT * FROM findings WHERE source = 'sqldb' "
                                "ORDER BY severity, artifact LIMIT 500")
@@ -2139,6 +2143,7 @@ def create_app(config: Config) -> FastAPI:
         for a in accounts:
             a["signals"] = _account_signals(a, reference)
             a["rank"] = sum(_SIGNAL_WEIGHT.get(s["id"], 0) for s in a["signals"])
+            a["in_box"] = (a["login"] or "").strip() in in_box
         accounts.sort(key=lambda a: (-a["rank"], a["cms"], a["login"].lower()))
 
         by_table = {}
@@ -2200,6 +2205,57 @@ def create_app(config: Config) -> FastAPI:
         return Response(buf.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition":
                                  f"attachment; filename={stem}_{slug}.csv"})
+
+    class FlagAccount(BaseModel):
+        # Die id aus db_accounts. Nicht der Login: derselbe Name kann in zwei
+        # Tabellen stehen, und welcher der beiden gemeint war, weiß nur die
+        # Zeile.
+        account_id: int
+        note: str = ""
+
+    @app.post("/api/cases/{slug}/database/accounts/flag", dependencies=[auth])
+    def flag_account(slug: str, body: FlagAccount):
+        """Ein untergeschobenes Konto als Indikator aufnehmen.
+
+        Der LOGIN ist der Indikator, nicht die Zeile: unter diesem Namen
+        meldet sich jemand wieder an, und danach sucht man in anderen
+        Systemen. Die E-Mail kommt als eigener Eintrag dazu, wenn eine
+        dransteht -- sie ist der zweite Wert, mit dem sich dasselbe Konto
+        anderswo wiederfinden lässt -- und beide bleiben verknüpft, damit im
+        Bericht steht, dass sie zu EINEM Konto gehören.
+
+        Die Bewertung selbst trifft der Analyst: ein Dump kann nicht sagen,
+        dass ein Admin bösartig ist. Deshalb ist das ein Knopf und keine
+        Regel."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            acc = db.one(conn, "SELECT * FROM db_accounts WHERE id = ?",
+                         (body.account_id,))
+            if acc is None:
+                raise HTTPException(404, "account not found")
+            login = (acc["login"] or "").strip()
+            if not login:
+                raise HTTPException(400, "account has no login name")
+            tags = [ioclib.TAG_ANALYST, ioclib.TAG_ACCOUNT]
+            where = f"{acc['cms'] or 'CMS'}-Konto aus {acc['tbl'] or 'dem Export'}"
+            if acc["admin"]:
+                where += " (Administrator)"
+            login_id = db.add_ioc(conn, login, "user", tags, note=body.note,
+                                  origin=f"vom Analysten markiert — {where}")
+            added = [{"value": login, "type": "user"}]
+            email = (acc["email"] or "").strip()
+            if email:
+                mail_id = db.add_ioc(
+                    conn, email, "email", [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
+                    origin=f"E-Mail des Kontos {login}")
+                db.link_iocs(conn, mail_id, login_id, ioclib.LINK_ACCOUNT_OF)
+                added.append({"value": email, "type": "email"})
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"added": added}
 
     # --- websocket ----------------------------------------------------------
 

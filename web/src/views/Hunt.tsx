@@ -14,18 +14,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Box, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Crosshair,
-  Download, PencilLine, Play, Plus, Radar, Trash2, Upload,
+  Download, HelpCircle, PencilLine, Play, Plus, Radar, Trash2, Upload,
 } from 'lucide-react'
 import {
-  api, del, downloadUrl, patch, post, type HuntPattern, type HuntResult,
-  type HuntRun,
+  api, del, downloadUrl, patch, post, type HuntClient, type HuntPattern,
+  type HuntResult, type HuntRun,
 } from '../api'
 import { formatCount, formatLogTime, formatSpan } from '../format'
 import {
   Button, Card, EmptyState, SeverityBadge, Tag,
 } from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
+import { InfoDot, Tooltip } from '../components/Tooltip'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
+import { FIELD_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -42,6 +43,9 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
+  // Offen, solange man noch am Zusammenstellen ist; mit wachsender
+  // Bibliothek klappt man sie zu und arbeitet mit den Ergebnissen.
+  const [libOpen, setLibOpen] = useState(true)
 
   const { data: lib } = useQuery({
     queryKey: ['patterns'],
@@ -198,20 +202,31 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         </div>
       )}
 
-      {/* ---- die Bibliothek ---- */}
+      {/* ---- die Bibliothek ----
+          Zuklappbar, weil sie mit jedem Fall wächst: wer zwanzig Muster
+          gesammelt hat, will beim Auswerten die Ergebnisse sehen und nicht
+          erst an der Liste vorbeiscrollen, aus der sie stammen. */}
       <Card className="overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2">
-          <Radar size={14} className="text-[var(--muted)]" />
-          <span className="text-[12px] font-semibold">
+        <button onClick={() => setLibOpen(!libOpen)}
+          className="flex w-full cursor-pointer items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2 text-left transition-colors hover:bg-[var(--panel)]">
+          {libOpen ? <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
+                   : <ChevronRight size={14} className="shrink-0 text-[var(--muted)]" />}
+          <Radar size={14} className="shrink-0 text-[var(--muted)]" />
+          <span className="shrink-0 text-[12px] font-semibold">
             Bibliothek — {formatCount(patterns.length)} Muster
           </span>
-          <Tooltip hint={`Gespeichert unter ${lib?.path ?? ''} — die Datei gehört zum Workspace, nicht zum Fall, und gilt deshalb für jeden Fall darin.`}>
-            <span className="mono truncate text-[11px] text-[var(--muted)]">
-              {lib?.path}
-            </span>
-          </Tooltip>
-        </div>
-        {patterns.map((p) => {
+          <InfoDot
+            title="Die Muster-Bibliothek"
+            body={`Gespeichert unter ${lib?.path ?? '—'}.`}
+            hint="Die Datei gehört zum WORKSPACE, nicht zum Fall: einmal angelegt, steht ein Muster in jedem weiteren Fall darin bereit. Der einzelne Fall protokolliert nur, wonach in ihm gesucht wurde — auch erfolglos." />
+          <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]">
+            {lib?.path}
+          </span>
+          <span className="shrink-0 text-[11px] text-[var(--muted)]">
+            {libOpen ? 'zuklappen' : 'aufklappen'}
+          </span>
+        </button>
+        {libOpen && patterns.map((p) => {
           const result = shown.find((r) => r.id === p.id)
           const last = runByPattern.get(p.pattern)
           if (editing === p.id) {
@@ -265,7 +280,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
             </div>
           )
         })}
-        {!patterns.length && (
+        {libOpen && !patterns.length && (
           <EmptyState icon={<Radar size={36} />} title="Noch kein Muster hinterlegt"
             sub="Trage oben einen URL-Pfad ein, den du aus einem Exploit kennst — etwa den Aufruf, mit dem eine bekannte Lücke ausgelöst wird. Die Bibliothek gehört zum Workspace und steht danach in jedem Fall bereit." />
         )}
@@ -377,10 +392,13 @@ function HuntSummary({ result }: { result: HuntResult }) {
           </span>
           {/* Das Zahlwort richtet sich nach der Gesamtzahl, das Verb nach
               der ersten: „1 von 2 Adressen KAM durch". */}
-          <span className="text-[13px] text-[var(--muted)]">
+          <span className="flex items-center gap-1 text-[13px] text-[var(--muted)]">
             von {formatCount(result.clients_total)}{' '}
             {result.clients_total === 1 ? 'Adresse' : 'Adressen'}{' '}
             {result.ok_clients === 1 ? 'kam' : 'kamen'} durch
+            {/* Sichtbar, sonst hovert niemand über einer Kennzahl: die
+                übrigen Angaben der Zeile erklären sich beim Überfahren. */}
+            <HelpCircle size={11} className="shrink-0 opacity-50" />
           </span>
         </div>
       </Tooltip>
@@ -423,7 +441,7 @@ function HuntSummary({ result }: { result: HuntResult }) {
   )
 }
 
-type SortCol = 'ip' | 'hits' | 'ok_hits' | 'first' | 'last'
+type SortCol = 'ip' | 'hits' | 'ok_hits' | 'first' | 'last' | 'dauer'
 type Sort = { col: SortCol; desc: boolean }
 
 /** Eine Adresse als Zahl, damit 2 vor 10 steht. IPv6 fällt auf den
@@ -479,6 +497,10 @@ function ResultCard({ slug, result, onTrace }: {
       if (sort.col === 'ip') return dir * ipKey(a.ip).localeCompare(ipKey(b.ip))
       if (sort.col === 'first') return dir * ((a.first_epoch ?? 0) - (b.first_epoch ?? 0))
       if (sort.col === 'last') return dir * ((a.last_epoch ?? 0) - (b.last_epoch ?? 0))
+      if (sort.col === 'dauer') {
+        const s = (c: HuntClient) => (c.last_epoch ?? 0) - (c.first_epoch ?? 0)
+        return dir * (s(a) - s(b))
+      }
       const d = dir * (a[sort.col] - b[sort.col])
       // Gleichstand bricht nach Anfragen, sonst springen Zeilen bei jedem
       // Neuzeichnen -- 40 Adressen mit je einem Treffer sind keine Seltenheit.
@@ -557,6 +579,9 @@ function ResultCard({ slug, result, onTrace }: {
             <SortHead className="px-2 py-2" col="last" sort={sort} onSort={setSort}>
               Letzter Treffer
             </SortHead>
+            <SortHead className="px-2 py-2 text-right" col="dauer" sort={sort} onSort={setSort}>
+              Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+            </SortHead>
             <th className="w-28 px-4 py-2" />
           </tr>
         </thead>
@@ -586,6 +611,11 @@ function ResultCard({ slug, result, onTrace }: {
               </td>
               <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
                 {formatLogTime(c.last_epoch, c.tz)}
+              </td>
+              {/* Die Angriffslänge: 40 Aufrufe in zwei Minuten sind ein
+                  Werkzeug, 40 über drei Wochen sind etwas anderes. */}
+              <td className="mono px-2 py-1.5 text-right text-[12px] tabular">
+                {formatSpan(c.first_epoch, c.last_epoch)}
               </td>
               <td className="px-4 py-1.5 text-right">
                 <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

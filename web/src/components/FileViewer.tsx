@@ -12,10 +12,10 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { ChevronLeft, ChevronRight, Copy, FileCode2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileCode2 } from 'lucide-react'
 import { api, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Modal, Tag } from './ui'
+import { Button, CopyButton, Modal, Tag } from './ui'
 
 export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   slug: string
@@ -98,11 +98,9 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
             </span>
           )}
 
-          <button
-            className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] hover:border-[var(--accent)]/60"
-            onClick={() => navigator.clipboard.writeText(path)}>
-            <Copy size={12} /> Pfad kopieren
-          </button>
+          <span className="ml-auto">
+            <CopyButton value={path} label="Pfad kopieren" />
+          </span>
         </div>
 
         {isError && (
