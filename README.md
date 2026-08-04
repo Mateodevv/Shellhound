@@ -1,23 +1,23 @@
 # SHELLHOUND
 
-**Forensik-Werkbank für gehackte Webserver.** Du hast eine Kopie des
-Webroots, die Access-Logs und einen Datenbank-Export — SHELLHOUND macht
-daraus in wenigen Minuten eine Arbeitsliste, eine Chronologie und eine
-IOC-Liste für den Bericht.
+Lokale DFIR-Werkbank für kompromittierte Webserver (WordPress, Joomla).
 
-Läuft lokal auf deiner Forensik-Maschine. Kein Cloud-Dienst, kein Konto,
-keine Telemetrie: die Beweismittel verlassen den Rechner nicht.
+Webroot-Kopie, Access-Logs und Datenbank-Export werden einmal indiziert.
+Danach ist jede Auswertung eine Datenbank-Abfrage: Triage über Artefakte,
+Chronologie aus gemessenen Zeiten, IOC-Export als CSV, JSON oder STIX 2.1.
 
-> **Sprache:** Oberfläche und Dokumentation sind auf Deutsch. Das ist eine
-> bewusste Entscheidung für den deutschsprachigen DFIR-Alltag, kein
-> Versehen. *The interface and docs are in German by design; see
-> [SECURITY.md](SECURITY.md) for an English summary of the threat model.*
+Läuft vollständig offline auf der Analyse-Maschine. Kein Dienst, kein
+Konto, keine Telemetrie.
+
+> Oberfläche und Dokumentation sind auf Deutsch. *The interface and
+> documentation are in German by design; see [SECURITY.md](SECURITY.md)
+> for an English summary.*
 
 <!-- SCREENSHOT: Dashboard mit Chronologie und Log-Abdeckung -->
 
----
+## Installation
 
-## In fünf Minuten loslegen
+Voraussetzungen: Python ≥ 3.10, Node ≥ 20.
 
 ```bash
 git clone https://github.com/Mateodevv/shellhound.git
@@ -27,282 +27,189 @@ cd web && npm ci && npm run build && cd ..
 python -m server.main
 ```
 
-Der Browser öffnet sich auf `http://127.0.0.1:8710`. Fertig.
+Die Oberfläche öffnet sich auf `http://127.0.0.1:8710`.
 
-**Erst mal ausprobieren, ohne echten Fall?**
+## Beispiel-Fall
 
 ```bash
 python tools/sample_case.py
 python -m server.main --workspace ~/ShellhoundSample
 ```
 
-Das baut einen vollständigen erfundenen Fall — Webroot mit WordPress und
-Joomla, zwei Wochen Logs, ein Datenbank-Export — und lässt die *echten*
-Engines darüber laufen. Was du danach siehst, hat die Erkennung wirklich
-gefunden. Das Skript druckt am Ende einen Rundgang durch alle Ansichten.
+Erzeugt einen erfundenen Fall (WordPress und Joomla, zwei Wochen Logs, ein
+Datenbank-Export) und lässt die regulären Engines darüber laufen. Alle
+angezeigten Funde stammen aus der Erkennung, nicht aus vorbereiteten Daten.
+Derselbe Fall dient in der CI als End-to-End-Test.
 
----
+## Funktionsumfang
 
-## Der Ablauf eines Falls
+**Analyse**
 
-### 1. Fall anlegen und Beweismittel eintragen
+- Access-Log-Index mit rund 55.000 Zeilen/s, GB-tauglich
+- 33 Detektionsregeln über Webroot, Datenbank-Export und Logs, dokumentiert
+  in [`docs/rules.md`](docs/rules.md)
+- CMS-Inventar mit Versionserkennung und Quellenangabe
+- Vergleich des Webroots gegen eine bekannt saubere Referenzkopie
 
-Neuer Case → unter **Evidence & Jobs** die Pfade eintragen. Vier Arten:
+**Auswertung**
 
-| Art | Was das ist |
+- Triage auf Artefakt-Ebene statt je Finding
+- Chronologie der bestätigten Artefakte, ausschließlich aus gemessenen
+  Zeiten
+- Trace beliebig vieler Clients mit Filter, Sortierung und Verlaufskurve
+- Muster-Jagd: eigene URL-Muster, fallübergreifend gespeichert
+- Länderzuordnung von IP-Adressen aus einer lokalen GeoIP-Datenbank
+- Volltextsuche über den Fall (<kbd>Strg</kbd>+<kbd>K</kbd>)
+
+**Ausgabe**
+
+- IOC-Box mit Beziehungen zwischen Indikatoren
+- Export als CSV, JSON und STIX 2.1
+- Trace-Export als ZIP mit Manifest und SHA-256
+- Fall-Archivierung als ZIP
+
+## Verwendung
+
+### Beweismittel registrieren
+
+Unter *Evidence & Jobs* die Pfade eintragen:
+
+| Art | Inhalt |
 |---|---|
-| **Webroot** | Kopie des Web-Verzeichnisses. *Kopie, nicht das Live-System.* |
-| **Access-Logs** | Apache/Nginx-Logs, auch `.gz`/`.bz2`, auch ein ganzer Ordner |
-| **SQL-Dump** | Datenbank-Export des CMS (`mysqldump`, `.sql`/`.sql.gz`) |
-| **Referenzkopie** | Ein bekannt sauberes CMS-Release derselben Version — optional, für den Datei-Vergleich |
+| Webroot | Kopie des Web-Verzeichnisses |
+| Access-Logs | Apache- oder Nginx-Logs, auch komprimiert |
+| SQL-Dump | Datenbank-Export des CMS |
+| Referenzkopie | Sauberes CMS-Release derselben Version (optional) |
 
-Schneller geht es mit **„Fall-Ordner durchsuchen"**: Ordner angeben, und
-SHELLHOUND schlägt vor, was es darin für Webroot, Logs und Dump hält.
+Alternativ durchsucht *Fall-Ordner durchsuchen* ein Verzeichnis und schlägt
+Kandidaten vor.
 
 <!-- SCREENSHOT: Evidence-Ansicht mit erkannten Kandidaten -->
 
-### 2. Analysieren
+### Triage
 
-Ein Klick startet alles parallel. Der Fortschritt läuft links unten mit.
+Entschieden wird über das Artefakt, nicht über einzelne Findings. Mehrere
+Regeln auf derselben Datei sind Beobachtungen zu einem Objekt.
 
-- **Logs → Index.** Einmal indiziert, danach ist jede Frage eine
-  Datenbank-Abfrage statt eines Log-Durchlaufs. ~55.000 Zeilen/s; ein
-  2-GB-Log braucht rund zwei Minuten.
-- **Webroot → Webshell-Scan + CMS-Inventar.** Regeln aus echten Fällen,
-  inklusive der Unterscheidung „hat CMS-Startschutz" vs. „hat keinen".
-- **SQL-Dump → eingeschleuster Code + Konten.** Streamend, GB-tauglich.
-
-### 3. Findings durcharbeiten
-
-**Entschieden wird über Artefakte, nicht über einzelne Findings.** Acht
-Regeln auf einer abgelegten Shell sind acht Beobachtungen über *eine*
-Datei — die Frage „gehört das zum Vorfall?" stellt sich einmal.
-
-<!-- SCREENSHOT: Findings-Ansicht, Artefakte nach Kategorie gruppiert -->
-
-Tastatur:
-
-| Taste | Wirkung |
+| Taste | Funktion |
 |---|---|
-| `j` / `k` | nächstes / vorheriges Artefakt |
-| `Enter` | Detail öffnen |
-| `c` | **True Positive** — gehört zum Vorfall |
-| `d` | **False Positive** |
-| `r` | gesichtet, Entscheidung später |
-| `x` | markieren (für Bulk-Aktionen) |
+| <kbd>j</kbd> / <kbd>k</kbd> | Nächstes / vorheriges Artefakt |
+| <kbd>Enter</kbd> | Detailfenster |
+| <kbd>c</kbd> | True Positive |
+| <kbd>d</kbd> | False Positive |
+| <kbd>r</kbd> | Gesichtet |
+| <kbd>x</kbd> | Markieren |
 
-Das Detail-Fenster holt alles zusammen, was zur Entscheidung nötig ist:
-Metadaten, Dateiinhalt (Raw und Hex), jede Regel mit ihrer Evidence, das
-Verhalten des Clients — und jede IP daran direkt als Trace.
+Ein True Positive überträgt Pfad und SHA-256 in die IOC-Box und entscheidet
+Clients mit, die die Datei laut Log geladen haben. Clients mit erfolglosen
+Anfragen werden vorgeschlagen, nicht entschieden.
 
-**True Positive tut mehr, als ein Häkchen zu setzen:** Pfad und SHA-256
-wandern in die IOC Box, und die Clients, die genau diese Datei laut Log
-geladen haben, werden **mitentschieden** — mit Vermerk, woraus, und mit
-Rückgängig. Wer sie nur erfolglos angefragt hat, wird *vorgeschlagen* statt
-entschieden. Eine Sondierung ins Leere ist etwas anderes als ein Zugriff.
-
+<!-- SCREENSHOT: Findings-Ansicht mit gruppierten Artefakten -->
 <!-- SCREENSHOT: Artefakt-Detailfenster mit Dateiinhalt und Clients -->
 
-**Filter blenden aus, sie wählen nicht aus.** Jeder Chip versteckt seine
-Klasse, der nächste Klick holt sie zurück, mehrere stapeln sich. So
-arbeitest du dich durch: Scanner weg, Low weg — übrig bleibt das
-Unerklärte.
+### Weitere Ansichten
 
-### 4. Actors: die Grundgesamtheit
-
-Jede IP, die in den Logs vorkommt — auch die, auf die keine Regel
-angesprochen hat. Mit Sparkline, Verhalten (Scanner, Brute-Force,
-Shell-Zugriff), **Länderflagge** und der Dauer ihrer Aktivität.
+- **Actors** — alle Clients aus den Logs mit Verhalten, Länderflagge und
+  Aktivitätsdauer. Mehrfachauswahl ergibt einen kombinierten Trace.
+- **Muster-Jagd** — hinterlegte URL-Muster gegen den Log-Index. Kennzahlen
+  je Suche, Protokoll auch erfolgloser Läufe.
+- **Database** — Konten mit benannten Auffälligkeiten, eingeschleuster Code
+  in Datenfeldern, Tabellen-Inventar.
+- **Dateien** — Evidence durchsuchen, Dateien manuell als IOC aufnehmen,
+  Vergleich gegen die Referenzkopie.
+- **IOC Box** — gesammelte Indikatoren mit Verknüpfungen und Export.
 
 <!-- SCREENSHOT: Actors-Liste mit Flaggen und Verhaltens-Badges -->
-
-„Unauffällig" ausblenden lässt genau die Clients übrig, an denen etwas
-dran ist. Beliebig viele markieren → **ein kombinierter Trace** in
-Millisekunden.
-
-Im Trace lässt sich filtern (URI, User-Agent, Statusklasse, Methode) und
-sortieren, und wenn er aus einem Fund heraus geöffnet wurde, ist die
-auslösende Zeile **rot markiert** — sonst sucht man sie unter tausenden.
-
-### 5. Muster-Jagd: dein eigenes Wissen einbringen
-
-Findings zeigen, was die *mitgelieferten* Regeln kennen. Hier hinterlegst
-du, was **du** weißt: „diesen URL-Pfad ruft nur auf, wer diesen Exploit
-fährt." Das Werkzeug sagt dir, wer ihn abgerufen hat.
-
-```
-option=com_jce&task=plugin          ← Muster (* ist Platzhalter)
-/wp-content/uploads/*.php
-```
-
-Über jedem Ergebnis steht der Befund in einer Zeile: **wie viele Adressen
-durchkamen** (nicht wie oft geklopft wurde), Anfragen und davon 2xx,
-erster bis letzter Treffer mit Zeitspanne.
-
 <!-- SCREENSHOT: Muster-Jagd mit Kennzahlen und Trefferliste -->
-
-**Die Bibliothek gehört dem Workspace, nicht dem Fall** — einmal angelegt,
-steht ein Muster in jedem weiteren Fall bereit. Der einzelne Fall
-protokolliert nur, wonach gesucht wurde. Auch erfolglos: *„wir haben
-darauf geprüft, es war nichts"* steht sonst nirgends und ist im Bericht
-Gold wert.
-
-### 6. Datenbank und Dateien
-
-**Database** zeigt, was der Dump verrät: Konten mit benannten
-Auffälligkeiten (kürzlich angelegt, schwacher Hash, offene Sitzung), den
-eingeschleusten Code in Datenfeldern, das Tabellen-Inventar. Ein
-untergeschobenes Konto nimmst du per Knopf als IOC auf — Login und E-Mail,
-verknüpft.
-
-**Dateien** lässt dich durch die Evidence klicken und markieren, was den
-Regeln entgangen ist. Und wenn eine Referenzkopie eingetragen ist:
-**der Webroot-Vergleich** — zusätzliche, veränderte und gelöschte Dateien.
-
 <!-- SCREENSHOT: Webroot-Diff mit zusätzlich/verändert/fehlt -->
+<!-- SCREENSHOT: IOC Box mit aufgeklappten Verknüpfungen -->
 
-### 7. Die Chronologie
+### Chronologie
 
-In der Fall-Zusammenfassung stehen die bestätigten Artefakte in ihrer
-zeitlichen Abfolge — der erste Absatz deines Berichts.
+Die bestätigten Artefakte in zeitlicher Abfolge. Jede Zeile nennt ihre
+Quelle (Access-Log oder Datenbank-Export). Die Chronologie ordnet gemessene
+Beobachtungen und leitet keine Ursachen ab.
+
+Der Zeitpunkt, zu dem eine Datei vorlag, wird über ihren ersten
+erfolgreichen Abruf belegt, nicht über die mtime der Kopie. Zeitliche Lücken
+werden ausgewiesen. Abweichende Uhren zwischen Log- und Datenbankserver
+lassen sich als Versatz je Quelle setzen; der Versatz wird gespeichert und
+in der Chronologie vermerkt.
 
 <!-- SCREENSHOT: Chronologie mit Lücken und Herkunftsangaben -->
 
-Sie **ordnet Gemessenes und behauptet keine Ursache.** An jeder Zeile
-steht, ob die Zeit aus dem Log oder aus dem Datenbank-Export stammt;
-welche Beobachtung aus welcher folgt, entscheidest du.
+## Konfiguration
 
-Dass eine Datei dalag, belegt ihr **erster erfolgreicher Abruf** — nicht
-die mtime der Kopie, der niemand ansieht, ob sie vom Original stammt oder
-vom Kopiervorgang. Lief davor eine Anfrage auf denselben Pfad ins Leere,
-grenzt das die Entstehung ein: *„die Datei entstand zwischen 07-07 04:02
-und 07-08 09:13"* ist eine rein gemessene Aussage.
-
-**Lücken werden benannt, nicht überbrückt.** Ein bestätigtes Artefakt, für
-das der Fall keine Zeit hergibt, steht gesondert darunter statt
-stillschweigend zu fehlen.
-
-Führen Log-Server und Datenbank-Server verschiedene Uhren, setzt du den
-**Versatz** oben rechts — er wird gespeichert und in der Kette ausgewiesen.
-
-### 8. IOC Box und Export
-
-Alles Gesammelte, **mit seinen Beziehungen**: Hash ↔ Pfad, wer den Pfad
-abgerufen hat, welche Domain in welchem eingeschleusten Code stand. Die
-Kanten entstehen beim Einsammeln — von Hand verknüpfen gibt es bewusst
-nicht.
-
-<!-- SCREENSHOT: IOC Box mit aufgeklappten Verknüpfungen -->
-
-Pfade sind **relativ zum Webroot** (`webroot/wp-content/…`), nie absolut —
-sonst wandern deine VM-Pfade in den Bericht.
-
-| Export | Wofür |
+| Option | Bedeutung |
 |---|---|
-| **CSV** | Excel, Bericht, Passwort-Reset-Liste |
-| **JSON** | eigene Skripte — enthält auch die Chronologie |
-| **STIX 2.1** | SIEM und Threat-Intel, mit `relationship`-Objekten |
+| `--workspace PFAD` | Ablage der Fälle, Standard `~/ShellhoundCases` |
+| `--port PORT` | Standard `8710` |
+| `--host HOST` | Standard `127.0.0.1`; abweichende Bindung erfordert `--token` |
+| `--token TOKEN` | Fester Zugriffstoken statt eines zufälligen je Start |
+| `--no-browser` | Browser nicht automatisch öffnen |
 
-Der **Trace-Export** ist ein ZIP aus CSV und Manifest: Abfrage, Filter,
-Zeilenzahl und SHA-256 samt Prüfbefehl. Damit ist er zitierfähig.
+Umgebungsvariablen: `SHELLHOUND_WORKSPACE`, `SHELLHOUND_GEOIP`.
 
-### 9. Fall abschließen
+Ein Fall ist ein Verzeichnis. `logindex.db` ist abgeleitet und wird nicht
+archiviert.
 
-Packt alles in ein ZIP unter `<workspace>/archive/` und entfernt die
-Arbeitskopie. Zurückholen über „Fall importieren" — auch auf einem anderen
-Rechner.
+## Sicherheit
 
----
+SHELLHOUND ist ein Einzelplatz-Werkzeug ohne Benutzerkonten und ohne TLS.
+Für den Zugriff von einem anderen Rechner ist ein SSH-Tunnel vorgesehen,
+keine Bindung an `0.0.0.0`.
 
-## Praktisches
+Der einzige ausgehende Netzwerkzugriff ist der optionale Download der
+GeoIP-Länderdatenbank; er erfolgt nur nach ausdrücklicher Bestätigung und
+überträgt keine Falldaten.
 
-**Überall im Fall suchen:** `Strg`+`K` — Artefakte, Indikatoren, Actors,
-Konten. Ein Treffer öffnet direkt das passende Fenster.
+Untersuchtes Material enthält funktionsfähigen Angriffscode. Empfohlen sind
+eine isolierte Maschine, ausschließlich Kopien der Originale und eine
+Virenscanner-Ausnahme für das Evidence-Verzeichnis.
 
-**Erklärungen:** Was ein Wert bedeutet, steht im Werkzeug. Ein `?` oder ein
-Hover erklärt jede Kennzahl, jede Regel und jedes Abzeichen — inklusive
-dessen, was es *nicht* aussagt.
+Vollständiges Bedrohungsmodell und Meldeweg für Schwachstellen:
+[SECURITY.md](SECURITY.md).
 
-**Länderflaggen** brauchen eine lokale GeoIP-Datenbank. Fehlt sie, bietet
-das Dashboard an, die freie DB-IP Country Lite zu laden (mit Nachfrage —
-es ist der einzige Netz-Kontakt des Werkzeugs). Alternativ eine `*.mmdb`
-in den Workspace legen oder `SHELLHOUND_GEOIP` setzen.
-
-**Wo liegen meine Fälle?** Unter `~/ShellhoundCases`, änderbar mit
-`--workspace` oder `SHELLHOUND_WORKSPACE`. Ein Fall ist ein Ordner —
-zippen heißt übergeben.
-
-**Von einem anderen Rechner zugreifen?** Über einen SSH-Tunnel, nicht über
-`--host 0.0.0.0`. Siehe [SECURITY.md](SECURITY.md).
-
----
-
-## Arbeiten Sie sicher
-
-Ein untersuchtes Webroot enthält **funktionsfähigen Angriffscode**.
-SHELLHOUND führt nichts davon aus — es liest, hasht und zeigt an. Trotzdem:
-
-- Isolierte VM, Snapshot vorher, kein Netzzugang.
-- Immer mit einer **Kopie** arbeiten.
-- **Virenscanner-Ausnahme für den Evidence-Ordner.** Sonst löscht er
-  Beweismittel, ohne dass es jemand merkt — auf Windows reproduzierbar für
-  Dateien mit bestimmten PHP-Mustern.
-
----
-
-## Unter der Haube
+## Architektur
 
 ```
-<workspace>/       hunt_patterns.json (Muster-Bibliothek, fallübergreifend)
-                   *.mmdb (GeoIP, optional)
-  <fall>/          case.db + logindex.db (abgeleitet) + evidence/
-server/            FastAPI + stdlib-SQLite
+<workspace>/       hunt_patterns.json, *.mmdb (optional)
+  <fall>/          case.db, logindex.db (abgeleitet), evidence/
+server/            FastAPI, SQLite aus der Standardbibliothek
   engines/         accesslog, logindex, webshell, cmsinventory,
                    sqldump, webrootdiff, detect
-web/               Vite + React + TypeScript + Tailwind
-docs/rules.md      jede Detektionsregel: Auslöser, Aussage, Grenzen
+web/               Vite, React, TypeScript, Tailwind
+docs/rules.md      Detektionsregeln mit Auslöser, Aussage und Grenzen
 ```
 
-Grundsätze, die überall gelten:
+Grundsätze:
 
-- **Ein Fall ist ein Ordner.** `logindex.db` ist abgeleitet und wird nicht
-  archiviert.
-- **Triage überlebt Re-Scans** — Fingerprints sind stabil.
-- **„Verworfen" löscht nie.** Es bleibt sichtbar und filterbar, mit Notiz.
-- **Alarme sind outcome-gated.** Ein Angriffsversuch, den der Server mit
-  404 beantwortet hat, ist etwas anderes als einer mit 200.
-- **Evidence wird nie ausgeliefert.** Findings tragen Text-Exzerpte;
-  Dateiinhalte kommen als JSON-Daten, nie als Dokument, das der Browser
-  ausführen könnte.
-- **Ein gefiltertes Artefakt kommt immer vollständig.** Ein Filter darf nie
-  einen Teil dessen verstecken, worauf eine Entscheidung beruht.
+- Triage-Zustände überleben Re-Scans; Fingerprints sind stabil.
+- Verworfene Findings werden nicht gelöscht, sondern bleiben filterbar.
+- Log-Alarme sind outcome-gated: ein mit 404 beantworteter Angriffsversuch
+  wird anders bewertet als ein erfolgreicher.
+- Evidence wird nie ausgeliefert. Findings enthalten Text-Exzerpte,
+  Dateiinhalte werden als JSON-Daten übertragen.
+- Gefilterte Artefakte werden immer vollständig geliefert.
 
-Entwicklung mit Hot Reload:
+### Entwicklung
 
 ```bash
-cd web && npm run dev            # Vite auf 5173, leitet /api und /ws weiter
+cd web && npm run dev
 python -m server.main --no-browser --token dev
-# dann http://localhost:5173/?token=dev
+# http://localhost:5173/?token=dev
 ```
 
----
+## Mitwirken
 
-## Mitmachen
+Fehlerberichte und Pull Requests sind willkommen. Schwachstellen bitte
+nicht als öffentliches Issue melden, siehe [SECURITY.md](SECURITY.md).
 
-Fehlerberichte und Pull Requests sind willkommen — für **Sicherheitslücken
-bitte kein öffentliches Issue**, siehe [SECURITY.md](SECURITY.md).
-
-**Niemals Daten aus einem echten Fall anhängen.** Kein Webroot, keine Logs,
-keine Kunden-IPs. Beschreibe stattdessen die *Form* der Daten oder baue ein
-Minimalbeispiel — `tools/sample_case.py` zeigt, wie das geht.
-
-Neue Detektionsregeln gehören mit ihrer Begründung nach
-[`docs/rules.md`](docs/rules.md): was sie auslöst, was sie aussagt und wo
-sie danebenliegen kann.
-
----
+Beiträge dürfen keine Daten aus realen Vorfällen enthalten. Für
+Reproduktionen eignet sich `tools/sample_case.py` als Vorlage. Neue
+Detektionsregeln gehören mit Auslöser, Aussage und Grenzen nach
+[`docs/rules.md`](docs/rules.md).
 
 ## Lizenz
 
-[Apache-2.0](LICENSE) — siehe [NOTICE](NOTICE) für die verwendeten
-Drittanbieter-Komponenten.
+[Apache-2.0](LICENSE). Drittanbieter-Komponenten: [NOTICE](NOTICE).
