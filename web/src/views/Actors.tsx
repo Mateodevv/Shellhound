@@ -25,7 +25,7 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
 import { Sparkline } from '../components/Sparkline'
-import { TraceWindow } from '../components/TraceWindow'
+import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp, useTriage } from '../components/triage'
@@ -69,7 +69,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   // Die URIs, die bei DIESEN Clients den Alarm ausgelöst haben — der Trace
   // markiert sie rot, damit man die auslösende Zeile nicht sucht.
-  const [traceMarks, setTraceMarks] = useState<string[]>([])
+  const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
 
@@ -151,8 +151,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           <span className="text-[13px] font-semibold">{checked.size} ausgewählt</span>
           <Button variant="primary"
             onClick={() => {
-              setTraceMarks(actors.filter((a) => checked.has(a.ip))
-                .flatMap((a) => a.alerts.map((al) => al.example)).filter(Boolean))
+              setTraceMarks({
+                exact: actors.filter((a) => checked.has(a.ip))
+                  .flatMap((a) => a.alerts.map((al) => al.example)).filter(Boolean),
+                reason: 'dieser Aufruf hat den Alarm ausgelöst',
+              })
               setTraceIps([...checked])
             }}>
             <Crosshair size={14} /> Trace ({checked.size} Clients)
@@ -272,7 +275,10 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       )}
                       <Button variant="ghost"
                         onClick={() => {
-                          setTraceMarks(a.alerts.map((al) => al.example).filter(Boolean))
+                          setTraceMarks({
+                            exact: a.alerts.map((al) => al.example).filter(Boolean),
+                            reason: 'dieser Aufruf hat den Alarm ausgelöst',
+                          })
                           setTraceIps([a.ip])
                         }}>
                         <Crosshair size={13} /> Trace
@@ -304,16 +310,14 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         roots={roots}
         collected={t.collected}
         onView={(path, line) => setViewing({ path, line })}
-        onTrace={(ips) => setTraceIps(ips)}
+        onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={() => { setSelected(null); t.clearCollected() }}
         onTriage={(state, note) => {
           if (selected) t.decide([selected.artifact], state, note)
         }}
       />
 
-      <TraceWindow slug={slug} ips={traceIps} layer={1}
-        highlight={traceMarks}
-        highlightReason="dieser Aufruf hat den Alarm ausgelöst"
+      <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
         onClose={() => setTraceIps(null)} />
 
       <FileViewer

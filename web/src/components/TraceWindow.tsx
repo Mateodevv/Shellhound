@@ -42,18 +42,26 @@ const SORTS = [
   { id: 'uri', label: 'URI' },
 ] as const
 
-export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
-                              highlightReason }: {
+/** Was im Trace rot markiert wird — und warum.
+ *
+ *  `exact` für Stellen, an denen die auslösenden URIs BEKANNT sind (die
+ *  Beispiel-URI eines Alarms, die vom Muster getroffenen URLs). `contains`
+ *  für die Fälle, in denen es um eine DATEI geht: dort kennt man den Pfad,
+ *  aber nicht jede Query-Variante, mit der sie aufgerufen wurde. */
+export interface TraceMarks {
+  exact?: string[]
+  contains?: string[]
+  reason?: string
+}
+
+export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   slug: string
   ips: string[] | null
   onClose: () => void
   layer?: number
-  /** URIs, die zum Flaggen geführt haben — die Zeilen dazu werden rot
-   *  markiert. Aus Actors sind das die Beispiel-URIs der Alarme, aus der
-   *  Muster-Jagd die tatsächlich getroffenen URLs. Ohne diese Markierung
-   *  sucht man die auslösende Zeile unter tausenden von Hand. */
-  highlight?: string[]
-  highlightReason?: string
+  /** Ohne diese Markierung sucht man die auslösende Zeile unter tausenden
+   *  von Hand. */
+  marks?: TraceMarks
 }) {
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
@@ -92,14 +100,24 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
     return map
   }, [ips])
 
-  const marked = useMemo(
-    () => new Set((highlight ?? []).filter(Boolean).map((u) => u.toLowerCase())),
-    [highlight])
+  const istMarkiert = useMemo(() => {
+    const exakt = new Set((marks?.exact ?? []).filter(Boolean)
+      .map((u) => u.toLowerCase()))
+    const teile = (marks?.contains ?? []).filter(Boolean)
+      .map((u) => u.toLowerCase().replace(/\\/g, '/'))
+    if (!exakt.size && !teile.length) return null
+    return (uri: string) => {
+      const u = (uri || '').toLowerCase()
+      return exakt.has(u) || teile.some((t) => u.includes(t))
+    }
+  }, [marks])
 
   if (!ips) return null
   const filtering = Boolean(search || status || method)
   const points = timeline?.timeline ?? []
-  const markedRows = data?.rows.filter((r) => marked.has((r.uri ?? '').toLowerCase())).length ?? 0
+  const markedRows = istMarkiert
+    ? (data?.rows.filter((r) => istMarkiert(r.uri)).length ?? 0)
+    : 0
 
   return (
     <Modal open onClose={onClose} layer={layer}
@@ -123,7 +141,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
         </div>
       )}
 
-      {marked.size > 0 && (
+      {istMarkiert && (
         <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-1.5 text-[12px]">
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--sev-high)' }} />
           <span className="text-[var(--danger-text)]">
@@ -132,7 +150,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
               : 'Auf dieser Seite keine markierte Zeile'}
           </span>
           <span className="text-[var(--muted)]">
-            — {highlightReason ?? 'das ist der Aufruf, der zum Flaggen geführt hat'}.
+            — {marks?.reason ?? 'das ist der Aufruf, der zum Flaggen geführt hat'}.
           </span>
         </div>
       )}
@@ -205,7 +223,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
           </thead>
           <tbody className="mono">
             {data?.rows.map((r, i) => {
-              const hit = marked.has((r.uri ?? '').toLowerCase())
+              const hit = istMarkiert ? istMarkiert(r.uri) : false
               return (
               <tr key={i} className={clsx(
                 'border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]',

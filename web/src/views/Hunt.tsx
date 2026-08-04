@@ -25,7 +25,7 @@ import {
   Button, Card, EmptyState, SeverityBadge, Tag,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { TraceWindow } from '../components/TraceWindow'
+import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -39,7 +39,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   // Die vom Muster getroffenen URLs — im Trace rot markiert, damit man den
   // Aufruf, um den es geht, nicht zwischen tausend anderen sucht.
-  const [traceMarks, setTraceMarks] = useState<string[]>([])
+  const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
 
@@ -275,14 +275,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
       {shown.map((r) => (
         <ResultCard key={r.id} slug={slug} result={r}
           onTrace={(ips) => {
-            setTraceMarks(r.uris.map((u) => u.uri))
+            setTraceMarks({ exact: r.uris.map((u) => u.uri),
+                            reason: 'dieser Aufruf passt auf das Muster' })
             setTraceIps(ips)
           }} />
       ))}
 
-      <TraceWindow slug={slug} ips={traceIps}
-        highlight={traceMarks}
-        highlightReason="dieser Aufruf passt auf das Muster"
+      <TraceWindow slug={slug} ips={traceIps} marks={traceMarks}
         onClose={() => setTraceIps(null)} />
     </div>
   )

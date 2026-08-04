@@ -72,11 +72,15 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 - **Actors: „Unauffällig" ausblenden.** Der Chip entfernt genau die Zeilen,
   an denen „unauffällig" steht — die Bedingung spiegelt exakt die Regeln, die
   ein Abzeichen erzeugen. Übrig bleibt, woran etwas dran ist.
-- **Der Trace markiert die auslösende Zeile rot.** Aus Actors sind das die
-  Beispiel-URIs der Alarme, aus der Muster-Jagd die tatsächlich getroffenen
-  URLs; eine Legende sagt, was markiert ist und warum. Ohne das sucht man
-  den einen Aufruf, um den es geht, unter tausenden von Hand — im Testfall
-  6 markierte Zeilen unter 56.
+- **Der Trace markiert die auslösende Zeile rot** — überall, wo er aufgeht.
+  Aus Actors sind das die Beispiel-URIs der Alarme, aus der Muster-Jagd die
+  getroffenen URLs, und **aus dem Artefakt-Fenster die Zeilen, in denen das
+  Artefakt aufgerufen wurde**: bei einer Datei ihr Pfad (Teilstring, weil die
+  Query-Varianten dahinter nicht vorher bekannt sind), bei einem Client der
+  Aufruf, der seinen Alarm ausgelöst hat. Eine Legende sagt jeweils, was
+  markiert ist und warum. Ohne das sucht man den einen Aufruf, um den es
+  geht, unter tausenden von Hand — im Beispielfall 32 markierte Zeilen unter
+  52 beim Datei-Artefakt, 15 beim Client.
 - **Einzelne Treffer-Adressen in die IOC Box**: neben dem Sammelknopf steht
   der Knopf jetzt auch an jeder Client-Zeile der Muster-Ergebnisse.
 - **Dateien** (neuer Menüpunkt): durch die registrierte Evidence klicken und

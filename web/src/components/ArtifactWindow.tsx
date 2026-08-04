@@ -26,6 +26,7 @@ import {
 } from '../format'
 import { Button, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
+import type { TraceMarks } from './TraceWindow'
 import { FIELD_EXPLAIN, explainRule } from '../explain'
 
 export const KIND_ICON: Record<string, typeof Bug> = {
@@ -94,7 +95,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   onClose: () => void
   onTriage: (state: string, note?: string) => void
   onView: (path: string, line: number | null) => void
-  onTrace: (ips: string[]) => void
+  /** Der Trace bekommt mit, WAS er rot markieren soll — sonst steht man im
+   *  Trace vor tausend Zeilen und sucht die, um die es geht. */
+  onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
   const [note, setNote] = useState('')
   useEffect(() => { setNote(artifact?.triage_note ?? '') }, [artifact])
@@ -117,6 +120,17 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const ips = ctx?.related_ips ?? []
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const Icon = KIND_ICON[kind] ?? Bug
+
+  // WAS im Trace rot wird, hängt an der Art des Artefakts:
+  //   Datei   -> die Aufrufe DIESER Datei. Der Pfad unterhalb der Evidence
+  //              ist bekannt, die Query-Varianten dahinter nicht -- deshalb
+  //              Teilstring statt exakter Liste.
+  //   Client  -> die URI, die seinen Alarm ausgelöst hat.
+  const marks: TraceMarks = kind === 'file'
+    ? { contains: [root ? rel : artifact.artifact.replace(/\\/g, '/')],
+        reason: 'hier wurde diese Datei aufgerufen' }
+    : { exact: (actor?.alerts ?? []).map((a) => a.example).filter(Boolean),
+        reason: 'dieser Aufruf hat den Alarm ausgelöst' }
 
   return (
     <Modal open onClose={onClose}
@@ -207,7 +221,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                   </Button>
                 )}
                 {kind === 'client' && (
-                  <Button onClick={() => onTrace([artifact.artifact])}>
+                  <Button onClick={() => onTrace([artifact.artifact], marks)}>
                     <Crosshair size={14} /> Trace öffnen
                   </Button>
                 )}
@@ -377,7 +391,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               right={ips.length > 1 && (
                 <button
                   className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                  onClick={() => onTrace(ips.map((i) => i.ip))}>
+                  onClick={() => onTrace(ips.map((i) => i.ip), marks)}>
                   alle zusammen tracen
                 </button>
               )}>
@@ -398,7 +412,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                         </span>
                       )}
                       <Button variant="ghost" className="shrink-0"
-                        onClick={() => onTrace([h.ip])}>
+                        onClick={() => onTrace([h.ip], marks)}>
                         <Crosshair size={12} /> Trace
                       </Button>
                     </div>
