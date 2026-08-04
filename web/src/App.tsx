@@ -35,9 +35,9 @@ const NAV: { id: ViewId; label: string; icon: typeof Bug }[] = [
   { id: 'actors', label: 'Actors', icon: Users },
   { id: 'hunt', label: 'Muster-Jagd', icon: Radar },
   { id: 'iocbox', label: 'IOC Box', icon: Box },
-  { id: 'files', label: 'Dateien', icon: FolderTree },
-  { id: 'cms', label: 'CMS Inventory', icon: Puzzle },
   { id: 'database', label: 'Database', icon: Database },
+  { id: 'cms', label: 'CMS Inventory', icon: Puzzle },
+  { id: 'files', label: 'Dateien', icon: FolderTree },
   { id: 'evidence', label: 'Evidence & Jobs', icon: FolderCog },
 ]
 

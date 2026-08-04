@@ -37,6 +37,9 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  // Die vom Muster getroffenen URLs — im Trace rot markiert, damit man den
+  // Aufruf, um den es geht, nicht zwischen tausend anderen sucht.
+  const [traceMarks, setTraceMarks] = useState<string[]>([])
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
 
@@ -270,10 +273,17 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
 
       {/* ---- die Ergebnisse ---- */}
       {shown.map((r) => (
-        <ResultCard key={r.id} slug={slug} result={r} onTrace={setTraceIps} />
+        <ResultCard key={r.id} slug={slug} result={r}
+          onTrace={(ips) => {
+            setTraceMarks(r.uris.map((u) => u.uri))
+            setTraceIps(ips)
+          }} />
       ))}
 
-      <TraceWindow slug={slug} ips={traceIps} onClose={() => setTraceIps(null)} />
+      <TraceWindow slug={slug} ips={traceIps}
+        highlight={traceMarks}
+        highlightReason="dieser Aufruf passt auf das Muster"
+        onClose={() => setTraceIps(null)} />
     </div>
   )
 }
@@ -390,16 +400,20 @@ function ResultCard({ slug, result, onTrace }: {
             <Crosshair size={13} /> alle tracen
           </Button>
         )}
-        <Tooltip hint="Übernimmt alle hier gelisteten Adressen als Indikatoren — mit dem Muster als Herkunft, damit im Bericht steht, WARUM sie drinstehen.">
+        <Tooltip hint="Übernimmt alle hier gelisteten Adressen als Indikatoren — mit dem Muster als Herkunft, damit im Bericht steht, WARUM sie drinstehen. Einzeln geht auch: der Knopf steht an jeder Zeile.">
           <Button variant="primary" disabled={collect.isPending}
             onClick={() => collect.mutate(result.clients.map((c) => c.ip))}>
-            <Box size={13} />
-            {collect.data
-              ? `${formatCount(collect.data.added)} übernommen`
-              : `Alle ${formatCount(result.clients.length)} in die IOC Box`}
+            <Box size={13} /> Alle {formatCount(result.clients.length)} in die IOC Box
           </Button>
         </Tooltip>
       </div>
+
+      {collect.data && (
+        <div className="border-b border-[var(--line)] bg-[rgba(12,163,12,0.08)] px-4 py-1.5 text-[12px] text-[var(--ok)] animate-fade-up">
+          {formatCount(collect.data.added)} Adresse(n) in die IOC Box übernommen —
+          Herkunft: „Muster-Treffer: {result.label || result.pattern}"
+        </div>
+      )}
 
       {result.truncated && (
         <div className="border-b border-[var(--line)] bg-[rgba(250,178,25,0.10)] px-4 py-1.5 text-[11.5px] text-[var(--sev-low)]">
@@ -440,10 +454,17 @@ function ResultCard({ slug, result, onTrace }: {
                 {formatDay(c.first_epoch, c.tz)} → {formatDay(c.last_epoch, c.tz)}
               </td>
               <td className="px-4 py-1.5 text-right">
-                <Button variant="ghost" className="opacity-0 group-hover:opacity-100"
-                  onClick={() => onTrace([c.ip])}>
-                  <Crosshair size={13} /> Trace
-                </Button>
+                <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Tooltip hint="Nur diese Adresse in die IOC Box — mit dem Muster als Herkunft.">
+                    <Button variant="ghost" disabled={collect.isPending}
+                      onClick={() => collect.mutate([c.ip])}>
+                      <Box size={13} /> IOC
+                    </Button>
+                  </Tooltip>
+                  <Button variant="ghost" onClick={() => onTrace([c.ip])}>
+                    <Crosshair size={13} /> Trace
+                  </Button>
+                </div>
               </td>
             </tr>
           ))}

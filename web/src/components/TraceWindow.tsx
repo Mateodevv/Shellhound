@@ -42,11 +42,18 @@ const SORTS = [
   { id: 'uri', label: 'URI' },
 ] as const
 
-export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
+export function TraceWindow({ slug, ips, onClose, layer = 0, highlight,
+                              highlightReason }: {
   slug: string
   ips: string[] | null
   onClose: () => void
   layer?: number
+  /** URIs, die zum Flaggen geführt haben — die Zeilen dazu werden rot
+   *  markiert. Aus Actors sind das die Beispiel-URIs der Alarme, aus der
+   *  Muster-Jagd die tatsächlich getroffenen URLs. Ohne diese Markierung
+   *  sucht man die auslösende Zeile unter tausenden von Hand. */
+  highlight?: string[]
+  highlightReason?: string
 }) {
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
@@ -85,9 +92,14 @@ export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
     return map
   }, [ips])
 
+  const marked = useMemo(
+    () => new Set((highlight ?? []).filter(Boolean).map((u) => u.toLowerCase())),
+    [highlight])
+
   if (!ips) return null
   const filtering = Boolean(search || status || method)
   const points = timeline?.timeline ?? []
+  const markedRows = data?.rows.filter((r) => marked.has((r.uri ?? '').toLowerCase())).length ?? 0
 
   return (
     <Modal open onClose={onClose} layer={layer}
@@ -108,6 +120,20 @@ export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
             </span>
           </div>
           <TimelineChart data={points} height={160} />
+        </div>
+      )}
+
+      {marked.size > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-1.5 text-[12px]">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--sev-high)' }} />
+          <span className="text-[var(--danger-text)]">
+            {markedRows > 0
+              ? `${formatCount(markedRows)} Zeile(n) auf dieser Seite rot markiert`
+              : 'Auf dieser Seite keine markierte Zeile'}
+          </span>
+          <span className="text-[var(--muted)]">
+            — {highlightReason ?? 'das ist der Aufruf, der zum Flaggen geführt hat'}.
+          </span>
         </div>
       )}
 
@@ -178,8 +204,13 @@ export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
             </tr>
           </thead>
           <tbody className="mono">
-            {data?.rows.map((r, i) => (
-              <tr key={i} className="border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]">
+            {data?.rows.map((r, i) => {
+              const hit = marked.has((r.uri ?? '').toLowerCase())
+              return (
+              <tr key={i} className={clsx(
+                'border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]',
+                hit && 'bg-[var(--danger-soft)]')}
+                style={hit ? { boxShadow: 'inset 3px 0 0 var(--sev-high)' } : undefined}>
                 {ips.length > 1 && (
                   <td className="whitespace-nowrap px-2 py-1">
                     <span className="mr-1.5 inline-block h-2 w-2 rounded-full"
@@ -191,7 +222,9 @@ export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
                   {formatLogTime(r.epoch, r.tz)}
                 </td>
                 <td className="px-2 py-1">{r.method}</td>
-                <td className="max-w-[420px] truncate px-2 py-1" title={r.uri}>{r.uri}</td>
+                <td className={clsx('max-w-[420px] truncate px-2 py-1',
+                  hit && 'font-semibold text-[var(--danger-text)]')}
+                  title={r.uri}>{r.uri}</td>
                 <td className={clsx('px-2 py-1 text-right tabular',
                   r.status >= 500 ? 'text-[var(--sev-high)]'
                     : r.status >= 400 ? 'text-[var(--sev-medium)]'
@@ -202,7 +235,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0 }: {
                   {r.agent}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
         {data && !data.rows.length && (

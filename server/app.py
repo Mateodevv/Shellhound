@@ -873,8 +873,12 @@ def create_app(config: Config) -> FastAPI:
             tags = [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED]
             if "webshell" in sources:
                 tags.append(ioclib.TAG_WEBSHELL)
-            db.add_ioc(conn, artifact, "path", tags, origin=origin)
-            out.append({"value": artifact, "type": "path"})
+            # Der Pfad IM WEBROOT, nirgends der absolute. Wo die Kopie auf
+            # der Forensik-Maschine liegt, gehört niemandem außerhalb dieser
+            # Maschine -- und ein Export trägt es sonst mit hinaus.
+            value = db.case_relative_path(conn, artifact)
+            db.add_ioc(conn, value, "path", tags, origin=origin)
+            out.append({"value": value, "type": "path"})
             # Der Hash aus dem Scan, sonst jetzt berechnet: das Detail zeigt
             # ihn ohnehin an, und ein bestaetigtes Artefakt ohne seinen
             # SHA-256 in der Box waere im Bericht eine Luecke.
@@ -1289,8 +1293,13 @@ def create_app(config: Config) -> FastAPI:
         try:
             roots = db.rows(conn, "SELECT kind, path, label FROM evidence "
                                   "ORDER BY kind, path")
-            box = {str(r["value"]).replace("\\", "/").lower()
+            # Die Box führt FALLRELATIVE Pfade -- der Abgleich läuft deshalb
+            # auf derselben Form, sonst meldete der Browser nie "schon
+            # erfasst". Die Wurzeln kommen hier heraus, das Umrechnen selbst
+            # ist danach reine Zeichenarbeit ohne Datenbank.
+            box = {str(r["value"]).replace("\\", "/").rstrip("/").lower()
                    for r in db.rows(conn, "SELECT value FROM iocs WHERE type = 'path'")}
+            bases = db.evidence_bases(conn)
             flagged = {str(r["artifact"]).replace("\\", "/").lower(): r
                        for r in db.rows(
                            conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, worst,"
@@ -1307,10 +1316,19 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(400, "Kein Verzeichnis")
         dirs, files, truncated = _list_dir(target)
 
+        def relative(p):
+            norm = p.replace("\\", "/").rstrip("/")
+            low = norm.lower()
+            for root, base in bases:
+                if low == root.lower() or low.startswith(root.lower() + "/"):
+                    return (norm[len(base) + 1:] if base else norm)
+            return norm
+
         def annotate(entry):
             key = entry["path"].replace("\\", "/").lower()
             hit = flagged.get(key)
-            entry["in_box"] = key in box
+            entry["in_box"] = relative(entry["path"]).lower() in box
+            entry["relative"] = relative(entry["path"])
             entry["flagged"] = hit["findings"] if hit else 0
             entry["worst"] = hit["worst"] if hit else None
             entry["triage"] = hit["triage"] if hit else None
@@ -1354,11 +1372,12 @@ def create_app(config: Config) -> FastAPI:
         added = []
         try:
             for path in targets:
-                db.add_ioc(conn, path, "path",
+                value = db.case_relative_path(conn, path)
+                db.add_ioc(conn, value, "path",
                            [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
                            note=body.note,
                            origin="vom Analysten im Datei-Browser markiert")
-                added.append({"value": path, "type": "path"})
+                added.append({"value": value, "type": "path"})
                 digest = _sha256_of(path)
                 if digest:
                     db.add_ioc(conn, digest, "hash",
