@@ -38,6 +38,21 @@ TAGS = (TAG_ANALYST, TAG_FINDING, TAG_CONFIRMED, TAG_HUNT, TAG_ACTOR,
         TAG_DERIVED, TAG_WEBSHELL, TAG_INJECTED, TAG_MODIFIED, TAG_ACCOUNT,
         TAG_SCANNER, TAG_BRUTE, TAG_SUCCESS, TAG_THREATLIST)
 
+# Wie zwei Indikatoren zusammenhängen (siehe ioc_links in db.py). Jede Art
+# steht mit BEIDEN Leserichtungen da: eine Kante ist an ihren zwei Enden
+# dieselbe Tatsache, aber nicht derselbe Satz -- am Hash liest sie sich
+# "ist der SHA-256 von /wp-content/…", am Pfad "hat den SHA-256 6b2f…".
+LINK_HASH_OF = "hash-of"
+LINK_REQUESTED = "requested"
+LINK_HOST_IN = "host-in"
+
+LINK_LABELS = {
+    LINK_HASH_OF: ("ist der SHA-256 von", "hat den SHA-256"),
+    LINK_REQUESTED: ("hat abgerufen", "wurde abgerufen von"),
+    LINK_HOST_IN: ("steht im Code von", "verweist auf"),
+}
+LINK_KINDS = tuple(LINK_LABELS)
+
 _HASH_RE = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
 _URL_RE = re.compile(r"^https?://", re.I)
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -84,27 +99,50 @@ def classify(value):
 
 # --- exports ----------------------------------------------------------------
 
-def to_csv(iocs):
+def _by_ioc(links):
+    """Kanten nach Indikator-id, beide Enden, mit der passenden Leserichtung.
+
+    Ein Export ist eine Momentaufnahme: der Empfänger kann nicht nachfragen,
+    an welchem Ende die Beziehung steht."""
+    out = {}
+    for link in links or ():
+        forward, back = LINK_LABELS.get(link["kind"], (link["kind"],) * 2)
+        out.setdefault(link["src_id"], []).append(
+            (forward, link["dst_value"], link["dst_type"], link["note"]))
+        out.setdefault(link["dst_id"], []).append(
+            (back, link["src_value"], link["src_type"], link["note"]))
+    return out
+
+
+def to_csv(iocs, links=()):
+    by_ioc = _by_ioc(links)
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["Value", "Type", "Tags", "Note", "Origin", "Added"])
+    w.writerow(["Value", "Type", "Tags", "Note", "Origin", "Added", "Related"])
     for i in iocs:
         value = str(i["value"])
         # formula-injection guard, same rule as the legacy reports
         if value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
             value = "'" + value
+        related = "; ".join(
+            f"{label} {other}" for label, other, _t, _n in by_ioc.get(i["id"], ()))
         w.writerow([value, i["type"], " ".join(json.loads(i["tags"] or "[]")),
-                    i["note"], i["origin"], i["added"]])
+                    i["note"], i["origin"], i["added"], related])
     return buf.getvalue()
 
 
-def to_json(iocs, case_name=""):
+def to_json(iocs, case_name="", links=()):
+    by_ioc = _by_ioc(links)
     return json.dumps({
         "case": case_name,
         "exported": datetime.now(timezone.utc).isoformat(),
         "iocs": [{"value": i["value"], "type": i["type"],
                   "tags": json.loads(i["tags"] or "[]"),
-                  "note": i["note"], "origin": i["origin"], "added": i["added"]}
+                  "note": i["note"], "origin": i["origin"], "added": i["added"],
+                  "related": [{"relation": label, "value": other, "type": typ,
+                               "note": note}
+                              for label, other, typ, note
+                              in by_ioc.get(i["id"], ())]}
                  for i in iocs],
     }, indent=2, ensure_ascii=False)
 
@@ -137,18 +175,23 @@ def _stix_pattern(value, ioc_type):
     return None
 
 
-def to_stix(iocs, case_name=""):
+def to_stix(iocs, case_name="", links=()):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     objects = []
+    # id des Indikators im Fall -> id im Bundle. Nur wer hier steht, wurde
+    # auch ausgegeben: für manche Typen gibt es kein STIX-Pattern, und eine
+    # Kante auf ein nicht vorhandenes Objekt macht das Bundle ungültig.
+    stix_ids = {}
     for i in iocs:
         pattern = _stix_pattern(i["value"], i["type"])
         if pattern is None:
             continue
         tags = json.loads(i["tags"] or "[]")
+        stix_ids[i["id"]] = f"indicator--{uuid.uuid4()}"
         objects.append({
             "type": "indicator",
             "spec_version": "2.1",
-            "id": f"indicator--{uuid.uuid4()}",
+            "id": stix_ids[i["id"]],
             "created": now,
             "modified": now,
             "name": f"{i['type']}: {i['value']}",
@@ -157,6 +200,32 @@ def to_stix(iocs, case_name=""):
             "pattern": pattern,
             "pattern_type": "stix",
             "valid_from": now,
+        })
+    # Ohne diese Objekte empfängt ein SIEM eine Handvoll unverbundener
+    # Indikatoren -- und der Zusammenhang, der den Fall ausmacht, bleibt in
+    # unserer Datenbank zurück.
+    #
+    # relationship_type bleibt beim generischen "related-to": zwischen zwei
+    # Indicators ist das der Wert, den fremde Systeme sicher verstehen. Die
+    # genaue Art steht daneben in der Beschreibung, wo sie niemanden beim
+    # Import stört.
+    for link in links or ():
+        src, dst = stix_ids.get(link["src_id"]), stix_ids.get(link["dst_id"])
+        if not src or not dst:
+            continue
+        label = LINK_LABELS.get(link["kind"], (link["kind"],) * 2)[0]
+        detail = f" ({link['note']})" if link["note"] else ""
+        objects.append({
+            "type": "relationship",
+            "spec_version": "2.1",
+            "id": f"relationship--{uuid.uuid4()}",
+            "created": now,
+            "modified": now,
+            "relationship_type": "related-to",
+            "description": f"{link['kind']} — {link['src_value']} "
+                           f"{label} {link['dst_value']}{detail}",
+            "source_ref": src,
+            "target_ref": dst,
         })
     bundle = {"type": "bundle", "id": f"bundle--{uuid.uuid4()}",
               "objects": objects}
