@@ -478,6 +478,235 @@ def create_app(config: Config) -> FastAPI:
             "timeline": logindex.timeline(case_dir),
         }
 
+    # --- die Chronologie des Falls ------------------------------------------
+    #
+    # JEDE ANSICHT BEANTWORTET „WAS", KEINE BEANTWORTET „IN WELCHER
+    # REIHENFOLGE". Genau das ist aber der erste Absatz jedes Berichts, und
+    # bisher tippte man ihn ab, indem man zwischen Actors, Findings und
+    # Database hin- und hersprang und Zeitstempel im Kopf sortierte.
+    #
+    # DIE KETTE ORDNET GEMESSENE TATSACHEN UND BEHAUPTET KEINE URSACHE.
+    # „08:12 Anfrage auf async-upload.php mit 2xx, 08:13 erster erfolgreicher
+    # Abruf von kb-media.php" ist eine Beobachtung. „Der Angreifer lud über
+    # die Upload-Funktion die Shell hoch" ist eine Schlussfolgerung -- die
+    # gehört dem Analysten. Eine Maschine, die die Schlussfolgerung des
+    # Berichts vorschreibt, ist bei jedem Fall bequem und bei jedem zehnten
+    # falsch, und eine falsche Kette ist schlimmer als keine.
+    #
+    # Daraus folgen drei Regeln:
+    #   1. NUR BESTÄTIGTE ARTEFAKTE. Die Triage entscheidet, was zur
+    #      Geschichte gehört, nicht die Erkennung.
+    #   2. NUR GEMESSENE ZEIT. Der erste 2xx auf eine Datei belegt, dass sie
+    #      da lag; die mtime der Kopie belegt gar nichts, weil ihr niemand
+    #      ansieht, ob sie vom Original stammt oder vom Kopiervorgang.
+    #   3. LÜCKEN WERDEN BENANNT, NICHT ÜBERBRÜCKT.
+
+    # Beide Uhren stehen ohne Zone da: die Logzeile in ihrer Serverzeit, der
+    # Kontozeitstempel in der des Datenbankservers. Sie werden verglichen,
+    # WIE SIE DASTEHEN -- alles andere hieße, eine Zeitzone zu erfinden. Die
+    # Antwort sagt das mit, damit es im Bericht nicht untergeht.
+    _CHAIN_EVENT_CAP = 80
+
+    def _local(epoch, tz=0):
+        """Logzeit als naive Ortszeit -- dieselbe, die überall angezeigt wird."""
+        return None if not epoch else int(epoch) + int(tz or 0)
+
+    def _iso(local):
+        """Naive Ortszeit als lesbarer Zeitstempel, für Fließtext."""
+        if not local:
+            return "—"
+        return datetime.fromtimestamp(int(local), tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S")
+
+    def _stamp_to_local(text):
+        """'2026-07-08 03:17:00' -> Sekunden, naiv gelesen."""
+        raw = str(text or "").strip().replace("T", " ")[:19]
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return int(datetime.strptime(raw, fmt)
+                           .replace(tzinfo=timezone.utc).timestamp())
+            except ValueError:
+                continue
+        return None
+
+    @app.get("/api/cases/{slug}/chain", dependencies=[auth])
+    def chain(slug: str):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            confirmed = db.rows(
+                conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, artifact_kind,"
+                      f" worst, findings, triage_note FROM art "
+                      f"WHERE triage = 'confirmed'")
+            files = {r["artifact"]: _web_path(conn, r["artifact"])
+                     for r in confirmed if r["artifact_kind"] == "file"}
+            clients = [r["artifact"] for r in confirmed
+                       if r["artifact_kind"] == "client"]
+            by_artifact = {r["artifact"]: r for r in confirmed}
+            accounts = db.rows(
+                conn, "SELECT login, registered, admin, last_login, tbl "
+                      "FROM db_accounts WHERE registered != ''")
+        finally:
+            conn.close()
+
+        overview = logindex.overview(case_dir) or {}
+        span_first = _local(overview.get("first_epoch"))
+        span_last = _local(overview.get("last_epoch"))
+        facts = logindex.chain_facts(
+            case_dir,
+            leaves=[os.path.basename(p) for p in files.values()],
+            ips=clients)
+
+        events, undated, gaps = [], [], []
+
+        dated = set()
+
+        def add(at, kind, title, detail, source, artifact="", artifact_kind="",
+                ip="", severity=None):
+            if at is None:
+                return
+            dated.add(artifact)
+            events.append({"at": at, "kind": kind, "title": title,
+                           "detail": detail, "source": source,
+                           "artifact": artifact, "artifact_kind": artifact_kind,
+                           "ip": ip, "severity": severity})
+
+        # --- bestätigte Dateien: wann lag sie da, wann wurde sie benutzt ----
+        for artifact, rel in files.items():
+            row = by_artifact[artifact]
+            name = os.path.basename(rel)
+            tail = "/" + rel
+            hits = [h for h in facts["files"].get(name, [])
+                    if _uri_path(h["uri"]).endswith(tail)]
+            if not hits:
+                continue
+            tz = max((h["tz"] or 0) for h in hits)
+            oks = [h["first_ok"] for h in hits if h["first_ok"]]
+            first_any = min(h["first_epoch"] for h in hits if h["first_epoch"])
+            last_any = max(h["last_epoch"] for h in hits if h["last_epoch"])
+            total = sum(h["hits"] for h in hits)
+            ok_total = sum(h["ok_hits"] for h in hits)
+            if oks:
+                first_ok = min(oks)
+                # Eine erfolglose Anfrage VOR dem ersten Erfolg grenzt ein,
+                # wann die Datei entstanden sein muss -- das ist die
+                # belastbarste Aussage, die ein Log dazu hergibt, und sie
+                # kommt ohne die mtime der Kopie aus.
+                detail = "die Datei lag spätestens zu diesem Zeitpunkt dort"
+                if first_any < first_ok:
+                    who = next((h["ip"] for h in hits
+                                if h["first_epoch"] == first_any), "")
+                    von = f" von {who}" if who else ""
+                    detail += (f". Eine Anfrage darauf{von} lief um "
+                               f"{_iso(_local(first_any, tz))} noch ins Leere "
+                               f"— die Datei entstand also dazwischen")
+                add(_local(first_ok, tz), "erfolg",
+                    f"Erster erfolgreicher Abruf von {name}", detail, "log",
+                    artifact, "file", severity=row["worst"])
+            else:
+                add(_local(first_any, tz), "versuch",
+                    f"Erste Anfrage auf {name}",
+                    f"{total}× angefragt, nie mit 2xx beantwortet — ein "
+                    f"erfolgreicher Zugriff ist im Log nicht belegt", "log",
+                    artifact, "file", severity=row["worst"])
+            if last_any and last_any != (min(oks) if oks else first_any):
+                add(_local(last_any, tz), "letzter-zugriff",
+                    f"Letzter Abruf von {name}",
+                    f"insgesamt {total} Anfrage(n), davon {ok_total}× 2xx",
+                    "log", artifact, "file", severity=row["worst"])
+
+        # --- bestätigte Clients: Erstkontakt und die auslösenden Aufrufe ----
+        for ip in clients:
+            row = by_artifact[ip]
+            actor = facts["clients"].get(ip)
+            if actor is None:
+                continue
+            tz = actor["tz"] or 0
+            add(_local(actor["first_epoch"], tz), "erstkontakt",
+                f"Erste Anfrage von {ip}",
+                f"{actor['requests']} Anfrage(n) insgesamt", "log",
+                ip, "client", ip, row["worst"])
+            for a in actor["alerts"]:
+                if a["severity"] >= db.SEV_INFO or not a["epoch"]:
+                    continue
+                add(_local(a["epoch"], tz), "alarm", a["detail"],
+                    f"ausgelöst durch: {a['example']}", "log",
+                    ip, "client", ip, a["severity"])
+            add(_local(actor["last_epoch"], tz), "letzter-zugriff",
+                f"Letzte Anfrage von {ip}", "", "log", ip, "client", ip,
+                row["worst"])
+
+        # --- Konten, die IM FALLZEITRAUM entstanden sind --------------------
+        # Ein Konto von 2019 gehört nicht in die Chronologie eines Vorfalls
+        # von 2026. Der Zeitraum des Logs ist das ehrlichste Fenster, das der
+        # Fall dafür hat.
+        for acc in accounts:
+            at = _stamp_to_local(acc["registered"])
+            if at is None or span_first is None or not (span_first <= at <= span_last):
+                continue
+            detail = f"in {acc['tbl'] or 'der Benutzertabelle'} angelegt"
+            last = _stamp_to_local(acc["last_login"])
+            if last and span_first <= last <= span_last:
+                detail += f"; letzte Anmeldung laut Export {_iso(last)}"
+            title = f"Konto {acc['login']} angelegt"
+            if acc["admin"]:
+                title += " (Administrator)"
+            add(at, "konto", title, detail, "dump",
+                severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
+
+        # JEDES BESTÄTIGTE ARTEFAKT MUSS AUFTAUCHEN -- in der Kette oder hier.
+        # Eine Chronologie, aus der eine Entscheidung des Analysten
+        # stillschweigend verschwindet, ist die gefährlichere Hälfte einer
+        # Lüge: sie sieht vollständig aus.
+        why_undated = {
+            "table": "der Datenbank-Export trägt keinen Zeitstempel dafür — "
+                     "wann der Code eingeschleust wurde, sagt der Fall nicht",
+            "dump": "ein Dump als Ganzes hat keinen Zeitpunkt im Vorfall",
+            "file": "im Log ist kein Abruf dieser Datei belegt — wann sie "
+                    "dort abgelegt wurde, sagt der Fall nicht",
+            "client": "dieser Client steht in keinem indizierten Log",
+        }
+        for row in confirmed:
+            if row["artifact"] in dated:
+                continue
+            kind = row["artifact_kind"]
+            undated.append({
+                "artifact": row["artifact"], "artifact_kind": kind,
+                "why": why_undated.get(kind, "ohne gemessenen Zeitpunkt")})
+
+        events.sort(key=lambda e: e["at"])
+        truncated = len(events) > _CHAIN_EVENT_CAP
+        if truncated:
+            events = events[:_CHAIN_EVENT_CAP]
+
+        # --- was der Fall NICHT belegt -------------------------------------
+        if not confirmed:
+            gaps.append("Noch ist kein Artefakt als True Positive bestätigt. "
+                        "Bis dahin steht hier nur, was der Datenbank-Export "
+                        "von sich aus datiert — die Chronologie füllt sich "
+                        "mit der Triage.")
+        elif not events:
+            gaps.append("Zu den bestätigten Artefakten trägt der Fall keine "
+                        "gemessene Zeit: weder das Log noch der Datenbank-"
+                        "Export sagt, wann sie entstanden sind.")
+        if events and span_first is not None and events[0]["at"] - span_first < 60:
+            gaps.append(
+                f"Das erste Ereignis liegt am Anfang der Log-Abdeckung "
+                f"({_iso(span_first)}). Was davor geschah, ist nicht belegt — "
+                f"der Vorfall kann älter sein als die vorliegenden Logs.")
+        if files and not any(e["kind"] == "erfolg" for e in events):
+            gaps.append("Auf keine der bestätigten Dateien ist im Log ein "
+                        "erfolgreicher Zugriff belegt — nur Versuche.")
+        if truncated:
+            gaps.append(f"Mehr als {_CHAIN_EVENT_CAP} Ereignisse; die "
+                        f"Chronologie zeigt die frühesten.")
+
+        return {
+            "span": {"first": span_first, "last": span_last},
+            "events": events, "gaps": gaps, "undated": undated,
+            "confirmed": len(confirmed), "truncated": truncated,
+        }
+
     # --- findings -----------------------------------------------------------
     #
     # THE UNIT OF WORK IS THE ARTIFACT, NOT THE SINGLE FINDING.
@@ -1257,12 +1486,18 @@ def create_app(config: Config) -> FastAPI:
                     new_findings += 1
                 conn.execute(
                     "INSERT INTO hunt_runs (pattern, label, ran_at, hits,"
-                    " ok_hits, clients) VALUES (?,?,?,?,?,?) "
+                    " ok_hits, clients, ok_clients, uris, first_epoch,"
+                    " last_epoch, tz) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(pattern) DO UPDATE SET label=excluded.label,"
                     " ran_at=excluded.ran_at, hits=excluded.hits,"
-                    " ok_hits=excluded.ok_hits, clients=excluded.clients",
+                    " ok_hits=excluded.ok_hits, clients=excluded.clients,"
+                    " ok_clients=excluded.ok_clients, uris=excluded.uris,"
+                    " first_epoch=excluded.first_epoch,"
+                    " last_epoch=excluded.last_epoch, tz=excluded.tz",
                     (entry["pattern"], entry["label"], db.now(), match["hits"],
-                     match["ok_hits"], len(match["clients"])))
+                     match["ok_hits"], match["clients_total"],
+                     match["ok_clients"], match["uri_total"],
+                     match["first_epoch"], match["last_epoch"], match["tz"]))
                 results.append({**match, "id": entry["id"],
                                 "label": entry["label"], "note": entry["note"]})
             conn.commit()

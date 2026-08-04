@@ -20,7 +20,7 @@ import {
   api, del, downloadUrl, patch, post, type HuntPattern, type HuntResult,
   type HuntRun,
 } from '../api'
-import { formatCount, formatDay } from '../format'
+import { formatCount, formatDay, formatLogTime, formatSpan } from '../format'
 import {
   Button, Card, EmptyState, SeverityBadge, Tag,
 } from '../components/ui'
@@ -235,7 +235,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               {last && (
                 <Tooltip title={`zuletzt gesucht: ${last.ran_at.replace('T', ' ')}`}
                   hint={last.hits
-                    ? `${formatCount(last.hits)} Treffer bei ${formatCount(last.clients)} Client(s), davon ${formatCount(last.ok_hits)}× mit 2xx beantwortet.`
+                    ? `${formatCount(last.hits)} Treffer bei ${formatCount(last.clients)} Client(s), davon ${formatCount(last.ok_clients)} mit 2xx beantwortet (${formatCount(last.ok_hits)} Anfragen). Getroffene URLs: ${formatCount(last.uris)}. Zeitraum: ${formatLogTime(last.first_epoch, last.tz)} → ${formatLogTime(last.last_epoch, last.tz)} (${formatSpan(last.first_epoch, last.last_epoch)}).`
                     : 'In diesem Fall kein Treffer — das ist im Fall protokolliert und damit belegbar.'}>
                   <span className={clsx('shrink-0 text-[11px] tabular',
                     last.ok_hits ? 'text-[var(--sev-high)]'
@@ -356,6 +356,60 @@ function ResultBadge({ result }: { result: HuntResult }) {
   )
 }
 
+/** Die Kennzahlen einer Suche in einem Block — was in den Bericht wandert.
+ *
+ *  Die entscheidende Zahl ist nicht, wie oft geklopft wurde, sondern wie
+ *  viele Adressen durchkamen: 300 Anfragen von 40 Adressen, von denen genau
+ *  eine eine 2xx bekam, ist ein völlig anderer Befund als 300 Anfragen mit
+ *  300 Erfolgen. Und die Spanne trennt die eine Kampagne (Minuten) vom
+ *  Hintergrundrauschen, das seit Monaten mitläuft. */
+function HuntSummary({ result }: { result: HuntResult }) {
+  const cells: { label: string; value: string; sub?: string; tone?: boolean; hint: string }[] = [
+    {
+      label: 'Adressen', value: formatCount(result.clients_total),
+      sub: `${formatCount(result.ok_clients)} erfolgreich`,
+      tone: result.ok_clients > 0,
+      hint: 'Wie viele verschiedene Clients das Muster getroffen haben — und bei wie vielen der Server mit 2xx geantwortet hat. Die zweite Zahl ist die, die zählt.',
+    },
+    {
+      label: 'Anfragen', value: formatCount(result.hits),
+      sub: `${formatCount(result.ok_hits)}× 2xx`,
+      tone: result.ok_hits > 0,
+      hint: 'Alle Anfragen auf die getroffenen URLs, und wie viele davon erfolgreich beantwortet wurden.',
+    },
+    {
+      label: 'Erster Treffer', value: formatLogTime(result.first_epoch, result.tz),
+      sub: `letzter: ${formatLogTime(result.last_epoch, result.tz)}`,
+      hint: 'Zeiten aus dem Log, in dessen eigener Zeitzone — nicht die Uhr dieses Rechners.',
+    },
+    {
+      label: 'Zeitspanne', value: formatSpan(result.first_epoch, result.last_epoch),
+      sub: `${formatCount(result.uri_total)} getroffene URL(s)`,
+      hint: 'Über welchen Zeitraum sich die Treffer erstrecken. Minuten sprechen für einen einzelnen Zugriff, Monate eher für Hintergrundrauschen.',
+    },
+  ]
+  return (
+    <div className="grid grid-cols-2 gap-px border-b border-[var(--line)] bg-[var(--line)] sm:grid-cols-4">
+      {cells.map((c) => (
+        <Tooltip key={c.label} title={c.label} hint={c.hint}>
+          <div className="bg-[var(--panel)] px-4 py-2">
+            <div className="text-[10.5px] uppercase tracking-wider text-[var(--muted)]">
+              {c.label}
+            </div>
+            <div className={clsx('mono text-[13px] font-semibold tabular',
+              c.tone && 'text-[var(--sev-high)]')}>
+              {c.value}
+            </div>
+            {c.sub && (
+              <div className="mono text-[11px] tabular text-[var(--muted)]">{c.sub}</div>
+            )}
+          </div>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
 /** Was ein Muster gefunden hat. Die getroffenen URIs stehen mit dabei: ein
  *  Muster, das zu weit greift, sieht man nur, wenn man sieht, WAS es traf. */
 function ResultCard({ slug, result, onTrace }: {
@@ -390,10 +444,6 @@ function ResultCard({ slug, result, onTrace }: {
           </div>
           <div className="mono truncate text-[11px] text-[var(--muted)]">{result.pattern}</div>
         </div>
-        <span className="text-[12px] text-[var(--muted)] tabular">
-          {formatCount(result.hits)} Anfragen · {formatCount(result.ok_hits)}× 2xx ·{' '}
-          {formatCount(result.clients.length)} Client(s)
-        </span>
         {result.clients.length > 1 && (
           <Button onClick={() => onTrace(result.clients.map((c) => c.ip))}>
             <Crosshair size={13} /> alle tracen
@@ -406,6 +456,8 @@ function ResultCard({ slug, result, onTrace }: {
           </Button>
         </Tooltip>
       </div>
+
+      <HuntSummary result={result} />
 
       {collect.data && (
         <div className="border-b border-[var(--line)] bg-[rgba(12,163,12,0.08)] px-4 py-1.5 text-[12px] text-[var(--ok)] animate-fade-up">
@@ -473,8 +525,12 @@ function ResultCard({ slug, result, onTrace }: {
       <button onClick={() => setShowUris(!showUris)}
         className="flex w-full cursor-pointer items-center gap-2 border-t border-[var(--line)] px-4 py-1.5 text-[11.5px] text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
         {showUris ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        {formatCount(result.uris.length)} getroffene URL{result.uris.length === 1 ? '' : 's'}
-        <span className="opacity-70">— prüfen, ob das Muster passt</span>
+        {formatCount(result.uri_total)} getroffene URL{result.uri_total === 1 ? '' : 's'}
+        <span className="opacity-70">
+          {result.uri_total > result.uris.length
+            ? `— die ${formatCount(result.uris.length)} häufigsten, zum Prüfen ob das Muster passt`
+            : '— prüfen, ob das Muster passt'}
+        </span>
       </button>
       {showUris && (
         <div className="border-t border-[var(--line)]">

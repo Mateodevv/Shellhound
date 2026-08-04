@@ -76,9 +76,11 @@ kein funktionsfähiges Werkzeug.
    in Millisekunden, Export als CSV.
 5. **Muster-Jagd**: eigene URL-Muster hinterlegen (die Aufrufe eines bekannten
    Exploits) — das Werkzeug sagt, wer sie abgerufen hat, und schreibt Treffer
-   als Findings auf den Client. Die Bibliothek liegt im **Workspace**
-   (`hunt_patterns.json`) und gilt damit für alle Fälle darin; der einzelne
-   Fall protokolliert, wonach gesucht wurde — auch erfolglos.
+   als Findings auf den Client. Über jedem Ergebnis stehen die Kennzahlen der
+   Suche: Adressen und davon erfolgreiche, Anfragen und davon 2xx, erster und
+   letzter Treffer, Zeitspanne, getroffene URLs. Die Bibliothek liegt im
+   **Workspace** (`hunt_patterns.json`) und gilt damit für alle Fälle darin;
+   der einzelne Fall protokolliert, wonach gesucht wurde — auch erfolglos.
 6. **IOC Box** hält die Indikatoren **mit ihren Beziehungen**: ein Hash und
    der Pfad, dessen Datei er beschreibt, entstehen aus demselben Fund und
    bleiben verknüpft; dazu die Clients, die den Pfad abgerufen haben, und die
@@ -87,7 +89,16 @@ kein funktionsfähiges Werkzeug.
    Hand. Export als CSV / JSON / STIX 2.1; das STIX-Bundle trägt sie als
    `relationship`-Objekte mit hinaus, statt unverbundene Indicators
    abzuliefern.
-7. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
+7. **Chronologie** (in der Fall-Zusammenfassung): die bestätigten Artefakte
+   in ihrer zeitlichen Abfolge — der erste Absatz des Berichts. Sie **ordnet
+   Gemessenes und behauptet keine Ursache**: an jeder Zeile steht, ob die
+   Zeit aus dem Log oder aus dem Datenbank-Export stammt, welche Beobachtung
+   aus welcher folgt, entscheidest du. Dass eine Datei dalag, belegt ihr
+   erster erfolgreicher Abruf — nicht die mtime der Kopie, der niemand
+   ansieht, ob sie vom Original stammt. Lücken stehen sichtbar drin, und ein
+   bestätigtes Artefakt ohne gemessene Zeit erscheint gesondert, statt
+   stillschweigend zu fehlen.
+8. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
    ZIP unter `<workspace>/archive/` und entfernt die Arbeitskopie — der Fall
    ist aus der Plattform raus. Zurückholen über „Fall importieren" auf der
    Startseite (aus dem Archiv-Ordner oder von einem beliebigen Pfad, z.B.

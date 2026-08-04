@@ -26,6 +26,20 @@ export function formatDay(epoch?: number | null, tz = 0): string {
   return new Date((epoch + tz) * 1000).toISOString().slice(0, 10)
 }
 
+/** Die Länge einer Zeitspanne in Worten. Eine Aktivität über vier Minuten
+ *  ist etwas anderes als dieselbe über vier Monate — die Spanne sagt das in
+ *  einem Wort, das man in einen Bericht übernehmen kann. */
+export function formatSpan(from?: number | null, to?: number | null): string {
+  if (!from || !to) return '—'
+  const s = Math.max(0, to - from)
+  const unit = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`
+  if (s < 60) return unit(s, 'Sekunde', 'Sekunden')
+  if (s < 3600) return unit(Math.round(s / 60), 'Minute', 'Minuten')
+  if (s < 86400) return unit(Math.round(s / 3600), 'Stunde', 'Stunden')
+  return unit(Math.round(s / 86400), 'Tag', 'Tage')
+}
+
 /** "vor 3 Minuten" — Uhrzeiten sind für Berichte, für die Oberfläche zählt
  *  meist der Abstand zu jetzt. Die genaue Zeit steht im Tooltip daneben. */
 export function relativeTime(iso?: string | null): string {

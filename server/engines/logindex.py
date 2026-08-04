@@ -934,6 +934,10 @@ def who_requested(case_dir, names, limit=200):
 # die Antwort dann auch (`truncated`), statt stillschweigend zu kürzen.
 _PATTERN_URI_CAP = 4000
 
+# Wie viele davon die Antwort einzeln aufzählt. Die Liste dient der
+# Stichprobe ("passt mein Muster?"), die Gesamtzahl steht daneben.
+_PATTERN_URI_SHOWN = 50
+
 
 def _like_from_pattern(pattern):
     """Teilstring, Groß-/Kleinschreibung egal, `*` als Platzhalter.
@@ -950,9 +954,13 @@ def match_pattern(case_dir, pattern, limit=200):
     """Wer hat URIs abgerufen, auf die dieses Muster passt?
 
     Liefert die getroffenen URIs (damit sichtbar ist, ob das Muster zu weit
-    greift) und je Client Trefferzahl, davon 2xx, sowie erste/letzte Anfrage."""
+    greift), je Client Trefferzahl, davon 2xx, sowie erste/letzte Anfrage --
+    und die Kennzahlen der Suche selbst, damit ein Lauf in einem Satz
+    zusammenfassbar ist."""
     empty = {"pattern": pattern, "uris": [], "clients": [], "hits": 0,
-             "ok_hits": 0, "truncated": False}
+             "ok_hits": 0, "clients_total": 0, "ok_clients": 0, "uri_total": 0,
+             "first_epoch": None, "last_epoch": None, "tz": 0,
+             "truncated": False}
     conn = _open_ro(case_dir)
     if conn is None or not str(pattern).strip():
         if conn is not None:
@@ -1001,10 +1009,30 @@ def match_pattern(case_dir, pattern, limit=200):
                JOIN want_leaf wl ON wl.id = r.leaf
                JOIN want_uri wu ON wu.id = r.uri
                JOIN strings s ON s.id = r.uri
-               GROUP BY s.text ORDER BY hits DESC LIMIT 50""")]
+               GROUP BY s.text ORDER BY hits DESC LIMIT ?""",
+            (_PATTERN_URI_SHOWN,))]
+        # Wie viele es WIRKLICH sind. Die Liste oben ist gedeckelt, und "50
+        # getroffene URLs" ist eine falsche Angabe, wenn es 3.000 waren --
+        # gerade diese Zahl soll ja verraten, dass das Muster zu weit greift.
+        uri_total = conn.execute(
+            """SELECT count(DISTINCT r.uri) FROM requests r
+               JOIN want_leaf wl ON wl.id = r.leaf
+               JOIN want_uri wu ON wu.id = r.uri""").fetchone()[0]
+        firsts = [c["first_epoch"] for c in clients if c["first_epoch"]]
+        lasts = [c["last_epoch"] for c in clients if c["last_epoch"]]
+        tzs = [c["tz"] for c in clients if c["tz"] is not None]
         return {"pattern": pattern, "uris": uris, "clients": clients,
                 "hits": sum(c["hits"] for c in clients),
                 "ok_hits": sum(c["ok_hits"] for c in clients),
+                # Die Kennzahlen der Suche. `ok_clients` ist die Zahl, die im
+                # Bericht steht: nicht wie oft geklopft wurde, sondern wie
+                # viele durchkamen.
+                "clients_total": len(clients),
+                "ok_clients": sum(1 for c in clients if c["ok_hits"] > 0),
+                "uri_total": uri_total,
+                "first_epoch": min(firsts) if firsts else None,
+                "last_epoch": max(lasts) if lasts else None,
+                "tz": max(tzs) if tzs else 0,
                 "truncated": truncated}
     finally:
         conn.close()
@@ -1048,6 +1076,86 @@ def requests_for_names(case_dir, names, limit=20000):
                 ORDER BY ok_hits DESC, hits DESC LIMIT ?""",
             wanted + [limit]).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def chain_facts(case_dir, leaves=(), ips=()):
+    """Die Zeitanker für die Fall-Chronologie -- alles GEMESSEN, nichts
+    geschlossen.
+
+    Für jeden Dateinamen: wann wurde er zum ersten Mal angefragt, wann zum
+    ersten Mal mit 2xx beantwortet, wann zuletzt. Der erste 2xx ist der
+    belastbarste Anker, den ein Fall für "diese Datei lag da" hat -- die
+    mtime der Kopie auf der Forensik-Maschine ist es nicht, weil niemand ihr
+    ansieht, ob sie vom Original stammt oder vom Kopiervorgang.
+
+    Für jeden Client: erste und letzte Anfrage sowie der Zeitpunkt der URI,
+    die seinen Alarm ausgelöst hat -- die Alarm-Tabelle selbst führt keine
+    Zeit, wohl aber die Anfrage dahinter.
+
+    Die Zuordnung Name -> Pfad passiert beim Aufrufer: hier steht nur der
+    Dateiname, weil `requests(leaf)` der indizierte Zugriff ist. Welche der
+    Treffer wirklich zu DIESEM Pfad gehören, entscheidet dort der Vergleich
+    der vollen URI."""
+    out = {"files": {}, "clients": {}}
+    names = [w for w in dict.fromkeys(_leaf(n) for n in leaves) if w]
+    wanted_ips = [w for w in dict.fromkeys(str(i).strip() for i in ips) if w]
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return out
+    try:
+        for chunk in _chunks(names, _VAR_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                    f"""SELECT s.text AS name, u.text AS uri, i.ip AS ip,
+                               min(r.epoch) AS first_epoch,
+                               max(r.epoch) AS last_epoch,
+                               max(r.tz) AS tz, count(*) AS hits,
+                               sum(CASE WHEN r.status BETWEEN 200 AND 299
+                                   THEN 1 ELSE 0 END) AS ok_hits,
+                               min(CASE WHEN r.status BETWEEN 200 AND 299
+                                   THEN r.epoch END) AS first_ok,
+                               max(CASE WHEN r.status BETWEEN 200 AND 299
+                                   THEN r.epoch END) AS last_ok
+                          FROM requests r
+                          JOIN strings s ON s.id = r.leaf
+                          JOIN strings u ON u.id = r.uri
+                          JOIN ips i ON i.id = r.ip
+                         WHERE r.leaf IN (SELECT id FROM strings
+                                           WHERE text IN ({marks}))
+                         GROUP BY s.text, u.text, i.ip""", chunk):
+                out["files"].setdefault(r["name"], []).append(dict(r))
+
+        for chunk in _chunks(wanted_ips, _VAR_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            for r in conn.execute(
+                    f"""SELECT i.ip AS ip, a.requests, a.first_epoch,
+                               a.last_epoch, a.tz
+                          FROM actors a JOIN ips i ON i.id = a.ip_id
+                         WHERE i.ip IN ({marks})""", chunk):
+                out["clients"][r["ip"]] = {**dict(r), "alerts": []}
+
+        ids = {}
+        for chunk in _chunks(list(out["clients"]), _VAR_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            for ip_id, ip in conn.execute(
+                    f"SELECT id, ip FROM ips WHERE ip IN ({marks})", chunk):
+                ids[ip_id] = ip
+        for ip_id, alerts in _alerts_by_ip(conn, ids).items():
+            ip = ids[ip_id]
+            for a in alerts:
+                # Wann diese URI von diesem Client zum ersten Mal kam. Ohne
+                # Beispiel-URI bleibt der Alarm ohne Zeit -- dann steht er in
+                # der Kette nicht, statt an einer erfundenen Stelle.
+                stamp = None
+                if a["example"]:
+                    stamp = conn.execute(
+                        "SELECT min(r.epoch) FROM requests r "
+                        "WHERE r.ip = ? AND r.uri = (SELECT id FROM strings "
+                        "WHERE text = ?)", (ip_id, a["example"])).fetchone()[0]
+                out["clients"][ip]["alerts"].append({**a, "epoch": stamp})
+        return out
     finally:
         conn.close()
 

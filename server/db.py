@@ -203,6 +203,14 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     hits INTEGER NOT NULL DEFAULT 0,
     ok_hits INTEGER NOT NULL DEFAULT 0,
     clients INTEGER NOT NULL DEFAULT 0,
+    -- Die Kennzahlen des Laufs, damit das Protokoll ohne einen zweiten Lauf
+    -- aussagt, was gefunden wurde. ok_clients ist die Zahl, die zählt: wie
+    -- viele Adressen kamen durch, nicht wie oft geklopft wurde.
+    ok_clients INTEGER NOT NULL DEFAULT 0,
+    uris INTEGER NOT NULL DEFAULT 0,
+    first_epoch INTEGER,
+    last_epoch INTEGER,
+    tz INTEGER NOT NULL DEFAULT 0,
     UNIQUE(pattern)
 );
 CREATE TABLE IF NOT EXISTS inert_php (
@@ -256,6 +264,13 @@ _ADDED_COLUMNS = {
         ("sessions", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "db_dumps": [("kind", "TEXT NOT NULL DEFAULT 'export'")],
+    "hunt_runs": [
+        ("ok_clients", "INTEGER NOT NULL DEFAULT 0"),
+        ("uris", "INTEGER NOT NULL DEFAULT 0"),
+        ("first_epoch", "INTEGER"),
+        ("last_epoch", "INTEGER"),
+        ("tz", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 
