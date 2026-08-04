@@ -33,7 +33,7 @@ import { Tooltip } from '../components/Tooltip'
 import { CMS_SCOPE_EXPLAIN, FIELD_EXPLAIN, explainPluginGroup } from '../explain'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp, useTriage } from '../components/triage'
-import { TraceWindow } from '../components/TraceWindow'
+import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import type { ViewId } from '../App'
 
@@ -90,6 +90,9 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  // Was der Trace rot markieren soll — kommt aus dem Artefakt-Fenster,
+  // das weiß, worum es geht (die Datei bzw. der Alarm des Clients).
+  const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [versionTarget, setVersionTarget] = useState<VersionTarget | null>(null)
   const t = useTriage(slug)
 
@@ -206,13 +209,13 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         roots={roots}
         collected={t.collected}
         onView={(path, line) => setViewing({ path, line })}
-        onTrace={(ips) => setTraceIps(ips)}
+        onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={() => { setSelected(null); t.clearCollected() }}
         onTriage={(state, note) => {
           if (selected) t.decide([selected.artifact], state, note)
         }}
       />
-      <TraceWindow slug={slug} ips={traceIps} layer={1}
+      <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
         onClose={() => setTraceIps(null)} />
       <FileViewer slug={slug} path={viewing?.path ?? null}
         focusLine={viewing?.line} layer={2} onClose={() => setViewing(null)} />
