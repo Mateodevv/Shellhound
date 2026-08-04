@@ -68,7 +68,7 @@ export interface CaseInfo {
 
 export interface EvidenceItem {
   id: number
-  kind: 'webroot' | 'access_logs' | 'sql_dump'
+  kind: 'webroot' | 'access_logs' | 'sql_dump' | 'reference'
   path: string
   added: string
   scanned_at: string
@@ -528,6 +528,8 @@ export interface CaseChain {
   undated: { artifact: string; artifact_kind: string; why: string }[]
   confirmed: number
   truncated: boolean
+  /** Vom Analysten gesetzter Uhren-Versatz je Quelle, in Sekunden. */
+  offsets: { logs: number; dump: number }
 }
 
 /** Das Protokoll des Falls: wonach gesucht wurde — auch erfolglos. */

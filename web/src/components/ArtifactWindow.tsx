@@ -14,9 +14,9 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Bug, Check, Crosshair, Eye, FileCode2, FileSearch, ServerCog,
-  ShieldCheck, ShieldOff, Table2, Users, X,
+  Bug, Check, Crosshair, Eye, FileSearch, ShieldCheck, ShieldOff, X,
 } from 'lucide-react'
+import { KIND_ICON, KIND_LABEL } from '../artifactKinds'
 import {
   api, type ArtifactContext, type Finding, type TriageResult, type TriageState,
 } from '../api'
@@ -28,14 +28,6 @@ import { Button, CopyButton, Modal, SeverityBadge, Tag, TriageBadge } from './ui
 import { InfoDot, Tooltip } from './Tooltip'
 import type { TraceMarks } from './TraceWindow'
 import { FIELD_EXPLAIN, explainRule } from '../explain'
-
-export const KIND_ICON: Record<string, typeof Bug> = {
-  file: FileCode2, table: Table2, client: Users, dump: ServerCog,
-}
-
-export const KIND_LABEL: Record<string, string> = {
-  file: 'Datei', table: 'Tabelle', client: 'Client', dump: 'Dump',
-}
 
 // Mit Artikel, für die Frage im Detail-Fenster: „Ist dieses Datei" liest
 // sich wie eine Maschine, und der Satz ist die wichtigste Zeile darin.

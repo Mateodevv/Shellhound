@@ -10,16 +10,16 @@
 // auseinander folgt, entscheidet der Analyst. Deshalb steht an jeder Zeile,
 // WORAUS die Zeit stammt, und deshalb stehen die Lücken so sichtbar wie die
 // Ereignisse: „dazwischen ist nichts belegt" ist eine Aussage des Falls.
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  AlertTriangle, ArrowRight, CircleHelp, Crosshair, Database, DoorOpen,
+  AlertTriangle, ArrowRight, CircleHelp, Clock, Crosshair, Database, DoorOpen,
   FileWarning, LogIn, UserPlus,
 } from 'lucide-react'
-import { api, type CaseChain as ChainData, type ChainEvent } from '../api'
+import { api, post, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
-import { Card, Collapsible, SeverityBadge } from './ui'
+import { Button, Card, Collapsible, SeverityBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
 
 const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
@@ -45,6 +45,63 @@ const SOURCE_HINT: Record<ChainEvent['source'], string> = {
   dump: 'Zeit aus dem Datenbank-Export, in der Zeitzone des Datenbankservers.',
 }
 
+/** Der Uhren-Abgleich: ein vom Analysten gesetzter Versatz je Quelle.
+ *
+ *  Log-Server und Datenbank-Server können verschiedene Uhren führen, und
+ *  bei „Konto 03:17, Erstkontakt 09:12" kann ein 6-Stunden-Versatz die
+ *  Reihenfolge der Geschichte drehen. Das Werkzeug rät nicht — der Versatz
+ *  ist eine Aussage des Analysten und steht sichtbar in der Kette. */
+function ClockEditor({ slug, offsets, onClose }: {
+  slug: string
+  offsets: { logs: number; dump: number }
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  // In Stunden bedient, in Sekunden gespeichert: Uhren gehen um Zeitzonen
+  // auseinander, nicht um Sekunden — und halbe Stunden gibt es (Indien).
+  const [logs, setLogs] = useState(String(offsets.logs / 3600))
+  const [dump, setDump] = useState(String(offsets.dump / 3600))
+  useEffect(() => {
+    setLogs(String(offsets.logs / 3600))
+    setDump(String(offsets.dump / 3600))
+  }, [offsets])
+  const save = useMutation({
+    mutationFn: () => post(`/api/cases/${slug}/clock`, {
+      logs: Math.round(parseFloat(logs.replace(',', '.') || '0') * 3600),
+      dump: Math.round(parseFloat(dump.replace(',', '.') || '0') * 3600),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chain'] })
+      onClose()
+    },
+  })
+  const feld = (wert: string, setz: (v: string) => void, label: string) => (
+    <label className="flex items-center gap-1.5 text-[12px]">
+      {label}
+      <input value={wert} onChange={(e) => setz(e.target.value)}
+        className="mono w-16 rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1 text-right text-[12px] outline-none focus:border-[var(--accent)]/70" />
+      <span className="text-[var(--muted)]">h</span>
+    </label>
+  )
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 animate-fade-up">
+      <Clock size={13} className="text-[var(--muted)]" />
+      <span className="text-[12px] font-medium">Uhren-Abgleich</span>
+      {feld(logs, setLogs, 'Log')}
+      {feld(dump, setDump, 'DB-Export')}
+      <span className="text-[11px] text-[var(--muted)]">
+        positiv = Quelle ging nach, ihre Zeiten werden vorgestellt
+      </span>
+      <div className="ml-auto flex gap-1.5">
+        <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+          Übernehmen
+        </Button>
+        <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
+      </div>
+    </div>
+  )
+}
+
 export function CaseChain({ slug, onOpen, onTrace }: {
   slug: string
   /** Ein Artefakt öffnen — dieselbe Ansicht wie aus Findings. */
@@ -55,6 +112,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   // ist für die Fälle, in denen man die Kennzahlen darüber vergleichen will,
   // ohne 40 Zeilen dazwischen.
   const [open, setOpen] = useState(true)
+  const [clockOpen, setClockOpen] = useState(false)
   const { data } = useQuery({
     queryKey: ['chain', slug],
     queryFn: () => api<ChainData>(`/api/cases/${slug}/chain`),
@@ -64,6 +122,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
 
   const first = data.events[0]?.at ?? null
   const last = data.events[data.events.length - 1]?.at ?? null
+  const adjusted = data.offsets && (data.offsets.logs !== 0 || data.offsets.dump !== 0)
 
   return (
     <Collapsible
@@ -82,7 +141,23 @@ export function CaseChain({ slug, onOpen, onTrace }: {
       sub={data.events.length
         ? `${data.events.length} datierte Beobachtung(en) aus ${data.confirmed} bestätigten Artefakten, über ${formatSpan(first, last)}. Geordnet wird, was gemessen wurde — welche Beobachtung aus welcher folgt, entscheidest du.`
         : 'Sobald Artefakte als True Positive bestätigt sind, steht hier ihre zeitliche Abfolge.'}
+      right={
+        <Tooltip title="Uhren-Abgleich"
+          body="Log-Server und Datenbank-Server können verschiedene Uhren führen — ein Versatz kann die Reihenfolge der Geschichte drehen."
+          hint="Der Versatz ist deine Aussage, nicht eine Vermutung des Werkzeugs. Er wird im Fall gespeichert und in der Kette ausgewiesen.">
+          <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
+            <Clock size={13} />
+            {adjusted
+              ? `Uhren ${data.offsets.logs ? `Log ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
+              : 'Uhren'}
+          </Button>
+        </Tooltip>
+      }
     >
+      {clockOpen && (
+        <ClockEditor slug={slug} offsets={data.offsets ?? { logs: 0, dump: 0 }}
+          onClose={() => setClockOpen(false)} />
+      )}
       <Card className="overflow-hidden">
         {data.events.map((e, i) => {
           const Icon = KIND_ICON[e.kind] ?? CircleHelp

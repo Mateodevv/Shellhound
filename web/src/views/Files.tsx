@@ -29,8 +29,10 @@ import {
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
+import { WebrootDiff } from '../components/WebrootDiff'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TriageFollowUp, useTriage } from '../components/triage'
+import { TriageFollowUp } from '../components/triage'
+import { useTriage } from '../components/useTriage'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { EVIDENCE_LABEL } from '../explain'
 import type { ViewId } from '../App'
@@ -194,6 +196,12 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
             </div>
           )}
         </div>
+      )}
+
+      {/* ---- Webroot gegen Referenzkopie ---- */}
+      {atRoot && (caseInfo?.evidence_items?.length ?? 0) > 0 && (
+        <WebrootDiff slug={slug} evidence={caseInfo!.evidence_items}
+          onView={(p) => setViewing({ path: p, line: null })} />
       )}
 
       {/* ---- der Inhalt eines Verzeichnisses ---- */}

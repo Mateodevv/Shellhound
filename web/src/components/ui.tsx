@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
+import { copyText } from '../copy'
 import { SEVERITY_EXPLAIN, TAG_EXPLAIN, TRIAGE_EXPLAIN } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
@@ -182,37 +183,6 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       {children}
     </button>
   )
-}
-
-/** In die Zwischenablage, mit Rückfallweg.
- *
- *  `navigator.clipboard` gibt es nur in einem "secure context". Localhost
- *  zählt dazu, ein LAN-Bind über http NICHT -- und genau den unterstützt
- *  dieses Werkzeug (`--host 0.0.0.0 --token …`, wenn die Forensik-VM von
- *  einem anderen Rechner aus bedient wird). Ohne den Rückfallweg täte der
- *  Knopf dort wortlos nichts. */
-export async function copyText(value: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value)
-      return true
-    }
-  } catch {
-    // weiter zum alten Weg -- auch ein verweigertes Recht landet hier
-  }
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = value
-    ta.setAttribute('readonly', '')
-    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    return ok
-  } catch {
-    return false
-  }
 }
 
 /** Kopieren mit Quittung. Ohne die kurze Bestätigung weiß niemand, ob der
