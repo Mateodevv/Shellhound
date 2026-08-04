@@ -1,15 +1,22 @@
 // App.tsx — shell: case selection + the left rail with the five views.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, ArrowLeft, Box, Bug, Database, FolderCog, FolderTree,
-  LayoutDashboard, Puzzle, Radar, Users,
+  LayoutDashboard, Puzzle, Radar, Search, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
+import { CommandPalette } from './components/CommandPalette'
+import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
+import { TraceWindow, type TraceMarks } from './components/TraceWindow'
+import { FileViewer } from './components/FileViewer'
+import { TriageFollowUp } from './components/triage'
+import { useTriage } from './components/useTriage'
+import type { EvidenceRoot } from './format'
 import { Start } from './views/Start'
 import { Dashboard } from './views/Dashboard'
 import { Evidence } from './views/Evidence'
@@ -45,6 +52,28 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const [view, setView] = useState<ViewId>('dashboard')
   const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
+  // Die globale Suche gehört der Shell: sie muss aus JEDER Ansicht heraus
+  // erreichbar sein, und ihr Treffer öffnet das Artefakt-Fenster direkt —
+  // egal, welche Ansicht gerade offen ist.
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteArtifact, setPaletteArtifact] = useState<ArtifactStub | null>(null)
+  const [paletteTrace, setPaletteTrace] = useState<string[] | null>(null)
+  const [paletteMarks, setPaletteMarks] = useState<TraceMarks | undefined>()
+  const [paletteViewing, setPaletteViewing] =
+    useState<{ path: string; line: number | null } | null>(null)
+  const t = useTriage(slug)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useLiveEvents((job) => {
     setLiveJobs((prev) => {
       const next = { ...prev, [job.id]: { ...prev[job.id], ...job } }
@@ -69,6 +98,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     () => Object.values(liveJobs).filter((j) => j.state === 'running' || j.state === 'queued'),
     [liveJobs])
 
+  const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
+    kind: e.kind, path: e.path, label: e.label,
+  }))
   const props = { slug, gotoView: setView }
 
   return (
@@ -88,6 +120,16 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </button>
 
         <div className="flex flex-col gap-0.5 p-2">
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+          >
+            <Search size={14} />
+            Suchen…
+            <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
+              Strg K
+            </span>
+          </button>
           {NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -141,6 +183,38 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           {view === 'evidence' && <Evidence {...props} onClosed={onBack} />}
         </div>
       </main>
+
+      <CommandPalette
+        slug={slug}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        gotoView={setView}
+        onOpenArtifact={(stub) => { t.clearCollected(); setPaletteArtifact(stub) }}
+      />
+      {/* Das Artefakt-Fenster der Palette lebt in der Shell: ein Treffer
+          soll sich öffnen, egal welche Ansicht gerade darunter liegt. */}
+      <ArtifactWindow
+        slug={slug}
+        artifact={paletteArtifact}
+        roots={roots}
+        collected={t.collected}
+        onView={(path, line) => setPaletteViewing({ path, line })}
+        onTrace={(ips, m) => { setPaletteMarks(m); setPaletteTrace(ips) }}
+        onClose={() => { setPaletteArtifact(null); t.clearCollected() }}
+        onTriage={(state, note) => {
+          if (paletteArtifact) t.decide([paletteArtifact.artifact], state, note)
+        }}
+      />
+      <TraceWindow slug={slug} ips={paletteTrace} layer={1} marks={paletteMarks}
+        onClose={() => setPaletteTrace(null)} />
+      <FileViewer
+        slug={slug}
+        path={paletteViewing?.path ?? null}
+        focusLine={paletteViewing?.line ?? null}
+        layer={2}
+        onClose={() => setPaletteViewing(null)}
+      />
+      <TriageFollowUp t={t} roots={roots} />
     </div>
   )
 }

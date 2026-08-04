@@ -29,7 +29,8 @@ import { Sparkline } from '../components/Sparkline'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TriageFollowUp, useTriage } from '../components/triage'
+import { TriageFollowUp } from '../components/triage'
+import { useTriage } from '../components/useTriage'
 import type { ViewId } from '../App'
 
 // Jeder Chip ist ein AUSBLENDE-Schalter: Klick versteckt die Klasse, der

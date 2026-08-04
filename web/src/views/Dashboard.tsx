@@ -11,7 +11,8 @@ import { CaseChain } from '../components/CaseChain'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
-import { TriageFollowUp, useTriage } from '../components/triage'
+import { TriageFollowUp } from '../components/triage'
+import { useTriage } from '../components/useTriage'
 import type { ViewId } from '../App'
 
 export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {

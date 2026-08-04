@@ -89,7 +89,12 @@ kein funktionsfähiges Werkzeug.
    Hand. Export als CSV / JSON / STIX 2.1; das STIX-Bundle trägt sie als
    `relationship`-Objekte mit hinaus, statt unverbundene Indicators
    abzuliefern.
-7. **Chronologie** (in der Fall-Zusammenfassung): die bestätigten Artefakte
+7. **Webroot-Diff** (Dateien-Ansicht): eine bekannt saubere Kopie derselben
+   CMS-Version als **Referenzkopie** registrieren, vergleichen — zusätzliche,
+   veränderte und gelöschte Dateien, jede direkt einsehbar und als IOC
+   flaggbar. Ein Treffer ist ein Kandidat, kein Fund. **Strg+K** öffnet
+   überall die globale Suche über Artefakte, Indikatoren, Actors und Konten.
+8. **Chronologie** (in der Fall-Zusammenfassung): die bestätigten Artefakte
    in ihrer zeitlichen Abfolge — der erste Absatz des Berichts. Sie **ordnet
    Gemessenes und behauptet keine Ursache**: an jeder Zeile steht, ob die
    Zeit aus dem Log oder aus dem Datenbank-Export stammt, welche Beobachtung
@@ -98,7 +103,7 @@ kein funktionsfähiges Werkzeug.
    ansieht, ob sie vom Original stammt. Lücken stehen sichtbar drin, und ein
    bestätigtes Artefakt ohne gemessene Zeit erscheint gesondert, statt
    stillschweigend zu fehlen.
-8. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
+9. **Fall abschließen** (Evidence & Jobs): packt den kompletten Fall in ein
    ZIP unter `<workspace>/archive/` und entfernt die Arbeitskopie — der Fall
    ist aus der Plattform raus. Zurückholen über „Fall importieren" auf der
    Startseite (aus dem Archiv-Ordner oder von einem beliebigen Pfad, z.B.

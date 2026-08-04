@@ -39,8 +39,10 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { ArtifactWindow, KIND_ICON } from '../components/ArtifactWindow'
-import { TriageFollowUp, useTriage } from '../components/triage'
+import { ArtifactWindow } from '../components/ArtifactWindow'
+import { KIND_ICON } from '../artifactKinds'
+import { TriageFollowUp } from '../components/triage'
+import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
 import type { ViewId } from '../App'
 
