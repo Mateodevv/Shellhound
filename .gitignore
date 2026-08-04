@@ -74,6 +74,14 @@ node_modules/
 web/dist/
 .vite/
 *.tsbuildinfo
+# Kopie der gebauten Oberfläche fürs Paketieren (siehe pyproject.toml) --
+# ein Build-Artefakt wie web/dist, kein Quelltext.
+server/static/
+
+# --- Paketierung -------------------------------------------------------------
+build/
+dist/
+*.egg-info/
 
 # --- Editoren und Betriebssystem ---------------------------------------------
 .vscode/

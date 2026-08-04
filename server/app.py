@@ -35,7 +35,21 @@ from server.engines import (cmsinventory, detect, logindex, sqldump,
 from server.events import hub
 from server.jobs import manager
 
-WEB_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+def _find_web_dist():
+    """Die gebaute Oberfläche -- im Repo unter web/dist, in einem
+    installierten Paket unter server/static. Beide Wege, damit `pip install`
+    ohne Node-Toolchain auf der Forensik-Maschine funktioniert und die
+    Entwicklung im Repo unverändert bleibt."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "static", here.parent / "web" / "dist"):
+        if (candidate / "index.html").is_file():
+            return candidate
+    # Nichts gebaut: der Server läuft trotzdem (die API ist vollständig),
+    # und die Startseite sagt, was fehlt.
+    return here.parent / "web" / "dist"
+
+
+WEB_DIST = _find_web_dist()
 
 EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump", "reference")
 
