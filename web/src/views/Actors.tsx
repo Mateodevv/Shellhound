@@ -17,7 +17,8 @@ import {
   api, downloadUrl, post, type Actor, type ActorsResponse, type CaseDetail,
 } from '../api'
 import {
-  TRIAGE_LABEL, formatCount, formatDay, relativeTime, type EvidenceRoot,
+  TRIAGE_LABEL, formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
+  type EvidenceRoot,
 } from '../format'
 import {
   Button, Chip, EmptyState, SearchInput, Tag, TriageBadge,
@@ -194,6 +195,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               <th className="px-2 py-2">
                 <span className="inline-flex items-center gap-1">Zeitraum <InfoDot body={FIELD_EXPLAIN.timespan} /></span>
               </th>
+              <th className="px-2 py-2 text-right">
+                <span className="inline-flex items-center gap-1">
+                  Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+                </span>
+              </th>
               <th className="px-2 py-2">Verhalten</th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">Fehler <InfoDot body={FIELD_EXPLAIN.errors} /></span>
@@ -237,6 +243,16 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                     <Tooltip title="Erste und letzte Anfrage"
                       body={`${formatDay(a.first_epoch, a.tz)} bis ${formatDay(a.last_epoch, a.tz)} (${relativeTime(a.last_epoch ? new Date(a.last_epoch * 1000).toISOString() : null)} zuletzt)`}>
                       <span>{formatDay(a.first_epoch, a.tz)} → {formatDay(a.last_epoch, a.tz)}</span>
+                    </Tooltip>
+                  </td>
+                  {/* Wie lange dieser Client aktiv war. Vier Minuten sind ein
+                      Werkzeuglauf, vier Wochen sind ein Dauergast — dieselbe
+                      Requestzahl bedeutet in beiden Fällen etwas anderes. */}
+                  <td className="mono px-2 py-2 text-right text-[12px] tabular text-[var(--muted)]">
+                    <Tooltip title="Dauer der Aktivität"
+                      body={`${formatLogTime(a.first_epoch, a.tz)} bis ${formatLogTime(a.last_epoch, a.tz)}`}
+                      hint={FIELD_EXPLAIN.duration_why}>
+                      <span>{formatSpan(a.first_epoch, a.last_epoch)}</span>
                     </Tooltip>
                   </td>
                   <td className="px-2 py-2">

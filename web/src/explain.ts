@@ -456,6 +456,8 @@ export const FIELD_EXPLAIN: Record<string, string> = {
   sparkline: 'Aktivität über den gesamten Zeitraum der Logs — eine Säule je Zeitabschnitt.',
   errors: 'Antworten mit 4xx/5xx. Viele Fehler bei wenigen Treffern sehen nach Abklopfen aus.',
   timespan: 'Erste und letzte Anfrage dieses Clients in den analysierten Logs.',
+  duration: 'Der Abstand zwischen erstem und letztem Treffer — wie lange die Aktivität andauerte.',
+  duration_why: 'Dieselbe Requestzahl bedeutet über vier Minuten etwas völlig anderes als über vier Wochen: das eine ist ein Werkzeuglauf, das andere ein Dauergast. Achtung, es ist eine Spanne, keine Summe — die Zeit dazwischen kann still gewesen sein.',
   cms_guard: 'Jede echte CMS-Datei beginnt mit einem Startschutz (_JEXEC / ABSPATH). Fehlt er, stammt die Datei nicht aus der Installation.',
   upload_dir: 'Verzeichnisse, in die ein Webserver schreiben darf (images, tmp, cache, uploads …). PHP gehört dort nicht hin.',
   sha256: 'Prüfsumme der Datei — eindeutige Kennung für Berichte und den Abgleich mit anderen Fällen.',

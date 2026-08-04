@@ -11,22 +11,23 @@
 // Beobachtungen und keine Punktzahl; sie bestimmen nur die Reihenfolge,
 // damit die eine auffällige Zeile nicht in 400 gewöhnlichen untergeht.
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Clock, Crown, Database as DatabaseIcon, Download, FileCode2, HelpCircle,
+  Box, Clock, Crown, Database as DatabaseIcon, Download, FileCode2, HelpCircle,
   KeyRound, Table2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
-  api, downloadUrl, type CaseDetail, type DbAccount, type DbDump, type DbTable,
-  type Finding,
+  api, downloadUrl, post, type CaseDetail, type DbAccount, type DbDump,
+  type DbTable, type Finding,
 } from '../api'
 import {
   SEVERITY_VAR, TRIAGE_LABEL, baseName, formatBytes, formatCount,
   type EvidenceRoot,
 } from '../format'
 import {
-  Card, Chip, EmptyState, SearchInput, Section, SeverityBadge, Tag, TriageBadge,
+  Button, Card, Chip, EmptyState, SearchInput, Section, SeverityBadge, Tag,
+  TriageBadge,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { FIELD_EXPLAIN } from '../explain'
@@ -51,6 +52,7 @@ interface DatabaseData {
 }
 
 export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const qc = useQueryClient()
   const { data } = useQuery({
     queryKey: ['database', slug],
     queryFn: () => api<DatabaseData>(`/api/cases/${slug}/database`),
@@ -74,6 +76,16 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
   }))
 
   const accounts = useMemo(() => data?.accounts ?? [], [data])
+
+  const flagAccount = useMutation({
+    mutationFn: (account_id: number) => post<{ added: { value: string }[] }>(
+      `/api/cases/${slug}/database/accounts/flag`, { account_id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['database'] })
+      qc.invalidateQueries({ queryKey: ['iocs'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
 
   // Wie oft kommt jede Beobachtung vor — die Zahlen auf den Chips.
   const signalCounts = useMemo(() => {
@@ -196,12 +208,13 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                 <th className="px-2 py-2">Letzter Login</th>
                 <th className="px-2 py-2">Hash</th>
                 <th className="px-2 py-2">Herkunft</th>
+                <th className="w-24 px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {visibleAccounts.map((a) => (
                 <tr key={a.id}
-                  className={clsx('border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]',
+                  className={clsx('group border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]',
                     a.admin && 'bg-[rgba(208,59,59,0.05)]')}>
                   <td className="mono px-4 py-2 font-medium">
                     <span className="flex items-center gap-1.5">
@@ -244,6 +257,26 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   </td>
                   <td className="mono px-2 py-2 text-[11px] text-[var(--muted)]">
                     {a.cms} · {a.tbl}
+                  </td>
+                  {/* Ein Dump kann nicht sagen, dass ein Konto
+                      untergeschoben wurde — das entscheidet der Analyst.
+                      Deshalb ein Knopf und keine Regel. */}
+                  <td className="px-3 py-2 text-right">
+                    {a.in_box ? (
+                      <Tooltip hint="Der Login liegt bereits in der IOC Box.">
+                        <Tag tone="accent">IOC</Tag>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip title="Konto als Indikator aufnehmen"
+                        body="Nimmt den Login in die IOC Box — und die E-Mail als eigenen, damit verknüpften Eintrag."
+                        hint="Der Login ist der Indikator, nicht die Zeile: unter diesem Namen meldet sich jemand wieder an, und danach sucht man in anderen Systemen.">
+                        <Button variant="ghost" disabled={flagAccount.isPending}
+                          className="opacity-0 transition-opacity group-hover:opacity-100"
+                          onClick={() => flagAccount.mutate(a.id)}>
+                          <Box size={13} /> IOC
+                        </Button>
+                      </Tooltip>
+                    )}
                   </td>
                 </tr>
               ))}
