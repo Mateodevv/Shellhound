@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import clsx from 'clsx'
 import {
   Activity, ArrowLeft, Box, Bug, Database, FolderCog, LayoutDashboard,
-  Puzzle, Users,
+  Puzzle, Radar, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
@@ -15,6 +15,7 @@ import { Dashboard } from './views/Dashboard'
 import { Evidence } from './views/Evidence'
 import { Findings } from './views/Findings'
 import { Actors } from './views/Actors'
+import { Hunt } from './views/Hunt'
 import { IocBox } from './views/IocBox'
 import { Cms } from './views/Cms'
 import { DatabaseView } from './views/Database'
@@ -24,12 +25,14 @@ const qc = new QueryClient({
 })
 
 export type ViewId =
-  | 'dashboard' | 'findings' | 'actors' | 'iocbox' | 'cms' | 'database' | 'evidence'
+  | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'cms' | 'database'
+  | 'evidence'
 
 const NAV: { id: ViewId; label: string; icon: typeof Bug }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'findings', label: 'Findings', icon: Bug },
   { id: 'actors', label: 'Actors', icon: Users },
+  { id: 'hunt', label: 'Muster-Jagd', icon: Radar },
   { id: 'iocbox', label: 'IOC Box', icon: Box },
   { id: 'cms', label: 'CMS Inventory', icon: Puzzle },
   { id: 'database', label: 'Database', icon: Database },
@@ -128,6 +131,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           {view === 'dashboard' && <Dashboard {...props} />}
           {view === 'findings' && <Findings {...props} />}
           {view === 'actors' && <Actors {...props} />}
+          {view === 'hunt' && <Hunt {...props} />}
           {view === 'iocbox' && <IocBox {...props} />}
           {view === 'cms' && <Cms {...props} />}
           {view === 'database' && <DatabaseView {...props} />}

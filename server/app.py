@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import db, iocs as ioclib, workspace
+from server import db, iocs as ioclib, patterns as patternlib, workspace
 from server.config import Config
 from server.engines import cmsinventory, detect, logindex, sqldump, webshell
 from server.events import hub
@@ -1117,6 +1117,127 @@ def create_app(config: Config) -> FastAPI:
         out["from_line"] = 1 if offset == 0 else None
         out["lines"] = text.split("\n")
         return out
+
+    # --- Muster-Jagd --------------------------------------------------------
+    # Die Bibliothek gehört dem WORKSPACE: einmal angelegt, steht ein Muster
+    # in jedem weiteren Fall bereit. Der Fall protokolliert nur, wonach in
+    # ihm gesucht wurde -- inklusive der Läufe ohne Treffer.
+
+    @app.get("/api/patterns", dependencies=[auth])
+    def patterns_list():
+        return {"patterns": patternlib.load(config.workspace),
+                "path": str(patternlib.library_path(config.workspace))}
+
+    class NewPattern(BaseModel):
+        pattern: str = ""
+        label: str = ""
+        note: str = ""
+        text: str = ""          # mehrere auf einmal (Zeilen oder JSON)
+
+    @app.post("/api/patterns", dependencies=[auth])
+    def patterns_add(body: NewPattern):
+        try:
+            if body.text.strip():
+                return patternlib.import_text(config.workspace, body.text)
+            return {"added": 1, "skipped": 0, "invalid": 0,
+                    "entry": patternlib.add(config.workspace, body.pattern,
+                                            body.label, body.note)}
+        except patternlib.PatternError as e:
+            raise HTTPException(400, str(e)) from e
+
+    class PatchPattern(BaseModel):
+        pattern: str | None = None
+        label: str | None = None
+        note: str | None = None
+
+    @app.patch("/api/patterns/{pattern_id}", dependencies=[auth])
+    def patterns_patch(pattern_id: str, body: PatchPattern):
+        try:
+            return patternlib.update(config.workspace, pattern_id,
+                                     body.pattern, body.label, body.note)
+        except patternlib.PatternError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.delete("/api/patterns/{pattern_id}", dependencies=[auth])
+    def patterns_delete(pattern_id: str):
+        return {"removed": patternlib.remove(config.workspace, pattern_id)}
+
+    @app.get("/api/patterns/export", dependencies=[auth])
+    def patterns_export():
+        return Response(patternlib.export_text(config.workspace),
+                        media_type="application/json",
+                        headers={"Content-Disposition":
+                                 "attachment; filename=hunt_patterns.json"})
+
+    class RunHunt(BaseModel):
+        # Leer = die ganze Bibliothek. Der Normalfall ist "alles laufen
+        # lassen": eine Bibliothek, die man einzeln anstoßen muss, benutzt
+        # nach dem dritten Fall niemand mehr.
+        ids: list[str] = []
+
+    @app.post("/api/cases/{slug}/hunt/run", dependencies=[auth])
+    def hunt_run(slug: str, body: RunHunt):
+        """Jedes Muster gegen den Log-Index. Treffer werden zu Findings auf
+        dem CLIENT-Artefakt -- damit läuft alles Weitere über die bestehende
+        Triage, statt eine zweite Arbeitsliste neben der ersten aufzumachen.
+
+        Outcome-gated wie die übrigen Log-Regeln: mit 2xx beantwortet ist ein
+        Treffer HIGH, ein reiner Versuch bleibt LOW. Der Analyst hat mit dem
+        Muster gesagt, dass der Pfad zu einem Exploit gehört -- ob der Server
+        mitgespielt hat, sagt erst der Statuscode."""
+        case_dir = case_dir_or_404(slug)
+        library = patternlib.load(config.workspace)
+        wanted = ([p for p in library if p["id"] in set(body.ids)]
+                  if body.ids else library)
+        if not wanted:
+            return {"results": [], "findings": 0, "ran": 0}
+
+        results, new_findings = [], 0
+        conn = db.connect(case_dir)
+        try:
+            for entry in wanted:
+                match = logindex.match_pattern(case_dir, entry["pattern"])
+                name = entry["label"] or entry["pattern"]
+                for client in match["clients"]:
+                    ok = client["ok_hits"] > 0
+                    rule = (f"Aufruf eines hinterlegten Musters ({name}) "
+                            f"— {'2xx beantwortet' if ok else 'nur Versuche'}")
+                    example = match["uris"][0]["uri"] if match["uris"] else ""
+                    db.upsert_finding(
+                        conn, "logs", db.SEV_HIGH if ok else db.SEV_LOW, rule,
+                        "client", client["ip"],
+                        evidence=(f"{client['hits']}× angefragt, davon "
+                                  f"{client['ok_hits']}× 2xx · Muster: "
+                                  f"{entry['pattern']} · z.B. {example}")[:400])
+                    new_findings += 1
+                conn.execute(
+                    "INSERT INTO hunt_runs (pattern, label, ran_at, hits,"
+                    " ok_hits, clients) VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(pattern) DO UPDATE SET label=excluded.label,"
+                    " ran_at=excluded.ran_at, hits=excluded.hits,"
+                    " ok_hits=excluded.ok_hits, clients=excluded.clients",
+                    (entry["pattern"], entry["label"], db.now(), match["hits"],
+                     match["ok_hits"], len(match["clients"])))
+                results.append({**match, "id": entry["id"],
+                                "label": entry["label"], "note": entry["note"]})
+            conn.commit()
+        finally:
+            conn.close()
+        if new_findings:
+            hub.publish({"type": "invalidate", "scope": "findings"})
+        return {"results": results, "findings": new_findings,
+                "ran": len(wanted)}
+
+    @app.get("/api/cases/{slug}/hunt/runs", dependencies=[auth])
+    def hunt_runs(slug: str):
+        """Das Protokoll dieses Falls: wonach gesucht wurde, auch erfolglos."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            return {"runs": db.rows(conn, "SELECT * FROM hunt_runs "
+                                          "ORDER BY ok_hits DESC, hits DESC")}
+        finally:
+            conn.close()
 
     class HuntBody(BaseModel):
         names: list[str]
