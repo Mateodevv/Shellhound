@@ -9,18 +9,18 @@
 // ein Muster in jedem weiteren Fall bereit. Der Fall protokolliert nur, wonach
 // in ihm gesucht wurde — auch erfolglos, denn „wir haben darauf geprüft, es
 // war nichts" steht sonst nirgends.
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Box, ChevronDown, ChevronRight, Crosshair, Download, PencilLine, Play, Plus,
-  Radar, Trash2, Upload,
+  Box, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Crosshair,
+  Download, PencilLine, Play, Plus, Radar, Trash2, Upload,
 } from 'lucide-react'
 import {
   api, del, downloadUrl, patch, post, type HuntPattern, type HuntResult,
   type HuntRun,
 } from '../api'
-import { formatCount, formatDay, formatLogTime, formatSpan } from '../format'
+import { formatCount, formatLogTime, formatSpan } from '../format'
 import {
   Button, Card, EmptyState, SeverityBadge, Tag,
 } from '../components/ui'
@@ -364,49 +364,99 @@ function ResultBadge({ result }: { result: HuntResult }) {
  *  300 Erfolgen. Und die Spanne trennt die eine Kampagne (Minuten) vom
  *  Hintergrundrauschen, das seit Monaten mitläuft. */
 function HuntSummary({ result }: { result: HuntResult }) {
-  const cells: { label: string; value: string; sub?: string; tone?: boolean; hint: string }[] = [
-    {
-      label: 'Adressen', value: formatCount(result.clients_total),
-      sub: `${formatCount(result.ok_clients)} erfolgreich`,
-      tone: result.ok_clients > 0,
-      hint: 'Wie viele verschiedene Clients das Muster getroffen haben — und bei wie vielen der Server mit 2xx geantwortet hat. Die zweite Zahl ist die, die zählt.',
-    },
-    {
-      label: 'Anfragen', value: formatCount(result.hits),
-      sub: `${formatCount(result.ok_hits)}× 2xx`,
-      tone: result.ok_hits > 0,
-      hint: 'Alle Anfragen auf die getroffenen URLs, und wie viele davon erfolgreich beantwortet wurden.',
-    },
-    {
-      label: 'Erster Treffer', value: formatLogTime(result.first_epoch, result.tz),
-      sub: `letzter: ${formatLogTime(result.last_epoch, result.tz)}`,
-      hint: 'Zeiten aus dem Log, in dessen eigener Zeitzone — nicht die Uhr dieses Rechners.',
-    },
-    {
-      label: 'Zeitspanne', value: formatSpan(result.first_epoch, result.last_epoch),
-      sub: `${formatCount(result.uri_total)} getroffene URL(s)`,
-      hint: 'Über welchen Zeitraum sich die Treffer erstrecken. Minuten sprechen für einen einzelnen Zugriff, Monate eher für Hintergrundrauschen.',
-    },
-  ]
+  const durch = result.ok_clients > 0
   return (
-    <div className="grid grid-cols-2 gap-px border-b border-[var(--line)] bg-[var(--line)] sm:grid-cols-4">
-      {cells.map((c) => (
-        <Tooltip key={c.label} title={c.label} hint={c.hint}>
-          <div className="bg-[var(--panel)] px-4 py-2">
-            <div className="text-[10.5px] uppercase tracking-wider text-[var(--muted)]">
-              {c.label}
-            </div>
-            <div className={clsx('mono text-[13px] font-semibold tabular',
-              c.tone && 'text-[var(--sev-high)]')}>
-              {c.value}
-            </div>
-            {c.sub && (
-              <div className="mono text-[11px] tabular text-[var(--muted)]">{c.sub}</div>
-            )}
-          </div>
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-[var(--line)] px-4 py-2.5">
+      {/* Der Befund, in der Größe, die er verdient. */}
+      <Tooltip
+        hint="Bei wie vielen der getroffenen Adressen der Server mit 2xx geantwortet hat. Ein Versuch ins Leere ist kein Zugriff — deshalb steht diese Zahl hier und nicht die Zahl der Anfragen.">
+        <div className="flex items-baseline gap-1.5">
+          <span className={clsx('text-[19px] font-bold leading-none tabular',
+            durch ? 'text-[var(--sev-high)]' : 'text-[var(--muted)]')}>
+            {formatCount(result.ok_clients)}
+          </span>
+          {/* Das Zahlwort richtet sich nach der Gesamtzahl, das Verb nach
+              der ersten: „1 von 2 Adressen KAM durch". */}
+          <span className="text-[13px] text-[var(--muted)]">
+            von {formatCount(result.clients_total)}{' '}
+            {result.clients_total === 1 ? 'Adresse' : 'Adressen'}{' '}
+            {result.ok_clients === 1 ? 'kam' : 'kamen'} durch
+          </span>
+        </div>
+      </Tooltip>
+
+      {/* Alles Weitere ist Beleg dazu und steht als Fließzeile daneben —
+          so, wie man es in den Bericht schreibt. */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px] text-[var(--muted)]">
+        <Tooltip hint="Alle Anfragen auf die getroffenen URLs, und wie viele davon erfolgreich beantwortet wurden.">
+          <span>
+            <span className="mono tabular text-[var(--fg)]">{formatCount(result.hits)}</span> Anfragen,
+            davon <span className={clsx('mono tabular',
+              result.ok_hits ? 'text-[var(--sev-high)]' : '')}>
+              {formatCount(result.ok_hits)}×
+            </span> mit 2xx
+          </span>
         </Tooltip>
-      ))}
+        <span className="opacity-40">·</span>
+        <Tooltip hint="Zeiten aus dem Log, in dessen eigener Zeitzone — nicht die Uhr dieses Rechners. Minuten sprechen für einen einzelnen Zugriff, Monate eher für Hintergrundrauschen.">
+          <span>
+            <span className="mono tabular text-[var(--fg)]">
+              {formatLogTime(result.first_epoch, result.tz)}
+            </span>
+            {' → '}
+            <span className="mono tabular text-[var(--fg)]">
+              {formatLogTime(result.last_epoch, result.tz)}
+            </span>
+            {' '}({formatSpan(result.first_epoch, result.last_epoch)})
+          </span>
+        </Tooltip>
+        <span className="opacity-40">·</span>
+        <Tooltip hint="Wie viele verschiedene URLs das Muster überhaupt getroffen hat. Eine hohe Zahl heißt meist: das Muster greift zu weit.">
+          <span>
+            <span className="mono tabular text-[var(--fg)]">
+              {formatCount(result.uri_total)}
+            </span> URL{result.uri_total === 1 ? '' : 's'}
+          </span>
+        </Tooltip>
+      </div>
     </div>
+  )
+}
+
+type SortCol = 'ip' | 'hits' | 'ok_hits' | 'first' | 'last'
+type Sort = { col: SortCol; desc: boolean }
+
+/** Eine Adresse als Zahl, damit 2 vor 10 steht. IPv6 fällt auf den
+ *  Textvergleich zurück — dort ist die Reihenfolge ohnehin nur eine
+ *  Gruppierung, keine Aussage. */
+function ipKey(ip: string): string {
+  const parts = ip.split('.')
+  if (parts.length !== 4) return ip
+  return parts.map((p) => p.padStart(3, '0')).join('.')
+}
+
+function SortHead({ col, sort, onSort, className, children }: {
+  col: SortCol
+  sort: Sort
+  onSort: (s: Sort) => void
+  className?: string
+  children: React.ReactNode
+}) {
+  const active = sort.col === col
+  return (
+    <th className={className}>
+      <button
+        onClick={() => onSort({ col, desc: active ? !sort.desc : true })}
+        className={clsx(
+          'inline-flex cursor-pointer items-center gap-1 uppercase tracking-wider hover:text-[var(--fg)]',
+          active && 'text-[var(--fg)]')}
+      >
+        {children}
+        {active
+          ? (sort.desc ? <ChevronDown size={11} /> : <ChevronUp size={11} />)
+          : <ChevronsUpDown size={11} className="opacity-40" />}
+      </button>
+    </th>
   )
 }
 
@@ -419,6 +469,22 @@ function ResultCard({ slug, result, onTrace }: {
 }) {
   const qc = useQueryClient()
   const [showUris, setShowUris] = useState(false)
+  // Voreinstellung wie vom Server geliefert: Erfolge zuerst. Das ist die
+  // Reihenfolge, in der man die Liste zuerst lesen will.
+  const [sort, setSort] = useState<Sort>({ col: 'ok_hits', desc: true })
+
+  const sorted = useMemo(() => {
+    const dir = sort.desc ? -1 : 1
+    return [...result.clients].sort((a, b) => {
+      if (sort.col === 'ip') return dir * ipKey(a.ip).localeCompare(ipKey(b.ip))
+      if (sort.col === 'first') return dir * ((a.first_epoch ?? 0) - (b.first_epoch ?? 0))
+      if (sort.col === 'last') return dir * ((a.last_epoch ?? 0) - (b.last_epoch ?? 0))
+      const d = dir * (a[sort.col] - b[sort.col])
+      // Gleichstand bricht nach Anfragen, sonst springen Zeilen bei jedem
+      // Neuzeichnen -- 40 Adressen mit je einem Treffer sind keine Seltenheit.
+      return d || b.hits - a.hits
+    })
+  }, [result.clients, sort])
 
   // Die Herkunft nennt das Muster: "hat den Exploit-Pfad abgerufen" ist die
   // Aussage, die im Bericht zählt — nicht "aus einer Liste eingesammelt".
@@ -476,15 +542,26 @@ function ResultCard({ slug, result, onTrace }: {
       <table className="w-full border-collapse text-[13px]">
         <thead>
           <tr className="border-b border-[var(--line)] text-left text-[11px] uppercase tracking-wider text-[var(--muted)]">
-            <th className="px-4 py-2">Client</th>
-            <th className="px-2 py-2 text-right">Anfragen</th>
-            <th className="px-2 py-2 text-right">davon 2xx</th>
-            <th className="px-2 py-2">Zeitraum</th>
+            <SortHead className="px-4 py-2" col="ip" sort={sort} onSort={setSort}>
+              Client
+            </SortHead>
+            <SortHead className="px-2 py-2 text-right" col="hits" sort={sort} onSort={setSort}>
+              Anfragen
+            </SortHead>
+            <SortHead className="px-2 py-2 text-right" col="ok_hits" sort={sort} onSort={setSort}>
+              davon 2xx
+            </SortHead>
+            <SortHead className="px-2 py-2" col="first" sort={sort} onSort={setSort}>
+              Erster Treffer
+            </SortHead>
+            <SortHead className="px-2 py-2" col="last" sort={sort} onSort={setSort}>
+              Letzter Treffer
+            </SortHead>
             <th className="w-28 px-4 py-2" />
           </tr>
         </thead>
         <tbody>
-          {result.clients.map((c) => (
+          {sorted.map((c) => (
             <tr key={c.ip}
               className="group border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]">
               <td className="px-4 py-1.5">
@@ -501,8 +578,14 @@ function ResultCard({ slug, result, onTrace }: {
                 c.ok_hits ? 'text-[var(--sev-high)]' : 'text-[var(--muted)]')}>
                 {formatCount(c.ok_hits)}
               </td>
-              <td className="px-2 py-1.5 text-[12px] text-[var(--muted)]">
-                {formatDay(c.first_epoch, c.tz)} → {formatDay(c.last_epoch, c.tz)}
+              {/* Auf die Sekunde: bei einem Muster-Treffer ist die Uhrzeit
+                  die halbe Aussage — sie sagt, ob die Aufrufe in einem
+                  Schwung kamen oder über Wochen verteilt. */}
+              <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
+                {formatLogTime(c.first_epoch, c.tz)}
+              </td>
+              <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
+                {formatLogTime(c.last_epoch, c.tz)}
               </td>
               <td className="px-4 py-1.5 text-right">
                 <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

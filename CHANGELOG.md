@@ -57,6 +57,16 @@ Ergebnis, was in den Bericht wandert: **Adressen** (davon erfolgreiche),
   traf. Gerade diese Zahl soll verraten, dass ein Muster zu weit greift.
 - `hunt_runs` speichert die Kennzahlen mit, damit das Protokoll ohne einen
   zweiten Lauf aussagt, was gefunden wurde.
+- Die Kennzahlen stehen als **eine Zeile** statt als vier gleich große
+  Kacheln: der Befund („1 von 2 Adressen kam durch") groß und farbig voran,
+  die Belege dahinter im Fließtext. Vier gleich gewichtete Kästen gaben der
+  entscheidenden Zahl dasselbe Gewicht wie der nebensächlichsten.
+- Der **Zeitraum je Client** steht jetzt auf die Sekunde genau in zwei
+  Spalten (erster / letzter Treffer) statt als Datum ohne Uhrzeit — bei einem
+  Muster-Treffer sagt erst die Uhrzeit, ob die Aufrufe in einem Schwung kamen
+  oder über Wochen verteilt.
+- Die Trefferliste ist nach jeder Spalte **sortierbar**, Adressen numerisch
+  (`192.0.2.9` vor `192.0.2.10`).
 
 ### Hinzugefügt — Indikatoren tragen ihre Beziehungen
 
