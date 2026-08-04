@@ -1,6 +1,7 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import clsx from 'clsx'
 import {
   Archive, CheckCircle2, ChevronRight, FileText, FolderOpen, FolderSearch,
   HardDrive, Pencil, Play, Server, Trash2, TriangleAlert, XCircle,
@@ -445,6 +446,10 @@ function PathBrowser({ kind, onClose, onPick }: {
   onPick: (path: string) => void
 }) {
   const [path, setPath] = useState('')
+  // Eine angeklickte Datei gewinnt gegen das Verzeichnis, in dem sie liegt —
+  // sonst müsste man für einen SQL-Dump den Pfad doch wieder tippen.
+  const [picked, setPicked] = useState('')
+  useEffect(() => { setPicked('') }, [path])
   const { data, isError, error } = useQuery({
     queryKey: ['pickpath', path],
     queryFn: () => api<PickPath>(`/api/pickpath?path=${encodeURIComponent(path)}`),
@@ -480,6 +485,31 @@ function PathBrowser({ kind, onClose, onPick }: {
               <ChevronRight size={14} className="text-[var(--muted)] opacity-0 transition-opacity group-hover:opacity-100" />
             </button>
           ))}
+          {/* Dateien sind wählbar, nicht nur Beiwerk: ein SQL-Dump IST eine
+              Datei, und wer sie nicht sieht, kann sie nicht registrieren. */}
+          {data?.files.map((f) => (
+            <button
+              key={f.path}
+              className={clsx(
+                'group flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[13px] cursor-pointer',
+                picked === f.path
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                  : 'hover:bg-[var(--panel-2)]')}
+              onClick={() => setPicked(picked === f.path ? '' : f.path)}
+            >
+              <FileText size={14} className="shrink-0 text-[var(--muted)]" />
+              <span className="min-w-0 flex-1 truncate">{f.name}</span>
+              <span className="shrink-0 tabular text-[11px] text-[var(--muted)]">
+                {formatBytes(f.size)}
+              </span>
+            </button>
+          ))}
+          {data?.truncated && (
+            <div className="px-3 py-2 text-[12px] text-[var(--sev-low)]">
+              Sehr viele Einträge — die Liste wurde gekürzt. Tippe den Pfad
+              unten direkt ein, wenn das Gesuchte fehlt.
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-[var(--line)] px-4 py-3">
           <input
@@ -489,9 +519,9 @@ function PathBrowser({ kind, onClose, onPick }: {
             className="mono min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
-          <Button variant="primary" disabled={!data?.path && !path.trim()}
-            onClick={() => onPick(path || data!.path)}>
-            Diesen Pfad verwenden
+          <Button variant="primary" disabled={!picked && !data?.path && !path.trim()}
+            onClick={() => onPick(picked || path || data!.path)}>
+            {picked ? 'Diese Datei verwenden' : 'Diesen Ordner verwenden'}
           </Button>
         </div>
       </Card>

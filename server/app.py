@@ -281,10 +281,19 @@ def create_app(config: Config) -> FastAPI:
     def detect_evidence(body: DetectBody):
         return detect.scan(body.folder)
 
+    # Wie viele Einträge ein Verzeichnis höchstens liefert. Ein Upload-Ordner
+    # mit 40.000 Dateien soll den Dialog nicht zum Stehen bringen; dass
+    # gekürzt wurde, sagt die Antwort mit.
+    _LISTING_CAP = 2000
+
     @app.get("/api/pickpath", dependencies=[auth])
     def pickpath(path: str = ""):
-        """Server-side folder browser: directories only, plus drives on
-        Windows when no path is given."""
+        """Server-side folder browser -- Verzeichnisse UND Dateien, plus die
+        Laufwerke unter Windows, wenn kein Pfad angegeben ist.
+
+        Dateien gehören dazu, weil nicht jede Evidence ein Ordner ist: ein
+        SQL-Dump ist eine einzelne Datei, und wer sie nicht sieht, kann sie
+        auch nicht auswählen."""
         if not path.strip():
             if os.name == "nt":
                 drives = []
@@ -292,24 +301,45 @@ def create_app(config: Config) -> FastAPI:
                     drives = os.listdrives()
                 except (OSError, AttributeError):
                     drives = [f"{c}:\\" for c in "CDEF" if os.path.exists(f"{c}:\\")]
-                return {"path": "", "parent": None,
-                        "dirs": [{"name": d, "path": d} for d in drives]}
+                return {"path": "", "parent": None, "files": [],
+                        "dirs": [{"name": d, "path": d} for d in drives],
+                        "truncated": False}
             path = "/"
         p = Path(path).expanduser()
         if not p.is_dir():
             raise HTTPException(400, f"not a directory: {p}")
-        dirs = []
+        dirs, files, truncated = _list_dir(p)
+        parent = str(p.parent) if p.parent != p else None
+        return {"path": str(p), "parent": parent, "dirs": dirs,
+                "files": files, "truncated": truncated}
+
+    def _list_dir(p):
+        """(dirs, files, truncated) eines Verzeichnisses, alphabetisch."""
+        dirs, files, seen = [], [], 0
         try:
-            for entry in sorted(p.iterdir(), key=lambda e: e.name.lower()):
-                try:
-                    if entry.is_dir():
-                        dirs.append({"name": entry.name, "path": str(entry)})
-                except OSError:
-                    continue
+            with os.scandir(p) as it:
+                for entry in it:
+                    seen += 1
+                    if seen > _LISTING_CAP:
+                        return (sorted(dirs, key=lambda d: d["name"].lower()),
+                                sorted(files, key=lambda f: f["name"].lower()),
+                                True)
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs.append({"name": entry.name, "path": entry.path})
+                        elif entry.is_file(follow_symlinks=False):
+                            try:
+                                size = entry.stat().st_size
+                            except OSError:
+                                size = 0
+                            files.append({"name": entry.name, "path": entry.path,
+                                          "size": size})
+                    except OSError:
+                        continue
         except OSError as e:
             raise HTTPException(400, f"cannot list {p}: {e}")
-        parent = str(p.parent) if p.parent != p else None
-        return {"path": str(p), "parent": parent, "dirs": dirs}
+        return (sorted(dirs, key=lambda d: d["name"].lower()),
+                sorted(files, key=lambda f: f["name"].lower()), False)
 
     # --- analyze pipeline ---------------------------------------------------
 
@@ -1239,6 +1269,108 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
+    # --- durch die Evidence klicken ----------------------------------------
+
+    @app.get("/api/cases/{slug}/browse", dependencies=[auth])
+    def browse(slug: str, path: str = ""):
+        """Durch die registrierte Evidence blättern.
+
+        Ohne `path` sind die Wurzeln selbst die Liste -- man beginnt bei dem,
+        was zum Fall gehört, nicht beim Dateisystem. Jeder tiefere Pfad läuft
+        durch dieselbe Schranke wie der Datei-Viewer (_within_evidence, auf
+        dem AUFGELÖSTEN Pfad), damit man sich hier nicht aus der Evidence
+        herausklicken kann.
+
+        Jeder Eintrag sagt gleich mit, ob er schon in der IOC Box liegt und ob
+        Findings auf ihm sitzen -- sonst flaggt man von Hand, was längst
+        erfasst ist."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            roots = db.rows(conn, "SELECT kind, path, label FROM evidence "
+                                  "ORDER BY kind, path")
+            box = {str(r["value"]).replace("\\", "/").lower()
+                   for r in db.rows(conn, "SELECT value FROM iocs WHERE type = 'path'")}
+            flagged = {str(r["artifact"]).replace("\\", "/").lower(): r
+                       for r in db.rows(
+                           conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, worst,"
+                                 f" triage, findings FROM art "
+                                 f"WHERE artifact_kind = 'file'")}
+        finally:
+            conn.close()
+
+        if not path.strip():
+            return {"path": "", "parent": None, "roots": roots, "dirs": [],
+                    "files": [], "truncated": False}
+        target = _within_evidence(case_dir, path)
+        if not target.is_dir():
+            raise HTTPException(400, "Kein Verzeichnis")
+        dirs, files, truncated = _list_dir(target)
+
+        def annotate(entry):
+            key = entry["path"].replace("\\", "/").lower()
+            hit = flagged.get(key)
+            entry["in_box"] = key in box
+            entry["flagged"] = hit["findings"] if hit else 0
+            entry["worst"] = hit["worst"] if hit else None
+            entry["triage"] = hit["triage"] if hit else None
+            return entry
+
+        # Innerhalb einer Wurzel darf man hoch -- aber nur bis zu ihr.
+        parent = str(target.parent)
+        try:
+            _within_evidence(case_dir, parent)
+        except HTTPException:
+            parent = None
+        return {"path": str(target), "parent": parent, "roots": roots,
+                "dirs": dirs, "files": [annotate(f) for f in files],
+                "truncated": truncated}
+
+    class FlagBody(BaseModel):
+        paths: list[str]
+        note: str = ""
+
+    @app.post("/api/cases/{slug}/files/flag", dependencies=[auth])
+    def flag_files(slug: str, body: FlagBody):
+        """Dateien von Hand als Indikator aufnehmen -- Pfad UND SHA-256.
+
+        Der Hash ist der Punkt: ein Pfad beschreibt, wo etwas auf DIESEM
+        Server lag, der Hash erkennt dieselbe Datei überall wieder. Die
+        Herkunft sagt ausdrücklich, dass ein Mensch das entschieden hat und
+        keine Regel."""
+        case_dir = case_dir_or_404(slug)
+        # ERST prüfen, DANN schreiben: _within_evidence öffnet die Fall-
+        # Datenbank selbst, und das mitten in einer offenen Schreib-
+        # Transaktion tut es nicht -- die zweite Verbindung läuft in
+        # "database is locked". Nebenbei ist es die richtige Reihenfolge:
+        # ein abgewiesener Pfad soll gar nichts geschrieben haben.
+        targets = []
+        for raw in body.paths:
+            target = _within_evidence(case_dir, raw)
+            if target.is_file():
+                targets.append(str(target))
+
+        conn = db.connect(case_dir)
+        added = []
+        try:
+            for path in targets:
+                db.add_ioc(conn, path, "path",
+                           [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
+                           note=body.note,
+                           origin="vom Analysten im Datei-Browser markiert")
+                added.append({"value": path, "type": "path"})
+                digest = _sha256_of(path)
+                if digest:
+                    db.add_ioc(conn, digest, "hash",
+                               [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
+                               origin=f"sha-256 von {os.path.basename(path)}")
+                    added.append({"value": digest, "type": "hash"})
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"added": added}
+
     class HuntBody(BaseModel):
         names: list[str]
 
@@ -1339,6 +1471,10 @@ def create_app(config: Config) -> FastAPI:
 
     class CollectBody(BaseModel):
         ips: list[str]
+        # Woher die Auswahl stammt. Bei einem Muster-Treffer ist das die
+        # eigentliche Aussage -- "diese Adresse hat den Exploit-Pfad
+        # abgerufen" sagt mehr als "aus der Actors-Liste eingesammelt".
+        origin: str = ""
 
     @app.post("/api/cases/{slug}/actors/collect", dependencies=[auth])
     def collect_actors(slug: str, body: CollectBody):
@@ -1352,7 +1488,7 @@ def create_app(config: Config) -> FastAPI:
             for ip in body.ips:
                 a = by_ip.get(ip)
                 tags = [ioclib.TAG_ACTOR]
-                origin = "actor: collected from the actors list"
+                origin = "actor: aus der Actors-Liste eingesammelt"
                 if a:
                     if a["scanner_uas"] != "[]":
                         tags.append(ioclib.TAG_SCANNER)
@@ -1360,7 +1496,13 @@ def create_app(config: Config) -> FastAPI:
                         tags.append(ioclib.TAG_BRUTE)
                     if a["login_redirects"] > 0 and a["login_posts"] >= logindex.BF_THRESHOLD:
                         tags.append(ioclib.TAG_SUCCESS)
-                    origin = f"actor: {a['requests']} request(s)"
+                    origin = f"actor: {a['requests']} Request(s)"
+                # Eine mitgegebene Herkunft ersetzt die allgemeine: sie sagt,
+                # WARUM diese Adresse aufgenommen wurde, und das ist die
+                # Angabe, die im Bericht zählt.
+                if body.origin.strip():
+                    origin = body.origin.strip()[:200]
+                    tags.append(ioclib.TAG_HUNT)
                 db.add_ioc(conn, ip, "ip", tags, origin=origin)
                 added += 1
             conn.commit()

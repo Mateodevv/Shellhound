@@ -13,11 +13,12 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  ChevronDown, ChevronRight, Crosshair, Download, Play, Plus, Radar,
-  Trash2, Upload,
+  Box, ChevronDown, ChevronRight, Crosshair, Download, PencilLine, Play, Plus,
+  Radar, Trash2, Upload,
 } from 'lucide-react'
 import {
-  api, del, downloadUrl, post, type HuntPattern, type HuntResult, type HuntRun,
+  api, del, downloadUrl, patch, post, type HuntPattern, type HuntResult,
+  type HuntRun,
 } from '../api'
 import { formatCount, formatDay } from '../format'
 import {
@@ -36,6 +37,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   const { data: lib } = useQuery({
@@ -209,6 +211,10 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         {patterns.map((p) => {
           const result = shown.find((r) => r.id === p.id)
           const last = runByPattern.get(p.pattern)
+          if (editing === p.id) {
+            return <PatternEditor key={p.id} slug={slug} entry={p}
+              onDone={() => { setEditing(null); refresh() }} />
+          }
           return (
             <div key={p.id}
               className="flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]">
@@ -238,6 +244,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               <Button variant="ghost" onClick={() => run.mutate([p.id])}>
                 <Play size={13} /> Suchen
               </Button>
+              <Tooltip hint="Muster, Name oder Notiz ändern — gilt danach für alle Fälle.">
+                <button
+                  className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
+                  onClick={() => setEditing(p.id)}>
+                  <PencilLine size={14} />
+                </button>
+              </Tooltip>
               <Tooltip hint="Entfernt das Muster aus der Bibliothek — auch für künftige Fälle. Bereits geschriebene Findings bleiben.">
                 <button
                   className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
@@ -256,9 +269,69 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
       </Card>
 
       {/* ---- die Ergebnisse ---- */}
-      {shown.map((r) => <ResultCard key={r.id} result={r} onTrace={setTraceIps} />)}
+      {shown.map((r) => (
+        <ResultCard key={r.id} slug={slug} result={r} onTrace={setTraceIps} />
+      ))}
 
       <TraceWindow slug={slug} ips={traceIps} onClose={() => setTraceIps(null)} />
+    </div>
+  )
+}
+
+/** Ein Muster nachbessern. Änderungen gelten für ALLE Fälle — die Bibliothek
+ *  gehört dem Workspace, und genau das steht auch am Knopf. */
+function PatternEditor({ slug, entry, onDone }: {
+  slug: string
+  entry: HuntPattern
+  onDone: () => void
+}) {
+  const [pattern, setPattern] = useState(entry.pattern)
+  const [label, setLabel] = useState(entry.label)
+  const [note, setNote] = useState(entry.note)
+  const [error, setError] = useState('')
+  void slug
+
+  const save = useMutation({
+    mutationFn: () => patch(`/api/patterns/${entry.id}`, { pattern, label, note }),
+    onSuccess: onDone,
+    onError: (e: Error) => setError(e.message),
+  })
+
+  return (
+    <div className="flex flex-col gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-4 py-3 last:border-0">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex min-w-64 flex-1 flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            URL-Muster
+          </span>
+          <input value={pattern} onChange={(e) => setPattern(e.target.value)}
+            className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        <label className="flex w-48 flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Name
+          </span>
+          <input value={label} onChange={(e) => setLabel(e.target.value)}
+            className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        <label className="flex w-40 flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Notiz
+          </span>
+          <input value={note} onChange={(e) => setNote(e.target.value)}
+            className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        <Button variant="primary" disabled={!pattern.trim() || save.isPending}
+          onClick={() => save.mutate()}>
+          Speichern
+        </Button>
+        <Button variant="ghost" onClick={onDone}>Abbrechen</Button>
+      </div>
+      <div className="text-[11px] text-[var(--muted)]">
+        Die Änderung gilt für alle Fälle. Bereits geschriebene Findings bleiben
+        stehen — sie halten fest, was zum Zeitpunkt der Suche galt.
+      </div>
+      {error && <div className="text-[12px] text-[var(--danger-text)]">{error}</div>}
     </div>
   )
 }
@@ -276,11 +349,27 @@ function ResultBadge({ result }: { result: HuntResult }) {
 
 /** Was ein Muster gefunden hat. Die getroffenen URIs stehen mit dabei: ein
  *  Muster, das zu weit greift, sieht man nur, wenn man sieht, WAS es traf. */
-function ResultCard({ result, onTrace }: {
+function ResultCard({ slug, result, onTrace }: {
+  slug: string
   result: HuntResult
   onTrace: (ips: string[]) => void
 }) {
+  const qc = useQueryClient()
   const [showUris, setShowUris] = useState(false)
+
+  // Die Herkunft nennt das Muster: "hat den Exploit-Pfad abgerufen" ist die
+  // Aussage, die im Bericht zählt — nicht "aus einer Liste eingesammelt".
+  const collect = useMutation({
+    mutationFn: (ips: string[]) => post<{ added: number }>(
+      `/api/cases/${slug}/actors/collect`,
+      { ips, origin: `Muster-Treffer: ${result.label || result.pattern}` }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['iocs'] })
+      qc.invalidateQueries({ queryKey: ['actors'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+
   if (!result.hits) return null
   return (
     <Card className="overflow-hidden">
@@ -301,6 +390,15 @@ function ResultCard({ result, onTrace }: {
             <Crosshair size={13} /> alle tracen
           </Button>
         )}
+        <Tooltip hint="Übernimmt alle hier gelisteten Adressen als Indikatoren — mit dem Muster als Herkunft, damit im Bericht steht, WARUM sie drinstehen.">
+          <Button variant="primary" disabled={collect.isPending}
+            onClick={() => collect.mutate(result.clients.map((c) => c.ip))}>
+            <Box size={13} />
+            {collect.data
+              ? `${formatCount(collect.data.added)} übernommen`
+              : `Alle ${formatCount(result.clients.length)} in die IOC Box`}
+          </Button>
+        </Tooltip>
       </div>
 
       {result.truncated && (
