@@ -13,7 +13,8 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Clock, Crown, Database as DatabaseIcon, Download, FileCode2, KeyRound, Table2,
+  Clock, Crown, Database as DatabaseIcon, Download, FileCode2, HelpCircle,
+  KeyRound, Table2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -139,39 +140,6 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
 
       {!!data?.schema_files.length && <SchemaCard files={data.schema_files} />}
 
-      {/* ---- der eingeschleuste Code, jetzt anklickbar ---- */}
-      {data && data.findings.length > 0 && (
-        <Section title="Eingeschleuster Code in Datenfeldern"
-          sub="Ein CMS speichert Code in Dateien, nie in der Datenbank. Klick auf eine Zeile öffnet die Tabelle als Artefakt — entscheiden wie in Findings.">
-          <Card className="overflow-hidden">
-            {data.findings.map((f) => (
-              <button key={f.fingerprint}
-                onClick={() => openArtifact({
-                  artifact: f.artifact, artifact_kind: 'table',
-                  worst: f.severity, triage: f.triage, triage_note: f.triage_note,
-                })}
-                className={clsx(
-                  'flex w-full cursor-pointer items-center gap-3 border-b border-[var(--line-soft)]',
-                  'px-4 py-2 text-left transition-colors last:border-0 hover:bg-[var(--panel-2)]',
-                  f.triage === 'confirmed' && 'opacity-45')}>
-                <span className="h-6 w-1 shrink-0 rounded-full"
-                  style={{ background: SEVERITY_VAR[f.severity] }} />
-                <SeverityBadge severity={f.severity} />
-                <span className="mono w-40 shrink-0 truncate text-[12px] font-medium">
-                  {f.artifact}
-                </span>
-                <span className="w-56 shrink-0 truncate text-[12.5px]">{f.rule}</span>
-                <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]"
-                  title={f.evidence}>
-                  {f.line ? `Zeile ${f.line} — ` : ''}{f.evidence}
-                </span>
-                <TriageBadge state={f.triage} label={TRIAGE_LABEL[f.triage]} />
-              </button>
-            ))}
-          </Card>
-        </Section>
-      )}
-
       {/* ---- die Konten, nach Auffälligkeit ---- */}
       <Section title="Konten"
         sub="Ein Dump kann nicht sagen, dass ein Admin bösartig ist — nur, was an ihm auffällt. Die Beobachtungen bestimmen die Reihenfolge, die Bewertung bleibt bei dir."
@@ -290,6 +258,43 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           )}
         </Card>
       </Section>
+
+      {/* ---- der eingeschleuste Code, jetzt anklickbar ----
+          NACH den Konten: wer diese Ansicht öffnet, sucht zuerst das
+          untergeschobene Konto. Der eingeschleuste Code ist der zweite
+          Befund, und er liest sich erst richtig, wenn man weiß, wessen
+          Konto ihn geschrieben haben könnte. */}
+      {data && data.findings.length > 0 && (
+        <Section title="Eingeschleuster Code in Datenfeldern"
+          sub="Ein CMS speichert Code in Dateien, nie in der Datenbank. Klick auf eine Zeile öffnet die Tabelle als Artefakt — entscheiden wie in Findings.">
+          <Card className="overflow-hidden">
+            {data.findings.map((f) => (
+              <button key={f.fingerprint}
+                onClick={() => openArtifact({
+                  artifact: f.artifact, artifact_kind: 'table',
+                  worst: f.severity, triage: f.triage, triage_note: f.triage_note,
+                })}
+                className={clsx(
+                  'flex w-full cursor-pointer items-center gap-3 border-b border-[var(--line-soft)]',
+                  'px-4 py-2 text-left transition-colors last:border-0 hover:bg-[var(--panel-2)]',
+                  f.triage === 'confirmed' && 'opacity-45')}>
+                <span className="h-6 w-1 shrink-0 rounded-full"
+                  style={{ background: SEVERITY_VAR[f.severity] }} />
+                <SeverityBadge severity={f.severity} />
+                <span className="mono w-40 shrink-0 truncate text-[12px] font-medium">
+                  {f.artifact}
+                </span>
+                <span className="w-56 shrink-0 truncate text-[12.5px]">{f.rule}</span>
+                <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]"
+                  title={f.evidence}>
+                  {f.line ? `Zeile ${f.line} — ` : ''}{f.evidence}
+                </span>
+                <TriageBadge state={f.triage} label={TRIAGE_LABEL[f.triage]} />
+              </button>
+            ))}
+          </Card>
+        </Section>
+      )}
 
       {/* ---- das Tabellen-Inventar, mit Fall-Bezug ---- */}
       <Section title="Tabellen im Dump"
@@ -458,12 +463,22 @@ function SchemaCard({ files }: { files: DbDump[] }) {
  *  hängt ab, ob ein fehlender Admin etwas bedeutet. */
 function DumpCard({ dump }: { dump: DbDump }) {
   const meta = dump.meta ?? {}
-  const facts: [string, string, string?][] = [
-    ['Datenbank', meta.database || '—'],
+  // Jede Angabe erklärt sich selbst — sie stammen aus dem KOPF des Dumps,
+  // den das Export-Werkzeug geschrieben hat, und was fehlt, ist genauso eine
+  // Aussage wie was dasteht.
+  const facts: [string, string, string, string][] = [
+    ['Datenbank', meta.database || '—',
+     'Der Name des Schemas, aus dem exportiert wurde.',
+     'Bei mehreren Instanzen auf einem Server entscheidet er, ob dieser Dump überhaupt zu dem Webroot gehört, den du untersuchst.'],
     ['Erstellt', meta.created || 'nicht im Kopf des Dumps vermerkt',
-     'Der Zeitstempel, den das Export-Werkzeug geschrieben hat. Ohne ihn ist unklar, welchen Stand dieser Dump zeigt.'],
-    ['Server', meta.server || '—'],
-    ['Werkzeug', [meta.tool, meta.tool_version].filter(Boolean).join(' ') || '—'],
+     'Der Zeitstempel, den das Export-Werkzeug geschrieben hat.',
+     'Die wichtigste Angabe der Karte: ein Dump von VOR dem Vorfall zeigt einen anderen Zustand als einer von danach — davon hängt ab, ob ein fehlendes Konto etwas bedeutet. Ohne ihn ist unklar, welchen Stand dieser Dump zeigt.'],
+    ['Server', meta.server || '—',
+     'Die MySQL-/MariaDB-Version, die den Export erzeugt hat.',
+     'Eine alte Version erklärt manchmal, warum ein Angriff funktioniert hat — und sie sagt, wohin der Dump sich zurückspielen lässt.'],
+    ['Werkzeug', [meta.tool, meta.tool_version].filter(Boolean).join(' ') || '—',
+     'Womit exportiert wurde (mysqldump, phpMyAdmin, ein Plugin).',
+     'Das Werkzeug bestimmt, WAS im Dump steht: manche Backup-Plugins lassen Sitzungen oder Log-Tabellen weg. Fehlt hier etwas, fehlt es womöglich auch in den Daten.'],
   ]
   return (
     <Card className="overflow-hidden">
@@ -486,21 +501,19 @@ function DumpCard({ dump }: { dump: DbDump }) {
         </div>
       </div>
       <div className="grid gap-2 px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
-        {facts.map(([label, value, hint]) => (
-          <div key={label} className="rounded-lg bg-[var(--panel-2)] px-3 py-2">
+        {facts.map(([label, value, body, hint]) => (
+          <Tooltip key={label} title={label} body={body} hint={hint}
+            as="div" className="!block rounded-lg bg-[var(--panel-2)] px-3 py-2">
+            {/* Das Fragezeichen ist die Einladung: ohne es hovert niemand
+                über einer Kennzahl, und die Erklärung bliebe ungelesen. */}
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               {label === 'Erstellt' && <Clock size={10} />}
               {label === 'Server' && <KeyRound size={10} className="opacity-0" />}
               {label}
+              <HelpCircle size={10} className="ml-auto shrink-0 opacity-50" />
             </div>
-            {hint ? (
-              <Tooltip hint={hint}>
-                <div className="mt-0.5 truncate text-[12px]">{value}</div>
-              </Tooltip>
-            ) : (
-              <div className="mt-0.5 truncate text-[12px]" title={value}>{value}</div>
-            )}
-          </div>
+            <div className="mt-0.5 truncate text-[12px]" title={value}>{value}</div>
+          </Tooltip>
         ))}
       </div>
     </Card>
