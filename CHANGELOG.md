@@ -5,6 +5,59 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Hinzugefügt — Chronologie des Falls
+
+Jede Ansicht beantwortete „was": welche Datei, welcher Client, welches
+Konto. Keine beantwortete **„in welcher Reihenfolge"** — und genau das ist
+der erste Absatz jedes Berichts. Bisher tippte man ihn ab, indem man
+zwischen Actors, Findings und Database hin- und hersprang und Zeitstempel im
+Kopf sortierte.
+
+Neu in der Fall-Zusammenfassung, keine sechste Ansicht daneben: die
+Geschichte **ist** der Fall.
+
+- **Sie ordnet gemessene Tatsachen und behauptet keine Ursache.** „09:12
+  erste Anfrage dieser Adresse, 09:13 erster erfolgreicher Abruf der Shell"
+  ist eine Beobachtung; „der Angreifer lud die Shell hoch" ist eine
+  Schlussfolgerung — die gehört dem Analysten. An jeder Zeile steht, woraus
+  die Zeit stammt (Access-Log oder Datenbank-Export).
+- **Nur bestätigte Artefakte.** Die Triage entscheidet, was zur Geschichte
+  gehört, nicht die Erkennung.
+- **Der erste 2xx statt der mtime.** Dass eine Datei dalag, belegt der erste
+  erfolgreiche Abruf — der mtime einer Kopie sieht niemand an, ob sie vom
+  Original stammt oder vom Kopiervorgang. Lief davor eine Anfrage auf
+  denselben Pfad ins Leere, grenzt das die Entstehung ein: „die Datei
+  entstand zwischen 07-07 04:02 und 07-08 09:13" ist rein gemessen.
+- **Konten**, deren Anlagedatum in den Log-Zeitraum fällt, stehen mit drin —
+  das Fenster des Logs ist das ehrlichste, das der Fall dafür hat.
+- **Lücken werden benannt, nicht überbrückt**: Abstände über einer Stunde
+  stehen als „ohne belegte Beobachtung" in der Leiste, und ein bestätigtes
+  Artefakt, für das der Fall keine Zeit hergibt (eine injizierte Tabelle
+  etwa), erscheint unter „bestätigt, aber ohne Zeitbezug" statt stillschweigend
+  zu verschwinden.
+- Aus jeder Zeile lassen sich Artefakt-Fenster und Trace direkt öffnen.
+- Beide Uhren stehen ohne Zone da — die Logzeile in ihrer Serverzeit, der
+  Kontozeitstempel in der des Datenbankservers. Sie werden verglichen, wie
+  sie dastehen; alles andere hieße, eine Zeitzone zu erfinden.
+
+### Hinzugefügt — Kennzahlen je Muster-Suche
+
+Die Muster-Jagd zeigte drei Zahlen in einer Zeile. Jetzt steht über jedem
+Ergebnis, was in den Bericht wandert: **Adressen** (davon erfolgreiche),
+**Anfragen** (davon 2xx), **erster und letzter Treffer** sowie die
+**Zeitspanne** und die Zahl der getroffenen URLs.
+
+- `ok_clients` ist die Zahl, die zählt: 300 Anfragen von 40 Adressen, von
+  denen genau eine eine 2xx bekam, ist ein anderer Befund als 300 Anfragen
+  mit 300 Erfolgen.
+- Die Spanne trennt die einzelne Kampagne (Minuten) vom Hintergrundrauschen,
+  das seit Monaten mitläuft.
+- Die Zahl der getroffenen URLs war **falsch**: angezeigt wurde die Länge
+  der gedeckelten Liste, also höchstens 50, auch wenn das Muster 3.000 URLs
+  traf. Gerade diese Zahl soll verraten, dass ein Muster zu weit greift.
+- `hunt_runs` speichert die Kennzahlen mit, damit das Protokoll ohne einen
+  zweiten Lauf aussagt, was gefunden wurde.
+
 ### Hinzugefügt — Indikatoren tragen ihre Beziehungen
 
 Ein Hash und der Pfad, dessen Datei er beschreibt, entstehen im selben
