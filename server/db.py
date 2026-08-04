@@ -213,6 +213,20 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     tz INTEGER NOT NULL DEFAULT 0,
     UNIQUE(pattern)
 );
+-- Das Ergebnis des letzten Webroot-Vergleichs (engines/webrootdiff.py).
+-- Eine Ableitung aus zwei Bäumen, keine Historie: jeder Lauf ersetzt den
+-- vorherigen. Pfade relativ zum jeweiligen Root, mit /.
+CREATE TABLE IF NOT EXISTS webroot_diff (
+    id INTEGER PRIMARY KEY,
+    webroot_id INTEGER NOT NULL,       -- evidence.id des Webroots
+    reference_id INTEGER NOT NULL,     -- evidence.id der Referenzkopie
+    status TEXT NOT NULL,              -- extra | missing | modified | too_big
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    ref_size INTEGER NOT NULL DEFAULT 0,
+    ran_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webroot_diff_status ON webroot_diff(status);
 CREATE TABLE IF NOT EXISTS inert_php (
     id INTEGER PRIMARY KEY, path TEXT NOT NULL, reason TEXT NOT NULL DEFAULT ''
 );

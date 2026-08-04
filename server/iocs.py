@@ -133,9 +133,9 @@ def to_csv(iocs, links=()):
     return buf.getvalue()
 
 
-def to_json(iocs, case_name="", links=()):
+def to_json(iocs, case_name="", links=(), chain=None):
     by_ioc = _by_ioc(links)
-    return json.dumps({
+    out = {
         "case": case_name,
         "exported": datetime.now(timezone.utc).isoformat(),
         "iocs": [{"value": i["value"], "type": i["type"],
@@ -146,7 +146,23 @@ def to_json(iocs, case_name="", links=()):
                               for label, other, typ, note
                               in by_ioc.get(i["id"], ())]}
                  for i in iocs],
-    }, indent=2, ensure_ascii=False)
+    }
+    # Die Chronologie reist mit: die Reihenfolge der Ereignisse ist die
+    # Aussage, die den Fall ausmacht, und sie stand bisher nur im Dashboard.
+    # `gaps` gehört dazu -- was der Fall NICHT belegt, ist Teil des Berichts.
+    if chain is not None:
+        out["chain"] = {
+            "span": chain["span"],
+            "events": chain["events"],
+            "gaps": chain["gaps"],
+            "undated": chain["undated"],
+            "clock_offsets": chain.get("offsets", {}),
+            "note": "Zeiten sind naive Ortszeiten der jeweiligen Quelle "
+                    "(Log-Server bzw. Datenbank-Server), als Unix-Sekunden "
+                    "kodiert; clock_offsets nennt vom Analysten gesetzte "
+                    "Korrekturen.",
+        }
+    return json.dumps(out, indent=2, ensure_ascii=False)
 
 
 _STIX_HASH_KIND = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
