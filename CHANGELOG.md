@@ -5,6 +5,19 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 
 ## [Unreleased]
 
+### Geändert — Database: Konten zuerst, Export-Summary erklärt sich
+
+- **Eingeschleuster Code steht jetzt nach den Konten.** Wer diese Ansicht
+  öffnet, sucht zuerst das untergeschobene Konto; der eingeschleuste Code ist
+  der zweite Befund und liest sich erst richtig, wenn man weiß, wessen Konto
+  ihn geschrieben haben könnte.
+- **Die Summary des Exports** (Datenbank / Erstellt / Server / Werkzeug)
+  erklärt jede Angabe statt nur einer: was sie ist und was sie für den Fall
+  bedeutet — etwa dass das Export-Werkzeug bestimmt, was überhaupt im Dump
+  steht (manche Backup-Plugins lassen Sitzungen oder Log-Tabellen weg).
+  Ein Fragezeichen in jeder Kachel zeigt, dass es dort etwas zu lesen gibt;
+  ohne diese Einladung hovert niemand über einer Kennzahl.
+
 ### Hinzugefügt — Chronologie des Falls
 
 Jede Ansicht beantwortete „was": welche Datei, welcher Client, welches
