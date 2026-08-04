@@ -1,9 +1,18 @@
 # Changelog
 
 Alle nennenswerten Änderungen an SHELLHOUND. Format nach
-[Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
+[Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
+nach [Semantic Versioning](https://semver.org/lang/de/).
 
-## [Unreleased]
+## [0.1.0] — 2026-08-05
+
+**Erste öffentliche Veröffentlichung.**
+
+Alles darunter ist die Entwicklung bis dahin — sie steht hier vollständig,
+weil die Begründungen zu den Entscheidungen gehören. Ab dieser Fassung gibt
+es ein LICENSE (Apache-2.0), eine SECURITY.md mit dem Bedrohungsmodell, ein
+installierbares Paket (`pip install .`, Kommando `shellhound`) und CI, die
+Linux und Windows mit Python 3.10 und 3.13 abdeckt.
 
 ### Hinzugefügt — Länderflaggen an IP-Adressen
 
@@ -543,9 +552,9 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
 - `GET /api/cases/{slug}/findings/{fingerprint}/context` — ersetzt durch das
   Artefakt-Detail.
 
-## [0.1.0] — 2026-08-02
+### Grundlage — die erste Fassung (2026-08-02, nie veröffentlicht)
 
-Erste Fassung: web-native DFIR-Workbench für Webserver-Kompromittierungen.
+Ausgangspunkt: web-native DFIR-Workbench für Webserver-Kompromittierungen.
 Fünf Views über einem Fall (Findings, Actors, IOC Box, CMS Inventory,
 Database), Engines für Access-Log-Index, Webshell-Scan, CMS-Inventar und
 SQL-Dump-Analyse, Fall-Archivierung als ZIP.

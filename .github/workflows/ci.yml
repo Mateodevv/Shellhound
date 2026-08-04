@@ -1,0 +1,77 @@
+# CI — was bei jedem Push laufen muss, damit „es baut" keine Behauptung ist.
+#
+# Der Beispiel-Fall ist hier mehr als ein Demo-Skript: er legt echte
+# Evidence an und lässt die NORMALEN Engines darüber laufen. Findet die
+# Erkennung darin nichts mehr, ist etwas kaputt — das ist der billigste
+# End-to-End-Test, den dieses Projekt haben kann.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (build + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: oxlint
+        run: npx oxlint src --deny-warnings
+        working-directory: web
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+  backend:
+    name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux und Windows: das Projekt ist auf Windows entstanden, läuft
+        # aber auf Forensik-VMs beider Sorten. Pfad-Behandlung ist genau
+        # die Klasse Fehler, die nur der andere Betriebssystem-Lauf zeigt.
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Abhängigkeiten
+        run: pip install -r requirements.txt
+      - name: Importierbar?
+        run: python -c "import server.app, server.main, server.geoip; print('import ok')"
+      - name: Beispiel-Fall End-to-End
+        run: python tools/sample_case.py --workspace ci-workspace --force
+      - name: Hat die Erkennung gefunden, was im Fall steckt?
+        run: python tools/ci_check.py ci-workspace
+
+  package:
+    name: Paket baut
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
