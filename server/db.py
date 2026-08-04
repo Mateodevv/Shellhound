@@ -82,6 +82,30 @@ CREATE TABLE IF NOT EXISTS iocs (
     origin TEXT NOT NULL DEFAULT '',
     added TEXT NOT NULL
 );
+-- WIE ZWEI INDIKATOREN ZUSAMMENHÄNGEN.
+-- Ein Hash und der Pfad, dessen Datei er beschreibt, entstehen im selben
+-- Moment aus demselben Fund -- bisher überlebte davon nur der Satz
+-- "sha-256 of kb-media.php" im origin-Feld. Das ist Prosa: sie liest sich
+-- gut und lässt sich nicht auswerten. Die Kante hier hält dieselbe Aussage
+-- so fest, dass der Export sie mit hinausträgt (STIX kennt dafür
+-- relationship-Objekte) und die Box sie am Eintrag zeigen kann.
+--
+-- ALLE Kanten entstehen automatisch beim Einsammeln. Es gibt bewusst kein
+-- "verknüpfe diese beiden von Hand": eine Kante, die der Analyst pflegen
+-- muss, wird nach dem dritten Fall nicht mehr gepflegt. Und sie trägt nur
+-- Information, wenn sie SPEZIFISCH ist -- "gehört zum selben Fall" gilt für
+-- jedes Paar in dieser Tabelle und sagt deshalb nichts.
+CREATE TABLE IF NOT EXISTS ioc_links (
+    id INTEGER PRIMARY KEY,
+    src INTEGER NOT NULL,              -- iocs.id, die Aussage geht von hier aus
+    dst INTEGER NOT NULL,              -- iocs.id
+    kind TEXT NOT NULL,                -- hash-of | requested | host-in
+    note TEXT NOT NULL DEFAULT '',
+    added TEXT NOT NULL,
+    UNIQUE(src, dst, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_ioc_links_src ON ioc_links(src);
+CREATE INDEX IF NOT EXISTS idx_ioc_links_dst ON ioc_links(dst);
 CREATE TABLE IF NOT EXISTS cms_installs (
     id INTEGER PRIMARY KEY,
     root TEXT UNIQUE NOT NULL,
@@ -364,18 +388,52 @@ def case_relative_path(conn, path):
 
 def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
     """Insert an IOC or merge tags into the existing entry. Existing type and
-    note win -- the analyst's correction must never be overwritten by a sync."""
+    note win -- the analyst's correction must never be overwritten by a sync.
+
+    Gibt die id zurück (auch beim Zusammenführen), damit der Aufrufer die
+    Kante zum Nachbar-Indikator ziehen kann: Pfad und Hash entstehen in
+    derselben Schleife, und nur dort ist noch bekannt, dass sie
+    zusammengehören."""
     value = str(value).strip()
     if not value:
         return None
     existing = one(conn, "SELECT * FROM iocs WHERE value = ?", (value,))
     if existing is None:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO iocs (value, type, note, tags, origin, added) "
             "VALUES (?,?,?,?,?,?)",
             (value, ioc_type, note, json.dumps(sorted(set(tags))), origin, now()))
-        return "inserted"
+        return cur.lastrowid
     merged = sorted(set(json.loads(existing["tags"] or "[]")) | set(tags))
     conn.execute("UPDATE iocs SET tags = ? WHERE id = ?",
                  (json.dumps(merged), existing["id"]))
-    return "merged"
+    return existing["id"]
+
+
+def link_iocs(conn, src_id, dst_id, kind, note=""):
+    """Eine Kante zwischen zwei Indikatoren ziehen.
+
+    Verträgt None auf beiden Seiten: der Aufrufer hat add_ioc-Ergebnisse in
+    der Hand, und ein leerer Wert liefert dort None. Eine Kante auf sich
+    selbst wäre eine Aussage ohne Inhalt und fällt ebenfalls weg."""
+    if not src_id or not dst_id or src_id == dst_id:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO ioc_links (src, dst, kind, note, added) "
+        "VALUES (?,?,?,?,?)", (src_id, dst_id, kind, note[:200], now()))
+
+
+def ioc_links(conn):
+    """Alle Kanten mit den Werten beider Enden.
+
+    Der INNER JOIN ist zugleich die Aufräumfunktion: eine Kante, deren
+    Indikator gelöscht wurde, verschwindet aus jeder Ansicht, ohne dass ein
+    Löschpfad daran gedacht haben muss."""
+    return rows(conn, """
+        SELECT l.id, l.kind, l.note, l.added,
+               l.src AS src_id, s.value AS src_value, s.type AS src_type,
+               l.dst AS dst_id, d.value AS dst_value, d.type AS dst_type
+          FROM ioc_links l
+          JOIN iocs s ON s.id = l.src
+          JOIN iocs d ON d.id = l.dst
+         ORDER BY l.id""")

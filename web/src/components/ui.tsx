@@ -6,11 +6,14 @@ import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
 import { SEVERITY_EXPLAIN, TAG_EXPLAIN, TRIAGE_EXPLAIN } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
-export function Card({ children, className, style }: {
-  children: ReactNode; className?: string; style?: React.CSSProperties
+export function Card({ children, className, style, id }: {
+  // `id` nur, damit eine Karte Sprungziel sein kann (IOC Box: von einem
+  // Indikator zu seinem verknüpften Nachbarn).
+  children: ReactNode; className?: string; style?: React.CSSProperties; id?: string
 }) {
   return (
     <div
+      id={id}
       className={clsx(
         'rounded-xl border border-[var(--line)] bg-[var(--panel)]', className)}
       style={style}
