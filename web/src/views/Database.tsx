@@ -13,7 +13,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Clock, Crown, Database as DatabaseIcon, Download, KeyRound, Table2,
+  Clock, Crown, Database as DatabaseIcon, Download, FileCode2, KeyRound, Table2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -37,7 +37,12 @@ import type { ViewId } from '../App'
 
 interface DatabaseData {
   dumps: DbDump[]
+  /** Mit Erweiterungen ausgelieferte install/uninstall/update-SQL — kein
+   *  Export, aber weiter auf eingeschleusten Code geprüft. */
+  schema_files: DbDump[]
   tables: DbTable[]
+  /** Wie viele Tabellen aus Schema-Dateien nicht im Inventar stehen. */
+  schema_tables: number
   accounts: DbAccount[]
   findings: Finding[]
   /** Bezugszeitpunkt für „jung": Erstellung des Dumps, sonst jüngstes Konto. */
@@ -98,10 +103,22 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
     (!tableSearch || t2.name.toLowerCase().includes(tableSearch.toLowerCase()))),
     [data, tableSearch, onlyFlaggedTables])
 
+  // Kein Export — aber vielleicht Schema-Dateien. Das ist ein ANDERER
+  // Zustand als "nichts analysiert", und der Unterschied ist der Grund,
+  // warum jemand hier ratlos steht: der Ordner enthielt .sql-Dateien, nur
+  // eben keine Datenbank.
   if (data && !data.dumps.length) {
     return (
-      <EmptyState icon={<DatabaseIcon size={36} />} title="Noch kein Datenbank-Export analysiert"
-        sub="Diese Ansicht liest den Datenbank-Export des CMS (mysqldump, .sql/.sql.gz). Registriere ihn als Evidence und starte die Analyse — dann stehen hier die Benutzerkonten und in Datenfelder eingeschleuster Code." />
+      <div className="flex flex-col gap-4">
+        <EmptyState icon={<DatabaseIcon size={36} />}
+          title={data.schema_files.length
+            ? 'Kein Datenbank-Export dabei'
+            : 'Noch kein Datenbank-Export analysiert'}
+          sub={data.schema_files.length
+            ? `Gefunden wurden ${formatCount(data.schema_files.length)} SQL-Dateien, die mit Erweiterungen ausgeliefert werden (install/uninstall/updates) — sie legen Tabellen an, enthalten aber keine Daten und keine Konten. Registriere zusätzlich einen echten Export (mysqldump, .sql/.sql.gz), um Konten und eingeschleusten Code zu sehen.`
+            : 'Diese Ansicht liest den Datenbank-Export des CMS (mysqldump, .sql/.sql.gz). Registriere ihn als Evidence und starte die Analyse — dann stehen hier die Benutzerkonten und in Datenfelder eingeschleuster Code.'} />
+        {data.schema_files.length > 0 && <SchemaCard files={data.schema_files} />}
+      </div>
     )
   }
 
@@ -119,6 +136,8 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
 
       {/* ---- WORAUS wir lesen: der Export selbst ---- */}
       {data?.dumps.map((d) => <DumpCard key={d.id} dump={d} />)}
+
+      {!!data?.schema_files.length && <SchemaCard files={data.schema_files} />}
 
       {/* ---- der eingeschleuste Code, jetzt anklickbar ---- */}
       {data && data.findings.length > 0 && (
@@ -274,7 +293,10 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
 
       {/* ---- das Tabellen-Inventar, mit Fall-Bezug ---- */}
       <Section title="Tabellen im Dump"
-        sub="Auch leere Tabellen stehen hier — »existiert und ist leer« ist eine andere Aussage als »nicht im Dump«, und nur eine davon kann bedeuten, dass jemand geleert hat."
+        sub={'Auch leere Tabellen stehen hier — »existiert und ist leer« ist eine andere Aussage als »nicht im Dump«, und nur eine davon kann bedeuten, dass jemand geleert hat.'
+          + (data?.schema_tables
+            ? ` ${formatCount(data.schema_tables)} Tabellen aus mitgelieferten Schema-Dateien sind nicht aufgeführt — sie sagen nur, was eine Erweiterung anlegen WÜRDE.`
+            : '')}
         right={
           <div className="flex items-center gap-2">
             {flaggedTables > 0 && (
@@ -367,6 +389,66 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
         focusLine={viewing?.line} layer={2} onClose={() => setViewing(null)} />
       <TriageFollowUp t={t} roots={roots} />
     </div>
+  )
+}
+
+/** Die mitgelieferten SQL-Dateien der Erweiterungen — zusammengefaltet.
+ *
+ *  Ein Webroot enthält Dutzende davon (install/uninstall/updates je
+ *  Erweiterung). Als Datenbank-Evidence sind sie wertlos: keine Daten, keine
+ *  Konten, kein Export-Kopf. Sie verschwinden deshalb aus der Export-Ansicht
+ *  — aber NICHT aus der Prüfung: eine manipulierte install.sql läuft bei der
+ *  nächsten Installation wieder an und überlebt jedes Aufräumen im
+ *  Dateisystem. Trägt eine von ihnen Findings, steht das hier vorne. */
+function SchemaCard({ files }: { files: DbDump[] }) {
+  const [open, setOpen] = useState(false)
+  const flagged = files.filter((f) => (f.flagged ?? 0) > 0)
+  return (
+    <Card className="overflow-hidden">
+      <button onClick={() => setOpen(!open)}
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-2)]">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--panel-2)] text-[var(--muted)]">
+          <FileCode2 size={16} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-semibold">
+            {formatCount(files.length)} mitgelieferte SQL-Datei{files.length === 1 ? '' : 'en'}
+            {' '}<span className="font-normal text-[var(--muted)]">— kein Export</span>
+          </div>
+          <div className="text-[11.5px] text-[var(--muted)]">
+            install/uninstall/update-Skripte von Erweiterungen: sie legen
+            Tabellen an, enthalten aber keine Daten und keine Konten.
+          </div>
+        </div>
+        {flagged.length > 0 && (
+          <Tag tone="danger" hint="Eine mitgelieferte SQL-Datei mit eingeschleustem Code ist ein Persistenz-Trick: sie läuft bei der nächsten Installation oder beim Update wieder an.">
+            {formatCount(flagged.length)} mit Findings
+          </Tag>
+        )}
+        <span className="shrink-0 text-[11px] text-[var(--muted)]">
+          {open ? 'zuklappen' : 'ansehen'}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-[var(--line)]">
+          {files.map((f) => (
+            <div key={f.id}
+              className="flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-1.5 text-[12px] last:border-0">
+              <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]"
+                title={f.path}>
+                {f.path}
+              </span>
+              {(f.flagged ?? 0) > 0 && (
+                <Tag tone="danger">{f.flagged} Finding{f.flagged === 1 ? '' : 's'}</Tag>
+              )}
+              <span className="shrink-0 tabular text-[11px] text-[var(--muted)]">
+                {formatBytes(f.size)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   )
 }
 

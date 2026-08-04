@@ -128,7 +128,15 @@ CREATE TABLE IF NOT EXISTS db_dumps (
     meta TEXT NOT NULL DEFAULT '{}',   -- header: tool/server/database/created
     statements INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0,
-    cms TEXT NOT NULL DEFAULT ''
+    cms TEXT NOT NULL DEFAULT '',
+    -- export = ein echter Datenbank-Export (mysqldump/phpMyAdmin).
+    -- schema = eine mit einer Erweiterung AUSGELIEFERTE SQL-Datei
+    --          (install/uninstall/updates). Sie enthält keine Daten und
+    --          keinen Export-Kopf; als Datenbank-Evidence ist sie wertlos
+    --          und verschüttet in der Ansicht den einen echten Export.
+    --          Geprüft wird sie trotzdem: eine manipulierte install.sql
+    --          läuft bei der nächsten Installation wieder an.
+    kind TEXT NOT NULL DEFAULT 'export'
 );
 CREATE TABLE IF NOT EXISTS db_tables (
     id INTEGER PRIMARY KEY,
@@ -208,6 +216,7 @@ _ADDED_COLUMNS = {
         ("blocked", "INTEGER NOT NULL DEFAULT 0"),
         ("sessions", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    "db_dumps": [("kind", "TEXT NOT NULL DEFAULT 'export'")],
 }
 
 

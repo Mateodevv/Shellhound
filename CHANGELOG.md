@@ -80,6 +80,21 @@ größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
   Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
   Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
   entschieden".
+- **Mitgelieferte SQL-Dateien verschütten den Export nicht mehr.** Ein
+  Webroot enthält Dutzende `install.mysql.utf8.sql`, `uninstall…` und
+  `updates/mysql/2.0.1.sql` — jede Erweiterung bringt ihre eigenen mit. Sie
+  sind keine Datenbank-Exports (keine Daten, keine Konten, kein Kopf) und
+  standen bisher gleichberechtigt neben dem einen echten Dump. Sie stehen
+  jetzt zusammengefaltet in einer Zeile; erkannt am Joomla-Platzhalter-Präfix
+  `#__`, der in einem `mysqldump` nie vorkommt, gestützt durch Pfad und
+  Fehlen von Daten. Ihre Tabellen fluten auch das Inventar nicht mehr.
+  **Gescannt werden sie weiter:** eine manipulierte `install.sql` läuft bei
+  der nächsten Installation wieder an und überlebt jedes Aufräumen im
+  Dateisystem — trägt eine Findings, steht das vorne an der Zeile.
+- **Behoben: `#__`-Tabellen wurden gar nicht geparst.** Die Regex für
+  Tabellennamen kannte kein `#`, womit `CREATE TABLE \`#__x\`` und
+  `INSERT INTO \`#__x\`` durchfielen — eingeschleuster Code in genau diesen
+  Dateien war für den Scanner unsichtbar.
 - **Database neu aufgebaut.** Die Seite war ein Stapel aus vier
   unverbundenen Tabellen; sie beantwortet jetzt die Frage, wegen der man sie
   öffnet — was hat der Angreifer in der Datenbank hinterlassen?
