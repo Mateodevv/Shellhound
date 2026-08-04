@@ -27,6 +27,28 @@ python -m server.main --no-browser --token dev
 # dann http://localhost:5173/?token=dev öffnen
 ```
 
+### Zum Ausprobieren: Beispiel-Fall
+
+```
+python tools/sample_case.py
+python -m server.main --workspace ~/ShellhoundSample
+```
+
+Baut einen vollständigen erfundenen Fall — Webroot mit WordPress und Joomla,
+zwei Wochen Access-Logs, ein Datenbank-Export — und lässt die **normalen
+Engines** darüber laufen. Was danach im Werkzeug steht, hat die Erkennung
+wirklich gefunden; das Beispiel ist damit zugleich ein End-to-End-Test.
+
+Der Fall erzählt eine Geschichte: ein Angreifer klopft ab, findet ein
+beschreibbares Upload-Verzeichnis, legt dort eine Shell ab und benutzt sie;
+ein zweiter versucht es mit Brute-Force auf den Login. Daneben läuft normaler
+Besucherverkehr. Das Skript druckt am Ende einen Rundgang durch die Ansichten.
+
+Alles darin ist erfunden: IP-Adressen aus den für Dokumentation reservierten
+Bereichen (RFC 5737), Domains auf `.test`, und die »Webshells« sind die
+kürzestmöglichen Textdateien, auf die die Regeln ansprechen — Prüfmuster,
+kein funktionsfähiges Werkzeug.
+
 ## Workflow
 
 1. **Case anlegen** → Evidence registrieren (Webroot-Kopie, Access-Logs,
