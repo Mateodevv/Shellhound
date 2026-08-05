@@ -235,8 +235,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           <thead>
             <tr className="border-b border-[var(--line)] text-left text-[10px] uppercase tracking-wider text-[var(--muted)]">
               {ips.length > 1 && <th className="px-2 py-1.5">Client</th>}
-              <th className="px-2 py-1.5">Zeit</th>
-              <th className="px-2 py-1.5">Methode</th>
+              <th className="px-2 py-1.5">{tr('table.time')}</th>
+              <th className="px-2 py-1.5">{tr('table.method')}</th>
               <th className="px-2 py-1.5">URI</th>
               <th className="px-2 py-1.5 text-right">Status</th>
               <th className="px-2 py-1.5">User-Agent</th>

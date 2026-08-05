@@ -194,7 +194,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           ))}
           {data && !data.roots.length && (
             <div className="md:col-span-2">
-              <EmptyState icon={<FolderTree size={36} />} title="Keine Evidence registriert"
+              <EmptyState icon={<FolderTree size={36} />} title={tr('files.empty.title')}
                 sub={tr('files.empty.sub')} />
             </div>
           )}

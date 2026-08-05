@@ -54,6 +54,15 @@ and can be switched from the sidebar at any time.
   into the case archive and into reports, and an archive whose wording
   depends on the language selected at the time of a click is worthless as
   evidence.
+- README, SECURITY.md, `docs/rules.md`, the release notes and this changelog
+  are in English, and so are the comments in the source. The reasoning for
+  the decisions lives in those comments; in German they were the point at
+  which most readers closed the tab.
+- `tests/test_i18n.py` guards both catalogues: every server key has every
+  language, the placeholders agree across languages, and `en.ts` and `de.ts`
+  cover the same keys. A key only one side knows shows up as a raw dotted
+  name in the interface, and nobody notices until someone switches the
+  language.
 
 ### Removed — sample case
 

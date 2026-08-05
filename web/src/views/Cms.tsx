@@ -429,7 +429,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                       className={clsx('shrink-0',
                         item.version_set ? 'text-[var(--accent)]' : 'text-[var(--muted)]')} />
                     {item.version === '(unknown)'
-                      ? <span className="text-[11px] text-[var(--sev-low)]">unbekannt</span>
+                      ? <span className="text-[11px] text-[var(--sev-low)]">{tr('cms.unknown')}</span>
                       : <span className="mono truncate text-[12px]">{item.version}</span>}
                   </button>
                 </Tooltip>

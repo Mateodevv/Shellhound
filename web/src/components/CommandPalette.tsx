@@ -174,7 +174,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
                 pick(items[cursor])
               }
             }}
-            placeholder="IP, Pfad, Hash, Login, Tabelle … (mind. 2 Zeichen)"
+            placeholder={tr('palette.placeholder')}
             className="min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--muted)]"
           />
           <span className="shrink-0 rounded border border-[var(--line)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">

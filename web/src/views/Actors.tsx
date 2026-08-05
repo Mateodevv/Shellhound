@@ -179,7 +179,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           </Button>
           <Tooltip hint={tr('actors.collect.hint')}>
             <Button onClick={() => collect.mutate([...checked])}>
-              <Box size={14} /> In IOC Box
+              <Box size={14} /> {tr('actors.toIocBox')}
             </Button>
           </Tooltip>
           <a
