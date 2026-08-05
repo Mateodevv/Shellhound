@@ -25,6 +25,7 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
   roots: EvidenceRoot[]
   layer?: number
 }) {
+  const tr = useT()
   const n = t.notice
   return (
     <>
@@ -61,7 +62,7 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
                 <Undo2 size={14} /> Rückgängig
               </Button>
             )}
-            <Button variant="ghost" onClick={t.dismissNotice}>Schließen</Button>
+            <Button variant="ghost" onClick={t.dismissNotice}>{tr('common.close')}</Button>
           </>
         }>
         {!!n?.linked.length && (
@@ -151,7 +152,7 @@ function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
             onClick={() => onDecide([...picked], 'dismissed')}>
             <X size={14} /> {formatCount(picked.size)} als False Positive
           </Button>
-          <Button variant="ghost" onClick={onClose}>Später</Button>
+          <Button variant="ghost" onClick={onClose}>{tr('common.later')}</Button>
         </div>
       </div>
     </Modal>

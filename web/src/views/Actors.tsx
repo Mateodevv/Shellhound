@@ -281,7 +281,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                             {b.label}
                           </Tag>
                         ))
-                        : <span className="text-[12px] text-[var(--muted)]">unauffällig</span>}
+                        : <span className="text-[12px] text-[var(--muted)]">{tr('actors.unremarkable')}</span>}
                     </div>
                   </td>
                   <td className={clsx('px-2 py-2 text-right tabular text-[12px]',

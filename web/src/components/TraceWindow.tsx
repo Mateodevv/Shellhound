@@ -280,8 +280,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         {data && !data.rows.length && (
           <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
             {filtering
-              ? 'Kein Request passt zu diesem Filter — die Auswahl selbst hat aber Einträge.'
-              : 'Keine Requests im Index für diese Auswahl.'}
+              ? tr('trace.noMatch')
+              : tr('trace.noRequests')}
           </div>
         )}
       </div>

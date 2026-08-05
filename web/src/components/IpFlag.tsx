@@ -11,6 +11,7 @@
 //
 // Flaggen sind lokal gebündelte SVGs (flag-icons, MIT): Windows rendert
 // Flaggen-Emojis nicht, und ein Forensik-Werkzeug lädt nichts von CDNs.
+import { useT } from '../i18n'
 import { useGeo } from '../geo'
 import { Tooltip } from './Tooltip'
 
@@ -24,6 +25,7 @@ const SPECIAL_SHORT: [string, string][] = [
 ]
 
 export function IpFlag({ ip }: { ip?: string | null }) {
+  const tr = useT()
   const info = useGeo(ip)
   if (!info) return null
 
@@ -42,7 +44,7 @@ export function IpFlag({ ip }: { ip?: string | null }) {
   if (!info.iso) return null
   return (
     <Tooltip title={`${info.name} (${info.iso.toUpperCase()})`}
-      hint="Laut GeoIP-Datenbank — eine Schätzung der Registrierung, kein Aufenthaltsort. VPNs, Proxys, Tor und Botnetz-Knoten stehen woanders.">
+      hint={tr('geo.flag.hint')}>
       <span className={`fi fi-${info.iso} shrink-0 rounded-[2px] text-[13px] leading-none`}
         aria-label={info.name} />
     </Tooltip>

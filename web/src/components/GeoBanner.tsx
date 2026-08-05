@@ -10,6 +10,7 @@
 //
 // »Nicht mehr zeigen« bleibt gemerkt (localStorage): wer bewusst ohne
 // GeoIP arbeitet, soll nicht in jedem Fall aufs Neue vertröstet werden.
+import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download, Globe, X } from 'lucide-react'
@@ -27,6 +28,7 @@ interface GeoStatus {
 const HIDE_KEY = 'shellhound.geoBannerHidden'
 
 export function GeoBanner() {
+  const tr = useT()
   const qc = useQueryClient()
   const [hidden, setHidden] = useState(() => localStorage.getItem(HIDE_KEY) === '1')
   const [confirming, setConfirming] = useState(false)
@@ -54,7 +56,7 @@ export function GeoBanner() {
         <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
           <Globe size={15} className="shrink-0 text-[var(--accent)]" />
           <span className="min-w-0">
-            <span className="font-semibold">Keine Länder-Datenbank.</span>{' '}
+            <span className="font-semibold">{tr('geo.missing.title')}</span>{' '}
             IP-Adressen erscheinen ohne Länderflaggen — eine lokale
             GeoIP-Datenbank lässt sich einmalig laden, danach läuft die
             Zuordnung vollständig offline.
@@ -69,7 +71,7 @@ export function GeoBanner() {
           </button>
           <button
             onClick={() => { localStorage.setItem(HIDE_KEY, '1'); setHidden(true) }}
-            title="Nicht mehr zeigen — die Datenbank lässt sich jederzeit als *.mmdb in den Workspace legen."
+            title={tr('geo.dismiss.hint')}
             className="cursor-pointer rounded p-1 text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
           >
             <X size={14} />

@@ -9,6 +9,7 @@
 // ein 200-MB-Log den Browser nicht umbringt. Die Seite sagt immer, welcher
 // BYTE-BEREICH gerade zu sehen ist — bei Evidence ist "ich sehe Teil X von
 // Y" eine Aussage, die man belegen können muss.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -26,6 +27,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
    *  Artefakt-Detail heraus geöffnet und muss darüber liegen. */
   layer?: number
 }) {
+  const tr = useT()
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
   const [offset, setOffset] = useState(0)
 
@@ -51,7 +53,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
           <span className="mono truncate">{name}</span>
           {data && <Tag>{formatBytes(data.size)}</Tag>}
-          {data?.binary && <Tag tone="warn" explain="Die Datei enthält Null-Bytes — sie ist keine reine Textdatei. Die Hex-Ansicht zeigt sie unverfälscht.">binär</Tag>}
+          {data?.binary && <Tag tone="warn" explain={tr('viewer.binary.hint')}>{tr('viewer.binary')}</Tag>}
         </span>
       }>
       <div className="flex flex-col gap-3">
