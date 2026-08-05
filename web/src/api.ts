@@ -207,6 +207,9 @@ export interface Actor {
 }
 
 export interface ActorsResponse {
+  /** Login POSTs from which the server calls a client a flood. Comes from
+   *  the server so badges and the "inconspicuous" filter cannot drift. */
+  bf_threshold?: number
   total: number
   actors: Actor[]
   span: { from_hour: number; to_hour: number } | null
@@ -537,7 +540,7 @@ export interface CaseChain {
   undated: { artifact: string; artifact_kind: string; why: string }[]
   confirmed: number
   truncated: boolean
-  /** Vom Analysten gesetzter Uhren-Versatz je Quelle, in Sekunden. */
+  /** Clock offset per source, set by the analyst, in seconds. */
   offsets: { logs: number; dump: number }
 }
 

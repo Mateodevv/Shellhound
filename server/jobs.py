@@ -63,11 +63,24 @@ class JobContext:
                 pass
 
 
+def _key(case_dir, job_id):
+    """The identity of a live job.
+
+    A job id is a rowid in ONE case database, so two open cases both hand out
+    1, 2, 3 -- the registry has to carry the case as well. Keyed by the id
+    alone, submitting in case B evicted case A's context, `cancel` stopped a
+    job in whichever case happened to collide, and `wait_for` reported "all
+    quiet" while an engine in the other case was still writing. Closing that
+    case would then pack a half-written database.
+    """
+    return (str(case_dir), int(job_id))
+
+
 class JobManager:
     def __init__(self):
         self.pool = ThreadPoolExecutor(max_workers=_WORKERS,
                                        thread_name_prefix="engine")
-        self.live = {}          # job_id -> JobContext
+        self.live = {}          # (case_dir, job_id) -> JobContext
         self._lock = threading.Lock()
 
     def submit(self, case_dir, kind, fn, evidence_id=None):
@@ -85,35 +98,36 @@ class JobManager:
 
         ctx = JobContext(self, case_dir, job_id)
         with self._lock:
-            self.live[job_id] = ctx
+            self.live[_key(case_dir, job_id)] = ctx
         hub.publish({"type": "job", "job": {"id": job_id, "kind": kind,
                                             "state": "queued", "progress": 0}})
         self.pool.submit(self._run, ctx, kind, fn)
         return job_id
 
-    def cancel(self, job_id):
+    def cancel(self, case_dir, job_id):
         with self._lock:
-            ctx = self.live.get(job_id)
+            ctx = self.live.get(_key(case_dir, job_id))
         if ctx is not None:
             ctx.cancel_event.set()
             return True
         return False
 
-    def wait_for(self, job_ids, timeout=20):
+    def wait_for(self, case_dir, job_ids, timeout=20):
         """Block until these jobs have left the live registry (or the timeout
         expires). Used before a case is packed away: an engine still holding
         a write transaction would land half a run in the archive. Returns the
         ids that were STILL running when the wait gave up -- the caller can
         report that rather than pretend."""
+        keys = {j: _key(case_dir, j) for j in job_ids}
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                remaining = [j for j in job_ids if j in self.live]
+                remaining = [j for j, k in keys.items() if k in self.live]
             if not remaining:
                 return []
             time.sleep(0.2)
         with self._lock:
-            return [j for j in job_ids if j in self.live]
+            return [j for j, k in keys.items() if k in self.live]
 
     def _set_state(self, ctx, state, error="", stats=None):
         conn = db.connect(ctx.case_dir)
@@ -149,7 +163,7 @@ class JobManager:
             self._set_state(ctx, "failed", error=traceback.format_exc(limit=8))
         finally:
             with self._lock:
-                self.live.pop(ctx.job_id, None)
+                self.live.pop(_key(ctx.case_dir, ctx.job_id), None)
 
 
 manager = JobManager()

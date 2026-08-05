@@ -228,7 +228,7 @@ def scan(case_dir, targets, ctx=None):
                 version = install["version"] or "(unknown)"
                 if ctx is not None:
                     ctx.progress(0.2 + 0.75 * (n / max(1, len(installs))),
-                                 f"Inventarisiere {install['type']} — {root}")
+                                 f"Inventorying {install['type']} — {root}")
                 cur = conn.execute(
                     "INSERT OR REPLACE INTO cms_installs (root, cms, version,"
                     " version_source) VALUES (?,?,?,?)",

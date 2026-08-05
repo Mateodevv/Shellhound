@@ -383,7 +383,7 @@ def build(case_dir, targets, ctx=None):
                                     break
                                 frac = (done_size + min(file_size, chars * file_size // denom)) / max(1, total_size)
                                 ctx.progress(0.02 + frac * 0.82,
-                                             f"{name}: {stats['lines'] + file_lines:,} Zeilen indiziert")
+                                             f"{name}: {stats['lines'] + file_lines:,} lines indexed")
             except (OSError, EOFError) as e:
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
@@ -457,14 +457,15 @@ def build(case_dir, targets, ctx=None):
                 breakdown = ", ".join(
                     f"{s} ×{n}" for s, n in sorted(a.login_statuses.items()))
                 alert_rows.append((ip_id, "login_flood", 1,
-                                   f"{a.login_posts} POSTs auf Login-Endpoints "
-                                   f"(Status: {breakdown})", ""))
+                                   f"{a.login_posts} POSTs against login "
+                                   f"endpoints (status: {breakdown})", ""))
                 if a.login_redirects:
                     alert_rows.append((
                         ip_id, "login_success", 0,
-                        f"{a.login_redirects} Redirect(s) unter {a.login_posts} "
-                        f"Login-POSTs — nach einer Flood bedeutet 301/302/303 "
-                        f"meist einen erfolgreichen Login. Verifizieren!", ""))
+                        f"{a.login_redirects} redirect(s) among "
+                        f"{a.login_posts} login POSTs — after a flood, "
+                        f"301/302/303 usually means a successful login. "
+                        f"Verify!", ""))
             for ua in sorted(a.scanner_uas):
                 # INFORMATIONAL (severity 3): every host on the internet is
                 # scanned around the clock, so "a scanner said hello" is
@@ -474,19 +475,19 @@ def build(case_dir, targets, ctx=None):
             if a.uphp_ok:
                 alert_rows.append((
                     ip_id, "upload_php", 0,
-                    f"{a.uphp_ok} von {a.uphp} Request(s) auf PHP in Upload-/"
-                    f"Cache-Verzeichnissen wurden 2xx beantwortet — Zugriff auf "
-                    f"eine abgelegte Shell?", a.examples.get("upload_php", "")))
+                    f"{a.uphp_ok} of {a.uphp} request(s) for PHP in upload/"
+                    f"cache directories were answered 2xx — access to a "
+                    f"dropped shell?", a.examples.get("upload_php", "")))
             if a.sqli_ok:
                 alert_rows.append((
                     ip_id, "sqli", 1,
-                    f"{a.sqli_ok} von {a.sqli} SQL-Injection-Mustern in URIs "
-                    f"wurden 2xx beantwortet", a.examples.get("sqli", "")))
+                    f"{a.sqli_ok} of {a.sqli} SQL injection patterns in URIs "
+                    f"were answered 2xx", a.examples.get("sqli", "")))
             if a.trav_ok:
                 alert_rows.append((
                     ip_id, "traversal", 1,
-                    f"{a.trav_ok} von {a.trav} Path-Traversal-Mustern wurden "
-                    f"2xx beantwortet", a.examples.get("traversal", "")))
+                    f"{a.trav_ok} of {a.trav} path traversal patterns were "
+                    f"answered 2xx", a.examples.get("traversal", "")))
         conn.executemany(
             "INSERT INTO alerts (ip_id, kind, severity, detail, example) "
             "VALUES (?,?,?,?,?)", alert_rows)
@@ -589,7 +590,7 @@ def status(case_dir, targets=None, lang="en"):
         stored = {(r[0], r[1], r[2]) for r in conn.execute(
             "SELECT path, size, mtime FROM sources WHERE skipped_reason = ''")}
     except sqlite3.Error as e:
-        out["reason"] = f"Index nicht lesbar: {e}"
+        out["reason"] = f"index not readable: {e}"
         return out
     finally:
         conn.close()

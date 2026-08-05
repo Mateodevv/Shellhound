@@ -821,4 +821,6 @@ export const de: Record<string, string> = {
   'start.newCase': 'Neuer Fall',
   'start.importCase': 'Fall importieren',
   'evidence.scan': 'Durchsuchen',
+  'table.artifact': 'Artefakt',
+  'database.statements': 'Statements',
 }

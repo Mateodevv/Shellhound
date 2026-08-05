@@ -220,7 +220,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </div>
             </Block>
 
-            {/* ---- Datei-Kontext ---- */}
+            {/* ---- file context ---- */}
             {file && (
               <div className="grid grid-cols-2 gap-2">
                 <MetaCell label={tr('artifact.size')}>{file.exists ? formatBytes(file.size) : tr('artifact.fileMissing')}</MetaCell>
@@ -434,7 +434,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             )}
             {ctx?.dump && (
               <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Statements">{formatCount(ctx.dump.statements)}</MetaCell>
+                <MetaCell label={tr('database.statements')}>{formatCount(ctx.dump.statements)}</MetaCell>
                 <MetaCell label={tr('artifact.size')}>{formatBytes(ctx.dump.size)}</MetaCell>
                 <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
                 <MetaCell label={tr('database.fact.created')}>{ctx.dump.meta?.created || '—'}</MetaCell>

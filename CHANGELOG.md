@@ -64,6 +64,47 @@ and can be switched from the sidebar at any time.
   name in the interface, and nobody notices until someone switches the
   language.
 
+### Fixed — the live job registry mixed up two open cases
+
+A job id is a rowid in ONE case database, so two open cases both hand out
+1, 2, 3. The registry of running jobs was keyed by that id alone. Submitting
+a job in case B therefore evicted case A's entry, and from then on:
+
+- **cancel hit the wrong job** — closing case B stopped an engine in case A;
+- **the wait before archiving lied.** `archive` waits for the jobs of its own
+  case; with the entry gone it returned "all quiet" and packed the case while
+  an engine was still writing into `case.db`. On Windows that surfaces as a
+  failed delete of the working copy; the worse outcome is a half-written
+  database in the archive.
+
+The registry is now keyed by (case, job id). Four guards in
+`tests/test_jobs.py` cover it, all verified against the reverted fix.
+
+### Fixed — a re-scan that flags nothing kept the old hashes
+
+`webshell.scan` only wrote its SHA-256 map when something was flagged. After
+a cleaned-up webroot was scanned again, the previous map survived, and
+confirming a file could attach the digest of a file that is no longer there
+— a hash in the IOC box that nothing measured. The map is now written
+unconditionally, empty result included.
+
+### Fixed — German that carried no umlaut
+
+The verification scan for the English switch keyed on umlauts, so text
+without one slipped through: the progress messages of every engine, the
+reasons behind the detected evidence candidates, the detail texts of the log
+alerts (which become the evidence line of a finding), the trace export
+manifest, and a handful of table headers. The detection reasons now go
+through `server/i18n.py` like the rest of the server prose; the alert details
+and the manifest are English, because they are stored resp. handed out.
+
+### Changed — the brute-force threshold has one home
+
+The Actors badges compared `login_posts >= 30` in TypeScript while the
+"inconspicuous" filter evaluated `BF_THRESHOLD` in SQL. Two copies of one
+number, and the list would have contradicted itself the day it changed. The
+server now sends `bf_threshold` with the actors payload.
+
 ### Removed — sample case
 
 `tools/sample_case.py` and `tools/ci_check.py`. The demo case was a user

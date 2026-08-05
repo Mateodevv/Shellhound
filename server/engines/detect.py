@@ -144,9 +144,9 @@ def scan(folder, lang="en"):
                       if n.lower().endswith((".php", ".phtml", ".inc")))
             out["candidates"]["webroot"].append({
                 "path": str(here), "score": score,
-                "why": (f"{CMS_LABEL[cms]}-Installation — "
-                        + ", ".join(matched[:4])
-                        + (f" · {php} PHP-Datei(en) auf dieser Ebene" if php else "")),
+                "why": (t(lang, "detect.cms", cms=CMS_LABEL[cms])
+                        + " " + ", ".join(matched[:4])
+                        + (" · " + t(lang, "detect.phpHere", n=php) if php else "")),
                 "kind": cms,
             })
             dirnames[:] = []
@@ -181,7 +181,7 @@ def scan(folder, lang="en"):
                 size = 0
             out["candidates"]["sql_dump"].append({
                 "path": str(path), "score": size,
-                "why": f"{size:,} Bytes — {why}", "kind": "dump",
+                "why": f"{size:,} bytes — {why}", "kind": "dump",
             })
 
     # Fold nested log directories into their topmost log-only parent.
@@ -211,10 +211,13 @@ def scan(folder, lang="en"):
     for here, s in log_dirs.items():
         out["candidates"]["access_logs"].append({
             "path": str(here), "score": s["parsed"] * 10 + s["files"],
-            "why": (f"{s['files']} Log-Datei(en), {s['size']:,} Bytes"
-                    + (f" in {s['nested'] + 1} Verzeichnissen" if s.get("nested") else "")
-                    + f" — {s['parsed']} von {s['sampled'] * SNIFF_LINES} Beispielzeilen "
-                      f"parsen als Webserver-Requests (z.B. {s['example']})"),
+            "why": (t(lang, "detect.logFiles", n=s["files"], bytes=f"{s['size']:,}")
+                    + (" " + t(lang, "detect.inDirs", n=s["nested"] + 1)
+                       if s.get("nested") else "")
+                    + " — " + t(lang, "detect.logParsed",
+                                 parsed=s["parsed"],
+                                 sampled=s["sampled"] * SNIFF_LINES,
+                                 example=s["example"])),
             "kind": "logs",
         })
 

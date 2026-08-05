@@ -275,6 +275,26 @@ CATALOGUE: dict[str, dict[str, str]] = {
 
     # --- evidence detection ---------------------------------------------
     "detect.contains": {"en": "contains", "de": "enthält"},
+    "detect.cms": {
+        "en": "{cms} installation —", "de": "{cms}-Installation —",
+    },
+    "detect.phpHere": {
+        "en": "{n} PHP file(s) at this level",
+        "de": "{n} PHP-Datei(en) auf dieser Ebene",
+    },
+    "detect.logFiles": {
+        "en": "{n} log file(s), {bytes} bytes",
+        "de": "{n} Log-Datei(en), {bytes} Bytes",
+    },
+    "detect.inDirs": {
+        "en": "in {n} directories", "de": "in {n} Verzeichnissen",
+    },
+    "detect.logParsed": {
+        "en": "{parsed} of {sampled} sample lines parse as web server "
+              "requests (e.g. {example})",
+        "de": "{parsed} von {sampled} Beispielzeilen parsen als "
+              "Webserver-Requests (z.B. {example})",
+    },
 
     # --- pattern library validation --------------------------------------
     "err.patternTooShort": {

@@ -281,7 +281,7 @@ def import_archive(workspace, zip_path):
     workspace.mkdir(parents=True, exist_ok=True)
     zip_path = Path(zip_path).expanduser()
     if not zip_path.is_file():
-        raise ImportError_(f"Datei nicht gefunden: {zip_path}")
+        raise ImportError_(f"file not found: {zip_path}")
     try:
         zf = zipfile.ZipFile(zip_path)
     except (OSError, zipfile.BadZipFile) as e:
