@@ -123,9 +123,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   //   Client  -> die URI, die seinen Alarm ausgelöst hat.
   const marks: TraceMarks = kind === 'file'
     ? { contains: [root ? rel : artifact.artifact.replace(/\\/g, '/')],
-        reason: 'hier wurde diese Datei aufgerufen' }
+        reason: tr('marks.fileFetched') }
     : { exact: (actor?.alerts ?? []).map((a) => a.example).filter(Boolean),
-        reason: 'dieser Aufruf hat den Alarm ausgelöst' }
+        reason: tr('marks.alertTrigger') }
 
   return (
     <Modal open onClose={onClose}
@@ -170,7 +170,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 rows={2}
-                placeholder="Begründung (wandert mit ins Fall-Archiv)"
+                placeholder={tr('artifact.note.placeholder')}
                 className="mb-2 w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
               />
               <div className="flex flex-wrap gap-2">
@@ -225,7 +225,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               <div className="grid grid-cols-2 gap-2">
                 <MetaCell label="Größe">{file.exists ? formatBytes(file.size) : 'Datei fehlt!'}</MetaCell>
                 <MetaCell label="Geändert"
-                  explain="Änderungszeitpunkt laut Dateisystem — mit Vorsicht: Angreifer können ihn fälschen (Timestomping).">
+                  explain={tr('artifact.mtime.hint')}>
                   <Tooltip title={absoluteTime(file.mtime)}>
                     <span>{relativeTime(file.mtime)}</span>
                   </Tooltip>

@@ -171,7 +171,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               setTraceMarks({
                 exact: actors.filter((a) => checked.has(a.ip))
                   .flatMap((a) => a.alerts.map((al) => al.example)).filter(Boolean),
-                reason: 'dieser Aufruf hat den Alarm ausgelöst',
+                reason: tr('marks.alertTrigger'),
               })
               setTraceIps([...checked])
             }}>
@@ -293,7 +293,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       {/* Nur Clients MIT Findings haben ein Artefakt — für
                           alle anderen gibt es nichts zu entscheiden. */}
                       {a.triage && (
-                        <Tooltip hint="Das Artefakt dieses Clients öffnen — dasselbe Fenster wie in Findings, mit Entscheidung.">
+                        <Tooltip hint={tr('actors.openArtifact')}>
                           <Button variant="ghost"
                             onClick={() => {
                               t.clearCollected()
@@ -310,7 +310,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                         onClick={() => {
                           setTraceMarks({
                             exact: a.alerts.map((al) => al.example).filter(Boolean),
-                            reason: 'dieser Aufruf hat den Alarm ausgelöst',
+                            reason: tr('marks.alertTrigger'),
                           })
                           setTraceIps([a.ip])
                         }}>

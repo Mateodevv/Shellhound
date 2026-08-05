@@ -31,6 +31,7 @@ import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [pattern, setPattern] = useState('')
   const [label, setLabel] = useState('')
@@ -105,8 +106,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Muster-Jagd"
-          body="Hinterlegte URL-Pfade — typischerweise die Aufrufe, die zu einem bekannten Exploit gehören. Das Werkzeug sucht im Log-Index, wer sie abgerufen hat."
-          hint="Die Muster gehören dem Workspace: einmal angelegt, stehen sie in jedem weiteren Fall bereit. Treffer werden zu Findings auf dem Client — mit 2xx beantwortet HIGH, reine Versuche LOW.">
+          body={tr('hunt.title.body')}
+          hint={tr('hunt.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">Muster-Jagd</h1>
         </Tooltip>
         <Button variant="primary" disabled={!patterns.length || run.isPending}
@@ -128,8 +129,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
             {run.data.findings > 0
               ? <>{formatCount(run.data.findings)} Finding(s) geschrieben —{' '}
                 <button className="cursor-pointer text-[var(--accent-text)] hover:underline"
-                  onClick={() => gotoView('findings')}>in der Arbeitsliste ansehen</button></>
-              : 'keine Treffer — im Fall protokolliert'}
+                  onClick={() => gotoView('findings')}>{tr('hunt.seeInList')}</button></>
+              : tr('hunt.noHits')}
           </span>
         )}
       </div>
@@ -263,14 +264,14 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               <Button variant="ghost" onClick={() => run.mutate([p.id])}>
                 <Play size={13} /> Suchen
               </Button>
-              <Tooltip hint="Muster, Name oder Notiz ändern — gilt danach für alle Fälle.">
+              <Tooltip hint={tr('hunt.edit.hint')}>
                 <button
                   className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                   onClick={() => setEditing(p.id)}>
                   <PencilLine size={14} />
                 </button>
               </Tooltip>
-              <Tooltip hint="Entfernt das Muster aus der Bibliothek — auch für künftige Fälle. Bereits geschriebene Findings bleiben.">
+              <Tooltip hint={tr('hunt.delete.hint')}>
                 <button
                   className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
                   onClick={() => remove.mutate(p.id)}>
@@ -282,8 +283,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
           )
         })}
         {libOpen && !patterns.length && (
-          <EmptyState icon={<Radar size={36} />} title="Noch kein Muster hinterlegt"
-            sub="Trage oben einen URL-Pfad ein, den du aus einem Exploit kennst — etwa den Aufruf, mit dem eine bekannte Lücke ausgelöst wird. Die Bibliothek gehört zum Workspace und steht danach in jedem Fall bereit." />
+          <EmptyState icon={<Radar size={36} />} title={tr('hunt.empty.title')}
+            sub={tr('hunt.empty.sub')} />
         )}
       </Card>
 
@@ -380,6 +381,7 @@ function ResultBadge({ result }: { result: HuntResult }) {
  *  300 Erfolgen. Und die Spanne trennt die eine Kampagne (Minuten) vom
  *  Hintergrundrauschen, das seit Monaten mitläuft. */
 function HuntSummary({ result }: { result: HuntResult }) {
+  const tr = useT()
   const durch = result.ok_clients > 0
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-[var(--line)] px-4 py-2.5">
@@ -395,7 +397,7 @@ function HuntSummary({ result }: { result: HuntResult }) {
               der ersten: „1 von 2 Adressen KAM durch". */}
           <span className="flex items-center gap-1 text-[13px] text-[var(--muted)]">
             von {formatCount(result.clients_total)}{' '}
-            {result.clients_total === 1 ? 'Adresse' : 'Adressen'}{' '}
+            {result.clients_total === 1 ? 'Adresse' : tr('hunt.addresses')}{' '}
             {result.ok_clients === 1 ? 'kam' : 'kamen'} durch
             {/* Sichtbar, sonst hovert niemand über einer Kennzahl: die
                 übrigen Angaben der Zeile erklären sich beim Überfahren. */}
@@ -539,7 +541,7 @@ function ResultCard({ slug, result, onTrace }: {
             <Crosshair size={13} /> alle tracen
           </Button>
         )}
-        <Tooltip hint="Übernimmt alle hier gelisteten Adressen als Indikatoren — mit dem Muster als Herkunft, damit im Bericht steht, WARUM sie drinstehen. Einzeln geht auch: der Knopf steht an jeder Zeile.">
+        <Tooltip hint={tr('hunt.collectAll.hint')}>
           <Button variant="primary" disabled={collect.isPending}
             onClick={() => collect.mutate(result.clients.map((c) => c.ip))}>
             <Box size={13} /> Alle {formatCount(result.clients.length)} in die IOC Box
@@ -598,7 +600,7 @@ function ResultCard({ slug, result, onTrace }: {
                 </span>
                 {c.ok_hits > 0 && (
                   <Tag tone="danger"
-                    hint="Der Server hat auf diesen Aufruf mit Erfolg geantwortet — nicht nur ein Versuch ins Leere.">
+                    hint={tr('hunt.successful.hint')}>
                     erfolgreich
                   </Tag>
                 )}
@@ -624,7 +626,7 @@ function ResultCard({ slug, result, onTrace }: {
               </td>
               <td className="px-4 py-1.5 text-right">
                 <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Tooltip hint="Nur diese Adresse in die IOC Box — mit dem Muster als Herkunft.">
+                  <Tooltip hint={tr('hunt.collectOne.hint')}>
                     <Button variant="ghost" disabled={collect.isPending}
                       onClick={() => collect.mutate([c.ip])}>
                       <Box size={13} /> IOC
