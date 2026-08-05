@@ -870,4 +870,12 @@ export const en: Record<string, string> = {
   'enrich.open': 'open there',
   'enrich.notReady': 'no lookup',
   'enrich.notReady.hint': 'Third-party lookups are switched off, or this service has no API key. Both are set under Settings.',
+  'source.yara': 'YARA',
+  'category.yara.label': 'Your own YARA rules',
+  'category.yara.what': 'Matches of the rules you placed in the workspace. What they mean is decided by whoever wrote them — this tool only reports the match.',
+  'yara.none': 'No YARA rules',
+  'yara.none.hint': 'Place .yar files in the yara/ folder of the workspace. They belong to the workspace, not to a case — a rule set grows across cases.',
+  'yara.missing': 'yara-python not installed',
+  'yara.missing.hint': 'Optional, like the GeoIP database: without the package everything else works, only your own rules do not run.',
+  'yara.broken': '{n} rule file(s) did not compile — they are listed under skipped, the rest ran.',
 }

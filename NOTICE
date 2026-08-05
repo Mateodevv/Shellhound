@@ -29,6 +29,28 @@ PYTHON RUNTIME DEPENDENCIES
       Reads the local GeoIP database. Optional: without it everything
       works, only the country flags are missing.
 
+OPTIONAL PYTHON DEPENDENCIES
+---------------------------
+
+  yara-python ................... Apache-2.0
+      Runs the analyst's own YARA rules over the webroot. Without it
+      everything else works, only those rules do not run.
+
+SERVICES CONTACTED ONLY ON AN EXPLICIT CLICK
+--------------------------------------------
+
+  VirusTotal .................... https://www.virustotal.com
+      Receives one SHA-256 per lookup, and nothing else. Requires an API
+      key the operator supplies; no key, no lookup.
+
+  AbuseIPDB ..................... https://www.abuseipdb.com
+      Receives one IP address per lookup, and nothing else. Same
+      conditions.
+
+  Neither is contacted unless the analyst has accepted what a lookup sends
+  and configured a key. What they return is stored as a third-party
+  opinion, apart from anything this toolkit measured.
+
 DATA NOT SHIPPED WITH THIS SOFTWARE
 -----------------------------------
 

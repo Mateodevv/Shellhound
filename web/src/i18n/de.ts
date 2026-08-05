@@ -865,4 +865,12 @@ export const de: Record<string, string> = {
   'enrich.open': 'dort öffnen',
   'enrich.notReady': 'keine Abfrage',
   'enrich.notReady.hint': 'Abfragen bei Dritten sind aus, oder dieser Dienst hat keinen API-Key. Beides steht unter Einstellungen.',
+  'source.yara': 'YARA',
+  'category.yara.label': 'Eigene YARA-Regeln',
+  'category.yara.what': 'Treffer der Regeln, die du im Workspace abgelegt hast. Was sie bedeuten, entscheidet, wer sie geschrieben hat — dieses Werkzeug meldet nur den Treffer.',
+  'yara.none': 'Keine YARA-Regeln',
+  'yara.none.hint': 'Lege .yar-Dateien im Ordner yara/ des Workspace ab. Sie gehören dem Workspace, nicht einem Fall — ein Regelsatz wächst über Fälle hinweg.',
+  'yara.missing': 'yara-python nicht installiert',
+  'yara.missing.hint': 'Optional wie die GeoIP-Datenbank: ohne das Paket läuft alles Übrige, nur die eigenen Regeln nicht.',
+  'yara.broken': '{n} Regeldatei(en) ließen sich nicht übersetzen — sie stehen unter „übersprungen", der Rest lief.',
 }

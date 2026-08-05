@@ -89,9 +89,9 @@ export interface Category {
 }
 
 const CATEGORY_ORDER: [string, number][] = [
-  ['webshell', 1], ['obfuscation', 2], ['htaccess', 3], ['db_injected', 4],
-  ['db_markup', 5], ['shell_access', 6], ['bruteforce', 7], ['probes', 8],
-  ['scanner', 9], ['other', 99],
+  ['webshell', 1], ['obfuscation', 2], ['htaccess', 3], ['yara', 4],
+  ['db_injected', 5], ['db_markup', 6], ['shell_access', 7],
+  ['bruteforce', 8], ['probes', 9], ['scanner', 10], ['other', 99],
 ]
 
 export function categories(t: Translate): Record<string, Category> {
@@ -127,6 +127,7 @@ const CATEGORY_RULES: [string | null, string, string][] = [
   ['logs', 'Scanner tool User-Agent', 'scanner'],
   ['logs', 'SQL injection', 'probes'],
   ['logs', 'Path traversal', 'probes'],
+  ['yara', '', 'yara'],
 ]
 
 export function categoryId(source: string, rule: string): string {

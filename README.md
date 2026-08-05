@@ -35,6 +35,8 @@ The interface opens at `http://127.0.0.1:8710`.
 - Access log index at roughly 55,000 lines/s, sized for gigabytes
 - 33 detection rules across webroot, database export and logs, documented
   in [`docs/rules.md`](docs/rules.md)
+- Your own YARA rules from the workspace, alongside the shipped ones
+  (optional: `pip install shellhound[yara]`)
 - CMS inventory with version detection and the source of every version
 - Comparison of the webroot against a known-clean reference copy
 
@@ -134,6 +136,9 @@ an offset per source; the offset is stored and reported in the chronology.
 | `--no-browser` | Do not open a browser automatically |
 
 Environment variables: `SHELLHOUND_WORKSPACE`, `SHELLHOUND_GEOIP`.
+
+API keys for third-party lookups are set in the interface under *Settings*
+and stored in the workspace, never in a case archive.
 
 A case is a directory. `logindex.db` is derived and is not archived.
 
