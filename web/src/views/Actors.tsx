@@ -7,7 +7,7 @@
 // angesprochen hat. Was in Findings längst entschieden ist, trägt hier
 // sein Badge und lässt sich im selben Artefakt-Fenster öffnen; niemand
 // soll in dieser Liste neu bewerten, was drüben schon beantwortet ist.
-import { useT } from '../i18n'
+import { useT, type Translate } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -39,26 +39,37 @@ import type { ViewId } from '../App'
 // nächste Klick holt sie zurück, mehrere stapeln sich. So arbeitet man sich
 // durch die Grundgesamtheit: Scanner weg, Brute-Force weg — was übrig
 // bleibt, ist das, was noch keine Regel benannt hat.
+// Nur die Schlüssel stehen hier: übersetzt wird beim Rendern, sonst wäre
+// die Sprache beim Laden des Moduls eingefroren.
 const FLAGS = [
-  { id: 'quiet', label: 'Unauffällig', hint: 'Clients ohne jedes Abzeichen — ganz normale Besucher. Ausblenden lässt genau die übrig, an denen etwas dran ist.' },
-  { id: 'alerted', label: 'Auffällig', hint: 'Clients, bei denen etwas mit DIESEM System passiert ist — Shell-Zugriff, Brute-Force, erfolgreiche Angriffsmuster. Reine Scanner-Besuche zählen hier nicht mit.' },
-  { id: 'scanner', label: 'Scanner', hint: 'Clients, die sich als Scan-Werkzeug ausgegeben haben. Passiert jedem Server rund um die Uhr.' },
-  { id: 'bruteforce', label: 'Brute-Force', hint: 'Clients mit vielen Login-Versuchen.' },
-  { id: 'probes', label: 'Angriffs­muster', hint: 'Clients mit SQL-Injection-, Traversal- oder Upload-PHP-Mustern.' },
+  { id: 'quiet', key: 'quiet' },
+  { id: 'alerted', key: 'alerted' },
+  { id: 'scanner', key: 'scanner' },
+  { id: 'bruteforce', key: 'brute' },
+  { id: 'probes', key: 'probes' },
 ] as const
 
 // key -> Erklärung im Glossar; label -> was auf dem Badge steht.
-function actorBadges(a: Actor) {
+// Die Abzeichen eines Clients. `key` zeigt auf die Erklärung im Katalog,
+// `label` wird beim Rendern übersetzt -- deshalb bekommt die Funktion den
+// Übersetzer herein statt ihn zu importieren.
+function actorBadges(a: Actor, tr: Translate) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
   if (a.login_redirects > 0 && a.login_posts >= 30)
-    badges.push({ key: 'Login erfolgreich?', label: 'Login erfolgreich?', tone: 'danger' })
-  if (a.upload_php_ok > 0) badges.push({ key: 'Shell-Zugriff 2xx', label: 'Shell-Zugriff', tone: 'danger' })
-  if (a.login_posts >= 30) badges.push({ key: 'Brute-Force', label: `Brute-Force ×${a.login_posts}`, tone: 'warn' })
+    badges.push({ key: 'loginSuccess', label: tr('badge.loginSuccess'), tone: 'danger' })
+  if (a.upload_php_ok > 0)
+    badges.push({ key: 'shellAccess', label: tr('badge.shellAccess'), tone: 'danger' })
+  if (a.login_posts >= 30)
+    badges.push({ key: 'bruteForce', label: tr('badge.bruteForce', { n: a.login_posts }), tone: 'warn' })
   // dezent (kein tone): ein Scanner-Besuch ist Kontext, kein Vorfall.
-  if (a.scanner_uas !== '[]') badges.push({ key: 'Scanner-UA', label: 'Scanner', tone: undefined })
-  if (a.sqli_ok > 0) badges.push({ key: 'SQLi 2xx', label: `SQLi ×${a.sqli_ok}`, tone: 'warn' })
-  else if (a.sqli_attempts > 0) badges.push({ key: 'SQLi-Versuche', label: `SQLi-Versuche ×${a.sqli_attempts}`, tone: undefined })
-  if (a.traversal_ok > 0) badges.push({ key: 'Traversal 2xx', label: 'Traversal', tone: 'warn' })
+  if (a.scanner_uas !== '[]')
+    badges.push({ key: 'scanner', label: tr('badge.scanner'), tone: undefined })
+  if (a.sqli_ok > 0)
+    badges.push({ key: 'sqliOk', label: tr('badge.sqliOk', { n: a.sqli_ok }), tone: 'warn' })
+  else if (a.sqli_attempts > 0)
+    badges.push({ key: 'sqliAttempts', label: tr('badge.sqliAttempts', { n: a.sqli_attempts }), tone: undefined })
+  if (a.traversal_ok > 0)
+    badges.push({ key: 'traversal', label: tr('badge.traversal'), tone: 'warn' })
   return badges
 }
 
@@ -116,15 +127,15 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Actors"
-          body="Jede IP-Adresse, die in den Logs auftaucht — mögliche Angreifer, Scanner und ganz normale Besucher."
-          hint="Jeder Chip blendet seine Klasse aus, der nächste Klick holt sie zurück — so arbeitest du dich durch: Scanner weg, Brute-Force weg, übrig bleibt das Unerklärte. »Trace« zeigt, was ein Client genau getan hat.">
+          body={tr('actors.title.body')}
+          hint={tr('actors.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">Actors</h1>
         </Tooltip>
         {FLAGS.map((f) => (
           <Tooltip key={f.id}
             hint={hidden.has(f.id)
-              ? `Ausgeblendet — Klick holt diese Clients zurück. ${f.hint}`
-              : `Klick blendet diese Clients aus. ${f.hint}`}>
+              ? `${tr('actors.flag.hidden')} ${tr(`actors.flag.${f.key}.hint`)}`
+              : `${tr('actors.flag.hide')} ${tr(`actors.flag.${f.key}.hint`)}`}>
             <Chip active={false} dimmed={hidden.has(f.id)}
               onClick={() => setHidden((prev) => {
                 const next = new Set(prev)
@@ -132,7 +143,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 else next.add(f.id)
                 return next
               })}>
-              {f.label}
+              {tr(`actors.flag.${f.key}`)}
             </Chip>
           </Tooltip>
         ))}
@@ -141,13 +152,13 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           onChange={(e) => setSort(e.target.value)}
           className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none cursor-pointer"
         >
-          <option value="requests">Sortierung: Requests</option>
-          <option value="last">Sortierung: zuletzt gesehen</option>
-          <option value="first">Sortierung: zuerst gesehen</option>
-          <option value="errors">Sortierung: Fehler</option>
+          <option value="requests">{tr('actors.sort.requests')}</option>
+          <option value="last">{tr('actors.sort.last')}</option>
+          <option value="first">{tr('actors.sort.first')}</option>
+          <option value="errors">{tr('actors.sort.errors')}</option>
         </select>
         <div className="ml-auto flex items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder="IP suchen…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('actors.search')} />
         </div>
       </div>
 
@@ -190,7 +201,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   checked={checked.size > 0 && checked.size === actors.length}
                   onChange={toggleAll} />
               </th>
-              <th className="px-2 py-2">Client</th>
+              <th className="px-2 py-2">{tr('table.client')}</th>
               <th className="px-2 py-2">
                 <span className="inline-flex items-center gap-1">Aktivität <InfoDot body={tr('field.sparkline')} /></span>
               </th>
@@ -205,7 +216,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   Dauer <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
                 </span>
               </th>
-              <th className="px-2 py-2">Verhalten</th>
+              <th className="px-2 py-2">{tr('table.behaviour')}</th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">Fehler <InfoDot body={tr('field.errors')} /></span>
               </th>
@@ -214,7 +225,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           </thead>
           <tbody>
             {actors.map((a) => {
-              const badges = actorBadges(a)
+              const badges = actorBadges(a, tr)
               return (
                 <tr key={a.ip_id}
                   className="group border-b border-[var(--line-soft)] transition-colors last:border-0 hover:bg-[var(--panel-2)]">
@@ -232,7 +243,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                     <div className="flex items-center gap-2">
                       <IpFlag ip={a.ip} />
                       <span className="mono font-medium">{a.ip}</span>
-                      {a.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
+                      {a.in_box && <Tag tone="accent" explain={tr('actors.inBox')}>IOC</Tag>}
                       {/* Was in Findings entschieden wurde, gilt auch hier —
                           sonst bewertet man dieselbe Adresse zweimal. */}
                       {a.triage && a.triage !== 'new' && (
@@ -246,7 +257,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   </td>
                   <td className="px-2 py-2 text-right tabular">{formatCount(a.requests)}</td>
                   <td className="px-2 py-2 text-[12px] text-[var(--muted)]">
-                    <Tooltip title="Erste und letzte Anfrage"
+                    <Tooltip title={tr('actors.firstLast')}
                       body={`${formatDay(a.first_epoch, a.tz)} bis ${formatDay(a.last_epoch, a.tz)} (${relativeTime(a.last_epoch ? new Date(a.last_epoch * 1000).toISOString() : null)} zuletzt)`}>
                       <span>{formatDay(a.first_epoch, a.tz)} → {formatDay(a.last_epoch, a.tz)}</span>
                     </Tooltip>
@@ -255,7 +266,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       Werkzeuglauf, vier Wochen sind ein Dauergast — dieselbe
                       Requestzahl bedeutet in beiden Fällen etwas anderes. */}
                   <td className="mono px-2 py-2 text-right text-[12px] tabular text-[var(--muted)]">
-                    <Tooltip title="Dauer der Aktivität"
+                    <Tooltip title={tr('actors.durationTitle')}
                       body={`${formatLogTime(a.first_epoch, a.tz)} bis ${formatLogTime(a.last_epoch, a.tz)}`}
                       hint={tr('field.duration_why')}>
                       <span>{formatSpan(a.first_epoch, a.last_epoch)}</span>
@@ -314,10 +325,10 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </table>
         {actors.length === 0 && (
           <EmptyState icon={<Users size={36} />}
-            title={hidden.size ? 'Alles ausgeblendet' : 'Noch keine Actors'}
+            title={hidden.size ? tr('actors.empty.hidden') : tr('actors.empty.title')}
             sub={hidden.size
-              ? 'Jeder verbliebene Client fällt unter einen ausgeblendeten Chip. Klick die durchgestrichenen Chips, um sie zurückzuholen.'
-              : 'Die Actors kommen aus den Access-Logs. Registriere die Logs als Evidence und starte die Analyse — danach steht hier jeder Client mit seiner Aktivität.'} />
+              ? tr('actors.empty.hiddenSub')
+              : tr('actors.empty.sub')} />
         )}
       </div>
       {data && data.total > actors.length && (

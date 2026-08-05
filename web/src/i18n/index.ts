@@ -36,9 +36,11 @@ export function setActiveLang(l: Lang) {
 export function initialLang(): Lang {
   const stored = localStorage.getItem(STORE_KEY)
   if (stored === 'en' || stored === 'de') return stored
-  // Only an explicitly German browser gets German; everything else gets
-  // the project default rather than a guess.
-  return navigator.language?.toLowerCase().startsWith('de') ? 'de' : 'en'
+  // English is THE default -- not "English unless the browser says
+  // otherwise". A German browser locale is a statement about the operating
+  // system, not about which language this tool should be documented and
+  // reported in; whoever wants German picks it once, and it is remembered.
+  return 'en'
 }
 
 export type Translate = (key: string, vars?: Record<string, string | number>) => string
