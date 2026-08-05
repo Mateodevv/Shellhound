@@ -36,6 +36,7 @@ import os
 from datetime import datetime, timezone
 
 from server import db
+from server import coverage
 from server.artifacts import ART_SQL, uri_path, web_path
 from server.engines import logindex
 from server.i18n import t
@@ -259,6 +260,11 @@ def case_chain(case_dir, lang="en"):
         gaps.append(t(lang, "chain.gap.onlyAttempts"))
     if truncated:
         gaps.append(t(lang, "chain.gap.truncated", n=EVENT_CAP))
+    # WHERE THE LOGS ARE SILENT is the same kind of statement as the gaps
+    # above: something the case cannot show. A window somebody removed and a
+    # quiet night look identical from here, so this points at the question
+    # rather than answering it.
+    gaps.extend(coverage.report(case_dir, lang)["notes"])
     # A set offset is part of the statement and therefore stands with the
     # limitations -- whoever reads the chain has to know that the clocks were
     # turned, and by whom.

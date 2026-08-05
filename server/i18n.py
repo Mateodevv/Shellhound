@@ -233,6 +233,45 @@ CATALOGUE: dict[str, dict[str, str]] = {
               "SHELLHOUND_GEOIP setzen.",
     },
 
+    # --- log coverage: what the logs do NOT cover ----------------------
+    "coverage.quiet": {
+        "en": "The logs are silent for {hours} h between {start} and {end} — "
+              "far longer than this log's own rhythm. That can be a quiet "
+              "night; it can also be a window somebody removed.",
+        "de": "Die Logs schweigen {hours} h zwischen {start} und {end} — weit "
+              "länger als der eigene Takt dieses Logs. Das kann eine ruhige "
+              "Nacht sein; es kann auch ein Fenster sein, das jemand "
+              "entfernt hat.",
+    },
+    "coverage.truncated": {
+        "en": "{file} begins in the middle of a record. Rotation cuts on "
+              "line boundaries — a head that starts mid-line means the "
+              "beginning was removed.",
+        "de": "{file} beginnt mitten in einem Eintrag. Rotation schneidet an "
+              "Zeilengrenzen — ein Anfang mitten in der Zeile heißt, dass "
+              "der Beginn entfernt wurde.",
+    },
+    "coverage.backwards": {
+        "en": "In {file} the timestamps step backwards {n}×. A web server "
+              "appends in order, so lines were edited, reordered or spliced.",
+        "de": "In {file} gehen die Zeitstempel {n}× rückwärts. Ein Webserver "
+              "hängt der Reihe nach an — also wurden Zeilen bearbeitet, "
+              "umsortiert oder zusammengesetzt.",
+    },
+    "coverage.staleMtime": {
+        "en": "{file} was last modified BEFORE its own last entry. A file "
+              "cannot be written before the last thing written into it.",
+        "de": "{file} wurde zuletzt VOR seinem eigenen letzten Eintrag "
+              "geändert. Eine Datei kann nicht geschrieben worden sein, "
+              "bevor das Letzte in sie geschrieben wurde.",
+    },
+    "coverage.summary": {
+        "en": "{n} note(s) on the coverage of these logs — see the "
+              "chronology.",
+        "de": "{n} Anmerkung(en) zur Abdeckung dieser Logs — siehe "
+              "Chronologie.",
+    },
+
     # --- log index status ----------------------------------------------
     "index.none": {"en": "no index built", "de": "kein Index gebaut"},
     "index.stale": {
