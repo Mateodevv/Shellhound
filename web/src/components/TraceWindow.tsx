@@ -14,6 +14,7 @@
 // Gefiltert und sortiert wird in SQL, nicht im Browser — sonst würde eine
 // Suche nur die 500 Zeilen der aktuellen Seite durchsuchen und alles davor
 // und danach übersehen.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -27,20 +28,22 @@ import { TimelineChart, type TimelinePoint } from './TimelineChart'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
 
+// Nur Schlüssel auf Modulebene: eine hier übersetzte Beschriftung wäre in
+// der Sprache eingefroren, die beim Laden des Moduls galt.
 const STATUS_FILTERS = [
-  { id: '', label: 'alle' },
-  { id: '2xx', label: '2xx' },
-  { id: '3xx', label: '3xx' },
-  { id: '4xx', label: '4xx' },
-  { id: '5xx', label: '5xx' },
+  { id: '', key: 'common.all' },
+  { id: '2xx', key: null },
+  { id: '3xx', key: null },
+  { id: '4xx', key: null },
+  { id: '5xx', key: null },
 ] as const
 
 const SORTS = [
-  { id: 'time', label: 'Zeit ↑ (Verlauf)' },
-  { id: 'time_desc', label: 'Zeit ↓ (neueste zuerst)' },
-  { id: 'status', label: 'Status' },
-  { id: 'size', label: 'Größe' },
-  { id: 'uri', label: 'URI' },
+  { id: 'time', key: 'trace.sort.time' },
+  { id: 'time_desc', key: 'trace.sort.timeDesc' },
+  { id: 'status', key: null },
+  { id: 'size', key: 'trace.sort.size' },
+  { id: 'uri', key: null },
 ] as const
 
 /** Was im Trace rot markiert wird — und warum.
@@ -64,6 +67,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
    *  von Hand. */
   marks?: TraceMarks
 }) {
+  const tr = useT()
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -153,13 +157,13 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
               : 'Auf dieser Seite keine markierte Zeile'}
           </span>
           <span className="text-[var(--muted)]">
-            — {marks?.reason ?? 'das ist der Aufruf, der zum Flaggen geführt hat'}.
+            — {marks?.reason ?? tr('trace.marks.default')}.
           </span>
         </div>
       )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <SearchInput value={search} onChange={setSearch} placeholder="URI oder User-Agent…" />
+        <SearchInput value={search} onChange={setSearch} placeholder={tr('trace.search')} />
         <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
           {STATUS_FILTERS.map((f) => (
             <button key={f.id}
@@ -169,25 +173,27 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
                 status === f.id
                   ? 'bg-[var(--accent)] text-white'
                   : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
-              {f.label}
+              {f.key ? tr(f.key) : f.id}
             </button>
           ))}
         </div>
         {(data?.methods.length ?? 0) > 1 && (
           <select value={method} onChange={(e) => setMethod(e.target.value)}
             className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
-            <option value="">Methode: alle</option>
+            <option value="">{tr('trace.method.all')}</option>
             {data?.methods.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
         <select value={sort} onChange={(e) => setSort(e.target.value)}
           className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
           {SORTS.map((s) => (
-            <option key={s.id} value={s.id}>Sortierung: {s.label}</option>
+            <option key={s.id} value={s.id}>
+              {tr('common.sort')}: {s.key ? tr(s.key) : (s.id === 'status' ? 'Status' : 'URI')}
+            </option>
           ))}
         </select>
         {filtering && (
-          <Tooltip hint="Der Filter läuft über den ganzen Trace, nicht nur über die angezeigte Seite.">
+          <Tooltip hint={tr('trace.filter.hint')}>
             <Button variant="ghost"
               onClick={() => { setSearch(''); setStatus(''); setMethod('') }}>
               Filter zurücksetzen
@@ -197,11 +203,11 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         {/* Der Export nimmt die AKTIVEN Filter mit — was man gefiltert vor
             sich hat, ist das, was man belegen will. Das ZIP trägt neben der
             CSV ein Manifest: Abfrage, Zeilenzahl, SHA-256. */}
-        <Tooltip title="Trace als Beleg exportieren"
-          body="Ein ZIP aus der CSV und einem Manifest mit Abfrage, Zeilenzahl und SHA-256-Prüfsumme."
+        <Tooltip title={tr('trace.export.title')}
+          body={tr('trace.export.body')}
           hint={filtering
-            ? 'Die aktiven Filter gelten auch für den Export — das Manifest hält sie fest.'
-            : 'Damit ist der Export zitierfähig: jeder Empfänger kann die Prüfsumme nachrechnen.'}>
+            ? tr('trace.export.filtered')
+            : tr('trace.export.hint')}>
           <a
             className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${ips.join(',')}`

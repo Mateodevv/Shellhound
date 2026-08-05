@@ -155,13 +155,13 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="CMS Inventory"
           body="Welche CMS-Installationen im Webroot stecken und welche Erweiterungen mit welcher Version installiert sind — und welche davon geflaggte Dateien enthalten."
-          hint="Die Versionen gleichst du gegen bekannte Lücken ab (WPScan, Joomla VEL). Jeder Chip blendet seine Klasse aus; Klick auf ein Finding-Badge öffnet das Artefakt.">
+          hint={tr('cms.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">CMS Inventory</h1>
         </Tooltip>
         {typeCounts.map(([base, n]) => (
           <Tooltip key={base}
             hint={hiddenTypes.has(base)
-              ? 'Ausgeblendet — Klick holt diese Einträge zurück.'
+              ? tr('cms.hidden')
               : 'Klick blendet diesen Typ aus.'}>
             <Chip active={false} dimmed={hiddenTypes.has(base)}
               onClick={() => toggle(setHiddenTypes, base)} count={n}>
@@ -170,7 +170,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
           </Tooltip>
         ))}
         {typeCounts.length > 0 && <span className="mx-1 h-4 w-px bg-[var(--line)]" />}
-        <Tooltip hint="Klick blendet Erweiterungen mit erkannter Version aus — übrig bleiben die ohne Manifest.">
+        <Tooltip hint={tr('cms.hideVersioned')}>
           <Chip active={false} dimmed={hiddenVersion.has('known')}
             onClick={() => toggle(setHiddenVersion, 'known')} count={versionCounts.known}>
             mit Version
@@ -273,7 +273,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           <div className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
             {install.cms}
             {install.version === '(unknown)'
-              ? <Tag tone="warn" hint="Die Kern-Version ließ sich nicht bestimmen — bei einer manipulierten Installation selbst ein Befund.">Version unbekannt</Tag>
+              ? <Tag tone="warn" hint={tr('cms.noCoreVersion')}>Version unbekannt</Tag>
               : <span className="mono text-[var(--accent-text)]">{install.version}</span>}
             {install.version_set && (
               <Tag tone="accent"
@@ -290,7 +290,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           {/* Kein `ghost`: auf dem ohnehin panel-2-farbenen Kopf wäre ein
               Knopf aus gedämpftem Text unsichtbar, bis man ihn zufällig
               überfährt. Ein Rahmen sagt „hier kann man klicken". */}
-          <Tooltip hint="Version prüfen: zeigt die Datei, aus der sie gelesen wurde, und lässt sie von Hand setzen.">
+          <Tooltip hint={tr('cms.checkVersion.hint')}>
             <Button className="text-[var(--fg)]"
               style={{ background: 'var(--panel)' }}
               onClick={() => onEditVersion({
@@ -310,7 +310,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           )}
           {flagged > 0 && (
             <Tag tone="danger"
-              hint="Erweiterungen, unter deren Pfad geflaggte Dateien liegen — die Kandidaten für den Einstiegspunkt.">
+              hint={tr('cms.flaggedExtensions')}>
               <Bug size={11} /> {flagged} mit Findings
             </Tag>
           )}
@@ -374,7 +374,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                   <Tooltip
                     title={`${item.flagged} geflaggte${item.flagged === 1 ? 's' : ''} Artefakt${item.flagged === 1 ? '' : 'e'} unter diesem Pfad`}
                     body={item.artifacts.map((a) => a.artifact).join('\n')}
-                    hint="Klick öffnet das Artefakt — entscheiden wie in Findings."
+                    hint={tr('cms.openArtifact')}
                     wide>
                     <button
                       className={clsx(
@@ -394,13 +394,13 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                 {/* Die Versionszelle ist ein KNOPF: prüfen heißt, die Datei
                     aufzumachen, aus der die Zahl stammt. */}
                 <Tooltip
-                  title={item.version_set ? 'Von Hand gesetzt' : 'Version prüfen'}
+                  title={item.version_set ? 'Von Hand gesetzt' : tr('cms.checkVersion')}
                   body={item.version_source
                     ? `gelesen aus: ${item.version_source}`
                     : 'Keine Quelle — es wurde kein Manifest/Header gefunden.'}
                   hint={item.version_set
                     ? `Gemessen war: ${item.version_parsed}. Klick zum Ändern oder Zurücksetzen.`
-                    : 'Klick öffnet die Quelldatei und lässt die Version von Hand setzen.'}
+                    : tr('cms.versionSource.hint')}
                   wide>
                   {/* Die Zelle sieht aus wie ein Eingabefeld, nicht wie
                       Text: Rahmen und Stift stehen IMMER da. Eine Fläche,
@@ -461,6 +461,7 @@ function VersionWindow({ slug, target, onClose, onView }: {
   onClose: () => void
   onView: (path: string) => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [value, setValue] = useState('')
   const [note, setNote] = useState('')
@@ -549,7 +550,7 @@ function VersionWindow({ slug, target, onClose, onView }: {
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Woher weißt du das? (wandert ins Fall-Archiv)"
+              placeholder={tr('cms.versionNote')}
               className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
             />
           </div>
