@@ -196,7 +196,18 @@ nicht als öffentliches Issue melden, siehe [SECURITY.md](SECURITY.md).
 Beiträge dürfen keine Daten aus realen Vorfällen enthalten. Für
 Reproduktionen beschreibe stattdessen die Form der Daten oder baue ein
 Minimalbeispiel. Neue Detektionsregeln gehören mit Auslöser, Aussage und
-Grenzen nach [`docs/rules.md`](docs/rules.md).
+Grenzen nach [`docs/rules.md`](docs/rules.md) — und mit einem Test in
+`tests/`, der belegt, dass sie anspringt.
+
+Tests laufen ohne zusätzliche Abhängigkeiten:
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+Sie bauen ihre Beweismittel selbst: winzige, erfundene Dateien, von denen
+jede genau eine Regel auslöst. Ein Fehlschlag benennt damit die kaputte
+Regel, statt auf einen großen Datenklumpen zu zeigen.
 
 ## Lizenz
 

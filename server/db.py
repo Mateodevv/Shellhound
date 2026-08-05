@@ -19,6 +19,13 @@ from pathlib import Path
 CASE_DB = "case.db"
 LOG_DB = "logindex.db"
 
+# Wie lange eine Verbindung auf eine belegte Sperre wartet, bevor sie
+# aufgibt. Großzügig, weil eine Engine eine Schreib-Transaktion durchaus
+# Sekunden halten darf -- lieber warten als die Anfrage des Analysten
+# abbrechen. Die Tests setzen den Wert herunter, sonst würde ein Test, der
+# eine Sperre absichtlich herbeiführt, minutenlang danebenstehen.
+BUSY_TIMEOUT_MS = 30000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT
@@ -379,10 +386,10 @@ def connect(case_dir):
     CASE_SCHEMA_VERSION abweicht: einmal je Fall statt einmal je Anfrage.
     Der Normalfall ist damit reines Lesen und kollidiert mit nichts."""
     path = case_db_path(case_dir)
-    conn = sqlite3.connect(str(path), timeout=30)
+    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
     # Ausdrücklich, nicht nur über `timeout`: SQLite wartet damit auf eine
     # belegte Sperre, statt sofort aufzugeben.
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_MS)}")
     # WAL nur setzen, wenn nötig -- der Wechsel des Journal-Modus verlangt
     # kurz exklusiven Zugriff, das Auslesen nicht.
     if (conn.execute("PRAGMA journal_mode").fetchone() or [""])[0] != "wal":
