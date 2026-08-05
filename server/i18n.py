@@ -235,6 +235,12 @@ CATALOGUE: dict[str, dict[str, str]] = {
 
     # --- log index status ----------------------------------------------
     "index.none": {"en": "no index built", "de": "kein Index gebaut"},
+    "index.stale": {
+        "en": "evidence has changed ({added} file(s) new/modified, {gone} "
+              "removed) — rebuild the index",
+        "de": "Evidence hat sich geändert ({added} Datei(en) neu/verändert, "
+              "{gone} entfernt) — Index neu bauen",
+    },
     "index.oldVersion": {
         "en": "index comes from an older version",
         "de": "Index stammt von einer älteren Version",

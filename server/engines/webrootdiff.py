@@ -1,45 +1,45 @@
 # server/engines/webrootdiff.py
-"""Webroot gegen eine Referenzkopie vergleichen.
+"""Compare a webroot against a reference copy.
 
-Die klassische Handarbeit nach jedem Webserver-Vorfall: das kompromittierte
-Webroot neben ein sauberes Release derselben CMS-Version legen und fragen,
-was ABWEICHT. Drei Antworten sind möglich, und jede bedeutet etwas anderes:
+The classic manual work after every web server incident: put the compromised
+webroot next to a clean release of the same CMS version and ask what DEVIATES.
+Three answers are possible, and each means something different:
 
-    extra     -- liegt nur im Webroot. Hochgeladen, generiert oder Teil der
-                 Installation, die die Referenz nicht abdeckt. Hier wohnen
-                 die abgelegten Shells.
-    modified  -- in beiden, aber verschieden. Hier wohnt der eingeschleuste
-                 Code in legitimen Dateien.
-    missing   -- liegt nur in der Referenz. Gelöschte Kern-Dateien sind
-                 selten Angriff, aber oft Spur eines Aufräumversuchs.
+    extra     -- only in the webroot. Uploaded, generated, or part of the
+                 installation the reference does not cover. This is where the
+                 dropped shells live.
+    modified  -- in both, but different. This is where injected code in
+                 legitimate files lives.
+    missing   -- only in the reference. Deleted core files are rarely an
+                 attack, but often the trace of a cleanup attempt.
 
-WAS DER VERGLEICH NICHT SAGT: Ein `extra` ist kein Fund, sondern ein
-Kandidat -- jedes Upload-Verzeichnis ist voller legitimer Extras. Der
-Vergleich verkleinert den Heuhaufen, die Bewertung bleibt beim Analysten.
+WHAT THE COMPARISON DOES NOT SAY: an `extra` is not a find but a candidate --
+every upload directory is full of legitimate extras. The comparison shrinks
+the haystack, the assessment stays with the analyst.
 
-Verglichen wird über SHA-256, aber nur wo nötig: unterschiedliche Größe IST
-Verschiedenheit, da braucht niemand einen Hash. Dateien über der Hash-Grenze
-mit GLEICHER Größe werden als `too_big` gemeldet statt still als gleich
-durchgewunken -- »nicht geprüft« ist eine andere Aussage als »gleich«."""
+Comparison is by SHA-256, but only where needed: a different size IS a
+difference, nobody needs a hash for that. Files above the hashing limit with
+the SAME size are reported as `too_big` rather than silently waved through as
+identical -- "not checked" is a different statement from "identical"."""
 import hashlib
 import os
 
 from server import db
 
-# Bis zu dieser Größe wird gehasht. Darüber entscheidet die Größe allein --
-# und Gleichstand wird gemeldet, nicht behauptet.
+# Files up to this size are hashed. Above it the size alone decides -- and a
+# tie is reported, not claimed.
 HASH_CAP = 32 * 1024 * 1024
 
-# Mehr Abweichungen speichert ein Lauf nicht. Wer 100.000 Unterschiede hat,
-# vergleicht die falschen Bäume (andere CMS-Version, falscher Ordner) -- das
-# sagt die Zusammenfassung dann auch.
+# A run stores no more deviations than this. Whoever has 100,000 differences
+# is comparing the wrong trees (different CMS version, wrong folder) -- and
+# the summary says so.
 ROW_CAP = 20000
 
 
 def _walk(root):
-    """rel_path (mit /) -> Größe. Symlinks werden nicht verfolgt: eine
-    Kopie aus der Forensik soll keine Schleifen enthalten, und wenn doch,
-    gehört ihr Ziel nicht zum Baum."""
+    """rel_path (with /) -> size. Symlinks are not followed: a forensic copy
+    should contain no loops, and if it does, their target does not belong to
+    the tree."""
     out = {}
     base = os.path.abspath(root)
     for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
@@ -69,13 +69,13 @@ def _sha256(path):
 
 
 def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
-    """Der Vergleich als Job. Ergebnis landet in webroot_diff (ersetzt den
-    vorherigen Lauf) und als Zusammenfassung in den Job-Stats."""
-    ctx.progress(0.02, "Webroot einlesen…")
+    """The comparison as a job. The result lands in webroot_diff (replacing
+    the previous run) and as a summary in the job stats."""
+    ctx.progress(0.02, "Reading webroot…")
     left = _walk(webroot_path)
     if ctx.cancelled():
         return {"cancelled": True}
-    ctx.progress(0.15, "Referenz einlesen…")
+    ctx.progress(0.15, "Reading reference…")
     right = _walk(reference_path)
     if ctx.cancelled():
         return {"cancelled": True}
@@ -97,8 +97,8 @@ def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
     for rel in sorted(set(right) - set(left)):
         keep("missing", rel, 0, right[rel])
 
-    # Gleicher Pfad, beide vorhanden: erst die Größe (kostenlos), dann der
-    # Hash (teuer, deshalb mit Fortschritt -- das hier ist der lange Teil).
+    # Same path, both present: first the size (free), then the hash
+    # (expensive, hence with progress -- this is the long part).
     both = sorted(set(left) & set(right))
     same_size = [rel for rel in both if left[rel] == right[rel]]
     for rel in both:
@@ -118,12 +118,12 @@ def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
         if a is None or b is None or a != b:
             keep("modified", rel, left[rel], right[rel])
 
-    ctx.progress(0.97, "Ergebnis speichern…")
+    ctx.progress(0.97, "Storing result…")
     conn = db.connect(ctx.case_dir)
     try:
-        # Ein Lauf ersetzt den vorherigen: das Ergebnis ist eine ABLEITUNG
-        # aus zwei Bäumen, keine Historie -- wer den alten Stand braucht,
-        # hat ihn im Fall-Archiv.
+        # A run replaces the previous one: the result is a DERIVATION from
+        # two trees, not a history -- whoever needs the old state has it in
+        # the case archive.
         conn.execute("DELETE FROM webroot_diff")
         conn.executemany(
             "INSERT INTO webroot_diff (webroot_id, reference_id, status,"

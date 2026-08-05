@@ -1,22 +1,22 @@
 # server/geoip.py
-"""Länderzuordnung für IP-Adressen -- offline, aus einer lokalen Datenbank.
+"""Country attribution for IP addresses -- offline, from a local database.
 
-GRUNDSATZ: KEINE ONLINE-ABFRAGE, NIEMALS. Die IPs eines Falls an einen
-GeoIP-Webdienst zu schicken hieße, Beweismittel an Dritte zu leaken -- exakt
-das, was dieses Werkzeug überall sonst verhindert. Deshalb liest dieser
-Modul ausschließlich eine MMDB-Datei, die der Analyst selbst besorgt und in
-den Workspace legt (GeoLite2-Country von MaxMind oder das DB-IP Country
-Lite; beide kostenlos, beide dürfen nicht von uns mitverteilt werden).
+PRINCIPLE: NO ONLINE LOOKUP, EVER. Sending the IPs of a case to a GeoIP web
+service would mean leaking evidence to a third party -- exactly what this
+tool prevents everywhere else. This module therefore reads nothing but an
+MMDB file the analyst obtains and places in the workspace themselves
+(GeoLite2-Country from MaxMind or the DB-IP Country Lite; both free, neither
+may be redistributed by us).
 
-Gefunden wird sie über SHELLHOUND_GEOIP oder als `*.mmdb` im Workspace.
-Ohne Datei gibt es keine Flaggen -- aber die SONDERBEREICHE kommen trotzdem:
-ob eine Adresse privat (RFC 1918), Loopback oder ein Dokumentations-Bereich
-ist, weiß die Standardbibliothek ohne jede Datenbank, und im Fall ist genau
-das oft die wichtigere Aussage (eine private Quell-IP im Access-Log heißt:
-der Verkehr kam durch einen Proxy oder aus dem eigenen Netz).
+It is found via SHELLHOUND_GEOIP or as a `*.mmdb` in the workspace. Without a
+file there are no flags -- but the SPECIAL RANGES come anyway: whether an
+address is private (RFC 1918), loopback or a documentation range is something
+the standard library knows without any database, and in a case that is often
+the more important statement (a private source IP in an access log means the
+traffic came through a proxy or from the local network).
 
-Und weil GeoIP gern überinterpretiert wird, sagt jede Antwort dazu, was sie
-ist: eine Schätzung der REGISTRIERUNG, kein Aufenthaltsort."""
+And because GeoIP is readily over-interpreted, every answer says what it is:
+an estimate of the REGISTRATION, not a location."""
 import ipaddress
 import os
 import threading
@@ -43,8 +43,8 @@ _DOC_NETS = [ipaddress.ip_network(n) for n in
 
 
 def find_db(workspace):
-    """Der Pfad zur MMDB, oder ''. Umgebungsvariable gewinnt -- wer sie
-    setzt, hat sich entschieden; sonst die erste *.mmdb im Workspace."""
+    """The path to the MMDB, or ''. The environment variable wins -- whoever
+    sets it has decided; otherwise the first *.mmdb in the workspace."""
     env = os.environ.get("SHELLHOUND_GEOIP", "").strip()
     if env and os.path.isfile(env):
         return env
@@ -57,7 +57,8 @@ def find_db(workspace):
 
 
 def _get_reader(workspace):
-    """Reader lazily öffnen und offen halten; bei gewechselter Datei neu."""
+    """Open the reader lazily and keep it open; anew when the file
+    changed."""
     global _reader, _reader_path
     if maxminddb is None:
         return None
@@ -112,19 +113,19 @@ def _special(addr, lang):
     return None
 
 
-# Die einzige Stelle im ganzen Werkzeug, die nach draußen spricht -- und
-# sie tut es nur auf einen expliziten Klick, zu genau einem Zweck: die frei
-# lizenzierte Länder-Datenbank von DB-IP holen (Creative Commons BY 4.0,
-# kein Konto nötig). ES GEHT KEIN BYTE FALLDATEN HINAUS -- der Request
-# enthält nichts als den Dateinamen des Monats.
+# The only place in the entire tool that speaks outward -- and it does so
+# only on an explicit click, for exactly one purpose: fetching the freely
+# licensed country database from DB-IP (Creative Commons BY 4.0, no account
+# required). NOT A BYTE OF CASE DATA GOES OUT -- the request contains nothing
+# but the file name of the month.
 _DBIP_URL = "https://download.db-ip.com/free/dbip-country-lite-{y}-{m:02d}.mmdb.gz"
 DB_FILENAME = "dbip-country-lite.mmdb"
 
 
 def download(workspace):
-    """Die DB-IP Country Lite in den Workspace laden. Probiert den
-    aktuellen Monat, dann den Vormonat (die Ausgabe erscheint monatlich,
-    am Monatsersten gibt es die neue manchmal noch nicht)."""
+    """Fetch the DB-IP Country Lite into the workspace. Tries the current
+    month, then the previous one (the edition appears monthly, and on the
+    first of the month the new one is sometimes not there yet)."""
     global _reader, _reader_path
     import gzip
     import shutil
@@ -149,8 +150,8 @@ def download(workspace):
             with urllib.request.urlopen(req, timeout=60) as resp, \
                     gzip.GzipFile(fileobj=resp) as gz, open(tmp, "wb") as out:
                 shutil.copyfileobj(gz, out)
-            # Erst prüfen, dann übernehmen: eine halbe Datei, die eine
-            # funktionierende ersetzt, wäre schlechter als gar keine.
+            # Check first, adopt second: half a file replacing a working
+            # one would be worse than none at all.
             probe = maxminddb.open_database(str(tmp))
             probe.close()
             with _lock:

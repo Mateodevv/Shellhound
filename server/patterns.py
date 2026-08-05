@@ -1,16 +1,14 @@
 # server/patterns.py
-"""Die Muster-Bibliothek: URL-Pfade, von denen der Analyst weiß, dass sie zu
-einem Exploit gehören.
+"""The pattern library: URL paths the analyst knows belong to an exploit.
 
-SIE LEBT IM WORKSPACE, NICHT IM FALL. Einmal angelegt, steht ein Muster in
-jedem weiteren Fall zur Verfügung -- das Wissen darüber, wonach man sucht,
-wächst über Fälle hinweg, während der einzelne Fall nur festhält, was er
-gefunden hat.
+IT LIVES IN THE WORKSPACE, NOT IN THE CASE. Created once, a pattern is
+available in every further case -- the knowledge of what to look for grows
+across cases, while the individual case only records what it found.
 
-Als JSON-Datei neben den Fällen, nicht als Datenbank: die Bibliothek soll man
-lesen, von Hand ergänzen, in ein anderes Team kopieren und in ein Repository
-legen können. Sie ist zugleich das Austauschformat -- Import und Export sind
-dieselbe Datei.
+As a JSON file next to the cases, not as a database: the library should be
+readable, extendable by hand, copyable to another team and placeable in a
+repository. It is at the same time the exchange format -- import and export
+are the same file.
 """
 import json
 import uuid
@@ -19,8 +17,8 @@ from pathlib import Path
 
 LIBRARY_FILE = "hunt_patterns.json"
 
-# Ein Muster ohne Substanz trifft alles: "/" oder "*" würde jede Zeile des
-# Logs einsammeln und als Fund ausgeben.
+# A pattern without substance hits everything: "/" or "*" would collect
+# every line of the log and report it as a find.
 MIN_PATTERN_LENGTH = 3
 
 
@@ -42,8 +40,8 @@ def library_path(workspace):
 
 
 def load(workspace):
-    """Die Bibliothek. Eine kaputte Datei wirft nicht -- sie darf nie der
-    Grund sein, dass die Oberfläche nicht mehr aufgeht."""
+    """The library. A broken file does not raise -- it must never be the
+    reason the interface no longer opens."""
     path = library_path(workspace)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -69,8 +67,8 @@ def save(workspace, patterns):
     path = library_path(workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"patterns": patterns}, indent=2, ensure_ascii=False)
-    # Erst daneben schreiben, dann ersetzen: ein Absturz mitten im Schreiben
-    # darf die Bibliothek nicht halbieren.
+    # Write beside it first, then replace: a crash in the middle of writing
+    # must not halve the library.
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(payload + "\n", encoding="utf-8")
     tmp.replace(path)
@@ -126,9 +124,9 @@ def remove(workspace, pattern_id):
 
 
 def import_text(workspace, text):
-    """Eine Liste einlesen: entweder JSON (wie der Export) oder eine Zeile je
-    Muster, optional `muster | label`. Bekannte Muster werden übersprungen,
-    nicht verdoppelt."""
+    """Read in a list: either JSON (as the export writes it) or one line per
+    pattern, optionally `pattern | label`. Known patterns are skipped, not
+    duplicated."""
     text = str(text or "").strip()
     if not text:
         return {"added": 0, "skipped": 0, "invalid": 0}
@@ -149,8 +147,8 @@ def import_text(workspace, text):
     else:
         for line in text.splitlines():
             line = line.strip()
-            # `#` leitet einen Kommentar ein -- eine geteilte Liste soll
-            # erklären dürfen, woher ihre Muster stammen.
+            # `#` starts a comment -- a shared list should be allowed to
+            # explain where its patterns come from.
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split("|", 2)]
@@ -171,6 +169,6 @@ def import_text(workspace, text):
 
 
 def export_text(workspace):
-    """Die Bibliothek als JSON -- dieselbe Form, die `import_text` liest."""
+    """The library as JSON -- the same form `import_text` reads."""
     return json.dumps({"patterns": load(workspace)}, indent=2,
                       ensure_ascii=False) + "\n"
