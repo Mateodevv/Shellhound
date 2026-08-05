@@ -32,6 +32,7 @@ import {
 import { Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
 import { WebrootDiff } from '../components/WebrootDiff'
+import { FsTimeline } from '../components/FsTimeline'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
@@ -201,9 +202,18 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
         </div>
       )}
 
-      {/* ---- Webroot gegen Referenzkopie ---- */}
+      {/* ---- webroot against a reference copy ---- */}
       {atRoot && (caseInfo?.evidence_items?.length ?? 0) > 0 && (
         <WebrootDiff slug={slug} evidence={caseInfo!.evidence_items}
+          onView={(p) => setViewing({ path: p, line: null })} />
+      )}
+
+      {/* ---- when the webroot was touched ----
+          Here rather than in the dashboard: this is a LEAD, and leads belong
+          where one browses, not next to the chronology, which is built from
+          measured time and must not be confused with it. */}
+      {atRoot && (caseInfo?.evidence_items?.length ?? 0) > 0 && (
+        <FsTimeline slug={slug}
           onView={(p) => setViewing({ path: p, line: null })} />
       )}
 

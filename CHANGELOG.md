@@ -6,6 +6,97 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — third-party lookups, behind a door that starts shut
+
+The GeoIP download used to be the only thing this tool sent outward. It is
+not any more, and because that promise changed, the second door is built like
+the first one.
+
+- **Settings** (`server/settings.py`, new view): operator configuration in
+  the workspace, next to the pattern library and for the same reason — this
+  is knowledge about the workstation, not about an incident. A case archive
+  never carries it: handing a colleague a case must not hand them an API key.
+  Keys are stored in cleartext, said plainly in the module and on the page —
+  there is no key store to hide them in, and a base64 wrapper would only
+  pretend. The interface only ever sees the last four characters.
+- **VirusTotal and AbuseIPDB** (`server/enrich.py`): one value leaves per
+  click — a SHA-256 or an IP, nothing else. Which service may receive which
+  kind is **enforced**, not documented. Nothing goes out before the analyst
+  has accepted what a lookup costs; there is no sweep and no background
+  refresh.
+- **What comes back is an opinion, not a measurement.** It lives in its own
+  table, never becomes a finding, and never moves a severity or a triage
+  decision. Every answer carries the time it was fetched.
+- Only hashes and IPs get a lookup button. A path would name the server, a
+  login would name a person.
+
+### Added — your own YARA rules
+
+Optional (`pip install shellhound[yara]`). Rules live in `<workspace>/yara/`
+and belong to the workspace, not to a case. A match without a `severity` in
+its metadata is MEDIUM, not HIGH — a foreign rule set must not decide the
+colour of the work list. The evidence line names the string identifiers that
+matched, never the bytes: a rule can match on a credential. A rule file that
+does not compile is listed by name under skipped and costs that one file, not
+the run. The status distinguishes the two silences that look alike — no YARA
+installed versus no rules placed.
+
+### Added — error logs
+
+Apache and Nginx error logs were recognised and skipped. They name a path and
+a line number for a file the interpreter **executed** — which catches what the
+access log structurally cannot: a shell run from cron, one pulled in by an
+`include`, one that crashed on its own payload, and one deleted before the
+copy was taken.
+
+An error naming a file is not evidence that it is malicious — legitimate code
+throws warnings all day. It proves the path existed and ran. LOW on its own,
+MEDIUM for a fatal; the weight comes from landing on the same artifact as
+something else. A path is only written when it resolves under a registered
+webroot: an error log mentions every file on the server.
+
+### Added — log coverage and tampering
+
+Attackers clean logs, and every other view is built around what IS in the
+data. This asks the opposite: a hole measured against the log's **own**
+rhythm rather than a fixed threshold, a first line that is not a whole
+record, timestamps stepping backwards inside one file, an mtime earlier than
+the file's own last entry.
+
+None of it proves tampering — a quiet window can be a maintenance night. So
+it produces no findings and no severities and lands in the **gaps** of the
+chronology, next to everything else the case cannot show.
+
+### Added — file system timeline
+
+The chronology refuses the file system on principle, and stays that way. But
+the distrust is about proof, not about value: "these fourteen files were
+written within forty seconds of each other, and one of them is the shell you
+already confirmed" says where to look next.
+
+Shown in the Files view, fenced off with a dashed border, ordered by **time**
+rather than by any suspicion score, with no severity anywhere and nothing
+written to the case. The one interpretation offered is the tie back: a burst
+containing a confirmed artifact is marked, because the other files in it were
+written in the same minute.
+
+### Added — CMS beyond WordPress and Joomla
+
+Drupal, TYPO3, Magento, PrestaShop and Contao are recognised in the dump and
+in the webroot. Their accounts — and those of any CMS at all — are read by
+column **name**, the only signal left when the schema is unknown. A table
+counts as an account table when its columns carry an identity, an e-mail and
+a password; all three, because a name and an e-mail alone would turn every
+orders table into an account list.
+
+`status`/`active` are read as the opposite of `blocked`, and a value decides
+for itself whether it is a date: an account list that shows `0` as a login
+time is worse than one with the column empty.
+
+**Fixed along the way:** Joomla was detected from a single marker table, so
+every TYPO3 export was also announced as Joomla (`tt_content` ends in
+`content`). Two markers are now required, as for every other CMS.
+
 ### Added — test suite
 
 The sample case served the CI as an end-to-end test. With its removal the CI
