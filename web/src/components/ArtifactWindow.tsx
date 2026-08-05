@@ -30,6 +30,7 @@ import { InfoDot, Tooltip } from './Tooltip'
 import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
 import { explainRule } from '../explain'
+import { EnrichPanel } from './Enrich'
 
 // With article, for the question in the detail window: "Is this file part of
 // the incident?" is the most important line in there, so each kind gets its
@@ -255,6 +256,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                           className="shrink-0" />
                       </span>
                     </MetaCell>
+                    {/* The hash is the only thing about a file that may be
+                        asked about outside -- a path would name the server. */}
+                    <div className="mt-2">
+                      <EnrichPanel slug={slug} kind="hash" value={file.sha256} />
+                    </div>
                   </div>
                 )}
               </div>
@@ -327,9 +333,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </div>
             )}
 
-            {/* ---- Actor-Kontext ---- */}
+            {/* ---- actor context ---- */}
             {kind === 'client' && actor && (
               <div className="flex flex-col gap-2">
+                <EnrichPanel slug={slug} kind="ip" value={artifact.artifact} />
                 <div className="grid grid-cols-2 gap-2">
                   <MetaCell label={tr('table.requests')}>{formatCount(actor.actor.requests)}</MetaCell>
                   <MetaCell label={tr('field.period')}>

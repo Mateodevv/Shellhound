@@ -13,6 +13,7 @@ import {
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
+import { EnrichPanel } from '../components/Enrich'
 import type { ViewId } from '../App'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
@@ -261,6 +262,14 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 <Trash2 size={13} />
               </Button>
             </div>
+            {/* Only hashes and addresses can be asked about outside. A path
+                would name the server, a login would name a person -- neither
+                belongs in someone else's database. */}
+            {(ioc.type === 'hash' || ioc.type === 'ip') && (
+              <div className="border-t border-[var(--line)] px-4 py-2">
+                <EnrichPanel slug={slug} kind={ioc.type} value={ioc.value} />
+              </div>
+            )}
             {open && (
               <div className="flex flex-col gap-1 border-t border-[var(--line)] px-4 py-2">
                 {links.map((l) => {
