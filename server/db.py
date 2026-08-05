@@ -288,7 +288,36 @@ _ADDED_COLUMNS = {
 }
 
 
-def _migrate(conn):
+# Die Fassung des Fall-Schemas. HOCHZÄHLEN, wenn SCHEMA, _ADDED_COLUMNS
+# oder eine der Datenkorrekturen in _upgrade() sich ändert -- daran erkennt
+# eine bestehende Fall-Datenbank, dass sie einmal angefasst werden muss.
+CASE_SCHEMA_VERSION = 1
+
+
+def _stored_version(conn):
+    """Die Fassung, auf der diese Datei steht. 0 = neu oder von vor der
+    Versionierung. Reiner Lesezugriff -- er darf niemals blockieren."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        return int(row[0]) if row and str(row[0]).isdigit() else 0
+    except sqlite3.Error:
+        # meta gibt es noch nicht: frische Datei.
+        return 0
+
+
+def _is_fresh(conn):
+    """Hat diese Datei überhaupt schon Tabellen? Reiner Lesezugriff."""
+    row = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'findings'").fetchone()
+    return not (row and row[0])
+
+
+def _upgrade(conn):
+    """Schema anlegen und Datenkorrekturen nachziehen -- der EINZIGE Pfad,
+    auf dem eine Verbindung schreibt, bevor der Aufrufer etwas will."""
+    conn.executescript(SCHEMA)
     for table, columns in _ADDED_COLUMNS.items():
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         for name, decl in columns:
@@ -304,6 +333,11 @@ def _migrate(conn):
         "WHERE source = 'logs' AND rule LIKE 'Scanner tool User-Agent%' "
         "AND severity != ?", (SEV_INFO, SEV_INFO))
     _relativize_ioc_paths(conn)
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (str(CASE_SCHEMA_VERSION),))
+    conn.commit()
 
 
 def _relativize_ioc_paths(conn):
@@ -331,14 +365,46 @@ def _relativize_ioc_paths(conn):
 
 
 def connect(case_dir):
-    """Open (and if needed create) the case database."""
+    """Open (and if needed create) the case database.
+
+    ÖFFNEN DARF NICHT SCHREIBEN. Diese Funktion läuft bei JEDER Anfrage --
+    auch bei rein lesenden wie der Job-Liste, die die Oberfläche im
+    Sekundentakt abfragt, solange eine Analyse läuft. Solange sie
+    bedingungslos Schema und Datenkorrekturen schrieb, traf jede dieser
+    Leseanfragen auf die Schreibsperre der laufenden Engine und starb mit
+    "database is locked" -- mitten in der Arbeit, sichtbar als Absturz im
+    Server-Fenster.
+
+    Geschrieben wird deshalb nur noch, wenn die gespeicherte Fassung von
+    CASE_SCHEMA_VERSION abweicht: einmal je Fall statt einmal je Anfrage.
+    Der Normalfall ist damit reines Lesen und kollidiert mit nichts."""
     path = case_db_path(case_dir)
     conn = sqlite3.connect(str(path), timeout=30)
-    conn.execute("PRAGMA journal_mode = WAL")
+    # Ausdrücklich, nicht nur über `timeout`: SQLite wartet damit auf eine
+    # belegte Sperre, statt sofort aufzugeben.
+    conn.execute("PRAGMA busy_timeout = 30000")
+    # WAL nur setzen, wenn nötig -- der Wechsel des Journal-Modus verlangt
+    # kurz exklusiven Zugriff, das Auslesen nicht.
+    if (conn.execute("PRAGMA journal_mode").fetchone() or [""])[0] != "wal":
+        conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
-    conn.executescript(SCHEMA)
-    _migrate(conn)
     conn.row_factory = sqlite3.Row
+
+    if _stored_version(conn) != CASE_SCHEMA_VERSION:
+        if _is_fresh(conn):
+            # Ohne Tabellen kann der Aufrufer nichts tun -- hier MUSS
+            # geschrieben werden, und ein Fehler gehört nach oben.
+            _upgrade(conn)
+        else:
+            try:
+                _upgrade(conn)
+            except sqlite3.OperationalError:
+                # Die Aktualisierung ist WARTUNG, keine Antwort auf die
+                # Frage des Aufrufers. Hält gerade eine Engine die
+                # Schreibsperre, bekommt sie den nächsten Versuch -- die
+                # laufende Leseanfrage scheitert deswegen nicht. Die
+                # Tabellen stehen bereits.
+                conn.rollback()
     return conn
 
 
