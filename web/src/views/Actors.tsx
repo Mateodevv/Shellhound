@@ -165,7 +165,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
 
       {checked.size > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
-          <span className="text-[13px] font-semibold">{checked.size} ausgewählt</span>
+          <span className="text-[13px] font-semibold">{tr('common.selected', { n: checked.size })}</span>
           <Button variant="primary"
             onClick={() => {
               setTraceMarks({
@@ -177,7 +177,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             }}>
             <Crosshair size={14} /> Trace ({checked.size} Clients)
           </Button>
-          <Tooltip hint="Übernimmt die Adressen als Indikatoren — getaggt mit dem, was die Logs sie tun gesehen haben (Scanner, Brute-Force, erfolgreich).">
+          <Tooltip hint={tr('actors.collect.hint')}>
             <Button onClick={() => collect.mutate([...checked])}>
               <Box size={14} /> In IOC Box
             </Button>
@@ -186,9 +186,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${[...checked].join(',')}`)}
           >
-            <Download size={14} /> Trace als CSV
+            <Download size={14} /> {tr('actors.traceCsv')}
           </a>
-          <Button variant="ghost" onClick={() => setChecked(new Set())}>Auswahl leeren</Button>
+          <Button variant="ghost" onClick={() => setChecked(new Set())}>{tr('common.clearSelection')}</Button>
         </div>
       )}
 
@@ -203,13 +203,13 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               </th>
               <th className="px-2 py-2">{tr('table.client')}</th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Aktivität <InfoDot body={tr('field.sparkline')} /></span>
+                <span className="inline-flex items-center gap-1">{tr('table.activity')} <InfoDot body={tr('field.sparkline')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">Requests <InfoDot body={tr('field.requests')} /></span>
               </th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Zeitraum <InfoDot body={tr('field.timespan')} /></span>
+                <span className="inline-flex items-center gap-1">{tr('field.period')} <InfoDot body={tr('field.timespan')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">
@@ -333,7 +333,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       </div>
       {data && data.total > actors.length && (
         <div className="text-[12px] text-[var(--muted)]">
-          {formatCount(actors.length)} von {formatCount(data.total)} Clients angezeigt — Filter/Suche verfeinern.
+          {tr('actors.capped', { shown: formatCount(actors.length), total: formatCount(data.total) })}
         </div>
       )}
 

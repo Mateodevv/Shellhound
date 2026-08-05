@@ -210,7 +210,7 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
   return (
     <Tooltip hint={state === 'fail'
       ? tr('copy.unavailable')
-      : `${label} — legt den Wert in die Zwischenablage.`}>
+      : tr('copy.hint', { what: label })}>
       <button onClick={copy} aria-label={label}
         className={clsx(
           'cursor-pointer rounded-md border border-transparent p-1 transition-colors',

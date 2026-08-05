@@ -83,7 +83,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
                 <ChevronLeft size={14} />
               </Button>
               <span className="tabular whitespace-nowrap">
-                Seite {page} / {pages}
+                {tr('viewer.page')} {page} / {pages}
               </span>
               <Button variant="ghost" disabled={data.eof}
                 onClick={() => setOffset(offset + data.window)}>
@@ -94,14 +94,14 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
 
           {data && (
             <span className="tabular text-[11.5px] text-[var(--muted)]">
-              Byte {formatCount(data.offset)}–{formatCount(data.offset + data.length)}
-              {' von '}{formatCount(data.size)}
-              {isFetching && ' · lädt…'}
+              {tr('viewer.byte')} {formatCount(data.offset)}–{formatCount(data.offset + data.length)}
+              {' '}{tr('viewer.of')}{' '}{formatCount(data.size)}
+              {isFetching && ` · ${tr('common.loading')}`}
             </span>
           )}
 
           <span className="ml-auto">
-            <CopyButton value={path} label="Pfad kopieren" />
+            <CopyButton value={path} label={tr('copy.path')} />
           </span>
         </div>
 
@@ -147,8 +147,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
 
         {data && data.from_line == null && data.mode === 'raw' && (
           <p className="text-[11px] text-[var(--muted)]">
-            Diese Seite beginnt mitten in der Datei — Zeilennummern wären geraten
-            und werden deshalb nicht angezeigt. Die Byte-Angabe oben ist exakt.
+            {tr('viewer.midFile')}
           </p>
         )}
       </div>

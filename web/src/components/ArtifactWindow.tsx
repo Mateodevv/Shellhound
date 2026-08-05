@@ -10,14 +10,14 @@
 //
 // GETEILT zwischen Findings und Actors: dasselbe Artefakt sieht überall
 // gleich aus, und eine Entscheidung ist überall dieselbe Entscheidung.
-import { useT } from '../i18n'
+import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Bug, Check, Crosshair, Eye, FileSearch, ShieldCheck, ShieldOff, X,
 } from 'lucide-react'
-import { KIND_ICON, KIND_LABEL } from '../artifactKinds'
+import { KIND_ICON } from '../artifactKinds'
 import {
   api, type ArtifactContext, type Finding, type TriageResult, type TriageState,
 } from '../api'
@@ -31,11 +31,12 @@ import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
 import { explainRule } from '../explain'
 
-// Mit Artikel, für die Frage im Detail-Fenster: „Ist dieses Datei" liest
-// sich wie eine Maschine, und der Satz ist die wichtigste Zeile darin.
+// With article, for the question in the detail window: "Is this file part of
+// the incident?" is the most important line in there, so each kind gets its
+// own phrasing instead of a generic noun.
 const KIND_THIS: Record<string, string> = {
-  file: 'diese Datei', table: 'diese Tabelle',
-  client: 'dieser Client', dump: 'dieser Dump',
+  file: 'artifact.this.file', table: 'artifact.this.table',
+  client: 'artifact.this.client', dump: 'artifact.this.dump',
 }
 
 /** Das Minimum, mit dem sich das Fenster öffnen lässt. Findings reicht seine
@@ -139,7 +140,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         {collected.length > 0 && (
           <div className="rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 animate-fade-up">
             <div className="mb-1 text-[12px] font-semibold text-[var(--ok)]">
-              In die IOC Box übernommen:
+              {tr('artifact.collected')}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {collected.map((c, i) => (
@@ -158,12 +159,15 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- die Entscheidung ---- */}
             <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-3">
               <div className="mb-2 text-[12.5px]">
-                Ist {KIND_THIS[kind] ?? 'dieses Artefakt'}{' '}
-                <span className="font-semibold">Teil des Vorfalls?</span>{' '}
+                {tr('artifact.question', {
+                  what: tr(KIND_THIS[kind] ?? 'artifact.this.generic'),
+                })}{' '}
+                <span className="font-semibold">{tr('artifact.question.tail')}</span>{' '}
                 <span className="text-[var(--muted)]">
-                  Die Entscheidung gilt für das ganze Artefakt — alle{' '}
-                  {formatCount(findings.length)} Finding{findings.length === 1 ? '' : 's'}{' '}
-                  darunter sind die Begründung dafür.
+                  {tr('artifact.question.scope', {
+                    n: formatCount(findings.length),
+                    findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
+                  })}
                 </span>
               </div>
               <textarea
@@ -175,46 +179,42 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               />
               <div className="flex flex-wrap gap-2">
                 <Button variant="primary" onClick={() => onTriage('confirmed', note)}>
-                  <Check size={14} /> True Positive &amp; sammeln
+                  <Check size={14} /> {tr('artifact.truePositiveCollect')}
                 </Button>
                 <Button onClick={() => onTriage('reviewed', note)}>
-                  <Eye size={14} /> Gesichtet
+                  <Eye size={14} /> {tr('triage.reviewed')}
                 </Button>
                 <Button variant="danger" onClick={() => onTriage('dismissed', note)}>
                   <X size={14} /> False Positive
                 </Button>
                 {ctx?.triaged_at && (
                   <span className="self-center text-[11px] text-[var(--muted)]">
-                    zuletzt entschieden: {absoluteTime(ctx.triaged_at)}
+                    {tr('artifact.lastDecided')}: {absoluteTime(ctx.triaged_at)}
                   </span>
                 )}
               </div>
               <p className="mt-2 text-[11px] text-[var(--muted)]">
-                Nichts wird gelöscht: ein False Positive verschwindet nur aus der
-                Arbeitsliste und bleibt mit deiner Notiz über den Filter erreichbar.
-                True Positive bleibt stehen und legt das Artefakt (+ SHA-256 bei
-                Dateien) in die IOC Box, samt der anfragenden Clients aus dem
-                Log-Index.
+                {tr('artifact.triage.explain')}
               </p>
             </div>
 
             {/* ---- was das Artefakt IST ---- */}
-            <Block title={KIND_LABEL[kind] ?? 'Artefakt'}>
+            <Block title={tr(`kind.${kind}`)}>
               <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
                 <span className="min-w-0 flex-1">{artifact.artifact}</span>
-                <CopyButton value={artifact.artifact} label="Pfad kopieren"
+                <CopyButton value={artifact.artifact} label={tr('copy.path')}
                   className="shrink-0" />
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {kind === 'file' && file?.exists && (
                   <Button onClick={() => onView(artifact.artifact,
                                                 findings.find((f) => f.line)?.line ?? null)}>
-                    <FileSearch size={14} /> Datei ansehen (Raw &amp; Hex)
+                    <FileSearch size={14} /> {tr('artifact.viewFile')}
                   </Button>
                 )}
                 {kind === 'client' && (
                   <Button onClick={() => onTrace([artifact.artifact], marks)}>
-                    <Crosshair size={14} /> Trace öffnen
+                    <Crosshair size={14} /> {tr('artifact.openTrace')}
                   </Button>
                 )}
               </div>
@@ -261,7 +261,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             )}
 
             {/* ---- WARUM es hier steht: jedes Finding auf diesem Artefakt ---- */}
-            <Block title={`Warum dieses Artefakt geflaggt wurde (${formatCount(findings.length)})`}>
+            <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
               <div className="flex flex-col gap-1.5">
                 {findings.map((f) => {
                   const e = explainRule(tr, f.rule)
@@ -276,7 +276,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                           <button
                             className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
                             onClick={() => onView(artifact.artifact, f.line)}>
-                            Zeile {f.line}
+                            {tr('artifact.line')} {f.line}
                           </button>
                         )}
                       </div>
@@ -302,8 +302,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           <div className="flex flex-col gap-4">
             {preview && !preview.error && !preview.binary && preview.lines && (
               <Block title={<>
-                Dateiinhalt {preview.focus ? `um Zeile ${preview.focus}` : '(Anfang)'}
-                {preview.truncated && ' — Datei gekürzt gelesen'}
+                {tr('artifact.fileContent')}{' '}
+                {preview.focus ? tr('artifact.aroundLine', { n: preview.focus }) : tr('artifact.fromStart')}
+                {preview.truncated && ` — ${tr('artifact.readTruncated')}`}
               </>}>
                 <pre className="mono max-h-[26rem] overflow-auto rounded-lg bg-[var(--code-bg)] px-0 py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
                   {preview.lines.map((l, i) => {
@@ -322,7 +323,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             )}
             {preview?.binary && (
               <div className="text-[12px] text-[var(--muted)]">
-                Binärdatei — kein Text-Preview. Die Hex-Ansicht zeigt sie unverfälscht.
+                {tr('artifact.binaryNoPreview')}
               </div>
             )}
 
@@ -331,7 +332,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               <div className="flex flex-col gap-2">
                 <div className="grid grid-cols-2 gap-2">
                   <MetaCell label="Requests">{formatCount(actor.actor.requests)}</MetaCell>
-                  <MetaCell label="Zeitraum">
+                  <MetaCell label={tr('field.period')}>
                     {formatDay(actor.actor.first_epoch, actor.actor.tz)} → {formatDay(actor.actor.last_epoch, actor.actor.tz)}
                   </MetaCell>
                   <MetaCell label="Fehler 4xx/5xx">
@@ -354,7 +355,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     ))}
                   </div>
                 )}
-                <Block title="Meistaufgerufene URIs">
+                <Block title={tr('artifact.topUris')}>
                   <div className="flex flex-col gap-0.5">
                     {actor.top_paths.map((p) => (
                       <div key={p.uri} className="flex items-center gap-2 text-[12px]">
@@ -366,7 +367,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </Block>
                 {actor.top_agents.length > 0 && (
                   <div className="text-[11px] text-[var(--muted)]">
-                    User-Agents: {actor.top_agents.map((a) => `${a.agent || '(leer)'} (${a.n}×)`).join(' · ')}
+                    User agents: {actor.top_agents.map((a) => `${a.agent || tr('artifact.emptyAgent')} (${a.n}×)`).join(' · ')}
                   </div>
                 )}
               </div>
@@ -375,13 +376,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- die IPs an diesem Artefakt, jede sofort als Trace ---- */}
             <Block
               title={<span className="flex items-center gap-1.5">
-                <Crosshair size={12} /> Clients an diesem Artefakt ({ips.length})
+                <Crosshair size={12} /> {tr('artifact.clientsHere')} ({ips.length})
               </span>}
               right={ips.length > 1 && (
                 <button
                   className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
                   onClick={() => onTrace(ips.map((i) => i.ip), marks)}>
-                  alle zusammen tracen
+                  {tr('artifact.traceAll')}
                 </button>
               )}>
               {ips.length ? (
@@ -391,7 +392,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                       className="flex items-center gap-2 rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
                       <IpFlag ip={h.ip} />
                       <span className="mono font-medium">{h.ip}</span>
-                      {h.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
+                      {h.in_box && <Tag tone="accent" explain={tr('artifact.ipInBox')}>IOC</Tag>}
                       <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--muted)]"
                         title={h.why}>
                         {h.why}
@@ -410,7 +411,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </div>
               ) : (
                 <div className="text-[12px] text-[var(--muted)]">
-                  Keine Adresse im Log-Index, die auf dieses Artefakt zeigt.
+                  {tr('artifact.noClients')}
                 </div>
               )}
             </Block>
@@ -418,9 +419,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- Tabellen-/Dump-Kontext ---- */}
             {ctx?.table && (
               <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Zeilen im Dump">{formatCount(ctx.table.rows)}</MetaCell>
-                <MetaCell label="Spalten">{ctx.table.columns}</MetaCell>
-                <MetaCell label="Dump-Bytes">{formatBytes(ctx.table.bytes)}</MetaCell>
+                <MetaCell label={tr('artifact.rowsInDump')}>{formatCount(ctx.table.rows)}</MetaCell>
+                <MetaCell label={tr('artifact.columns')}>{ctx.table.columns}</MetaCell>
+                <MetaCell label={tr('artifact.dumpBytes')}>{formatBytes(ctx.table.bytes)}</MetaCell>
                 <MetaCell label="CMS">{ctx.table.cms || '—'}</MetaCell>
                 {ctx.table.col_list && (
                   <div className="col-span-2">

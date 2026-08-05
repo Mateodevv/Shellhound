@@ -303,8 +303,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         ).map(([s, label, color]) => (
           <Tooltip key={s}
             hint={hiddenSeverity.has(s)
-              ? `${label}-Artefakte sind ausgeblendet — Klick holt sie zurück.`
-              : `Klick blendet ${label}-Artefakte aus.`}>
+              ? tr('findings.hidden.back', { what: label })
+              : tr('filter.hide', { what: label })}>
             <Chip active={false} dimmed={hiddenSeverity.has(s)}
               onClick={() => setHiddenSeverity((prev) => toggleHidden(prev, s))}
               count={counts?.severity[s] ?? 0}>
@@ -316,8 +316,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         {(['new', 'confirmed', 'dismissed'] as const).map((state) => (
           <Tooltip key={state}
             hint={hiddenTriage.has(state)
-              ? `${tr(`triage.${state}`)} ist ausgeblendet — Klick holt sie zurück.`
-              : `Klick blendet »${tr(`triage.${state}`)}« aus.`}>
+              ? tr('findings.hidden.back', { what: tr(`triage.${state}`) })
+              : tr('filter.hide', { what: tr(`triage.${state}`) })}>
             <Chip active={false} dimmed={hiddenTriage.has(state)}
               onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
               count={counts?.triage[state] ?? 0}>
@@ -331,8 +331,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           return (
           <Tooltip key={key}
             hint={hiddenSource.has(key)
-              ? `${label} ist ausgeblendet — Klick holt die Artefakte zurück.`
-              : `Klick blendet Artefakte aus dieser Quelle aus.`}>
+              ? tr('findings.hidden.back', { what: label })
+              : tr('filter.hide', { what: label })}>
             <Chip active={false} dimmed={hiddenSource.has(key)}
               onClick={() => setHiddenSource((prev) => toggleHidden(prev, key))}
               count={counts?.source[key] ?? 0}>
@@ -382,15 +382,16 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
             placeholder={tr('findings.bulkNote')}
             className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
-          <Button variant="ghost" onClick={() => setChecked(new Set())}>Auswahl leeren</Button>
+          <Button variant="ghost" onClick={() => setChecked(new Set())}>{tr('common.clearSelection')}</Button>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
           <span>
-            {formatCount(data?.total ?? 0)} Artefakt{(data?.total ?? 0) === 1 ? '' : 'e'}
-            {' aus '}{formatCount(data?.findings_total ?? 0)} Findings
-            {' in '}{formatCount(categories.length)}{' '}
-            Kategorie{categories.length === 1 ? '' : 'n'}
+            {tr('findings.count', {
+              artifacts: formatCount(data?.total ?? 0),
+              findings: formatCount(data?.findings_total ?? 0),
+              categories: formatCount(categories.length),
+            })}
           </span>
           <button
             className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
@@ -464,7 +465,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
                     onChange={() => toggleCategoryChecked(c)}
-                    title="Alle Artefakte dieser Kategorie markieren" />
+                    title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
                     {open
@@ -487,17 +488,16 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                           {formatCount(c.artifacts.length)}{' '}
                           {artifactNoun(tr, c.kind, c.artifacts.length)}
                         </span>
-                        {' aus '}
-                        {formatCount(c.findings)} Finding{c.findings === 1 ? '' : 's'}
-                        {decided > 0 && ` · ${decided} entschieden`}
+                        {' '}{tr('findings.fromN', { n: formatCount(c.findings) })}
+                        {decided > 0 && ` · ${tr('findings.decided', { n: decided })}`}
                       </div>
                     </div>
                   </button>
                   <SeverityBadge severity={c.worst} />
-                  {/* Fortschritt: wie viel dieser Kategorie ist entschieden? */}
+                  {/* Progress: how much of this category is decided? */}
                   <Tooltip
-                    title={`${decided} von ${c.artifacts.length} entschieden`}
-                    hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${c.artifacts.length - decided} offen`}>
+                    title={tr('findings.progress', { decided, total: c.artifacts.length })}
+                    hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${tr('findings.open', { n: c.artifacts.length - decided })}`}>
                     <div className="flex w-24 shrink-0 items-center gap-2">
                       <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)]">
                         {c.confirmed > 0 && (
@@ -544,7 +544,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       else next.delete(a.artifact)
                       setChecked(next)
                     }} />
-                  <Tooltip hint={open ? 'Findings zuklappen' : 'Zeigt die Regeln, die auf dieses Artefakt angesprochen haben.'}>
+                  <Tooltip hint={open ? tr('findings.collapse') : tr('findings.expand')}>
                     <button onClick={() => toggleArtifact(a)}
                       className="shrink-0 cursor-pointer rounded p-0.5 text-[var(--muted)] hover:text-[var(--fg)]">
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -554,16 +554,15 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                     onClick={() => {
                       setCursor(vi.index)
-                      // Das Sammel-Ergebnis gehört zu DER Aktion, die es
-                      // erzeugt hat -- beim Öffnen eines anderen Artefakts
-                      // verfällt es, sonst liest es sich als Ergebnis für
-                      // dieses hier.
+                      // The collect result belongs to THE action that produced
+                      // it -- opening another artifact expires it, otherwise it
+                      // reads as a result for this one.
                       t.clearCollected()
                       setSelected(a)
                     }}>
-                    {/* Die Art des Artefakts als Symbol, eingefärbt nach dem
-                        Schweregrad: eine Datei sieht anders aus als ein
-                        Client, und Rot sticht aus einer Liste heraus. */}
+                    {/* The artifact kind as an icon, tinted by severity: a file
+                        looks different from a client, and red stands out of a
+                        list. */}
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
                       style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`,
                                color: tint }}>
@@ -580,7 +579,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   </button>
                   <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     {a.artifact_kind === 'file' && (
-                      <Tooltip hint="Die Datei im Original ansehen — als Text und als Hex-Dump.">
+                      <Tooltip hint={tr('findings.viewFile.hint')}>
                         <button
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setViewing({ path: a.artifact, line: a.items[0]?.line ?? null })}>
@@ -589,7 +588,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       </Tooltip>
                     )}
                     {a.artifact_kind === 'client' && (
-                      <Tooltip hint="Jeden Request dieses Clients ansehen.">
+                      <Tooltip hint={tr('findings.trace.hint')}>
                         <button
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setTraceIps([a.artifact])}>
@@ -753,7 +752,7 @@ function ArtifactName({ artifact, kind, roots }: {
     : null
   return (
     <Tooltip wide className="min-w-0"
-      title={rootName ? `unter: ${rootName}` : tr('findings.fullPath')}
+      title={rootName ? tr('findings.under', { root: rootName }) : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
         {root ? rel : shortPath(artifact, 80)}

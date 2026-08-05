@@ -16,6 +16,7 @@ import {
   Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { formatCount } from '../format'
+import { useT } from '../i18n'
 
 export interface TimelinePoint {
   day: string
@@ -28,18 +29,20 @@ export interface TimelinePoint {
 }
 
 const LABEL: Record<string, string> = {
-  requests: 'Anfragen gesamt',
-  ok: 'beantwortet (2xx)',
-  errors: 'abgewiesen (4xx/5xx)',
-  new_clients: 'neue Clients',
+  requests: 'chart.requests',
+  ok: 'chart.ok',
+  errors: 'chart.errors',
+  new_clients: 'chart.newClients',
 }
 
 export function TimelineChart({ data, height = 220 }: {
   data: TimelinePoint[]
   height?: number
 }) {
-  if (!data.length) return null
+  const tr = useT()
+  const label = (k: string) => (LABEL[k] ? tr(LABEL[k]) : k)
   const hasOk = data.some((d) => d.ok != null)
+  if (!data.length) return null
   return (
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
@@ -68,11 +71,11 @@ export function TimelineChart({ data, height = 220 }: {
           }}
           labelStyle={{ color: 'var(--muted)', fontWeight: 600 }}
           formatter={(value, name) =>
-            [formatCount(value as number), LABEL[name as string] ?? name]}
+            [formatCount(value as number), label(name as string)]}
         />
         <Legend
           wrapperStyle={{ fontSize: 12, color: 'var(--muted)' }}
-          formatter={(v: string) => LABEL[v] ?? v}
+          formatter={(v: string) => label(v)}
         />
         <Bar dataKey="requests" fill="var(--accent)" radius={[3, 3, 0, 0]}
           maxBarSize={26} fillOpacity={0.55} />

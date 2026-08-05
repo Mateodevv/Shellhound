@@ -67,7 +67,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
       const Icon = KIND_ICON[a.artifact_kind] ?? Box
       out.push({
         key: `art:${a.artifact}`,
-        group: 'Artefakte',
+        group: tr('nav.findings'),
         render: (
           <>
             <Icon size={14} className="shrink-0 text-[var(--muted)]" />
@@ -87,7 +87,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const a of data.actors) {
       out.push({
         key: `actor:${a.ip}`,
-        group: 'Actors',
+        group: tr('nav.actors'),
         render: (
           <>
             <Users size={14} className="shrink-0 text-[var(--muted)]" />
@@ -108,7 +108,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const i of data.iocs) {
       out.push({
         key: `ioc:${i.id}`,
-        group: 'IOC Box',
+        group: tr('nav.iocbox'),
         render: (
           <>
             <Box size={14} className="shrink-0 text-[var(--muted)]" />
@@ -122,7 +122,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const a of data.accounts) {
       out.push({
         key: `acc:${a.id}`,
-        group: 'Konten',
+        group: tr('nav.database'),
         render: (
           <>
             <User size={14} className="shrink-0 text-[var(--muted)]" />
@@ -208,12 +208,12 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
           })}
           {q.trim().length >= 2 && data && !items.length && (
             <div className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
-              Nichts gefunden — auch das ist eine Aussage.
+              {tr('palette.nothing')}
             </div>
           )}
           {q.trim().length < 2 && (
             <div className="px-4 py-6 text-center text-[12px] text-[var(--muted)]">
-              Sucht in Artefakten, Indikatoren, Actors und Konten dieses Falls.
+              {tr('palette.scope')}
             </div>
           )}
         </div>

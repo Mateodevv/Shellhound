@@ -2,7 +2,7 @@
 // Meldung über Mitentschiedenes mit Rückgängig, Vorschlagsfenster für die
 // mittlere Stufe. Der Hook dazu lebt in useTriage.ts; wer ihn benutzt,
 // rendert einmal <TriageFollowUp>.
-import { useT } from '../i18n'
+import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { Bug, Check, Crosshair, Undo2, X } from 'lucide-react'
 import { type TriageLink } from '../api'
@@ -37,9 +37,10 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
         onDecide={(names, state) => {
           t.review(null)
           t.dismissNotice()
-          // Ein Vorschlag ist bereits das Ergebnis einer Übernahme — er
-          // zieht keine weitere nach sich.
-          t.decide(names, state, 'aus Vorschlag entschieden', false)
+          // A suggestion is already the result of a propagation — it does
+          // not pull another one behind it. The note is written into the case
+          // and therefore stays in the project language, English.
+          t.decide(names, state, 'decided from suggestion', false)
         }}
       />
 
@@ -48,18 +49,21 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
         onClose={t.dismissNotice}
         tone={n?.linked.length ? 'ok' : 'info'}
         title={n?.linked.length
-          ? `${formatCount(n.linked.length)} Artefakt${n.linked.length === 1 ? '' : 'e'} mitentschieden`
-          : `${formatCount(n?.suggested.length ?? 0)} verknüpfte${(n?.suggested.length ?? 0) === 1 ? 's' : ''} Artefakt${(n?.suggested.length ?? 0) === 1 ? '' : 'e'} gefunden`}
+          ? plural(tr, n.linked.length, 'triage.alsoDecided.one', 'triage.alsoDecided.many',
+                   { n: formatCount(n.linked.length) })
+          : plural(tr, n?.suggested.length ?? 0, 'triage.linkedFound.one', 'triage.linkedFound.many',
+                   { n: formatCount(n?.suggested.length ?? 0) })}
         actions={
           <>
             {!!n?.suggested.length && (
               <Button onClick={() => t.review(n.suggested)}>
-                {formatCount(n.suggested.length)} Vorschlag{n.suggested.length === 1 ? '' : 'e'} prüfen
+                {plural(tr, n.suggested.length, 'triage.review.one', 'triage.review.many',
+                        { n: formatCount(n.suggested.length) })}
               </Button>
             )}
             {!!n?.linked.length && (
               <Button variant="ghost" onClick={() => t.undo(n.linked)}>
-                <Undo2 size={14} /> Rückgängig
+                <Undo2 size={14} /> {tr('common.undo')}
               </Button>
             )}
             <Button variant="ghost" onClick={t.dismissNotice}>{tr('common.close')}</Button>
@@ -67,8 +71,7 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
         }>
         {!!n?.linked.length && (
           <>
-            Das Log belegt, dass diese zum selben Vorfall gehören — sie sind
-            jetzt True Positive, mit Vermerk woraus:
+            {tr('triage.alsoDecided.body')}
             <ul className="mt-1 flex flex-col gap-0.5">
               {n.linked.slice(0, 4).map((l) => (
                 <li key={l.artifact} className="truncate">
@@ -76,22 +79,21 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
                   {' — '}{l.why}
                 </li>
               ))}
-              {n.linked.length > 4 && <li>… und {n.linked.length - 4} weitere</li>}
+              {n.linked.length > 4 && <li>{tr('triage.andMore', { n: n.linked.length - 4 })}</li>}
             </ul>
           </>
         )}
         {!n?.linked.length && !!n?.suggested.length && (
-          <>Nur angefragt, nie erfolgreich beantwortet — das entscheidet sich
-            nicht von selbst.</>
+          <>{tr('triage.linkedFound.body')}</>
         )}
       </Toast>
     </>
   )
 }
 
-/** Die mittlere Stufe: Artefakte, die an der Entscheidung HÄNGEN, aber nicht
- *  von ihr FOLGEN — angefragt, nie erfolgreich. Sie werden vorgelegt, nicht
- *  entschieden: eine Sondierung ins Leere ist etwas anderes als ein Zugriff. */
+/** The middle tier: artifacts that HANG on the decision but do not FOLLOW
+ *  from it — requested, never successful. They are put forward, not decided:
+ *  a probe into the void is something other than an access. */
 function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
   links: TriageLink[] | null
   roots: EvidenceRoot[]
@@ -107,14 +109,14 @@ function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
     <Modal open onClose={onClose} layer={layer}
       title={<span className="flex items-center gap-2">
         <Crosshair size={16} className="text-[var(--accent)]" />
-        {formatCount(links.length)} verknüpfte{links.length === 1 ? 's' : ''} Artefakt{links.length === 1 ? '' : 'e'} prüfen
+        {plural(tr, links.length, 'triage.review.linked.one', 'triage.review.linked.many',
+                { n: formatCount(links.length) })}
       </span>}>
       <div className="flex flex-col gap-3">
         <p className="text-[12.5px] text-[var(--muted)]">
-          Diese hängen an dem, was du gerade entschieden hast — aber der Log
-          zeigt <span className="text-[var(--fg)]">keinen erfolgreichen Zugriff</span>.
-          Ein Versuch ins Leere kann zum Vorfall gehören oder Rauschen sein;
-          deshalb steht die Entscheidung hier bei dir.
+          {tr('triage.suggest.a')}{' '}
+          <span className="text-[var(--fg)]">{tr('triage.suggest.noAccess')}</span>.{' '}
+          {tr('triage.suggest.b')}
         </p>
         <div className="flex flex-col gap-1">
           {links.map((l) => {
@@ -146,11 +148,11 @@ function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" disabled={!picked.size}
             onClick={() => onDecide([...picked], 'confirmed')}>
-            <Check size={14} /> {formatCount(picked.size)} als True Positive
+            <Check size={14} /> {tr('triage.markAs', { n: formatCount(picked.size), what: 'True Positive' })}
           </Button>
           <Button variant="danger" disabled={!picked.size}
             onClick={() => onDecide([...picked], 'dismissed')}>
-            <X size={14} /> {formatCount(picked.size)} als False Positive
+            <X size={14} /> {tr('triage.markAs', { n: formatCount(picked.size), what: 'False Positive' })}
           </Button>
           <Button variant="ghost" onClick={onClose}>{tr('common.later')}</Button>
         </div>
