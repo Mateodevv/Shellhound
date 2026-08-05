@@ -1,10 +1,10 @@
-// Tooltip.tsx — Erklärung bei Hover/Fokus.
+// Tooltip.tsx -- explanation on hover/focus.
 //
-// Warum nicht `title=""`: der native Tooltip erscheint erst nach ~1,5s, kann
-// keine zwei Absätze und ist per Tastatur nicht erreichbar. Hier ist die
-// Erklärung Teil der Oberfläche, nicht ein verstecktes Extra — deshalb eigene
-// Umsetzung mit fixer Positionierung (funktioniert auch in scrollenden
-// Tabellen und Drawern, ohne dass ein overflow:hidden sie abschneidet).
+// Why not `title=""`: the native tooltip only appears after ~1.5s, cannot do
+// two paragraphs and is unreachable by keyboard. Here the explanation is
+// part of the interface, not a hidden extra -- hence an own implementation
+// with fixed positioning (which also works in scrolling tables and drawers,
+// without an overflow:hidden cutting it off).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { HelpCircle } from 'lucide-react'
@@ -14,7 +14,7 @@ interface Props {
   children: ReactNode
   title?: ReactNode
   body?: ReactNode
-  hint?: ReactNode          // zweite Zeile: "was heißt das für mich"
+  hint?: ReactNode          // second line: "what does that mean for me"
   wide?: boolean
   className?: string
   as?: 'span' | 'div'
@@ -73,11 +73,11 @@ export function Tooltip({ children, title, body, hint, wide, className, as = 'sp
       >
         {children}
       </Tag>
-      {/* IN EIN PORTAL, nicht an Ort und Stelle: die virtualisierten Zeilen
-          der Findings-Liste tragen ein `transform`, und ein Transform macht
-          aus `position: fixed` einen Bezug auf DIESE Zeile und sperrt den
-          z-index in ihren Stacking-Context. Der Tooltip lag dann hinter der
-          nächsten Zeile. Am <body> gibt es diesen Käfig nicht. */}
+      {/* INTO A PORTAL, not in place: the virtualised rows of the findings
+          list carry a `transform`, and a transform turns `position: fixed`
+          into a reference to THAT row and locks the z-index into its
+          stacking context. The tooltip then lay behind the next row. At
+          <body> that cage does not exist. */}
       {open && createPortal(
         <div
           role="tooltip"
@@ -104,8 +104,8 @@ export function Tooltip({ children, title, body, hint, wide, className, as = 'sp
   )
 }
 
-/** Ein kleines Fragezeichen, das bei Hover erklärt. Für Spaltenköpfe und
- *  Kennzahlen, wo der Text selbst keinen Platz für die Erklärung hat. */
+/** A small question mark that explains on hover. For column heads and key
+ *  figures, where the text itself has no room for the explanation. */
 export function InfoDot({ title, body, hint, wide }: Omit<Props, 'children'>) {
   return (
     <Tooltip title={title} body={body} hint={hint} wide={wide}>

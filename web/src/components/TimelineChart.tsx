@@ -1,16 +1,16 @@
-// TimelineChart.tsx — der Verlauf: Balken für ALLE Anfragen, darüber zwei
-// Kurven für die beantworteten (2xx) und die abgewiesenen (4xx/5xx).
+// TimelineChart.tsx -- the timeline: bars for ALL requests, above them two
+// curves for the answered (2xx) and the rejected (4xx/5xx) ones.
 //
-// Warum drei Reihen statt einer: die Gesamtzahl sagt, WIE VIEL los war, das
-// Verhältnis sagt, WAS los war. 500 Anfragen mit 20 Erfolgen sind ein
-// Abklopfen, 500 mit 480 Erfolgen sind Betrieb — und eine Erfolgskurve, die
-// mitten in einer Fehlerwelle nach oben geht, ist der Moment, in dem etwas
-// funktioniert hat, das vorher nicht funktionierte.
+// Why three series instead of one: the total says HOW MUCH was going on, the
+// ratio says WHAT was going on. 500 requests with 20 successes are probing,
+// 500 with 480 successes are business as usual -- and a success curve that
+// rises in the middle of a wave of errors is the moment something worked
+// that had not worked before.
 //
-// Die Farben kommen aus den Theme-Variablen (SVG versteht `var()`), damit
-// das Diagramm dem gewählten Theme folgt statt in fest verdrahtetem Blau zu
-// stehen. 2xx trägt die OK-Farbe, Fehler die Warnfarbe — dieselbe Bedeutung
-// wie überall sonst in der Oberfläche.
+// The colours come from the theme variables (SVG understands `var()`), so
+// the chart follows the chosen theme instead of standing in hard-wired blue.
+// 2xx carries the OK colour, errors the warning colour -- the same meaning
+// as everywhere else in the interface.
 import {
   Bar, ComposedChart, CartesianGrid, Legend, Line, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -23,8 +23,8 @@ export interface TimelinePoint {
   requests: number
   errors: number
   new_clients?: number
-  /** Mit 2xx beantwortet. `null` bei einem Index aus einer älteren Version,
-   *  der die Spalte noch nicht kennt — dann bleibt die Kurve weg. */
+  /** Answered with 2xx. `null` on an index from an older version that does
+   *  not know the column yet -- the curve then stays away. */
   ok?: number | null
 }
 

@@ -1,5 +1,5 @@
-// Start.tsx — die Landing-View: offenen Fall wählen, neuen anlegen, oder
-// einen abgeschlossenen Fall aus dem Archiv zurückholen.
+// Start.tsx -- the landing view: pick an open case, create a new one, or
+// restore a closed case from the archive.
 import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'

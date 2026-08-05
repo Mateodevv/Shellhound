@@ -1,5 +1,5 @@
-// ThemeSwitcher.tsx — kleiner Popover zum Umschalten des UI-Themes.
-// `up` öffnet das Menü nach oben (für die Sidebar-Unterkante).
+// ThemeSwitcher.tsx -- a small popover for switching the UI theme.
+// `up` opens the menu upwards (for the bottom edge of the sidebar).
 import { useT } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'

@@ -1,12 +1,12 @@
-// WebrootDiff.tsx — das Webroot gegen eine bekannt saubere Kopie.
+// WebrootDiff.tsx -- the webroot against a known-clean copy.
 //
-// Die klassische Handarbeit nach jedem Webserver-Vorfall, als Abfrage: was
-// ist ZUSÄTZLICH da (hochgeladene Shells wohnen hier), was ist VERÄNDERT
-// (eingeschleuster Code in legitimen Dateien), was FEHLT (oft die Spur
-// eines Aufräumversuchs). Ein Treffer ist ein KANDIDAT, kein Fund — jedes
-// Upload-Verzeichnis ist voller legitimer Extras. Der Vergleich verkleinert
-// den Heuhaufen; ansehen, flaggen oder verwerfen bleibt Handarbeit, und
-// genau dafür stehen die Knöpfe an jeder Zeile.
+// The classic manual work after every web server incident, as a query: what
+// is EXTRA (uploaded shells live here), what is MODIFIED (injected code in
+// legitimate files), what is MISSING (often the trace of a cleanup attempt).
+// A hit is a CANDIDATE, not a find -- every upload directory is full of
+// legitimate extras. The comparison shrinks the haystack; looking, flagging
+// or dismissing stays manual work, and that is exactly what the buttons on
+// every row are for.
 import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -35,7 +35,7 @@ interface DiffData {
   webroot: { path: string } | null
 }
 
-// Nur Schlüssel auf Modulebene -- übersetzt wird beim Rendern.
+// Keys only at module level -- translation happens at render time.
 const STATUS_KEY: Record<DiffRow['status'], string> = {
   extra: 'diff.extra',
   modified: 'diff.modified',

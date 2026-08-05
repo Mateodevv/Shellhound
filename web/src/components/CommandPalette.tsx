@@ -1,9 +1,9 @@
-// CommandPalette.tsx — EIN Feld über den ganzen Fall (Strg+K).
+// CommandPalette.tsx -- ONE field across the whole case (Ctrl+K).
 //
-// Mit neun Ansichten wird „wo war nochmal…" zur echten Reibung, und die
-// Antwort liegt immer in genau einer davon. Die Palette ist ein
-// SPRUNGBRETT, keine Ergebnisliste: jede Gruppe ist hart gedeckelt, ein
-// Treffer öffnet das Artefakt-Fenster direkt oder springt in die Ansicht.
+// With nine views, "where was that again…" turns into real friction, and the
+// answer always sits in exactly one of them. The palette is a SPRINGBOARD,
+// not a result list: every group is hard-capped, and a hit either opens the
+// artifact window directly or jumps into the view.
 import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -47,7 +47,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     if (open) {
       setQ('')
       setCursor(0)
-      // Nach dem Rendern fokussieren — die Palette ist eine Tastatur-Sache.
+      // Focus after rendering -- the palette is a keyboard affair.
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [open])
@@ -98,7 +98,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
             </span>
           </>
         ),
-        // Ein Actor IST das Client-Artefakt — dasselbe Fenster wie überall.
+        // An actor IS the client artifact -- the same window as everywhere.
         run: () => onOpenArtifact({
           artifact: a.ip, artifact_kind: 'client', worst: 3,
           triage: 'new', triage_note: '',

@@ -1,15 +1,16 @@
-// Database.tsx — was der Datenbank-Export hergibt.
+// Database.tsx -- what the database export yields.
 //
-// Die Seite beantwortet EINE Frage: was hat der Angreifer in der Datenbank
-// hinterlassen? Deshalb steht oben, WORAUS wir das lesen (welcher Export,
-// wann erstellt — ein Dump von VOR dem Vorfall zeigt einen anderen Zustand
-// als einer von danach), dann der eingeschleuste Code, dann die Konten.
+// The page answers ONE question: what did the attacker leave behind in the
+// database? That is why at the top stands WHAT we read this from (which
+// export, created when -- a dump from BEFORE the incident shows a different
+// state from one taken afterwards), then the injected code, then the
+// accounts.
 //
-// Die Konten sind der heikelste Teil: ein Dump kann nicht sagen, dass ein
-// Admin bösartig ist — nur, dass er existiert, gestern angelegt wurde und
-// sich nie angemeldet hat. Deshalb stehen an jedem Konto BENANNTE
-// Beobachtungen und keine Punktzahl; sie bestimmen nur die Reihenfolge,
-// damit die eine auffällige Zeile nicht in 400 gewöhnlichen untergeht.
+// The accounts are the most delicate part: a dump cannot say that an admin
+// is malicious -- only that they exist, were created yesterday and have
+// never signed in. That is why every account carries NAMED observations and
+// no score; they only determine the order, so that the one conspicuous row
+// does not go under among 400 ordinary ones.
 import { plural, useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -40,15 +41,16 @@ import type { ViewId } from '../App'
 
 interface DatabaseData {
   dumps: DbDump[]
-  /** Mit Erweiterungen ausgelieferte install/uninstall/update-SQL — kein
-   *  Export, aber weiter auf eingeschleusten Code geprüft. */
+  /** install/uninstall/update SQL shipped with extensions -- not an export,
+   *  but still checked for injected code. */
   schema_files: DbDump[]
   tables: DbTable[]
-  /** Wie viele Tabellen aus Schema-Dateien nicht im Inventar stehen. */
+  /** How many tables from schema files are not in the inventory. */
   schema_tables: number
   accounts: DbAccount[]
   findings: Finding[]
-  /** Bezugszeitpunkt für „jung": Erstellung des Dumps, sonst jüngstes Konto. */
+  /** Reference point for "young": creation of the dump, otherwise the
+   *  youngest account. */
   reference: string
 }
 
@@ -89,7 +91,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
     },
   })
 
-  // Wie oft kommt jede Beobachtung vor — die Zahlen auf den Chips.
+  // How often each observation occurs -- the numbers on the chips.
   const signalCounts = useMemo(() => {
     const out = new Map<string, { label: string; why: string; n: number }>()
     for (const a of accounts) {
@@ -148,12 +150,12 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
         <h1 className="text-lg font-bold">Database</h1>
       </Tooltip>
 
-      {/* ---- WORAUS wir lesen: der Export selbst ---- */}
+      {/* ---- WHAT we read from: the export itself ---- */}
       {data?.dumps.map((d) => <DumpCard key={d.id} dump={d} />)}
 
       {!!data?.schema_files.length && <SchemaCard files={data.schema_files} />}
 
-      {/* ---- die Konten, nach Auffälligkeit ---- */}
+      {/* ---- the accounts, by conspicuousness ---- */}
       <Section title={tr('database.accounts')}
         sub={tr('database.accounts.sub')}
         right={
@@ -294,11 +296,11 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
         </Card>
       </Section>
 
-      {/* ---- der eingeschleuste Code, jetzt anklickbar ----
-          NACH den Konten: wer diese Ansicht öffnet, sucht zuerst das
-          untergeschobene Konto. Der eingeschleuste Code ist der zweite
-          Befund, und er liest sich erst richtig, wenn man weiß, wessen
-          Konto ihn geschrieben haben könnte. */}
+      {/* ---- the injected code, clickable now ----
+          AFTER the accounts: whoever opens this view looks for the planted
+          account first. The injected code is the second finding, and it
+          only reads properly once one knows whose account might have
+          written it. */}
       {data && data.findings.length > 0 && (
         <Section title={tr('database.injected')}
           sub={tr('database.injected.sub')}>
@@ -432,14 +434,14 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
   )
 }
 
-/** Die mitgelieferten SQL-Dateien der Erweiterungen — zusammengefaltet.
+/** The SQL files shipped with the extensions -- folded together.
  *
- *  Ein Webroot enthält Dutzende davon (install/uninstall/updates je
- *  Erweiterung). Als Datenbank-Evidence sind sie wertlos: keine Daten, keine
- *  Konten, kein Export-Kopf. Sie verschwinden deshalb aus der Export-Ansicht
- *  — aber NICHT aus der Prüfung: eine manipulierte install.sql läuft bei der
- *  nächsten Installation wieder an und überlebt jedes Aufräumen im
- *  Dateisystem. Trägt eine von ihnen Findings, steht das hier vorne. */
+ *  A webroot contains dozens of them (install/uninstall/updates per
+ *  extension). As database evidence they are worthless: no data, no
+ *  accounts, no export header. They therefore disappear from the export view
+ *  -- but NOT from the check: a manipulated install.sql runs again on the
+ *  next installation and survives every cleanup in the file system. If one
+ *  of them carries findings, that stands at the front here. */
 function SchemaCard({ files }: { files: DbDump[] }) {
   const tr = useT()
   const [open, setOpen] = useState(false)
@@ -493,10 +495,10 @@ function SchemaCard({ files }: { files: DbDump[] }) {
   )
 }
 
-/** Der Export selbst — der Bezugsrahmen für alles darunter. Der
- *  ERSTELLUNGSZEITPUNKT ist die wichtigste Angabe: ein Dump von vor dem
- *  Vorfall zeigt einen anderen Zustand als einer von danach, und davon
- *  hängt ab, ob ein fehlender Admin etwas bedeutet. */
+/** The export itself -- the frame of reference for everything below it. The
+ *  CREATION TIME is the most important fact: a dump from before the incident
+ *  shows a different state from one taken afterwards, and whether a missing
+ *  admin means anything depends on that. */
 function DumpCard({ dump }: { dump: DbDump }) {
   const tr = useT()
   const meta = dump.meta ?? {}
@@ -541,8 +543,9 @@ function DumpCard({ dump }: { dump: DbDump }) {
         {facts.map(([label, value, body, hint]) => (
           <Tooltip key={label} title={label} body={body} hint={hint}
             as="div" className="!block rounded-lg bg-[var(--panel-2)] px-3 py-2">
-            {/* Das Fragezeichen ist die Einladung: ohne es hovert niemand
-                über einer Kennzahl, und die Erklärung bliebe ungelesen. */}
+            {/* The question mark is the invitation: without it nobody
+                hovers over a key figure, and the explanation would go
+                unread. */}
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               {label === 'Erstellt' && <Clock size={10} />}
               {label === 'Server' && <KeyRound size={10} className="opacity-0" />}

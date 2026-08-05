@@ -1,15 +1,15 @@
-// ArtifactWindow.tsx — das Detail-Fenster EINES Artefakts: alles, was zur
-// Entscheidung nötig ist, in einer Ansicht.
+// ArtifactWindow.tsx -- the detail window of ONE artifact: everything needed
+// for the decision, in one view.
 //
-// Zentriert und breit statt als Streifen am Rand — beurteilt wird aus dem
-// ZUSAMMENHANG, und der entsteht erst, wenn Begründung, Dateiinhalt und die
-// Clients daran nebeneinander liegen statt hintereinander zu scrollen.
-// Links steht, was man entscheidet und warum; rechts, was man dafür ansieht.
-// Die Entscheidung selbst zuoberst, weil sie der Grund ist, aus dem das
-// Fenster offen ist.
+// Centred and wide rather than a strip at the edge -- judgement comes from
+// CONTEXT, and context only arises when reasoning, file content and the
+// clients on it lie side by side instead of scrolling one after another. On
+// the left is what one decides and why; on the right, what one looks at for
+// it. The decision itself at the very top, because it is the reason the
+// window is open.
 //
-// GETEILT zwischen Findings und Actors: dasselbe Artefakt sieht überall
-// gleich aus, und eine Entscheidung ist überall dieselbe Entscheidung.
+// SHARED between Findings and Actors: the same artifact looks the same
+// everywhere, and a decision is the same decision everywhere.
 import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -39,9 +39,9 @@ const KIND_THIS: Record<string, string> = {
   client: 'artifact.this.client', dump: 'artifact.this.dump',
 }
 
-/** Das Minimum, mit dem sich das Fenster öffnen lässt. Findings reicht seine
- *  volle Artefakt-Zeile herein; Actors kennt nur IP und Entscheidung — alles
- *  Weitere holt das Fenster selbst über den Kontext-Endpoint nach. */
+/** The minimum the window can be opened with. Findings hands in its full
+ *  artifact row; Actors only knows the IP and the decision -- everything else
+ *  the window fetches itself through the context endpoint. */
 export interface ArtifactStub {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
@@ -90,8 +90,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   onClose: () => void
   onTriage: (state: string, note?: string) => void
   onView: (path: string, line: number | null) => void
-  /** Der Trace bekommt mit, WAS er rot markieren soll — sonst steht man im
-   *  Trace vor tausend Zeilen und sucht die, um die es geht. */
+  /** The trace is told WHAT to mark red -- otherwise one stands in front of
+   *  a thousand lines looking for the one that matters. */
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
   const tr = useT()
@@ -117,11 +117,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const Icon = KIND_ICON[kind] ?? Bug
 
-  // WAS im Trace rot wird, hängt an der Art des Artefakts:
-  //   Datei   -> die Aufrufe DIESER Datei. Der Pfad unterhalb der Evidence
-  //              ist bekannt, die Query-Varianten dahinter nicht -- deshalb
-  //              Teilstring statt exakter Liste.
-  //   Client  -> die URI, die seinen Alarm ausgelöst hat.
+  // WHAT turns red in the trace depends on the kind of artifact:
+  //   file   -> the requests for THIS file. The path below the evidence is
+  //             known, the query variants behind it are not -- hence a
+  //             substring instead of an exact list.
+  //   client -> the URI that triggered its alert.
   const marks: TraceMarks = kind === 'file'
     ? { contains: [root ? rel : artifact.artifact.replace(/\\/g, '/')],
         reason: tr('marks.fileFetched') }
@@ -154,9 +154,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         )}
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start">
-          {/* ================= links: entscheiden und warum ================= */}
+          {/* ============== left: what to decide, and why ================== */}
           <div className="flex flex-col gap-4">
-            {/* ---- die Entscheidung ---- */}
+            {/* ---- the decision ---- */}
             <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-3">
               <div className="mb-2 text-[12.5px]">
                 {tr('artifact.question', {
@@ -198,7 +198,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </p>
             </div>
 
-            {/* ---- was das Artefakt IST ---- */}
+            {/* ---- what the artifact IS ---- */}
             <Block title={tr(`kind.${kind}`)}>
               <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
                 <span className="min-w-0 flex-1">{artifact.artifact}</span>
@@ -260,7 +260,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </div>
             )}
 
-            {/* ---- WARUM es hier steht: jedes Finding auf diesem Artefakt ---- */}
+            {/* ---- WHY it is here: every finding on this artifact ---- */}
             <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
               <div className="flex flex-col gap-1.5">
                 {findings.map((f) => {
@@ -298,7 +298,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </Block>
           </div>
 
-          {/* ================= rechts: was man dafür ansieht ================= */}
+          {/* ============== right: what one looks at for it ================ */}
           <div className="flex flex-col gap-4">
             {preview && !preview.error && !preview.binary && preview.lines && (
               <Block title={<>
@@ -373,7 +373,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </div>
             )}
 
-            {/* ---- die IPs an diesem Artefakt, jede sofort als Trace ---- */}
+            {/* ---- the IPs on this artifact, each traceable at once ---- */}
             <Block
               title={<span className="flex items-center gap-1.5">
                 <Crosshair size={12} /> {tr('artifact.clientsHere')} ({ips.length})

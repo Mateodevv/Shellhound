@@ -1,7 +1,7 @@
-// triage.tsx — was einer Entscheidung FOLGT, als sichtbarer Baustein:
-// Meldung über Mitentschiedenes mit Rückgängig, Vorschlagsfenster für die
-// mittlere Stufe. Der Hook dazu lebt in useTriage.ts; wer ihn benutzt,
-// rendert einmal <TriageFollowUp>.
+// triage.tsx -- what FOLLOWS a decision, as a visible building block: the
+// message about what was decided along, with undo, and the suggestion window
+// for the middle tier. The hook for it lives in useTriage.ts; whoever uses
+// it renders <TriageFollowUp> once.
 import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { Bug, Check, Crosshair, Undo2, X } from 'lucide-react'
@@ -11,15 +11,14 @@ import { Button, Modal, Toast, TriageBadge } from './ui'
 import { KIND_ICON } from '../artifactKinds'
 import type { TriageController } from './useTriage'
 
-/** Nur der Dateiname bzw. die Adresse — in einer Meldung zählt, WAS gemeint
- *  ist, nicht der vollständige Pfad. */
+/** Only the file name resp. the address -- in a message what counts is WHAT
+ *  is meant, not the full path. */
 function shortArtifact(artifact: string): string {
   return artifact.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() ?? artifact
 }
 
-/** Meldung + Vorschlagsfenster zu einer Entscheidung. Einmal pro View
- *  rendern; `layer` hebt das Vorschlagsfenster über ein offenes
- *  Artefakt-Fenster. */
+/** Message plus suggestion window for a decision. Render once per view;
+ *  `layer` lifts the suggestion window above an open artifact window. */
 export function TriageFollowUp({ t, roots, layer = 1 }: {
   t: TriageController
   roots: EvidenceRoot[]

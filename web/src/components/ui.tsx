@@ -9,8 +9,8 @@ import { explain } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
 export function Card({ children, className, style, id }: {
-  // `id` nur, damit eine Karte Sprungziel sein kann (IOC Box: von einem
-  // Indikator zu seinem verknüpften Nachbarn).
+  // `id` only so that a card can be a jump target (IOC box: from one
+  // indicator to its linked neighbour).
   children: ReactNode; className?: string; style?: React.CSSProperties; id?: string
 }) {
   return (
@@ -114,7 +114,7 @@ export function Tag({ children, tone, explain, hint }: {
   return <Tooltip title={explain} hint={hint}>{badge}</Tooltip>
 }
 
-/** Ein IOC-Tag, das sich selbst erklärt. */
+/** An IOC tag that explains itself. */
 export function IocTag({ tag, tone }: {
   tag: string; tone?: 'accent' | 'danger' | 'warn'
 }) {
@@ -128,9 +128,9 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   onClick: () => void
   children: ReactNode
   count?: number
-  /** Ausblende-Logik: dieser Chip ist gerade AUSGEBLENDET — durchgestrichen
-   *  und zurückgenommen, aber klickbar, denn der nächste Klick holt die
-   *  Einträge zurück. `active` und `dimmed` schließen einander aus. */
+  /** Hide logic: this chip is currently HIDDEN -- struck through and
+   *  receded, but clickable, because the next click brings the entries back.
+   *  `active` and `dimmed` are mutually exclusive. */
   dimmed?: boolean
 }) {
   return (
@@ -162,8 +162,8 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   disabled?: boolean
   className?: string
   title?: string
-  /** Für den Fall, dass ein Knopf sich vom Untergrund abheben muss, auf dem
-   *  er sitzt — eine Utility-Klasse würde gegen die Variante verlieren. */
+  /** For the case where a button has to stand out from the surface it sits
+   *  on -- a utility class would lose against the variant. */
   style?: React.CSSProperties
 }) {
   return (
@@ -189,10 +189,10 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   )
 }
 
-/** Kopieren mit Quittung. Ohne die kurze Bestätigung weiß niemand, ob der
- *  Klick angekommen ist — und man klickt ein zweites Mal, was nichts ändert,
- *  aber Zweifel lässt. Ein FEHLSCHLAG wird ebenso gezeigt: still nichts zu
- *  tun ist die schlechteste der drei Möglichkeiten. */
+/** Copying with a receipt. Without the short confirmation nobody knows
+ *  whether the click arrived -- and one clicks a second time, which changes
+ *  nothing but leaves doubt. A FAILURE is shown just as clearly: silently
+ *  doing nothing is the worst of the three possibilities. */
 export function CopyButton({ value, label = 'Kopieren', className }: {
   value: string; label?: string; className?: string
 }) {
@@ -225,8 +225,8 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
   )
 }
 
-/** Ein Abschnitt, den man zuklappen kann. Der Zustand gehört dem Aufrufer,
- *  damit er ihn merken oder von außen setzen kann. */
+/** A section that can be collapsed. The state belongs to the caller, so it
+ *  can be remembered or set from outside. */
 export function Collapsible({ open, onToggle, title, sub, right, count, children }: {
   open: boolean
   onToggle: () => void
@@ -287,14 +287,14 @@ export function EmptyState({ icon, title, sub, action }: {
   )
 }
 
-// Welche Overlays gerade offen sind, in der Reihenfolge, in der sie geöffnet
-// wurden. Escape schließt nur das OBERSTE: sonst räumt ein Tastendruck die
-// ganze Kette ab und man verliert den Kontext, in dem man gerade gearbeitet
-// hat (Datei-Viewer zu, Artefakt-Detail gleich mit).
+// Which overlays are currently open, in the order they were opened. Escape
+// closes only the TOPMOST one: otherwise one keystroke clears the whole
+// chain and one loses the context one was just working in (file viewer
+// closed, artifact detail along with it).
 const drawerStack: symbol[] = []
 
-/** Meldet ein offenes Overlay an und sagt, ob es gerade das oberste ist.
- *  Drawer und Modal teilen sich diesen Stapel — sie liegen übereinander. */
+/** Registers an open overlay and says whether it is currently the topmost.
+ *  Drawer and modal share this stack -- they lie on top of each other. */
 function useOverlayEscape(open: boolean, onClose: () => void) {
   useEffect(() => {
     if (!open) return
@@ -315,13 +315,13 @@ function useOverlayEscape(open: boolean, onClose: () => void) {
   }, [open, onClose])
 }
 
-/** Ein zentriertes Fenster — die Standard-Ansicht für alles, was FLÄCHE
- *  braucht: Artefakt-Detail, Datei-Viewer, Trace.
+/** A centred window -- the standard view for everything that needs AREA:
+ *  artifact detail, file viewer, trace.
  *
- *  Fenster, die aus einem anderen heraus geöffnet werden (`layer` > 0),
- *  sind jede Stufe etwas kleiner. Das ist keine Dekoration: man sieht am
- *  Rand, dass darunter noch etwas liegt, zu dem man zurückkommt — sonst
- *  wirkt ein Trace wie ein Themenwechsel statt wie ein Blick zur Seite. */
+ *  Windows opened from another one (`layer` > 0) are slightly smaller per
+ *  level. That is not decoration: one sees at the edge that something else
+ *  lies below, something one comes back to -- otherwise a trace feels like a
+ *  change of subject rather than a glance to the side. */
 export function Modal({ open, onClose, title, children, layer = 0 }: {
   open: boolean
   onClose: () => void
@@ -362,13 +362,13 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   )
 }
 
-/** Eine Meldung über etwas, das GERADE PASSIERT IST, ohne den Arbeitsfluss
- *  zu unterbrechen. Sie liegt über allem (auch über offenen Fenstern), denn
- *  sie berichtet über die Aktion, die man eben ausgelöst hat.
+/** A message about something that JUST HAPPENED, without interrupting the
+ *  flow of work. It lies above everything (open windows included), because
+ *  it reports on the action one has just triggered.
  *
- *  Sie verschwindet nach `timeout` von selbst — aber nur, wenn sie keine
- *  Aktion trägt: eine Meldung mit »Rückgängig« darf nicht weglaufen, bevor
- *  man sie gelesen hat. */
+ *  It disappears by itself after `timeout` -- but only when it carries no
+ *  action: a message with "undo" must not run away before it has been
+ *  read. */
 export function Toast({ open, onClose, tone = 'info', title, children, actions,
                         timeout = 9000 }: {
   open: boolean

@@ -1,14 +1,14 @@
-// FileViewer.tsx — die betroffene Datei ansehen: Raw und Hex.
+// FileViewer.tsx -- looking at the file in question: raw and hex.
 //
-// Der Inhalt kommt als JSON-Daten vom Server und wird hier als TEXT
-// gerendert. Er wird nie als Dokument geladen: eine bösartige .html aus
-// einem kompromittierten Webroot ist hier eine Zeichenkette in einem <pre>,
-// keine Seite, die der Browser ausführt.
+// The content comes from the server as JSON data and is rendered here as
+// TEXT. It is never loaded as a document: a malicious .html from a
+// compromised webroot is a string in a <pre> here, not a page the browser
+// executes.
 //
-// Große Dateien werden seitenweise gelesen (256 KB Raw, 16 KB Hex), damit
-// ein 200-MB-Log den Browser nicht umbringt. Die Seite sagt immer, welcher
-// BYTE-BEREICH gerade zu sehen ist — bei Evidence ist "ich sehe Teil X von
-// Y" eine Aussage, die man belegen können muss.
+// Large files are read page by page (256 KB raw, 16 KB hex), so that a
+// 200 MB log does not kill the browser. The page always says which BYTE
+// RANGE is currently visible -- with evidence, "I am looking at part X of Y"
+// is a statement one has to be able to back up.
 import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -23,8 +23,8 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   path: string | null
   focusLine?: number | null
   onClose: () => void
-  /** Standardmäßig ganz vorne: der Viewer wird fast immer AUS einem
-   *  Artefakt-Detail heraus geöffnet und muss darüber liegen. */
+  /** In front by default: the viewer is almost always opened FROM an
+   *  artifact detail and has to lie above it. */
   layer?: number
 }) {
   const tr = useT()

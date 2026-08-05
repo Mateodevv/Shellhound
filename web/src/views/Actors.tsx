@@ -1,12 +1,12 @@
-// Actors.tsx — every client the logs saw, mit Aktivitäts-Sparkline und
-// Klassifikations-Badges. Traces sind Abfragen gegen den Index: 20 Clients
-// auswählen und der kombinierte Trace steht sofort.
+// Actors.tsx -- every client the logs saw, with an activity sparkline and
+// classification badges. Traces are queries against the index: select 20
+// clients and the combined trace is there at once.
 //
-// ARBEITSTEILUNG mit Findings: dort wird entschieden, hier wird GEJAGT —
-// die Grundgesamtheit aller Clients, auch derer, auf die keine Regel
-// angesprochen hat. Was in Findings längst entschieden ist, trägt hier
-// sein Badge und lässt sich im selben Artefakt-Fenster öffnen; niemand
-// soll in dieser Liste neu bewerten, was drüben schon beantwortet ist.
+// DIVISION OF LABOUR with Findings: over there decisions are made, here one
+// HUNTS -- the total population of all clients, including those no rule
+// responded to. What has long been decided in Findings carries its badge
+// here and opens in the same artifact window; nobody should re-assess in
+// this list what has already been answered over there.
 import { useT, type Translate } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -35,12 +35,12 @@ import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import type { ViewId } from '../App'
 
-// Jeder Chip ist ein AUSBLENDE-Schalter: Klick versteckt die Klasse, der
-// nächste Klick holt sie zurück, mehrere stapeln sich. So arbeitet man sich
-// durch die Grundgesamtheit: Scanner weg, Brute-Force weg — was übrig
-// bleibt, ist das, was noch keine Regel benannt hat.
-// Nur die Schlüssel stehen hier: übersetzt wird beim Rendern, sonst wäre
-// die Sprache beim Laden des Moduls eingefroren.
+// Every chip is a HIDE switch: a click hides the class, the next click
+// brings it back, several of them stack. That is how one works through the
+// total population: scanners gone, brute force gone -- what remains is what
+// no rule has named yet.
+// Only the keys stand here: translation happens at render time, otherwise
+// the language would be frozen at module load.
 const FLAGS = [
   { id: 'quiet', key: 'quiet' },
   { id: 'alerted', key: 'alerted' },
@@ -49,10 +49,9 @@ const FLAGS = [
   { id: 'probes', key: 'probes' },
 ] as const
 
-// key -> Erklärung im Glossar; label -> was auf dem Badge steht.
-// Die Abzeichen eines Clients. `key` zeigt auf die Erklärung im Katalog,
-// `label` wird beim Rendern übersetzt -- deshalb bekommt die Funktion den
-// Übersetzer herein statt ihn zu importieren.
+// The badges of a client. `key` points at the explanation in the catalogue,
+// `label` is translated at render time -- which is why the function takes the
+// translator in rather than importing it.
 function actorBadges(a: Actor, tr: Translate) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
   if (a.login_redirects > 0 && a.login_posts >= 30)
@@ -61,7 +60,7 @@ function actorBadges(a: Actor, tr: Translate) {
     badges.push({ key: 'shellAccess', label: tr('badge.shellAccess'), tone: 'danger' })
   if (a.login_posts >= 30)
     badges.push({ key: 'bruteForce', label: tr('badge.bruteForce', { n: a.login_posts }), tone: 'warn' })
-  // dezent (kein tone): ein Scanner-Besuch ist Kontext, kein Vorfall.
+  // Understated (no tone): a scanner visit is context, not an incident.
   if (a.scanner_uas !== '[]')
     badges.push({ key: 'scanner', label: tr('badge.scanner'), tone: undefined })
   if (a.sqli_ok > 0)
@@ -77,14 +76,14 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const tr = useT()
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  // Default: nichts ausgeblendet — das Einzigartige dieser Seite ist die
-  // Grundgesamtheit. Ausblenden ist die Handbewegung des Jagens.
+  // Default: nothing hidden -- what makes this page unique is the total
+  // population. Hiding is the hand movement of hunting.
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState('requests')
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Die URIs, die bei DIESEN Clients den Alarm ausgelöst haben — der Trace
-  // markiert sie rot, damit man die auslösende Zeile nicht sucht.
+  // The URIs that triggered the alert for THESE clients -- the trace marks
+  // them red so that one does not have to hunt for the triggering line.
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
@@ -98,8 +97,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       `/api/cases/${slug}/actors?search=${encodeURIComponent(search)}&hide=${hide}&sort=${sort}&limit=200`),
   })
 
-  // Die Evidence-Wurzeln, damit Datei-Pfade in Vorschlägen lesbar sind —
-  // derselbe Query-Key wie in der Shell, also praktisch immer schon geladen.
+  // The evidence roots, so that file paths in suggestions are readable --
+  // the same query key as in the shell, so practically always loaded
+  // already.
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
@@ -244,8 +244,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       <IpFlag ip={a.ip} />
                       <span className="mono font-medium">{a.ip}</span>
                       {a.in_box && <Tag tone="accent" explain={tr('actors.inBox')}>IOC</Tag>}
-                      {/* Was in Findings entschieden wurde, gilt auch hier —
-                          sonst bewertet man dieselbe Adresse zweimal. */}
+                      {/* What was decided in Findings holds here too --
+                          otherwise one assesses the same address twice. */}
                       {a.triage && a.triage !== 'new' && (
                         <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                       )}
@@ -262,9 +262,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       <span>{formatDay(a.first_epoch, a.tz)} → {formatDay(a.last_epoch, a.tz)}</span>
                     </Tooltip>
                   </td>
-                  {/* Wie lange dieser Client aktiv war. Vier Minuten sind ein
-                      Werkzeuglauf, vier Wochen sind ein Dauergast — dieselbe
-                      Requestzahl bedeutet in beiden Fällen etwas anderes. */}
+                  {/* How long this client was active. Four minutes are a
+                      tool run, four weeks are a regular guest -- the same
+                      request count means something different in each. */}
                   <td className="mono px-2 py-2 text-right text-[12px] tabular text-[var(--muted)]">
                     <Tooltip title={tr('actors.durationTitle')}
                       body={`${formatLogTime(a.first_epoch, a.tz)} bis ${formatLogTime(a.last_epoch, a.tz)}`}
@@ -290,8 +290,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                      {/* Nur Clients MIT Findings haben ein Artefakt — für
-                          alle anderen gibt es nichts zu entscheiden. */}
+                      {/* Only clients WITH findings have an artifact -- for
+                          all others there is nothing to decide. */}
                       {a.triage && (
                         <Tooltip hint={tr('actors.openArtifact')}>
                           <Button variant="ghost"

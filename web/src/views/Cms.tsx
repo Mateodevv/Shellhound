@@ -1,17 +1,17 @@
-// Cms.tsx — das Inventar der Installationen: welches CMS, welche Version,
-// welche Erweiterungen — und WELCHE DAVON KOMPROMITTIERT IST.
+// Cms.tsx -- the inventory of the installations: which CMS, which version,
+// which extensions -- and WHICH OF THEM IS COMPROMISED.
 //
-// EINE Liste pro Installation statt eines Kachel-Mosaiks: früher wurde jeder
-// Engine-Typ eine eigene Karten-Tabelle, und Joomla produziert davon 10-15
-// („Plugin (system)", „Plugin (content)" …) — unterschiedlich hohe Kacheln
-// ohne Leserichtung. Jetzt falten sich die Typen auf 4-5 Gruppen zusammen
-// (die Plugin-Gruppe und Site/Admin sind ein Zusatz an der Zeile, kein
-// eigener Typ), und man liest einmal von oben nach unten.
+// ONE list per installation instead of a mosaic of tiles: every engine type
+// used to become its own card table, and Joomla produces 10-15 of those
+// ("Plugin (system)", "Plugin (content)" …) -- tiles of differing height
+// without a reading direction. Now the types fold into 4-5 groups (the
+// plugin group and site/admin are an addition on the row, not a type of
+// their own), and one reads once from top to bottom.
 //
-// Der Fall-Bezug kommt vom Server: Erweiterungen mit geflaggten Dateien
-// darunter tragen ein Badge und öffnen das Artefakt-Fenster — die Frage
-// „welche Erweiterung ist es?" beantwortet die Seite selbst, statt den
-// Pfad-Abgleich dem Kopf des Analysten zu überlassen.
+// The tie to the case comes from the server: extensions with flagged files
+// under them carry a badge and open the artifact window -- the page answers
+// the question "which extension is it?" itself instead of leaving the path
+// comparison to the analyst's head.
 import { plural, useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -39,19 +39,18 @@ import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
 import type { ViewId } from '../App'
 
-// „Plugin (system)" -> Gruppe Plugin, Zusatz system; „Module (Admin)" ->
-// Gruppe Module, Bereich Admin. Der Zusatz gehört an die Zeile, nicht in
-// die Gliederung — sonst wird jede Plugin-Gruppe eine eigene Tabelle.
+// "Plugin (system)" -> group Plugin, addition system; "Module (Admin)" ->
+// group Module, scope Admin. The addition belongs on the row, not in the
+// structure -- otherwise every plugin group becomes its own table.
 const SCOPES = new Set(['Site', 'Admin'])
 
-// WO DIE ENGINE DEN BEREICH WEGLÄSST, IST ER TROTZDEM FESTGELEGT — nur
-// leider nicht einheitlich: die Engine holt Komponenten unbenannt aus
-// administrator/components (also Backend), Module und Templates dagegen
-// unbenannt aus modules/ bzw. templates/ (also Frontend). Ein „Component"
-// ohne Kennzeichnung neben einem „Module" ohne Kennzeichnung liest sich
-// deshalb falsch. Hier wird der stille Bereich ausgeschrieben; der in der
-// Datenbank gespeicherte Typ bleibt unangetastet, weil an ihm der Schlüssel
-// der Versionskorrekturen hängt.
+// WHERE THE ENGINE OMITS THE SCOPE IT IS STILL DETERMINED -- just,
+// unfortunately, not uniformly: the engine takes components unlabelled from
+// administrator/components (so, backend), but modules and templates
+// unlabelled from modules/ resp. templates/ (so, frontend). An unlabelled
+// "Component" next to an unlabelled "Module" therefore reads wrongly. Here
+// the silent scope is spelled out; the type stored in the database stays
+// untouched, because the key of the version corrections hangs on it.
 const IMPLICIT_SCOPE: Record<string, string> = {
   Component: 'Admin',
   Module: 'Site',
@@ -66,13 +65,13 @@ function splitType(raw: string): { base: string; qualifier?: string; scope?: str
     : { base: m[1], qualifier: m[2], scope: IMPLICIT_SCOPE[m[1]] }
 }
 
-// Lesereihenfolge: das am häufigsten Manipulierte zuerst.
+// Reading order: what gets manipulated most often comes first.
 const TYPE_ORDER: Record<string, number> = {
   Plugin: 1, Theme: 2, Template: 3, Component: 4, Module: 5,
 }
 
-/** Worauf sich eine Versionskorrektur bezieht — Installation oder
- *  Erweiterung. Das Fenster ist für beide dasselbe. */
+/** What a version correction refers to -- installation or extension. The
+ *  window is the same for both. */
 interface VersionTarget extends VersionFacts {
   kind: 'install' | 'item'
   id: number
@@ -237,12 +236,12 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
   const tr = useT()
   const unknown = install.items.filter((i) => i.version === '(unknown)').length
   const flagged = install.items.filter((i) => i.flagged > 0).length
-  // Zugeklappte Gruppen. Ein Filter oder eine Suche klappt alles auf — sonst
-  // steckt der Treffer hinter einem Klick, den man nicht sieht.
+  // Collapsed groups. A filter or a search expands everything -- otherwise
+  // the hit sits behind a click one cannot see.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
-  // Eine Liste, gegliedert nach Basis-Typ — die Plugin-Gruppe steht als
-  // Zusatz an der Zeile.
+  // One list, structured by base type -- the plugin group stands as an
+  // addition on the row.
   const sections = useMemo(() => {
     const byBase = new Map<string, CmsItem[]>()
     for (const i of install.items) {
@@ -351,7 +350,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                 className={clsx(
                   'flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0',
                   'transition-colors hover:bg-[var(--panel-2)]')}>
-                {/* Farbkante nur, wenn hier etwas gefunden wurde. */}
+                {/* A coloured edge only when something was found here. */}
                 <span className="h-8 w-1 shrink-0 rounded-full"
                   style={{ background: worstHit ? SEVERITY_VAR[worstHit.worst] : 'transparent' }} />
                 <div className="min-w-0 flex-1">

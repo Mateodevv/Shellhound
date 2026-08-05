@@ -1,9 +1,10 @@
-// geo.ts — Länderzuordnung für IPs, gebündelt abgefragt und global gecacht.
+// geo.ts -- country attribution for IPs, queried in batches and cached
+// globally.
 //
-// Jede Ansicht zeigt Adressen, und keine soll je Zeile einen Request
-// abschicken: Aufrufe sammeln sich für einen Wimpernschlag und gehen als
-// EIN Batch an /api/geo. Der Cache lebt auf Modul-Ebene — dieselbe IP ist
-// in Actors, Trace und IOC Box dieselbe Antwort.
+// Every view shows addresses, and none should fire a request per row: calls
+// collect for the blink of an eye and go out as ONE batch to /api/geo. The
+// cache lives at module level -- the same IP is the same answer in Actors,
+// Trace and the IOC box.
 import { useEffect, useState } from 'react'
 import { post } from './api'
 
@@ -24,8 +25,8 @@ const cache = new Map<string, GeoInfo | null>()
 let pending = new Map<string, ((g: GeoInfo | null) => void)[]>()
 let timer: number | undefined
 
-// Der Zustand der Datenbank, nach der ersten Antwort bekannt — damit die
-// Oberfläche sagen kann, WARUM keine Flaggen kommen.
+// The state of the database, known after the first answer -- so that the
+// interface can say WHY no flags are coming.
 export let geoStatus: { available: boolean; source: string; why: string } | null = null
 
 function flush() {
@@ -41,8 +42,8 @@ function flush() {
       for (const cb of batch.get(ip) ?? []) cb(info)
     }
   }, () => {
-    // Fehler heißt „keine Aussage", nicht „kein Land" — nichts cachen,
-    // der nächste Blick fragt neu.
+    // An error means "no statement", not "no country" -- cache nothing, the
+    // next look asks again.
     for (const ip of ips) for (const cb of batch.get(ip) ?? []) cb(null)
   })
 }
@@ -54,19 +55,19 @@ function request(ip: string, cb: (g: GeoInfo | null) => void) {
   if (timer === undefined) timer = window.setTimeout(flush, 40)
 }
 
-// Angemeldete Hooks — damit ein Nachladen der Datenbank die sichtbaren
-// Flaggen sofort erneuert, statt bis zum Ansichtswechsel zu warten.
+// Registered hooks -- so that fetching the database refreshes the visible
+// flags at once instead of waiting for a change of view.
 const listeners = new Set<() => void>()
 
-/** Nach dem Nachladen der Datenbank: alles vergessen, was ohne sie
- *  beantwortet wurde, und jede sichtbare Stelle neu fragen lassen. */
+/** After the database was fetched: forget everything answered without it,
+ *  and let every visible place ask again. */
 export function clearGeoCache() {
   cache.clear()
   listeners.forEach((l) => l())
 }
 
-/** Die Zuordnung einer IP — undefined solange sie unterwegs ist, null wenn
- *  es keine gibt (keine Datenbank und kein Sonderbereich). */
+/** The attribution of an IP -- undefined while it is in flight, null when
+ *  there is none (no database and no special range). */
 export function useGeo(ip?: string | null): GeoInfo | null | undefined {
   const key = (ip ?? '').trim()
   const [info, setInfo] = useState<GeoInfo | null | undefined>(

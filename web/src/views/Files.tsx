@@ -1,18 +1,19 @@
-// Files.tsx — durch die Evidence klicken und Dateien von Hand als Indikator
-// aufnehmen.
+// Files.tsx -- click through the evidence and take files in as indicators by
+// hand.
 //
-// Die Regeln finden, was sie kennen. Diese Ansicht ist für alles andere: die
-// Datei, die einem beim Durchsehen auffällt, weil sie am falschen Ort liegt,
-// weil ihr Name nicht passt, weil das Änderungsdatum in die Nacht des
-// Vorfalls fällt. Ein Mensch sieht das — eine Regel hat es nicht gesucht.
+// The rules find what they know. This view is for everything else: the file
+// that catches one's eye while looking through, because it sits in the wrong
+// place, because its name does not fit, because the modification date falls
+// into the night of the incident. A human sees that -- a rule was not
+// looking for it.
 //
-// Man beginnt bei den registrierten Evidence-Wurzeln, nicht beim Dateisystem:
-// was zum Fall gehört, ist die Auswahl. Tiefer geht es nur innerhalb dieser
-// Wurzeln (dieselbe Schranke wie der Datei-Viewer, auf dem aufgelösten Pfad).
+// One starts at the registered evidence roots, not at the file system: what
+// belongs to the case is the selection. Going deeper only happens within
+// those roots (the same fence as in the file viewer, on the resolved path).
 //
-// Jeder Eintrag zeigt gleich, was der Fall über ihn schon weiß — schon in der
-// IOC Box, Findings darauf —, damit man nicht von Hand markiert, was längst
-// erfasst ist.
+// Every entry shows right away what the case already knows about it --
+// already in the IOC box, findings on it -- so that one does not mark by
+// hand what has long been recorded.
 import { plural, useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -47,8 +48,8 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Was der Trace rot markieren soll — kommt aus dem Artefakt-Fenster,
-  // das weiß, worum es geht (die Datei bzw. der Alarm des Clients).
+  // What the trace should mark red -- comes from the artifact window, which
+  // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const t = useTriage(slug)
 
@@ -65,8 +66,8 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
     kind: e.kind, path: e.path, label: e.label,
   }))
 
-  // Der Wechsel des Verzeichnisses verwirft die Auswahl: eine Markierung,
-  // die man nicht mehr sieht, würde man später versehentlich mit-flaggen.
+  // Changing directory discards the selection: a check one can no longer
+  // see would later get flagged along by accident.
   useEffect(() => { setChecked(new Set()); setFilter('') }, [path])
 
   const flag = useMutation({
@@ -167,7 +168,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
         </div>
       )}
 
-      {/* ---- Einstieg: die Wurzeln des Falls ---- */}
+      {/* ---- entry point: the roots of the case ---- */}
       {atRoot && (
         <div className="grid gap-3 md:grid-cols-2">
           {data?.roots.map((r) => (
@@ -206,7 +207,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           onView={(p) => setViewing({ path: p, line: null })} />
       )}
 
-      {/* ---- der Inhalt eines Verzeichnisses ---- */}
+      {/* ---- the content of a directory ---- */}
       {!atRoot && (
         <Card className="overflow-hidden">
           {files.length > 0 && (
@@ -249,7 +250,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
               <span className="min-w-0 flex-1 truncate text-[13px]" title={f.name}>
                 {f.name}
               </span>
-              {/* Was der Fall über diese Datei schon weiß. */}
+              {/* What the case already knows about this file. */}
               {f.flagged > 0 && f.worst != null && (
                 <Tooltip hint={tr('files.flagged.hint')}>
                   <button

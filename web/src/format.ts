@@ -28,9 +28,9 @@ export function formatDay(epoch?: number | null, tz = 0): string {
   return new Date((epoch + tz) * 1000).toISOString().slice(0, 10)
 }
 
-/** Die Länge einer Zeitspanne in Worten. Eine Aktivität über vier Minuten
- *  ist etwas anderes als dieselbe über vier Monate — die Spanne sagt das in
- *  einem Wort, das man in einen Bericht übernehmen kann. */
+/** The length of a time span in words. Activity across four minutes is
+ *  something other than the same across four months -- the span says so in
+ *  one word that can be carried into a report. */
 export function formatSpan(from?: number | null, to?: number | null): string {
   if (!from || !to) return '—'
   const s = Math.max(0, to - from)
@@ -43,8 +43,9 @@ export function formatSpan(from?: number | null, to?: number | null): string {
   return unit(Math.round(s / 86400), de ? 'Tag' : 'day', de ? 'Tage' : 'days')
 }
 
-/** "vor 3 Minuten" — Uhrzeiten sind für Berichte, für die Oberfläche zählt
- *  meist der Abstand zu jetzt. Die genaue Zeit steht im Tooltip daneben. */
+/** "3 minutes ago" -- clock times are for reports; for the interface what
+ *  usually counts is the distance from now. The exact time stands next to it
+ *  in the tooltip. */
 export function relativeTime(iso?: string | null): string {
   if (!iso) return '—'
   const then = new Date(iso).getTime()
@@ -73,9 +74,9 @@ export function absoluteTime(iso?: string | null): string {
 
 export interface EvidenceRoot { kind: string; path: string; label?: string }
 
-/** Ein Pfad, wie ein Mensch ihn denkt: relativ zur Evidence, unter der er
- *  liegt. Aus 90 Zeichen Absolutpfad wird `images/shell.php` — der volle
- *  Pfad bleibt als Tooltip erhalten, er ist die belastbare Angabe. */
+/** A path the way a human thinks of it: relative to the evidence it sits
+ *  under. 90 characters of absolute path become `images/shell.php` -- the
+ *  full path is kept as a tooltip, it is the defensible statement. */
 export function relativeToRoot(path: string, roots: EvidenceRoot[]):
     { root: EvidenceRoot | null; rel: string } {
   const norm = (s: string) => s.replace(/\\/g, '/').replace(/\/+$/, '')
