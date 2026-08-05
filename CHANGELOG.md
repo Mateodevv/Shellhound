@@ -64,6 +64,31 @@ and can be switched from the sidebar at any time.
   name in the interface, and nobody notices until someone switches the
   language.
 
+### Changed — the chronology and the artifact aggregate are modules
+
+`server/app.py` held every route AND about thirty helpers in one closure
+inside `create_app()`, 2,622 lines of it. Two blocks were self-contained and
+are now their own modules:
+
+- **`server/chain.py`** — the chronology. It is the one piece of narrative
+  the server writes, it is shared by the `/chain` route and the JSON export,
+  and it was previously reachable only through HTTP.
+- **`server/artifacts.py`** — `ART_SQL` and the helpers around it. Every
+  query that counts or lists artifacts has to fold the rows of one artifact
+  the same way, or the dashboard and the findings list quietly count
+  different things; that rule now has one home.
+
+Behaviour is unchanged, and that was checked rather than assumed: the old
+implementation was loaded from a copy of the pre-refactor file and run
+against the same analysed case as the new one. The chronology is **byte-for-
+byte identical** in both languages, and `ART_SQL`, the counts, `web_path()`
+and `uri_path()` agree on every artifact of the fixture.
+
+`tests/test_chain.py` adds 14 tests for the rules that fail quietly: an
+artifact that vanishes from the story, a gap that is bridged instead of
+named, a clock offset that is applied but not reported, measured times that
+shift with the language.
+
 ### Fixed — the live job registry mixed up two open cases
 
 A job id is a rowid in ONE case database, so two open cases both hand out

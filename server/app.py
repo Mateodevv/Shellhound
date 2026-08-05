@@ -29,6 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server import db, geoip, iocs as ioclib, patterns as patternlib, workspace
+from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
+from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
 from server.config import Config
@@ -516,9 +518,9 @@ def create_app(config: Config) -> FastAPI:
             # in. "14 Dateien" is the size of the job; the 119 rules that
             # fired on them are the evidence, not the workload.
             severity = {r["worst"]: r["n"] for r in db.rows(
-                conn, f"WITH art AS ({_ART_SQL}) SELECT worst, count(*) n "
+                conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
                       f"FROM art WHERE triage != 'dismissed' GROUP BY worst")}
-            triage = _artifact_counts(conn)["triage"]
+            triage = artifact_counts(conn)["triage"]
             findings_total = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
@@ -545,267 +547,12 @@ def create_app(config: Config) -> FastAPI:
         }
 
     # --- the chronology of the case -----------------------------------------
-    #
-    # EVERY VIEW ANSWERS "WHAT", NONE ANSWERS "IN WHICH ORDER". That,
-    # however, is exactly the first paragraph of every report, and until now
-    # one typed it out by jumping between Actors, Findings and Database and
-    # sorting timestamps in one's head.
-    #
-    # THE CHAIN ORDERS MEASURED FACTS AND CLAIMS NO CAUSE.
-    # "08:12 request for async-upload.php with 2xx, 08:13 first successful
-    # retrieval of kb-media.php" is an observation. "The attacker uploaded
-    # the shell through the upload function" is a conclusion -- and that
-    # belongs to the analyst. A machine that dictates the conclusion of the
-    # report is convenient in every case and wrong in every tenth, and a
-    # wrong chain is worse than none.
-    #
-    # Three rules follow from that:
-    #   1. CONFIRMED ARTIFACTS ONLY. The triage decides what belongs to the
-    #      story, not the detection.
-    #   2. MEASURED TIME ONLY. The first 2xx for a file proves it was there;
-    #      the mtime of the copy proves nothing at all, because nobody can
-    #      tell from it whether it comes from the original or from the
-    #      copying.
-    #   3. GAPS ARE NAMED, NOT BRIDGED.
-
-    # Both clocks stand there without a zone: the log line in its server
-    # time, the account timestamp in that of the database server. They are
-    # compared AS THEY STAND -- anything else would mean inventing a time
-    # zone. The response says so, lest it get lost in the report.
-    _CHAIN_EVENT_CAP = 80
-
-    def _local(epoch, tz=0):
-        """Log time as naive local time -- the same one shown everywhere."""
-        return None if not epoch else int(epoch) + int(tz or 0)
-
-    def _iso(local):
-        """Naive local time as a readable timestamp, for running text."""
-        if not local:
-            return "—"
-        return datetime.fromtimestamp(int(local), tz=timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S")
-
-    def _stamp_to_local(text):
-        """'2026-07-08 03:17:00' -> seconds, read naively."""
-        raw = str(text or "").strip().replace("T", " ")[:19]
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-            try:
-                return int(datetime.strptime(raw, fmt)
-                           .replace(tzinfo=timezone.utc).timestamp())
-            except ValueError:
-                continue
-        return None
-
-    # The CLOCK OFFSET set by the analyst, per source, in seconds. Log
-    # server and database server can run different clocks (time zone,
-    # drifting VM) -- and with "account 03:17, first contact 09:12" a
-    # six-hour offset can turn the order of the story around. The offset is
-    # therefore a STATEMENT OF THE ANALYST, stored in the case and reported
-    # in the chronology -- not something the tool quietly guesses.
-    def _clock_offsets(conn):
-        row = db.one(conn, "SELECT value FROM meta WHERE key = 'clock_offsets'")
-        try:
-            raw = json.loads(row["value"]) if row else {}
-        except (ValueError, TypeError):
-            raw = {}
-        return {"logs": int(raw.get("logs", 0) or 0),
-                "dump": int(raw.get("dump", 0) or 0)}
-
-    def _case_chain(case_dir, lang="en"):
-        """The chronology as data -- shared by the route and the exports:
-        what the analyst reads in the dashboard has to be the same thing the
-        case hands out."""
-        conn = db.connect(case_dir)
-        try:
-            confirmed = db.rows(
-                conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, artifact_kind,"
-                      f" worst, findings, triage_note FROM art "
-                      f"WHERE triage = 'confirmed'")
-            files = {r["artifact"]: _web_path(conn, r["artifact"])
-                     for r in confirmed if r["artifact_kind"] == "file"}
-            clients = [r["artifact"] for r in confirmed
-                       if r["artifact_kind"] == "client"]
-            by_artifact = {r["artifact"]: r for r in confirmed}
-            accounts = db.rows(
-                conn, "SELECT login, registered, admin, last_login, tbl "
-                      "FROM db_accounts WHERE registered != ''")
-            offsets = _clock_offsets(conn)
-        finally:
-            conn.close()
-
-        off_logs, off_dump = offsets["logs"], offsets["dump"]
-        overview = logindex.overview(case_dir) or {}
-        span_first = _local(overview.get("first_epoch"))
-        if span_first is not None:
-            span_first += off_logs
-        span_last = _local(overview.get("last_epoch"))
-        if span_last is not None:
-            span_last += off_logs
-        facts = logindex.chain_facts(
-            case_dir,
-            leaves=[os.path.basename(p) for p in files.values()],
-            ips=clients)
-
-        events, undated, gaps = [], [], []
-
-        # Every log time through ONE funnel, every dump time through the
-        # other -- that way no single spot can forget the offset.
-        def _log_at(epoch, tz=0):
-            at = _local(epoch, tz)
-            return None if at is None else at + off_logs
-
-        def _dump_at(text):
-            at = _stamp_to_local(text)
-            return None if at is None else at + off_dump
-
-        dated = set()
-
-        def add(at, kind, title, detail, source, artifact="", artifact_kind="",
-                ip="", severity=None):
-            if at is None:
-                return
-            dated.add(artifact)
-            events.append({"at": at, "kind": kind, "title": title,
-                           "detail": detail, "source": source,
-                           "artifact": artifact, "artifact_kind": artifact_kind,
-                           "ip": ip, "severity": severity})
-
-        # --- confirmed files: when was it there, when was it used ----------
-        for artifact, rel in files.items():
-            row = by_artifact[artifact]
-            name = os.path.basename(rel)
-            tail = "/" + rel
-            hits = [h for h in facts["files"].get(name, [])
-                    if _uri_path(h["uri"]).endswith(tail)]
-            if not hits:
-                continue
-            tz = max((h["tz"] or 0) for h in hits)
-            oks = [h["first_ok"] for h in hits if h["first_ok"]]
-            first_any = min(h["first_epoch"] for h in hits if h["first_epoch"])
-            last_any = max(h["last_epoch"] for h in hits if h["last_epoch"])
-            total = sum(h["hits"] for h in hits)
-            ok_total = sum(h["ok_hits"] for h in hits)
-            if oks:
-                first_ok = min(oks)
-                # An unsuccessful request BEFORE the first success bounds
-                # when the file must have appeared -- the most defensible
-                # statement a log yields about it, and it manages without
-                # the mtime of the copy.
-                detail = _t(lang, "chain.file.wasThere")
-                if first_any < first_ok:
-                    who = next((h["ip"] for h in hits
-                                if h["first_epoch"] == first_any), "")
-                    by = _t(lang, "chain.file.by", ip=who) if who else ""
-                    detail += _t(lang, "chain.file.probeBefore", by=by,
-                                 at=_iso(_log_at(first_any, tz)))
-                add(_log_at(first_ok, tz), "erfolg",
-                    _t(lang, "chain.file.firstOk", name=name), detail, "log",
-                    artifact, "file", severity=row["worst"])
-            else:
-                add(_log_at(first_any, tz), "versuch",
-                    _t(lang, "chain.file.firstTry", name=name),
-                    _t(lang, "chain.file.firstTry.detail", n=total), "log",
-                    artifact, "file", severity=row["worst"])
-            if last_any and last_any != (min(oks) if oks else first_any):
-                add(_log_at(last_any, tz), "letzter-zugriff",
-                    _t(lang, "chain.file.last", name=name),
-                    _t(lang, "chain.file.last.detail", n=total, ok=ok_total),
-                    "log", artifact, "file", severity=row["worst"])
-
-        # --- confirmed clients: first contact and the triggering calls -----
-        for ip in clients:
-            row = by_artifact[ip]
-            actor = facts["clients"].get(ip)
-            if actor is None:
-                continue
-            tz = actor["tz"] or 0
-            add(_log_at(actor["first_epoch"], tz), "erstkontakt",
-                _t(lang, "chain.client.first", ip=ip),
-                _t(lang, "chain.client.first.detail", n=actor["requests"]),
-                "log", ip, "client", ip, row["worst"])
-            for a in actor["alerts"]:
-                if a["severity"] >= db.SEV_INFO or not a["epoch"]:
-                    continue
-                # The alert text itself comes from the index and is English:
-                # it is stored and travels into findings and the archive.
-                add(_log_at(a["epoch"], tz), "alarm", a["detail"],
-                    _t(lang, "chain.alert.detail", example=a["example"]), "log",
-                    ip, "client", ip, a["severity"])
-            add(_log_at(actor["last_epoch"], tz), "letzter-zugriff",
-                _t(lang, "chain.client.last", ip=ip), "", "log", ip, "client",
-                ip, row["worst"])
-
-        # --- accounts created WITHIN THE PERIOD OF THE CASE -----------------
-        # An account from 2019 does not belong in the chronology of an
-        # incident from 2026. The period of the log is the most honest window
-        # the case has for that.
-        for acc in accounts:
-            at = _dump_at(acc["registered"])
-            if at is None or span_first is None or not (span_first <= at <= span_last):
-                continue
-            detail = _t(lang, "chain.account.detail",
-                        table=acc["tbl"] or _t(lang, "chain.account.userTable"))
-            last = _dump_at(acc["last_login"])
-            if last and span_first <= last <= span_last:
-                detail += _t(lang, "chain.account.lastLogin", at=_iso(last))
-            title = _t(lang, "chain.account.created", login=acc["login"])
-            if acc["admin"]:
-                title += _t(lang, "chain.account.admin")
-            add(at, "konto", title, detail, "dump",
-                severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
-
-        # EVERY CONFIRMED ARTIFACT MUST SHOW UP -- in the chain or here. A
-        # chronology from which a decision of the analyst quietly disappears
-        # is the more dangerous half of a lie: it looks complete.
-        for row in confirmed:
-            if row["artifact"] in dated:
-                continue
-            kind = row["artifact_kind"]
-            key = ("chain.undated." + kind
-                   if kind in ("table", "dump", "file", "client")
-                   else "chain.undated.other")
-            undated.append({
-                "artifact": row["artifact"], "artifact_kind": kind,
-                "why": _t(lang, key)})
-
-        events.sort(key=lambda e: e["at"])
-        truncated = len(events) > _CHAIN_EVENT_CAP
-        if truncated:
-            events = events[:_CHAIN_EVENT_CAP]
-
-        # --- what the case does NOT prove ----------------------------------
-        if not confirmed:
-            gaps.append(_t(lang, "chain.gap.noConfirmed"))
-        elif not events:
-            gaps.append(_t(lang, "chain.gap.noTimes"))
-        if events and span_first is not None and events[0]["at"] - span_first < 60:
-            gaps.append(_t(lang, "chain.gap.atLogStart", at=_iso(span_first)))
-        if files and not any(e["kind"] == "erfolg" for e in events):
-            gaps.append(_t(lang, "chain.gap.onlyAttempts"))
-        if truncated:
-            gaps.append(_t(lang, "chain.gap.truncated", n=_CHAIN_EVENT_CAP))
-        # A set offset is part of the statement and therefore stands with the
-        # limitations -- whoever reads the chain has to know that the clocks
-        # were turned, and by whom.
-        for source, off in (("logs", off_logs), ("dump", off_dump)):
-            if off:
-                gaps.append(_t(
-                    lang, "chain.gap.clockOffset",
-                    source=_t(lang, "chain.clock.source." + source),
-                    hours=f"{abs(off) / 3600:g}",
-                    direction=_t(lang, "chain.clock.forward" if off > 0
-                                 else "chain.clock.back")))
-
-        return {
-            "span": {"first": span_first, "last": span_last},
-            "events": events, "gaps": gaps, "undated": undated,
-            "confirmed": len(confirmed), "truncated": truncated,
-            "offsets": offsets,
-        }
+    # Assembled in server/chain.py -- it is the one piece of narrative the
+    # server writes, shared by this route and the JSON export.
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
     def chain(slug: str, lang: str = lang_dep):
-        return _case_chain(case_dir_or_404(slug), lang)
+        return case_chain(case_dir_or_404(slug), lang)
 
     class ClockBody(BaseModel):
         # Seconds, per source. 0 = the clocks hold as they stand.
@@ -854,7 +601,7 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             artifacts = db.rows(
-                conn, f"WITH art AS ({_ART_SQL}) "
+                conn, f"WITH art AS ({ART_SQL}) "
                       f"SELECT artifact, artifact_kind, worst, triage, findings "
                       f"FROM art WHERE artifact LIKE ? ESCAPE '\\' "
                       f"ORDER BY worst LIMIT ?", (like, _SEARCH_CAP))
@@ -893,28 +640,9 @@ def create_app(config: Config) -> FastAPI:
     # ARTIFACT: its worst severity, its decision. The individual findings
     # travel along as the evidence FOR that decision.
 
-    # The aggregate every artifact query starts from. `state` folds the rows
-    # of one artifact into one decision -- confirmed wins (one real hit makes
-    # the artifact real), dismissed only counts when it is unanimous. Legacy
-    # cases triaged per finding therefore stay readable instead of showing a
-    # state their rows do not agree on.
-    _ART_SQL = """
-        SELECT artifact,
-               MIN(artifact_kind) AS artifact_kind,
-               MIN(severity)      AS worst,
-               MIN(source)        AS source,
-               COUNT(*)           AS findings,
-               MAX(triaged_at)    AS triaged_at,
-               MAX(triage_note)   AS triage_note,
-               MAX(last_seen)     AS last_seen,
-               CASE
-                 WHEN SUM(triage = 'confirmed') > 0 THEN 'confirmed'
-                 WHEN SUM(triage = 'dismissed') = COUNT(*) THEN 'dismissed'
-                 WHEN SUM(triage = 'reviewed') > 0 THEN 'reviewed'
-                 ELSE 'new'
-               END AS triage
-        FROM findings GROUP BY artifact
-    """
+    # The artifact aggregate lives in server/artifacts.py: every query that
+    # counts or lists artifacts has to fold the rows of one artifact the same
+    # way, or the dashboard and the findings list count different things.
 
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
@@ -963,11 +691,11 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             total = conn.execute(
-                f"WITH art AS ({_ART_SQL}) SELECT count(*) FROM art {clause}",
+                f"WITH art AS ({ART_SQL}) SELECT count(*) FROM art {clause}",
                 params).fetchone()[0]
             artifacts = db.rows(
                 conn,
-                f"WITH art AS ({_ART_SQL}) SELECT * FROM art {clause} "
+                f"WITH art AS ({ART_SQL}) SELECT * FROM art {clause} "
                 f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
                 params + [min(limit, 2000), offset])
             rows = []
@@ -977,7 +705,7 @@ def create_app(config: Config) -> FastAPI:
                 rows = db.rows(conn,
                                f"SELECT * FROM findings WHERE artifact IN ({marks}) "
                                f"ORDER BY severity, artifact, line", names)
-            counts = _artifact_counts(conn)
+            counts = artifact_counts(conn)
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
             # under a named webroot, not 90 characters of absolute path.
@@ -988,17 +716,6 @@ def create_app(config: Config) -> FastAPI:
                     "counts": counts, "roots": roots}
         finally:
             conn.close()
-
-    def _artifact_counts(conn):
-        """The chip counts -- artifacts, not findings, in every dimension."""
-        def group(column):
-            return {r[column]: r["n"] for r in db.rows(
-                conn, f"WITH art AS ({_ART_SQL}) "
-                      f"SELECT {column}, count(*) n FROM art GROUP BY {column}")}
-        sev = group("worst")
-        return {"severity": sev, "triage": group("triage"),
-                "source": group("source"),
-                "total": sum(sev.values())}
 
     def _artifacts_of(conn, artifacts, fingerprints):
         """Resolve a triage request to the set of artifacts it touches. A
@@ -1107,28 +824,10 @@ def create_app(config: Config) -> FastAPI:
     # A bare name comparison ("some index.php") is NO proof and no longer
     # appears here at all.
 
-    def _uri_path(uri):
-        """The path part of a URI, lower-cased, without the query."""
-        return str(uri or "").split("?", 1)[0].split("#", 1)[0].strip().lower()
-
-    def _web_path(conn, artifact):
-        """The file as it would appear in a URL: the path below the evidence
-        root it sits under. Falls back to the file name when no root
-        matches."""
-        target = str(artifact).replace("\\", "/")
-        best = ""
-        for row in db.rows(conn, "SELECT path FROM evidence"):
-            root = str(row["path"]).replace("\\", "/").rstrip("/")
-            if root and target.lower().startswith(root.lower() + "/") \
-                    and len(root) > len(best):
-                best = root
-        rel = target[len(best) + 1:] if best else os.path.basename(target)
-        return rel.strip("/").lower()
-
     def _touches(conn, case_dir, by_artifact):
         """artifact -> [{ip, hits, ok_hits, uri}] for the file artifacts in
         it. One query for all names, the path comparison afterwards."""
-        files = {a: _web_path(conn, a) for a, findings in by_artifact.items()
+        files = {a: web_path(conn, a) for a, findings in by_artifact.items()
                  if findings and findings[0]["artifact_kind"] == "file"}
         if not files:
             return {}
@@ -1139,7 +838,7 @@ def create_app(config: Config) -> FastAPI:
             tail = "/" + rel
             hits = {}
             for r in rows:
-                if not _uri_path(r["uri"]).endswith(tail):
+                if not uri_path(r["uri"]).endswith(tail):
                     continue
                 agg = hits.setdefault(r["ip"], {"ip": r["ip"], "hits": 0,
                                                 "ok_hits": 0, "uri": r["uri"]})
@@ -1161,7 +860,7 @@ def create_app(config: Config) -> FastAPI:
         # without a finding of its own is not an artifact -- it only lands in
         # the IOC box, as before.
         known = {r["artifact"]: r for r in db.rows(
-            conn, f"WITH art AS ({_ART_SQL}) "
+            conn, f"WITH art AS ({ART_SQL}) "
                   f"SELECT artifact, artifact_kind, triage, triage_note FROM art")}
         # A propagation only touches what is NOT yet decided. A false
         # positive assigned by hand must never be overwritten by automation
@@ -1201,7 +900,7 @@ def create_app(config: Config) -> FastAPI:
         clients = [a for a in decided
                    if known.get(a, {}).get("artifact_kind") == "client"]
         if clients:
-            file_paths = {a: _web_path(conn, a) for a, r in known.items()
+            file_paths = {a: web_path(conn, a) for a, r in known.items()
                           if r["artifact_kind"] == "file"
                           and r["triage"] in open_states}
             if file_paths:
@@ -1216,7 +915,7 @@ def create_app(config: Config) -> FastAPI:
                             continue
                         tail = "/" + rel
                         hit = [r for r in by_ip.get(ip, [])
-                               if _uri_path(r["uri"]).endswith(tail)]
+                               if uri_path(r["uri"]).endswith(tail)]
                         if not hit:
                             continue
                         ok = sum(r["ok_hits"] for r in hit)
@@ -1722,7 +1421,7 @@ def create_app(config: Config) -> FastAPI:
             bases = db.evidence_bases(conn)
             flagged = {str(r["artifact"]).replace("\\", "/").lower(): r
                        for r in db.rows(
-                           conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, worst,"
+                           conn, f"WITH art AS ({ART_SQL}) SELECT artifact, worst,"
                                  f" triage, findings FROM art "
                                  f"WHERE artifact_kind = 'file'")}
         finally:
@@ -1929,7 +1628,7 @@ def create_app(config: Config) -> FastAPI:
             # long been decided in Findings has to be visible in Actors --
             # otherwise one re-assesses it here in one's head.
             triage = {r["artifact"]: r["triage"] for r in db.rows(
-                conn, f"WITH art AS ({_ART_SQL}) SELECT artifact, triage "
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact, triage "
                       f"FROM art WHERE artifact_kind = 'client'")}
         finally:
             conn.close()
@@ -2208,7 +1907,7 @@ def create_app(config: Config) -> FastAPI:
         stem = f"iocs_{info['slug']}"
         if format == "json":
             return Response(ioclib.to_json(rows, info["name"], links,
-                                           chain=_case_chain(case_dir, lang)),
+                                           chain=case_chain(case_dir, lang)),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}.json"})
@@ -2254,7 +1953,7 @@ def create_app(config: Config) -> FastAPI:
             installs = db.rows(conn, "SELECT * FROM cms_installs ORDER BY root")
             items = db.rows(conn, "SELECT * FROM cms_items ORDER BY type, name")
             flagged = db.rows(conn,
-                              f"WITH art AS ({_ART_SQL}) "
+                              f"WITH art AS ({ART_SQL}) "
                               f"SELECT artifact, worst, triage, findings "
                               f"FROM art WHERE artifact_kind = 'file'")
             overrides = {(r["scope"], r["key"]): r for r in db.rows(
@@ -2436,7 +2135,7 @@ def create_app(config: Config) -> FastAPI:
                                "SELECT * FROM findings WHERE source = 'sqldb' "
                                "ORDER BY severity, artifact LIMIT 500")
             flagged = db.rows(conn,
-                              f"WITH art AS ({_ART_SQL}) "
+                              f"WITH art AS ({ART_SQL}) "
                               f"SELECT artifact, worst, triage, findings FROM art "
                               f"WHERE artifact_kind = 'table'")
         finally:
