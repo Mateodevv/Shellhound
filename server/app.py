@@ -28,7 +28,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import db, enrich, geoip, iocs as ioclib, patterns as patternlib
+from server import coverage, db, enrich, geoip, iocs as ioclib
+from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
 from server.chain import case_chain
@@ -412,6 +413,14 @@ def create_app(config: Config) -> FastAPI:
             except ValueError:
                 r["result"] = {}
         return {"entries": rows}
+
+    @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
+    def log_coverage(slug: str, lang: str = lang_dep):
+        """Where the logs are SILENT, and whether the shape of the hole looks
+        deliberate. No findings and no severities: a removed window and a
+        quiet night look identical from here, so this points at the question
+        rather than answering it."""
+        return coverage.report(case_dir_or_404(slug), lang)
 
     @app.get("/api/yara", dependencies=[auth])
     def yara_status():
