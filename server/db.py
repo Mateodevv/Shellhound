@@ -220,6 +220,21 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     tz INTEGER NOT NULL DEFAULT 0,
     UNIQUE(pattern)
 );
+-- WHAT A THIRD PARTY SAYS -- kept apart from what the case measured.
+-- A reputation score is somebody else's conclusion about somebody else's
+-- data. It never becomes a finding, never moves a severity and never
+-- decides a triage; it sits beside the indicator as a foreign opinion, with
+-- the time it was fetched, because a verdict from six weeks ago is a
+-- different statement from one fetched this morning.
+CREATE TABLE IF NOT EXISTS enrichment (
+    id INTEGER PRIMARY KEY,
+    service TEXT NOT NULL,             -- virustotal | abuseipdb
+    value TEXT NOT NULL,               -- the ONE thing that was sent
+    kind TEXT NOT NULL DEFAULT '',     -- hash | ip
+    fetched TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(service, value)
+);
 -- The result of the last webroot comparison (engines/webrootdiff.py).
 -- A derivation from two trees, not a history: every run replaces the
 -- previous one. Paths relative to the respective root, with /.
@@ -298,7 +313,7 @@ _ADDED_COLUMNS = {
 # The version of the case schema. BUMP IT when SCHEMA, _ADDED_COLUMNS or one
 # of the data corrections in _upgrade() changes -- that is how an existing
 # case database recognises that it has to be touched once.
-CASE_SCHEMA_VERSION = 1
+CASE_SCHEMA_VERSION = 2
 
 
 def _stored_version(conn):

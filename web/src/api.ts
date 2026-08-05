@@ -206,6 +206,48 @@ export interface Actor {
   triage: TriageState | null
 }
 
+/** Operator configuration. The real API keys never reach the browser --
+ *  `hint` is the last four characters, enough to tell two keys apart. */
+export interface SettingsInfo {
+  services: Record<string, {
+    configured: boolean
+    hint: string
+    /** The ONE kind of value this service is allowed to receive. */
+    sends: string
+    url: string
+  }>
+  enrichment_ack: boolean
+  path: string
+}
+
+/** What a third party said about one indicator. An OPINION, not a
+ *  measurement: it never becomes a finding and never moves a severity.
+ *  `fetched` matters -- a verdict from six weeks ago is a different
+ *  statement from one fetched this morning. */
+export interface Enrichment {
+  service: string
+  value: string
+  kind: string
+  fetched: string
+  cached?: boolean
+  result: {
+    known: boolean
+    score?: number
+    of?: number
+    suspicious?: number
+    label?: string
+    names?: string[]
+    reports?: number
+    distinct_reporters?: number
+    country?: string
+    isp?: string
+    usage?: string
+    tor?: boolean
+    last_reported?: string
+    permalink?: string
+  }
+}
+
 export interface ActorsResponse {
   /** Login POSTs from which the server calls a client a flood. Comes from
    *  the server so badges and the "inconspicuous" filter cannot drift. */
