@@ -329,7 +329,7 @@ def _extract_users(table, rows, cms):
             login = row[2]
             email = row[3]
             pw = row[4]
-            # Feste Spaltenordnung: 5 block, 7 registerDate, 8 lastvisitDate.
+            # Fixed column order: 5 block, 7 registerDate, 8 lastvisitDate.
             if len(row) >= 9:
                 try:
                     blocked = 1 if int(str(row[5]).strip() or 0) else 0
@@ -370,7 +370,7 @@ def _wp_user_meta_signals(rows):
             entry["sessions"] = 1
         elif any(key.endswith(k) for k in _LAST_LOGIN_KEYS):
             stamp = _clean_stamp(value)
-            if stamp.isdigit():          # Unix-Zeit, wie Plugins sie schreiben
+            if stamp.isdigit():          # Unix time, as plugins write it
                 from datetime import datetime as _dt
                 try:
                     stamp = _dt.fromtimestamp(int(stamp)).isoformat(sep=" ",
@@ -511,8 +511,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     """One streaming pass over one dump."""
     tables_seen = []
     wp_admin_ids, joomla_super_ids = set(), set()
-    wp_meta = {}                 # user_id -> letzter Login / aktive Sitzung
-    placeholder_seen = False     # `#__` -> mitgelieferte Schema-Datei
+    wp_meta = {}                 # user_id -> last login / active session
+    placeholder_seen = False     # `#__` -> a shipped schema file
     data_rows = 0
     user_tables = []
     row_offsets = {}
@@ -534,8 +534,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                     break
                 frac = (done_before + min(size, read_bytes)) / total_size
                 ctx.progress(0.02 + frac * 0.93,
-                             f"{name}: {statements:,} Statements, "
-                             f"{sum(t['rows'] for t in inv.values()):,} Zeilen")
+                             f"{name}: {statements:,} statements, "
+                             f"{sum(t['rows'] for t in inv.values()):,} rows")
             if not placeholder_seen and _PREFIX_PLACEHOLDER in stmt:
                 placeholder_seen = True
             created = parse_create(stmt)

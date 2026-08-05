@@ -6,6 +6,7 @@ effective discriminator is the CMS bootstrap guard (_JEXEC / ABSPATH): a PHP
 file in a writable upload directory is only flagged when the guard is ABSENT
 and the file has an executable surface. Ported rule-for-rule.
 """
+import json
 import os
 import re
 
@@ -191,7 +192,8 @@ def scan(case_dir, targets, ctx=None):
                 if ctx.cancelled():
                     break
                 ctx.progress(0.02 + (i / total) * 0.93,
-                             f"{i:,}/{total:,} Dateien — {stats['findings']} Findings")
+                             f"{i:,}/{total:,} files — "
+                             f"{stats['findings']} findings")
             stats["scanned"] += 1
             findings, skip_reason, inert = scan_file(file_path)
             abs_path = os.path.abspath(file_path)
@@ -222,10 +224,12 @@ def scan(case_dir, targets, ctx=None):
             digest = sha256_of(path)
             if digest:
                 hashes[path] = digest
-        if hashes:
-            import json as _json
-            conn.execute("INSERT OR REPLACE INTO meta VALUES ('webshell_hashes', ?)",
-                         (_json.dumps(hashes),))
+        # Written UNCONDITIONALLY, empty result included: these hashes are a
+        # measurement of THIS run. Keeping the previous map when a re-scan
+        # flags nothing would hand a confirmation the digest of a file that is
+        # no longer there -- a hash in the IOC box that nothing measured.
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('webshell_hashes', ?)",
+                     (json.dumps(hashes),))
         conn.commit()
     finally:
         conn.close()

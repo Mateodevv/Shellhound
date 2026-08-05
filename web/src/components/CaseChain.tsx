@@ -221,7 +221,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                   {e.artifact && (
                     <button onClick={() => onOpen(e.artifact, e.artifact_kind)}
                       className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-[11px] text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]">
-                      Artefakt <ArrowRight size={12} />
+                      {tr('table.artifact')} <ArrowRight size={12} />
                     </button>
                   )}
                 </div>

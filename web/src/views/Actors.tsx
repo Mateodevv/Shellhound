@@ -52,13 +52,20 @@ const FLAGS = [
 // The badges of a client. `key` points at the explanation in the catalogue,
 // `label` is translated at render time -- which is why the function takes the
 // translator in rather than importing it.
-function actorBadges(a: Actor, tr: Translate) {
+//
+// `bfThreshold` comes from the server (see /actors): the same number decides
+// the "inconspicuous" filter in SQL, and a badge row that disagrees with the
+// filter above it is worse than either alone. The fallback only covers an
+// older server that does not send it yet.
+const BF_FALLBACK = 30
+
+function actorBadges(a: Actor, tr: Translate, bfThreshold = BF_FALLBACK) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
-  if (a.login_redirects > 0 && a.login_posts >= 30)
+  if (a.login_redirects > 0 && a.login_posts >= bfThreshold)
     badges.push({ key: 'loginSuccess', label: tr('badge.loginSuccess'), tone: 'danger' })
   if (a.upload_php_ok > 0)
     badges.push({ key: 'shellAccess', label: tr('badge.shellAccess'), tone: 'danger' })
-  if (a.login_posts >= 30)
+  if (a.login_posts >= bfThreshold)
     badges.push({ key: 'bruteForce', label: tr('badge.bruteForce', { n: a.login_posts }), tone: 'warn' })
   // Understated (no tone): a scanner visit is context, not an incident.
   if (a.scanner_uas !== '[]')
@@ -206,26 +213,26 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 <span className="inline-flex items-center gap-1">{tr('table.activity')} <InfoDot body={tr('field.sparkline')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Requests <InfoDot body={tr('field.requests')} /></span>
+                <span className="inline-flex items-center gap-1">{tr('table.requests')} <InfoDot body={tr('field.requests')} /></span>
               </th>
               <th className="px-2 py-2">
                 <span className="inline-flex items-center gap-1">{tr('field.period')} <InfoDot body={tr('field.timespan')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">
-                  Dauer <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
+                  {tr('hunt.duration')} <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
                 </span>
               </th>
               <th className="px-2 py-2">{tr('table.behaviour')}</th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Fehler <InfoDot body={tr('field.errors')} /></span>
+                <span className="inline-flex items-center gap-1">{tr('table.errors')} <InfoDot body={tr('field.errors')} /></span>
               </th>
               <th className="w-24 px-3 py-2" />
             </tr>
           </thead>
           <tbody>
             {actors.map((a) => {
-              const badges = actorBadges(a, tr)
+              const badges = actorBadges(a, tr, data?.bf_threshold)
               return (
                 <tr key={a.ip_id}
                   className="group border-b border-[var(--line-soft)] transition-colors last:border-0 hover:bg-[var(--panel-2)]">
@@ -302,7 +309,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                                 worst: 3, triage: a.triage!, triage_note: '',
                               })
                             }}>
-                            <FileSearch size={13} /> Artefakt
+                            <FileSearch size={13} /> {tr('table.artifact')}
                           </Button>
                         </Tooltip>
                       )}

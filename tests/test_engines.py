@@ -88,6 +88,39 @@ class EngineTests(unittest.TestCase):
             conn.close()
         self.assertIsNotNone(row, "no hashes stored for flagged files")
 
+    def test_a_clean_rescan_clears_the_hashes(self):
+        """The hash map is a measurement of the LAST run.
+
+        Keeping the previous one when a re-scan flags nothing would hand a
+        confirmation the digest of a file that is no longer there -- a hash
+        in the IOC box that nothing measured. Runs against an empty webroot
+        so the class fixture stays untouched."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        case = Path(tempfile.mkdtemp(prefix="shellhound-rescan-"))
+        empty = Path(tempfile.mkdtemp(prefix="shellhound-empty-"))
+        conn = db.connect(case)
+        try:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES "
+                         "('webshell_hashes', ?)",
+                         (json.dumps({"C:/gone/shell.php": "deadbeef"}),))
+            conn.commit()
+        finally:
+            conn.close()
+
+        webshell.scan(case, [str(empty)])
+
+        conn = db.connect(case)
+        try:
+            row = db.one(conn, "SELECT value FROM meta "
+                               "WHERE key = 'webshell_hashes'")
+        finally:
+            conn.close()
+        self.assertEqual({}, json.loads(row["value"]),
+                         "a scan that flagged nothing kept the old hashes")
+
     # --- CMS inventory ------------------------------------------------------
 
     def test_wordpress_detected_with_version(self):

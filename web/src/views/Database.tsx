@@ -536,7 +536,7 @@ function DumpCard({ dump }: { dump: DbDump }) {
         </div>
         <div className="flex shrink-0 items-center gap-3 text-[12px] text-[var(--muted)]">
           <span>{formatBytes(dump.size)}</span>
-          <span>{formatCount(dump.statements)} Statements</span>
+          <span>{formatCount(dump.statements)} {tr('database.statements')}</span>
         </div>
       </div>
       <div className="grid gap-2 px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">

@@ -215,9 +215,9 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
         for job_id in live:
-            manager.cancel(job_id)
+            manager.cancel(case_dir, job_id)
         if live:
-            still_running = manager.wait_for(live, timeout=20)
+            still_running = manager.wait_for(case_dir, live, timeout=20)
             if still_running:
                 # An engine that is still running holds an open handle on
                 # case.db -- on Windows the delete of the working copy would
@@ -380,7 +380,7 @@ def create_app(config: Config) -> FastAPI:
                 "files": files, "truncated": truncated}
 
     def _list_dir(p):
-        """(dirs, files, truncated) eines Verzeichnisses, alphabetisch."""
+        """(dirs, files, truncated) of one directory, alphabetically."""
         dirs, files, seen = [], [], 0
         try:
             with os.scandir(p) as it:
@@ -502,8 +502,8 @@ def create_app(config: Config) -> FastAPI:
 
     @app.post("/api/cases/{slug}/jobs/{job_id}/cancel", dependencies=[auth])
     def cancel_job(slug: str, job_id: int):
-        case_dir_or_404(slug)
-        return {"cancelled": manager.cancel(job_id)}
+        case_dir = case_dir_or_404(slug)
+        return {"cancelled": manager.cancel(case_dir, job_id)}
 
     # --- dashboard ----------------------------------------------------------
 
@@ -586,7 +586,7 @@ def create_app(config: Config) -> FastAPI:
             "%Y-%m-%d %H:%M:%S")
 
     def _stamp_to_local(text):
-        """'2026-07-08 03:17:00' -> Sekunden, naiv gelesen."""
+        """'2026-07-08 03:17:00' -> seconds, read naively."""
         raw = str(text or "").strip().replace("T", " ")[:19]
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
@@ -808,7 +808,7 @@ def create_app(config: Config) -> FastAPI:
         return _case_chain(case_dir_or_404(slug), lang)
 
     class ClockBody(BaseModel):
-        # Sekunden, je Quelle. 0 = Uhren gelten, wie sie dastehen.
+        # Seconds, per source. 0 = the clocks hold as they stand.
         logs: int = 0
         dump: int = 0
 
@@ -1081,7 +1081,7 @@ def create_app(config: Config) -> FastAPI:
     _HASH_MAX_BYTES = 32 * 1024 * 1024
 
     def _sha256_of(path):
-        """SHA-256 einer Evidence-Datei, oder '' wenn zu gross/unlesbar."""
+        """SHA-256 of an evidence file, or '' when too large/unreadable."""
         try:
             if not os.path.isfile(path) or os.path.getsize(path) > _HASH_MAX_BYTES:
                 return ""
@@ -1577,7 +1577,7 @@ def create_app(config: Config) -> FastAPI:
         pattern: str = ""
         label: str = ""
         note: str = ""
-        text: str = ""          # mehrere auf einmal (Zeilen oder JSON)
+        text: str = ""          # several at once (lines or JSON)
 
     @app.post("/api/patterns", dependencies=[auth])
     def patterns_add(body: NewPattern, lang: str = lang_dep):
@@ -1938,6 +1938,13 @@ def create_app(config: Config) -> FastAPI:
             a["in_box"] = a["ip"] in box_ips
             a["triage"] = triage.get(a["ip"])
         result["span"] = sparks["span"]
+        # The threshold travels with the data instead of being repeated in
+        # the frontend. The badges of a row and the "inconspicuous" filter
+        # are the same statement, and the filter is evaluated in SQL against
+        # BF_THRESHOLD -- a second copy in TypeScript would drift silently
+        # the day this number changes, and the list would then contradict
+        # itself.
+        result["bf_threshold"] = logindex.BF_THRESHOLD
         return result
 
     class TraceBody(BaseModel):
@@ -2014,29 +2021,29 @@ def create_app(config: Config) -> FastAPI:
 
         filters = [f"Clients: {', '.join(wanted)}"]
         if search.strip():
-            filters.append(f"Suche: {search.strip()}")
+            filters.append(f"Search: {search.strip()}")
         if status.strip():
             filters.append(f"Status: {status.strip()}")
         if method.strip():
-            filters.append(f"Methode: {method.strip()}")
-        filters.append(f"Sortierung: {sort}")
+            filters.append(f"Method: {method.strip()}")
+        filters.append(f"Sort: {sort}")
         truncated = result["total"] > len(result["rows"])
         manifest = "\n".join([
-            "SHELLHOUND Trace-Export",
-            f"Fall: {info['name']} ({info['slug']})",
-            f"Exportiert: {db.now()}",
+            "SHELLHOUND trace export",
+            f"Case: {info['name']} ({info['slug']})",
+            f"Exported: {db.now()}",
             "",
-            "Abfrage:",
+            "Query:",
             *(f"  {line}" for line in filters),
             "",
-            f"Zeilen: {len(result['rows'])} von {result['total']}"
-            + (" — ABGESCHNITTEN am Export-Limit" if truncated else ""),
+            f"Rows: {len(result['rows'])} of {result['total']}"
+            + (" — TRUNCATED at the export limit" if truncated else ""),
             "Times in the time zone of the respective log line.",
             "",
             f"SHA-256 (trace.csv): {digest}",
             "",
             "Verify:  certutil -hashfile trace.csv SHA256",
-            "     bzw. sha256sum trace.csv",
+            "     or:  sha256sum trace.csv",
         ]) + "\n"
 
         zbuf = io.BytesIO()
@@ -2079,7 +2086,7 @@ def create_app(config: Config) -> FastAPI:
                         tags.append(ioclib.TAG_BRUTE)
                     if a["login_redirects"] > 0 and a["login_posts"] >= logindex.BF_THRESHOLD:
                         tags.append(ioclib.TAG_SUCCESS)
-                    origin = f"actor: {a['requests']} Request(s)"
+                    origin = f"actor: {a['requests']} request(s)"
                 # A supplied origin replaces the generic one: it says WHY
                 # this address was taken in, and that is the fact that counts
                 # in the report.
