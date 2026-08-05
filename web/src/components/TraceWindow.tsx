@@ -1,19 +1,20 @@
-// TraceWindow.tsx — was ein Client (oder eine Handvoll davon) getan hat:
-// jeder Request aus dem Log-Index.
+// TraceWindow.tsx -- what a client (or a handful of them) did: every request
+// from the log index.
 //
-// Der Trace ist eine ABFRAGE gegen den Index, kein Log-Durchlauf — deshalb
-// darf er überall aufgehen, wo eine IP-Adresse steht: in der Actors-Liste,
-// im Artefakt-Detail, neben einem Hunt-Treffer. `layer` entscheidet, auf
-// welcher Ebene er liegt, wenn er AUS einem anderen Fenster geöffnet wird.
+// The trace is a QUERY against the index, not a pass through the log -- which
+// is why it may open anywhere an IP address appears: in the actors list, in
+// the artifact detail, next to a hunt hit. `layer` decides which level it
+// lies on when it is opened FROM another window.
 //
-// Oben der VERLAUF dieser Auswahl (dieselbe Kurve wie im Dashboard, nur auf
-// die Clients eingeschränkt): erst daran sieht man, ob die Requests über
-// Wochen verteilt sind oder in neun Minuten passiert sind. Er beschreibt
-// immer den ganzen Zeitraum, nie die gerade angezeigte Seite.
+// At the top the TIMELINE of this selection (the same curve as in the
+// dashboard, only restricted to the clients): only there does one see whether
+// the requests are spread over weeks or happened in nine minutes. It always
+// describes the whole period, never the page currently displayed.
 //
-// Gefiltert und sortiert wird in SQL, nicht im Browser — sonst würde eine
-// Suche nur die 500 Zeilen der aktuellen Seite durchsuchen und alles davor
-// und danach übersehen.
+// Filtering and sorting happen in SQL, not in the browser -- otherwise a
+// search would only search the 500 rows of the current page and miss
+// everything before and after.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -27,28 +28,30 @@ import { TimelineChart, type TimelinePoint } from './TimelineChart'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
 
+// Keys only at module level: a label translated here would be frozen in
+// whichever language was active when the module loaded.
 const STATUS_FILTERS = [
-  { id: '', label: 'alle' },
-  { id: '2xx', label: '2xx' },
-  { id: '3xx', label: '3xx' },
-  { id: '4xx', label: '4xx' },
-  { id: '5xx', label: '5xx' },
+  { id: '', key: 'common.all' },
+  { id: '2xx', key: null },
+  { id: '3xx', key: null },
+  { id: '4xx', key: null },
+  { id: '5xx', key: null },
 ] as const
 
 const SORTS = [
-  { id: 'time', label: 'Zeit ↑ (Verlauf)' },
-  { id: 'time_desc', label: 'Zeit ↓ (neueste zuerst)' },
-  { id: 'status', label: 'Status' },
-  { id: 'size', label: 'Größe' },
-  { id: 'uri', label: 'URI' },
+  { id: 'time', key: 'trace.sort.time' },
+  { id: 'time_desc', key: 'trace.sort.timeDesc' },
+  { id: 'status', key: null },
+  { id: 'size', key: 'trace.sort.size' },
+  { id: 'uri', key: null },
 ] as const
 
-/** Was im Trace rot markiert wird — und warum.
+/** What gets marked red in the trace -- and why.
  *
- *  `exact` für Stellen, an denen die auslösenden URIs BEKANNT sind (die
- *  Beispiel-URI eines Alarms, die vom Muster getroffenen URLs). `contains`
- *  für die Fälle, in denen es um eine DATEI geht: dort kennt man den Pfad,
- *  aber nicht jede Query-Variante, mit der sie aufgerufen wurde. */
+ *  `exact` for places where the triggering URIs are KNOWN (the example URI of
+ *  an alert, the URLs hit by a pattern). `contains` for the cases that are
+ *  about a FILE: there one knows the path, but not every query variant it
+ *  was requested with. */
 export interface TraceMarks {
   exact?: string[]
   contains?: string[]
@@ -60,10 +63,11 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   ips: string[] | null
   onClose: () => void
   layer?: number
-  /** Ohne diese Markierung sucht man die auslösende Zeile unter tausenden
-   *  von Hand. */
+  /** Without this marking one hunts for the triggering line among thousands
+   *  by hand. */
   marks?: TraceMarks
 }) {
+  const tr = useT()
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -71,11 +75,12 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   const [sort, setSort] = useState('time')
   const pageSize = 500
 
-  // Ein neuer Trace startet auf Seite 1 und ohne Filter des vorigen.
+  // A new trace starts on page 1 and without the filters of the previous.
   useEffect(() => {
     setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
   }, [ips])
-  // Ein Filter verkleinert die Menge — auf Seite 7 stünde man sonst im Leeren.
+  // A filter shrinks the set -- on page 7 one would otherwise stand in the
+  // void.
   useEffect(() => { setPage(0) }, [search, status, method, sort])
 
   const { data, isFetching } = useQuery({
@@ -86,8 +91,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
     enabled: !!ips?.length,
   })
 
-  // Der Verlauf hängt NUR an der Auswahl: er darf sich beim Blättern und
-  // Filtern nicht ändern, sonst beschriebe er nicht mehr den Zeitraum.
+  // The timeline depends ONLY on the selection: it must not change when
+  // paging or filtering, otherwise it would no longer describe the period.
   const { data: timeline } = useQuery({
     queryKey: ['trace-timeline', slug, ips],
     queryFn: () => post<{ timeline: TimelinePoint[] }>(
@@ -126,18 +131,18 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         <Crosshair size={16} className="text-[var(--accent)]" />
         Trace: {ips.length === 1
           ? <span className="inline-flex items-center gap-1.5"><IpFlag ip={ips[0]} />{ips[0]}</span>
-          : `${ips.length} Clients`}
+          : tr('trace.nClients', { n: ips.length })}
         {data && <span className="text-[12px] font-normal text-[var(--muted)]">
-          {formatCount(data.total)} Requests {isFetching && '· lädt…'}
+          {formatCount(data.total)} {tr('trace.requests')} {isFetching && `· ${tr('common.loading')}`}
         </span>}
       </span>}>
 
       {points.length > 1 && (
         <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Verlauf dieser Auswahl
+            {tr('trace.timeline')}
             <span className="ml-2 font-normal normal-case opacity-70">
-              — unabhängig von Filter und Seite
+              — {tr('trace.timeline.sub')}
             </span>
           </div>
           <TimelineChart data={points} height={160} />
@@ -149,17 +154,17 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--sev-high)' }} />
           <span className="text-[var(--danger-text)]">
             {markedRows > 0
-              ? `${formatCount(markedRows)} Zeile(n) auf dieser Seite rot markiert`
-              : 'Auf dieser Seite keine markierte Zeile'}
+              ? tr('trace.marked', { n: formatCount(markedRows) })
+              : tr('trace.marked.none')}
           </span>
           <span className="text-[var(--muted)]">
-            — {marks?.reason ?? 'das ist der Aufruf, der zum Flaggen geführt hat'}.
+            — {marks?.reason ?? tr('trace.marks.default')}.
           </span>
         </div>
       )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <SearchInput value={search} onChange={setSearch} placeholder="URI oder User-Agent…" />
+        <SearchInput value={search} onChange={setSearch} placeholder={tr('trace.search')} />
         <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
           {STATUS_FILTERS.map((f) => (
             <button key={f.id}
@@ -169,46 +174,48 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
                 status === f.id
                   ? 'bg-[var(--accent)] text-white'
                   : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
-              {f.label}
+              {f.key ? tr(f.key) : f.id}
             </button>
           ))}
         </div>
         {(data?.methods.length ?? 0) > 1 && (
           <select value={method} onChange={(e) => setMethod(e.target.value)}
             className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
-            <option value="">Methode: alle</option>
+            <option value="">{tr('trace.method.all')}</option>
             {data?.methods.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
         <select value={sort} onChange={(e) => setSort(e.target.value)}
           className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
           {SORTS.map((s) => (
-            <option key={s.id} value={s.id}>Sortierung: {s.label}</option>
+            <option key={s.id} value={s.id}>
+              {tr('common.sort')}: {s.key ? tr(s.key) : s.id.toUpperCase()}
+            </option>
           ))}
         </select>
         {filtering && (
-          <Tooltip hint="Der Filter läuft über den ganzen Trace, nicht nur über die angezeigte Seite.">
+          <Tooltip hint={tr('trace.filter.hint')}>
             <Button variant="ghost"
               onClick={() => { setSearch(''); setStatus(''); setMethod('') }}>
-              Filter zurücksetzen
+              {tr('trace.filter.reset')}
             </Button>
           </Tooltip>
         )}
-        {/* Der Export nimmt die AKTIVEN Filter mit — was man gefiltert vor
-            sich hat, ist das, was man belegen will. Das ZIP trägt neben der
-            CSV ein Manifest: Abfrage, Zeilenzahl, SHA-256. */}
-        <Tooltip title="Trace als Beleg exportieren"
-          body="Ein ZIP aus der CSV und einem Manifest mit Abfrage, Zeilenzahl und SHA-256-Prüfsumme."
+        {/* The export carries the ACTIVE filters — what you have filtered in
+            front of you is what you want to prove. Next to the CSV the ZIP
+            carries a manifest: query, row count, SHA-256. */}
+        <Tooltip title={tr('trace.export.title')}
+          body={tr('trace.export.body')}
           hint={filtering
-            ? 'Die aktiven Filter gelten auch für den Export — das Manifest hält sie fest.'
-            : 'Damit ist der Export zitierfähig: jeder Empfänger kann die Prüfsumme nachrechnen.'}>
+            ? tr('trace.export.filtered')
+            : tr('trace.export.hint')}>
           <a
             className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${ips.join(',')}`
               + `&search=${encodeURIComponent(search)}&status=${status}`
               + `&method=${encodeURIComponent(method)}&sort=${sort}`)}
           >
-            <Download size={14} /> Export mit Prüfsumme
+            <Download size={14} /> {tr('trace.export.cta')}
           </a>
         </Tooltip>
       </div>
@@ -216,10 +223,10 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
       {data && data.total > pageSize && (
         <div className="mb-2 flex items-center gap-2 text-[12px] text-[var(--muted)]">
           <Button variant="ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>←</Button>
-          Seite {page + 1} / {Math.ceil(data.total / pageSize)}
+          {tr('viewer.page')} {page + 1} / {Math.ceil(data.total / pageSize)}
           <Button variant="ghost" disabled={(page + 1) * pageSize >= data.total}
             onClick={() => setPage(page + 1)}>→</Button>
-          {filtering && <span className="opacity-70">gefiltert</span>}
+          {filtering && <span className="opacity-70">{tr('trace.filtered')}</span>}
         </div>
       )}
 
@@ -228,8 +235,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           <thead>
             <tr className="border-b border-[var(--line)] text-left text-[10px] uppercase tracking-wider text-[var(--muted)]">
               {ips.length > 1 && <th className="px-2 py-1.5">Client</th>}
-              <th className="px-2 py-1.5">Zeit</th>
-              <th className="px-2 py-1.5">Methode</th>
+              <th className="px-2 py-1.5">{tr('table.time')}</th>
+              <th className="px-2 py-1.5">{tr('table.method')}</th>
               <th className="px-2 py-1.5">URI</th>
               <th className="px-2 py-1.5 text-right">Status</th>
               <th className="px-2 py-1.5">User-Agent</th>
@@ -274,8 +281,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         {data && !data.rows.length && (
           <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
             {filtering
-              ? 'Kein Request passt zu diesem Filter — die Auswahl selbst hat aber Einträge.'
-              : 'Keine Requests im Index für diese Auswahl.'}
+              ? tr('trace.noMatch')
+              : tr('trace.noRequests')}
           </div>
         )}
       </div>

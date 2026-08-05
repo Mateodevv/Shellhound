@@ -1,15 +1,16 @@
-// CaseChain.tsx — die Chronologie des Falls.
+// CaseChain.tsx -- the chronology of the case.
 //
-// Jede andere Ansicht beantwortet „was": welche Datei, welcher Client,
-// welches Konto. Diese beantwortet „in welcher Reihenfolge" — der erste
-// Absatz jedes Berichts, den man bisher abtippte, indem man zwischen drei
-// Ansichten hin- und hersprang und Zeitstempel im Kopf sortierte.
+// Every other view answers "what": which file, which client, which account.
+// This one answers "in which order" -- the first paragraph of every report,
+// which until now one typed out by jumping between three views and sorting
+// timestamps in one's head.
 //
-// SIE ORDNET GEMESSENE TATSACHEN UND BEHAUPTET KEINE URSACHE. Was hier
-// steht, ist eine Beobachtung mit Zeitstempel und Herkunft; welche davon
-// auseinander folgt, entscheidet der Analyst. Deshalb steht an jeder Zeile,
-// WORAUS die Zeit stammt, und deshalb stehen die Lücken so sichtbar wie die
-// Ereignisse: „dazwischen ist nichts belegt" ist eine Aussage des Falls.
+// IT ORDERS MEASURED FACTS AND CLAIMS NO CAUSE. What stands here is an
+// observation with a timestamp and a source; which of them follows from
+// which is for the analyst to decide. That is why every line says WHERE the
+// time comes from, and why the gaps stand as visibly as the events:
+// "nothing is proven in between" is a statement of the case.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -32,34 +33,37 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   konto: UserPlus,
 }
 
-const KIND_LABEL: Record<ChainEvent['kind'], string> = {
-  erstkontakt: 'Erstkontakt',
-  versuch: 'nur Versuche',
-  erfolg: 'erfolgreich',
-  alarm: 'Alarm',
-  'letzter-zugriff': 'letzte Aktivität',
-  konto: 'Konto',
+// Keys only: the event kinds come from the server under English names and
+// are labelled here, not renamed.
+const KIND_KEY: Record<ChainEvent['kind'], string> = {
+  erstkontakt: 'chain.kind.firstContact',
+  versuch: 'chain.kind.attempts',
+  erfolg: 'chain.kind.success',
+  alarm: 'chain.kind.alert',
+  'letzter-zugriff': 'chain.lastActivity',
+  konto: 'chain.kind.account',
 }
 
-const SOURCE_HINT: Record<ChainEvent['source'], string> = {
-  log: 'Zeit aus dem Access-Log, in der Zeitzone des Logs.',
-  dump: 'Zeit aus dem Datenbank-Export, in der Zeitzone des Datenbankservers.',
+const SOURCE_KEY: Record<ChainEvent['source'], string> = {
+  log: 'chain.source.log',
+  dump: 'chain.source.dump',
 }
 
-/** Der Uhren-Abgleich: ein vom Analysten gesetzter Versatz je Quelle.
+/** The clock alignment: an offset per source, set by the analyst.
  *
- *  Log-Server und Datenbank-Server können verschiedene Uhren führen, und
- *  bei „Konto 03:17, Erstkontakt 09:12" kann ein 6-Stunden-Versatz die
- *  Reihenfolge der Geschichte drehen. Das Werkzeug rät nicht — der Versatz
- *  ist eine Aussage des Analysten und steht sichtbar in der Kette. */
+ *  Log server and database server can run different clocks, and with
+ *  "account 03:17, first contact 09:12" a six-hour offset can turn the order
+ *  of the story around. The tool does not guess -- the offset is a statement
+ *  of the analyst and stands visibly in the chain. */
 function ClockEditor({ slug, offsets, onClose }: {
   slug: string
   offsets: { logs: number; dump: number }
   onClose: () => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
-  // In Stunden bedient, in Sekunden gespeichert: Uhren gehen um Zeitzonen
-  // auseinander, nicht um Sekunden — und halbe Stunden gibt es (Indien).
+  // Operated in hours, stored in seconds: clocks diverge by time zones, not
+  // by seconds -- and half hours exist (India).
   const [logs, setLogs] = useState(String(offsets.logs / 3600))
   const [dump, setDump] = useState(String(offsets.dump / 3600))
   useEffect(() => {
@@ -87,17 +91,17 @@ function ClockEditor({ slug, offsets, onClose }: {
   return (
     <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 animate-fade-up">
       <Clock size={13} className="text-[var(--muted)]" />
-      <span className="text-[12px] font-medium">Uhren-Abgleich</span>
-      {feld(logs, setLogs, 'Log')}
-      {feld(dump, setDump, 'DB-Export')}
+      <span className="text-[12px] font-medium">{tr('chain.clock')}</span>
+      {feld(logs, setLogs, tr('chain.clock.logs'))}
+      {feld(dump, setDump, tr('chain.clock.dump'))}
       <span className="text-[11px] text-[var(--muted)]">
-        positiv = Quelle ging nach, ihre Zeiten werden vorgestellt
+        {tr('chain.clock.sign')}
       </span>
       <div className="ml-auto flex gap-1.5">
         <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
-          Übernehmen
+          {tr('common.apply')}
         </Button>
-        <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
+        <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
       </div>
     </div>
   )
@@ -105,13 +109,14 @@ function ClockEditor({ slug, offsets, onClose }: {
 
 export function CaseChain({ slug, onOpen, onTrace }: {
   slug: string
-  /** Ein Artefakt öffnen — dieselbe Ansicht wie aus Findings. */
+  /** Open an artifact -- the same view as from Findings. */
   onOpen: (artifact: string, kind: string) => void
   onTrace: (ip: string) => void
 }) {
-  // Sie steht offen, weil sie der erste Absatz des Berichts ist. Zuklappen
-  // ist für die Fälle, in denen man die Kennzahlen darüber vergleichen will,
-  // ohne 40 Zeilen dazwischen.
+  // It stands open because it is the first paragraph of the report.
+  // Collapsing is for the cases where one wants to compare the key figures
+  // above it without 40 lines in between.
+  const tr = useT()
   const [open, setOpen] = useState(true)
   const [clockOpen, setClockOpen] = useState(false)
   const { data } = useQuery({
@@ -132,25 +137,25 @@ export function CaseChain({ slug, onOpen, onTrace }: {
       count={data.events.length || undefined}
       title={
         <>
-          Chronologie
+          {tr('chain.title')}
           <InfoDot
-            title="Chronologie des Falls"
-            body="Die bestätigten Artefakte in ihrer zeitlichen Abfolge — der erste Absatz des Berichts."
-            hint="Sie ordnet GEMESSENE Tatsachen und behauptet keine Ursache: an jeder Zeile steht, ob die Zeit aus dem Access-Log oder aus dem Datenbank-Export stammt. Welche Beobachtung aus welcher folgt, entscheidest du." />
+            title={tr('chain.title.long')}
+            body={tr('chain.title.body')}
+            hint={tr('chain.title.hint')} />
         </>
       }
       sub={data.events.length
-        ? `${data.events.length} datierte Beobachtung(en) aus ${data.confirmed} bestätigten Artefakten, über ${formatSpan(first, last)}. Geordnet wird, was gemessen wurde — welche Beobachtung aus welcher folgt, entscheidest du.`
-        : 'Sobald Artefakte als True Positive bestätigt sind, steht hier ihre zeitliche Abfolge.'}
+        ? tr('chain.sub', { n: data.events.length, confirmed: data.confirmed, span: formatSpan(first, last) })
+        : tr('chain.empty')}
       right={
-        <Tooltip title="Uhren-Abgleich"
-          body="Log-Server und Datenbank-Server können verschiedene Uhren führen — ein Versatz kann die Reihenfolge der Geschichte drehen."
-          hint="Der Versatz ist deine Aussage, nicht eine Vermutung des Werkzeugs. Er wird im Fall gespeichert und in der Kette ausgewiesen.">
+        <Tooltip title={tr('chain.clock')}
+          body={tr('chain.clock.body')}
+          hint={tr('chain.clock.hint')}>
           <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
             <Clock size={13} />
             {adjusted
-              ? `Uhren ${data.offsets.logs ? `Log ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
-              : 'Uhren'}
+              ? `${tr('chain.clocks')} ${data.offsets.logs ? `${tr('chain.clock.logs')} ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
+              : tr('chain.clocks')}
           </Button>
         </Tooltip>
       }
@@ -163,8 +168,8 @@ export function CaseChain({ slug, onOpen, onTrace }: {
         {data.events.map((e, i) => {
           const Icon = KIND_ICON[e.kind] ?? CircleHelp
           const prev = data.events[i - 1]
-          // Gleiche Sekunde = ein Moment, keine zwei. Die Zeit steht dann
-          // nur einmal da, sonst liest sich eine Beobachtung wie zwei.
+          // Same second = one moment, not two. The time then appears only
+          // once, otherwise one observation reads like two.
           const sameMoment = prev?.at === e.at
           const gapBefore = prev && e.at - prev.at > 3600
           return (
@@ -177,13 +182,13 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                 </div>
               )}
               <div className="flex items-start gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]">
-                <Tooltip hint={SOURCE_HINT[e.source]}>
+                <Tooltip hint={tr(SOURCE_KEY[e.source])}>
                   <span className={clsx('mono w-[96px] shrink-0 pt-0.5 text-[11px] tabular',
                     sameMoment ? 'text-transparent' : 'text-[var(--muted)]')}>
                     {formatLogTime(e.at, 0).slice(0, 16)}
                   </span>
                 </Tooltip>
-                <Tooltip hint={KIND_LABEL[e.kind]}>
+                <Tooltip hint={tr(KIND_KEY[e.kind])}>
                   <Icon size={14} className={clsx('mt-0.5 shrink-0',
                     e.severity === 0 ? 'text-[var(--sev-high)]'
                       : e.severity === 1 ? 'text-[var(--sev-medium)]'
@@ -226,8 +231,8 @@ export function CaseChain({ slug, onOpen, onTrace }: {
         })}
       </Card>
 
-      {/* Was der Fall NICHT belegt, gehört genauso in den Bericht wie das,
-          was er belegt — und es steht sonst nirgends. */}
+      {/* What the case does NOT prove belongs in the report just as much as
+          what it does prove -- and it is written down nowhere else. */}
       {data.gaps.length > 0 && (
         <div className="mt-2 flex flex-col gap-1.5">
           {data.gaps.map((g) => (
@@ -243,7 +248,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
       {data.undated.length > 0 && (
         <div className="mt-2 rounded-lg border border-[var(--line)] px-3 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--muted)]">
-            <Database size={12} /> bestätigt, aber ohne Zeitbezug
+            <Database size={12} /> {tr('chain.undated')}
           </div>
           {data.undated.map((u) => (
             <button key={u.artifact} onClick={() => onOpen(u.artifact, u.artifact_kind)}

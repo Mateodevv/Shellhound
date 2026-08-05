@@ -1,4 +1,11 @@
 // api.ts — fetch wrapper + shared types for the SHELLHOUND API.
+//
+// Every call carries the chosen language in `X-Lang`. Parts of the case
+// narrative are assembled on the server -- the chronology, the GeoIP
+// descriptions, the observations on an account -- and can only be phrased
+// where the data is. A download link cannot set headers and gets `?lang=`
+// from `downloadUrl()` instead.
+import { activeLang } from './i18n'
 
 declare global {
   interface Window { __SHELLHOUND_TOKEN__?: string }
@@ -22,6 +29,7 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     ...init,
     headers: {
       'X-Token': TOKEN,
+      'X-Lang': activeLang(),
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
@@ -48,6 +56,7 @@ export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE
 export function downloadUrl(path: string): string {
   const sep = path.includes('?') ? '&' : '?'
   return `${path}${sep}token=${encodeURIComponent(TOKEN)}`
+       + `&lang=${encodeURIComponent(activeLang())}`
 }
 
 // ---- types -----------------------------------------------------------------
@@ -128,9 +137,9 @@ export interface Finding {
 
 export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
 
-/** Ein Artefakt (Datei, Client, Tabelle, Dump) mit dem, was der Server über
- *  seine Findings aggregiert hat. DAS ist die Einheit, über die entschieden
- *  wird — die Findings darunter sind die Begründung. */
+/** An artifact (file, client, table, dump) with what the server aggregated
+ *  over its findings. THAT is the unit decisions are made about -- the
+ *  findings below it are the reasoning. */
 export interface ArtifactRow {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
@@ -147,9 +156,9 @@ export interface FindingsResponse {
   /** Anzahl Artefakte im aktuellen Filter. */
   total: number
   artifacts: ArtifactRow[]
-  /** Alle Findings der gelieferten Artefakte. */
+  /** All findings of the delivered artifacts. */
   findings: Finding[]
-  /** Alle Findings im Fall, ungefiltert — nur als Größenangabe. */
+  /** All findings in the case, unfiltered -- as a size only. */
   findings_total: number
   counts: {
     severity: Record<string, number>
@@ -164,7 +173,7 @@ export interface ActorAlert {
   kind: string
   severity: number
   detail: string
-  /** Die URI, die den Alarm ausgelöst hat — der Trace markiert sie rot. */
+  /** The URI that triggered the alert -- the trace marks it red. */
   example: string
 }
 
@@ -193,7 +202,7 @@ export interface Actor {
   alerts: ActorAlert[]
   sparkline: number[]
   in_box: boolean
-  /** Entscheidung des Client-Artefakts in Findings; null = kein Finding. */
+  /** Decision of the client artifact in Findings; null = no finding. */
   triage: TriageState | null
 }
 
@@ -216,9 +225,9 @@ export interface TraceRow {
   source: string
 }
 
-/** Ein Nachbar dieses Indikators, aus Sicht DIESES Eintrags gelesen: `label`
- *  ist bereits die richtige Leserichtung ("hat den SHA-256" am Pfad, "ist der
- *  SHA-256 von" am Hash). */
+/** A neighbour of this indicator, read from the perspective of THIS entry:
+ *  `label` already carries the right reading direction ("has the SHA-256" at
+ *  the path, "is the SHA-256 of" at the hash). */
 export interface IocLink {
   id: number
   kind: string
@@ -239,8 +248,8 @@ export interface Ioc {
   links: IocLink[]
 }
 
-/** Ein geflaggtes Artefakt unterhalb einer Extension — der Fall-Bezug des
- *  Inventars: DIESE Erweiterung enthält etwas, das die Regeln benannt haben. */
+/** A flagged artifact below an extension -- the inventory's tie to the case:
+ *  THIS extension contains something the rules named. */
 export interface CmsArtifactHit {
   artifact: string
   worst: number
@@ -248,9 +257,9 @@ export interface CmsArtifactHit {
   findings: number
 }
 
-/** Was an einer Versionsangabe hängt: der Messwert, die Datei, aus der er
- *  stammt, und — falls vorhanden — die Korrektur des Analysten. `version`
- *  ist immer der GELTENDE Wert, `version_parsed` der gemessene. */
+/** What hangs on a version: the measured value, the file it came from, and
+ *  -- if there is one -- the analyst's correction. `version` is always the
+ *  value THAT APPLIES, `version_parsed` the measured one. */
 export interface VersionFacts {
   version: string
   version_parsed: string
@@ -285,10 +294,10 @@ export interface DbDump {
   statements: number
   size: number
   cms: string
-  /** `schema` = mit einer Erweiterung ausgelieferte install/uninstall/
-   *  update-SQL, kein Datenbank-Export. */
+  /** `schema` = install/uninstall/update SQL shipped with an extension, not
+   *  a database export. */
   kind: 'export' | 'schema'
-  /** Nur bei Schema-Dateien gefüllt: Findings auf ihren Tabellen. */
+  /** Filled for schema files only: findings on their tables. */
   flagged?: number
 }
 
@@ -300,15 +309,15 @@ export interface DbTable {
   rows: number
   bytes: number
   col_list: string
-  /** Findings auf dieser Tabelle — 0, wenn keine. */
+  /** Findings on this table -- 0 when there are none. */
   flagged: number
   worst: number | null
   triage: TriageState | null
 }
 
-/** Eine benannte Beobachtung an einem Konto. Bewusst kein Punktwert: ein
- *  Dump kann nicht sagen, dass ein Admin bösartig ist — nur, was an ihm
- *  auffällt. */
+/** A named observation about an account. Deliberately not a score: a dump
+ *  cannot say that an admin is malicious -- only what stands out about
+ *  them. */
 export interface AccountSignal {
   id: string
   label: string
@@ -326,13 +335,13 @@ export interface DbAccount {
   registered: string
   hash_type: string
   admin: number
-  /** Leer heißt „der Dump sagt es nicht", nicht „nie angemeldet". */
+  /** Empty means "the dump does not say", not "never signed in". */
   last_login: string
   blocked: number
   sessions: number
   signals: AccountSignal[]
   rank: number
-  /** Der Login liegt bereits als Indikator in der IOC Box. */
+  /** The login is already in the IOC box as an indicator. */
   in_box: boolean
 }
 
@@ -358,7 +367,7 @@ export interface Dashboard {
   } | null
   timeline: {
     day: string; requests: number; errors: number; new_clients: number
-    /** Mit 2xx beantwortet; null bei einem Index vor Schema 3. */
+    /** Answered with 2xx; null on an index from before schema 3. */
     ok: number | null
   }[]
 }
@@ -370,7 +379,7 @@ export interface CaseSummary {
   created: string
   closed?: string
   findings: number
-  /** Fehlt in Archiven, die vor der Artefakt-Triage geschlossen wurden. */
+  /** Missing in archives closed before artifact-level triage. */
   artifacts?: number
   confirmed: number
   dismissed: number
@@ -417,19 +426,19 @@ export interface PickPath {
   path: string
   parent: string | null
   dirs: { name: string; path: string }[]
-  /** Dateien im Verzeichnis — nicht jede Evidence ist ein Ordner: ein
-   *  SQL-Dump ist eine einzelne Datei. */
+  /** Files in the directory -- not every piece of evidence is a folder: a
+   *  SQL dump is a single file. */
   files: { name: string; path: string; size: number }[]
   truncated: boolean
 }
 
-/** Ein Eintrag im Evidence-Browser, angereichert um das, was der Fall über
- *  ihn schon weiß. */
+/** An entry in the evidence browser, enriched with what the case already
+ *  knows about it. */
 export interface BrowseFile {
   name: string
   path: string
-  /** Pfad relativ zur Evidence-Wurzel (inkl. deren Ordnername) — die Form,
-   *  in der die IOC Box ihn führt. */
+  /** Path relative to the evidence root (including its folder name) -- the
+   *  form the IOC box carries it in. */
   relative: string
   size: number
   in_box: boolean
@@ -458,8 +467,8 @@ export interface DetectResult {
 
 export interface HuntHit { ip: string; name: string; hits: number; ok_hits: number }
 
-/** Ein Muster aus der Bibliothek. Sie liegt im WORKSPACE, nicht im Fall —
- *  einmal angelegt, steht es in jedem weiteren Fall bereit. */
+/** A pattern from the library. It lives in the WORKSPACE, not in the case --
+ *  created once, it is ready in every further case. */
 export interface HuntPattern {
   id: string
   pattern: string
@@ -484,15 +493,15 @@ export interface HuntResult {
   note: string
   hits: number
   ok_hits: number
-  /** Die tatsächlich getroffenen URIs — damit sichtbar ist, ob das Muster
-   *  zu weit greift. */
+  /** The URIs actually hit -- so that it is visible whether the pattern
+   *  reaches too far. */
   uris: { uri: string; hits: number; ok_hits: number }[]
   clients: HuntClient[]
-  /** Das Muster traf mehr distinkte URIs, als eingesammelt wurden. */
+  /** The pattern hit more distinct URIs than were collected. */
   truncated: boolean
-  /** Die Kennzahlen der Suche. `ok_clients` ist die Zahl fürs Protokoll:
-   *  wie viele Adressen kamen durch, nicht wie oft geklopft wurde.
-   *  `uri_total` zählt ALLE getroffenen URLs — `uris` ist nur die Stichprobe. */
+  /** The key figures of the search. `ok_clients` is the number for the
+   *  record: how many addresses got through, not how often someone knocked.
+   *  `uri_total` counts ALL URLs hit -- `uris` is only the sample. */
   clients_total: number
   ok_clients: number
   uri_total: number
@@ -501,16 +510,16 @@ export interface HuntResult {
   tz: number
 }
 
-/** Ein Ereignis der Fall-Chronologie. `at` ist eine NAIVE ORTSZEIT in
- *  Sekunden — die Logzeile trägt ihre Serverzeit, der Kontozeitstempel die
- *  des Datenbankservers, und beide werden verglichen, wie sie dastehen.
- *  Darum immer mit tz = 0 formatieren. */
+/** An event of the case chronology. `at` is a NAIVE LOCAL TIME in seconds --
+ *  the log line carries its server time, the account timestamp that of the
+ *  database server, and both are compared as they stand. Always format it
+ *  with tz = 0 for that reason. */
 export interface ChainEvent {
   at: number
   kind: 'erstkontakt' | 'versuch' | 'erfolg' | 'alarm' | 'letzter-zugriff' | 'konto'
   title: string
   detail: string
-  /** Woraus die Zeit stammt: aus dem Access-Log oder aus dem SQL-Export. */
+  /** Where the time comes from: the access log or the SQL export. */
   source: 'log' | 'dump'
   artifact: string
   artifact_kind: '' | 'file' | 'table' | 'client' | 'dump'
@@ -518,9 +527,9 @@ export interface ChainEvent {
   severity: number | null
 }
 
-/** Die Chronologie: geordnete gemessene Tatsachen, keine Kausalaussagen.
- *  `gaps` sagt, was der Fall NICHT belegt — das gehört genauso in den
- *  Bericht wie die Ereignisse selbst. */
+/** The chronology: ordered measured facts, no statements about cause.
+ *  `gaps` says what the case does NOT prove -- and that belongs in the
+ *  report just as much as the events themselves. */
 export interface CaseChain {
   span: { first: number | null; last: number | null }
   events: ChainEvent[]
@@ -532,7 +541,8 @@ export interface CaseChain {
   offsets: { logs: number; dump: number }
 }
 
-/** Das Protokoll des Falls: wonach gesucht wurde — auch erfolglos. */
+/** The record of the case: what was searched for -- unsuccessfully
+ *  included. */
 export interface HuntRun {
   pattern: string
   label: string
@@ -557,10 +567,9 @@ export interface FilePreview {
   truncated?: boolean
 }
 
-/** Ein Artefakt, das an einer Entscheidung HÄNGT: entweder wurde es
- *  mitentschieden (`linked`) oder es wird vorgeschlagen (`suggested`).
- *  `previous` ist der Zustand davor — damit lässt sich die Übernahme
- *  zurücknehmen, ohne zu raten. */
+/** An artifact that HANGS on a decision: it was either decided along
+ *  (`linked`) or it is suggested (`suggested`). `previous` is the state from
+ *  before -- with it the propagation can be taken back without guessing. */
 export interface TriageLink {
   artifact: string
   kind: 'file' | 'table' | 'client' | 'dump'
@@ -578,8 +587,8 @@ export interface TriageResult {
   suggested: TriageLink[]
 }
 
-/** Eine IP, die an diesem Artefakt hängt — mit dem Grund, warum sie hier
- *  steht. Jede davon lässt sich direkt als Trace öffnen. */
+/** An IP that hangs on this artifact -- with the reason why it is here.
+ *  Each of them can be opened directly as a trace. */
 export interface RelatedIp {
   ip: string
   why: string
@@ -588,7 +597,7 @@ export interface RelatedIp {
   in_box: boolean
 }
 
-/** Alles über EIN Artefakt: die Antwort, aus der entschieden wird. */
+/** Everything about ONE artifact: the response a decision is made from. */
 export interface ArtifactContext {
   artifact: string
   kind: 'file' | 'table' | 'client' | 'dump'

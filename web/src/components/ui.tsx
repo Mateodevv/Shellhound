@@ -1,15 +1,16 @@
 // ui.tsx — the small building blocks: cards, badges, chips, drawer, progress.
+import { useT } from '../i18n'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
 import { copyText } from '../copy'
-import { SEVERITY_EXPLAIN, TAG_EXPLAIN, TRIAGE_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
 export function Card({ children, className, style, id }: {
-  // `id` nur, damit eine Karte Sprungziel sein kann (IOC Box: von einem
-  // Indikator zu seinem verknüpften Nachbarn).
+  // `id` only so that a card can be a jump target (IOC box: from one
+  // indicator to its linked neighbour).
   children: ReactNode; className?: string; style?: React.CSSProperties; id?: string
 }) {
   return (
@@ -54,6 +55,7 @@ export function StatTile({ label, value, tone, sub, onClick, info }: {
 }
 
 export function SeverityBadge({ severity, plain }: { severity: number; plain?: boolean }) {
+  const tr = useT()
   const badge = (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold"
@@ -67,7 +69,7 @@ export function SeverityBadge({ severity, plain }: { severity: number; plain?: b
     </span>
   )
   if (plain) return badge
-  const e = SEVERITY_EXPLAIN[severity]
+  const e = explain(tr, `severity.${severity}`)
   return <Tooltip title={e?.what} hint={e?.why}>{badge}</Tooltip>
 }
 
@@ -79,7 +81,8 @@ const TRIAGE_STYLE: Record<string, string> = {
 }
 
 export function TriageBadge({ state, label }: { state: string; label: string }) {
-  const e = TRIAGE_EXPLAIN[state]
+  const tr = useT()
+  const e = explain(tr, `triage.${state}`)
   return (
     <Tooltip title={e?.what} hint={e?.why}>
       <span className={clsx('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
@@ -111,11 +114,12 @@ export function Tag({ children, tone, explain, hint }: {
   return <Tooltip title={explain} hint={hint}>{badge}</Tooltip>
 }
 
-/** Ein IOC-Tag, das sich selbst erklärt. */
+/** An IOC tag that explains itself. */
 export function IocTag({ tag, tone }: {
   tag: string; tone?: 'accent' | 'danger' | 'warn'
 }) {
-  const e = TAG_EXPLAIN[tag]
+  const tr = useT()
+  const e = explain(tr, `tag.${tag}`)
   return <Tag tone={tone} explain={e?.what} hint={e?.why}>{tag}</Tag>
 }
 
@@ -124,9 +128,9 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   onClick: () => void
   children: ReactNode
   count?: number
-  /** Ausblende-Logik: dieser Chip ist gerade AUSGEBLENDET — durchgestrichen
-   *  und zurückgenommen, aber klickbar, denn der nächste Klick holt die
-   *  Einträge zurück. `active` und `dimmed` schließen einander aus. */
+  /** Hide logic: this chip is currently HIDDEN -- struck through and
+   *  receded, but clickable, because the next click brings the entries back.
+   *  `active` and `dimmed` are mutually exclusive. */
   dimmed?: boolean
 }) {
   return (
@@ -158,8 +162,8 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   disabled?: boolean
   className?: string
   title?: string
-  /** Für den Fall, dass ein Knopf sich vom Untergrund abheben muss, auf dem
-   *  er sitzt — eine Utility-Klasse würde gegen die Variante verlieren. */
+  /** For the case where a button has to stand out from the surface it sits
+   *  on -- a utility class would lose against the variant. */
   style?: React.CSSProperties
 }) {
   return (
@@ -185,13 +189,14 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   )
 }
 
-/** Kopieren mit Quittung. Ohne die kurze Bestätigung weiß niemand, ob der
- *  Klick angekommen ist — und man klickt ein zweites Mal, was nichts ändert,
- *  aber Zweifel lässt. Ein FEHLSCHLAG wird ebenso gezeigt: still nichts zu
- *  tun ist die schlechteste der drei Möglichkeiten. */
+/** Copying with a receipt. Without the short confirmation nobody knows
+ *  whether the click arrived -- and one clicks a second time, which changes
+ *  nothing but leaves doubt. A FAILURE is shown just as clearly: silently
+ *  doing nothing is the worst of the three possibilities. */
 export function CopyButton({ value, label = 'Kopieren', className }: {
   value: string; label?: string; className?: string
 }) {
+  const tr = useT()
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
@@ -204,8 +209,8 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
   }
   return (
     <Tooltip hint={state === 'fail'
-      ? 'Die Zwischenablage ist hier nicht verfügbar — den Wert bitte von Hand markieren.'
-      : `${label} — legt den Wert in die Zwischenablage.`}>
+      ? tr('copy.unavailable')
+      : tr('copy.hint', { what: label })}>
       <button onClick={copy} aria-label={label}
         className={clsx(
           'cursor-pointer rounded-md border border-transparent p-1 transition-colors',
@@ -220,8 +225,8 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
   )
 }
 
-/** Ein Abschnitt, den man zuklappen kann. Der Zustand gehört dem Aufrufer,
- *  damit er ihn merken oder von außen setzen kann. */
+/** A section that can be collapsed. The state belongs to the caller, so it
+ *  can be remembered or set from outside. */
 export function Collapsible({ open, onToggle, title, sub, right, count, children }: {
   open: boolean
   onToggle: () => void
@@ -282,14 +287,14 @@ export function EmptyState({ icon, title, sub, action }: {
   )
 }
 
-// Welche Overlays gerade offen sind, in der Reihenfolge, in der sie geöffnet
-// wurden. Escape schließt nur das OBERSTE: sonst räumt ein Tastendruck die
-// ganze Kette ab und man verliert den Kontext, in dem man gerade gearbeitet
-// hat (Datei-Viewer zu, Artefakt-Detail gleich mit).
+// Which overlays are currently open, in the order they were opened. Escape
+// closes only the TOPMOST one: otherwise one keystroke clears the whole
+// chain and one loses the context one was just working in (file viewer
+// closed, artifact detail along with it).
 const drawerStack: symbol[] = []
 
-/** Meldet ein offenes Overlay an und sagt, ob es gerade das oberste ist.
- *  Drawer und Modal teilen sich diesen Stapel — sie liegen übereinander. */
+/** Registers an open overlay and says whether it is currently the topmost.
+ *  Drawer and modal share this stack -- they lie on top of each other. */
 function useOverlayEscape(open: boolean, onClose: () => void) {
   useEffect(() => {
     if (!open) return
@@ -310,13 +315,13 @@ function useOverlayEscape(open: boolean, onClose: () => void) {
   }, [open, onClose])
 }
 
-/** Ein zentriertes Fenster — die Standard-Ansicht für alles, was FLÄCHE
- *  braucht: Artefakt-Detail, Datei-Viewer, Trace.
+/** A centred window -- the standard view for everything that needs AREA:
+ *  artifact detail, file viewer, trace.
  *
- *  Fenster, die aus einem anderen heraus geöffnet werden (`layer` > 0),
- *  sind jede Stufe etwas kleiner. Das ist keine Dekoration: man sieht am
- *  Rand, dass darunter noch etwas liegt, zu dem man zurückkommt — sonst
- *  wirkt ein Trace wie ein Themenwechsel statt wie ein Blick zur Seite. */
+ *  Windows opened from another one (`layer` > 0) are slightly smaller per
+ *  level. That is not decoration: one sees at the edge that something else
+ *  lies below, something one comes back to -- otherwise a trace feels like a
+ *  change of subject rather than a glance to the side. */
 export function Modal({ open, onClose, title, children, layer = 0 }: {
   open: boolean
   onClose: () => void
@@ -324,6 +329,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   children: ReactNode
   layer?: number
 }) {
+  const tr = useT()
   useOverlayEscape(open, onClose)
   if (!open) return null
   const inset = Math.min(layer, 3)
@@ -344,7 +350,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
           <div className="min-w-0 text-[15px] font-semibold">{title}</div>
           <button
             onClick={onClose}
-            title="Schließen (Esc)"
+            title={tr('common.closeEsc')}
             className="shrink-0 rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
           >
             <X size={16} />
@@ -356,13 +362,13 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   )
 }
 
-/** Eine Meldung über etwas, das GERADE PASSIERT IST, ohne den Arbeitsfluss
- *  zu unterbrechen. Sie liegt über allem (auch über offenen Fenstern), denn
- *  sie berichtet über die Aktion, die man eben ausgelöst hat.
+/** A message about something that JUST HAPPENED, without interrupting the
+ *  flow of work. It lies above everything (open windows included), because
+ *  it reports on the action one has just triggered.
  *
- *  Sie verschwindet nach `timeout` von selbst — aber nur, wenn sie keine
- *  Aktion trägt: eine Meldung mit »Rückgängig« darf nicht weglaufen, bevor
- *  man sie gelesen hat. */
+ *  It disappears by itself after `timeout` -- but only when it carries no
+ *  action: a message with "undo" must not run away before it has been
+ *  read. */
 export function Toast({ open, onClose, tone = 'info', title, children, actions,
                         timeout = 9000 }: {
   open: boolean
@@ -373,6 +379,7 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
   actions?: ReactNode
   timeout?: number
 }) {
+  const tr = useT()
   useEffect(() => {
     if (!open || !timeout || actions) return
     const t = setTimeout(onClose, timeout)
@@ -394,7 +401,7 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
               </div>
             )}
           </div>
-          <button onClick={onClose} title="Schließen"
+          <button onClick={onClose} title={tr('common.close')}
             className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer">
             <X size={14} />
           </button>

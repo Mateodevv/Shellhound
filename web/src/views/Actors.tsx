@@ -1,12 +1,13 @@
-// Actors.tsx — every client the logs saw, mit Aktivitäts-Sparkline und
-// Klassifikations-Badges. Traces sind Abfragen gegen den Index: 20 Clients
-// auswählen und der kombinierte Trace steht sofort.
+// Actors.tsx -- every client the logs saw, with an activity sparkline and
+// classification badges. Traces are queries against the index: select 20
+// clients and the combined trace is there at once.
 //
-// ARBEITSTEILUNG mit Findings: dort wird entschieden, hier wird GEJAGT —
-// die Grundgesamtheit aller Clients, auch derer, auf die keine Regel
-// angesprochen hat. Was in Findings längst entschieden ist, trägt hier
-// sein Badge und lässt sich im selben Artefakt-Fenster öffnen; niemand
-// soll in dieser Liste neu bewerten, was drüben schon beantwortet ist.
+// DIVISION OF LABOUR with Findings: over there decisions are made, here one
+// HUNTS -- the total population of all clients, including those no rule
+// responded to. What has long been decided in Findings carries its badge
+// here and opens in the same artifact window; nobody should re-assess in
+// this list what has already been answered over there.
+import { useT, type Translate } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -17,14 +18,14 @@ import {
   api, downloadUrl, post, type Actor, type ActorsResponse, type CaseDetail,
 } from '../api'
 import {
-  TRIAGE_LABEL, formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
+  formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
   type EvidenceRoot,
 } from '../format'
 import {
   Button, Chip, EmptyState, SearchInput, Tag, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
-import { BADGE_EXPLAIN, FIELD_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import { Sparkline } from '../components/Sparkline'
 import { IpFlag } from '../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
@@ -34,44 +35,55 @@ import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import type { ViewId } from '../App'
 
-// Jeder Chip ist ein AUSBLENDE-Schalter: Klick versteckt die Klasse, der
-// nächste Klick holt sie zurück, mehrere stapeln sich. So arbeitet man sich
-// durch die Grundgesamtheit: Scanner weg, Brute-Force weg — was übrig
-// bleibt, ist das, was noch keine Regel benannt hat.
+// Every chip is a HIDE switch: a click hides the class, the next click
+// brings it back, several of them stack. That is how one works through the
+// total population: scanners gone, brute force gone -- what remains is what
+// no rule has named yet.
+// Only the keys stand here: translation happens at render time, otherwise
+// the language would be frozen at module load.
 const FLAGS = [
-  { id: 'quiet', label: 'Unauffällig', hint: 'Clients ohne jedes Abzeichen — ganz normale Besucher. Ausblenden lässt genau die übrig, an denen etwas dran ist.' },
-  { id: 'alerted', label: 'Auffällig', hint: 'Clients, bei denen etwas mit DIESEM System passiert ist — Shell-Zugriff, Brute-Force, erfolgreiche Angriffsmuster. Reine Scanner-Besuche zählen hier nicht mit.' },
-  { id: 'scanner', label: 'Scanner', hint: 'Clients, die sich als Scan-Werkzeug ausgegeben haben. Passiert jedem Server rund um die Uhr.' },
-  { id: 'bruteforce', label: 'Brute-Force', hint: 'Clients mit vielen Login-Versuchen.' },
-  { id: 'probes', label: 'Angriffs­muster', hint: 'Clients mit SQL-Injection-, Traversal- oder Upload-PHP-Mustern.' },
+  { id: 'quiet', key: 'quiet' },
+  { id: 'alerted', key: 'alerted' },
+  { id: 'scanner', key: 'scanner' },
+  { id: 'bruteforce', key: 'brute' },
+  { id: 'probes', key: 'probes' },
 ] as const
 
-// key -> Erklärung im Glossar; label -> was auf dem Badge steht.
-function actorBadges(a: Actor) {
+// The badges of a client. `key` points at the explanation in the catalogue,
+// `label` is translated at render time -- which is why the function takes the
+// translator in rather than importing it.
+function actorBadges(a: Actor, tr: Translate) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
   if (a.login_redirects > 0 && a.login_posts >= 30)
-    badges.push({ key: 'Login erfolgreich?', label: 'Login erfolgreich?', tone: 'danger' })
-  if (a.upload_php_ok > 0) badges.push({ key: 'Shell-Zugriff 2xx', label: 'Shell-Zugriff', tone: 'danger' })
-  if (a.login_posts >= 30) badges.push({ key: 'Brute-Force', label: `Brute-Force ×${a.login_posts}`, tone: 'warn' })
-  // dezent (kein tone): ein Scanner-Besuch ist Kontext, kein Vorfall.
-  if (a.scanner_uas !== '[]') badges.push({ key: 'Scanner-UA', label: 'Scanner', tone: undefined })
-  if (a.sqli_ok > 0) badges.push({ key: 'SQLi 2xx', label: `SQLi ×${a.sqli_ok}`, tone: 'warn' })
-  else if (a.sqli_attempts > 0) badges.push({ key: 'SQLi-Versuche', label: `SQLi-Versuche ×${a.sqli_attempts}`, tone: undefined })
-  if (a.traversal_ok > 0) badges.push({ key: 'Traversal 2xx', label: 'Traversal', tone: 'warn' })
+    badges.push({ key: 'loginSuccess', label: tr('badge.loginSuccess'), tone: 'danger' })
+  if (a.upload_php_ok > 0)
+    badges.push({ key: 'shellAccess', label: tr('badge.shellAccess'), tone: 'danger' })
+  if (a.login_posts >= 30)
+    badges.push({ key: 'bruteForce', label: tr('badge.bruteForce', { n: a.login_posts }), tone: 'warn' })
+  // Understated (no tone): a scanner visit is context, not an incident.
+  if (a.scanner_uas !== '[]')
+    badges.push({ key: 'scanner', label: tr('badge.scanner'), tone: undefined })
+  if (a.sqli_ok > 0)
+    badges.push({ key: 'sqliOk', label: tr('badge.sqliOk', { n: a.sqli_ok }), tone: 'warn' })
+  else if (a.sqli_attempts > 0)
+    badges.push({ key: 'sqliAttempts', label: tr('badge.sqliAttempts', { n: a.sqli_attempts }), tone: undefined })
+  if (a.traversal_ok > 0)
+    badges.push({ key: 'traversal', label: tr('badge.traversal'), tone: 'warn' })
   return badges
 }
 
 export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  // Default: nichts ausgeblendet — das Einzigartige dieser Seite ist die
-  // Grundgesamtheit. Ausblenden ist die Handbewegung des Jagens.
+  // Default: nothing hidden -- what makes this page unique is the total
+  // population. Hiding is the hand movement of hunting.
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState('requests')
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Die URIs, die bei DIESEN Clients den Alarm ausgelöst haben — der Trace
-  // markiert sie rot, damit man die auslösende Zeile nicht sucht.
+  // The URIs that triggered the alert for THESE clients -- the trace marks
+  // them red so that one does not have to hunt for the triggering line.
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
@@ -85,8 +97,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       `/api/cases/${slug}/actors?search=${encodeURIComponent(search)}&hide=${hide}&sort=${sort}&limit=200`),
   })
 
-  // Die Evidence-Wurzeln, damit Datei-Pfade in Vorschlägen lesbar sind —
-  // derselbe Query-Key wie in der Shell, also praktisch immer schon geladen.
+  // The evidence roots, so that file paths in suggestions are readable --
+  // the same query key as in the shell, so practically always loaded
+  // already.
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
@@ -114,15 +127,15 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Actors"
-          body="Jede IP-Adresse, die in den Logs auftaucht — mögliche Angreifer, Scanner und ganz normale Besucher."
-          hint="Jeder Chip blendet seine Klasse aus, der nächste Klick holt sie zurück — so arbeitest du dich durch: Scanner weg, Brute-Force weg, übrig bleibt das Unerklärte. »Trace« zeigt, was ein Client genau getan hat.">
+          body={tr('actors.title.body')}
+          hint={tr('actors.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">Actors</h1>
         </Tooltip>
         {FLAGS.map((f) => (
           <Tooltip key={f.id}
             hint={hidden.has(f.id)
-              ? `Ausgeblendet — Klick holt diese Clients zurück. ${f.hint}`
-              : `Klick blendet diese Clients aus. ${f.hint}`}>
+              ? `${tr('actors.flag.hidden')} ${tr(`actors.flag.${f.key}.hint`)}`
+              : `${tr('actors.flag.hide')} ${tr(`actors.flag.${f.key}.hint`)}`}>
             <Chip active={false} dimmed={hidden.has(f.id)}
               onClick={() => setHidden((prev) => {
                 const next = new Set(prev)
@@ -130,7 +143,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 else next.add(f.id)
                 return next
               })}>
-              {f.label}
+              {tr(`actors.flag.${f.key}`)}
             </Chip>
           </Tooltip>
         ))}
@@ -139,43 +152,43 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           onChange={(e) => setSort(e.target.value)}
           className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none cursor-pointer"
         >
-          <option value="requests">Sortierung: Requests</option>
-          <option value="last">Sortierung: zuletzt gesehen</option>
-          <option value="first">Sortierung: zuerst gesehen</option>
-          <option value="errors">Sortierung: Fehler</option>
+          <option value="requests">{tr('actors.sort.requests')}</option>
+          <option value="last">{tr('actors.sort.last')}</option>
+          <option value="first">{tr('actors.sort.first')}</option>
+          <option value="errors">{tr('actors.sort.errors')}</option>
         </select>
         <div className="ml-auto flex items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder="IP suchen…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('actors.search')} />
         </div>
       </div>
 
 
       {checked.size > 0 && (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
-          <span className="text-[13px] font-semibold">{checked.size} ausgewählt</span>
+          <span className="text-[13px] font-semibold">{tr('common.selected', { n: checked.size })}</span>
           <Button variant="primary"
             onClick={() => {
               setTraceMarks({
                 exact: actors.filter((a) => checked.has(a.ip))
                   .flatMap((a) => a.alerts.map((al) => al.example)).filter(Boolean),
-                reason: 'dieser Aufruf hat den Alarm ausgelöst',
+                reason: tr('marks.alertTrigger'),
               })
               setTraceIps([...checked])
             }}>
             <Crosshair size={14} /> Trace ({checked.size} Clients)
           </Button>
-          <Tooltip hint="Übernimmt die Adressen als Indikatoren — getaggt mit dem, was die Logs sie tun gesehen haben (Scanner, Brute-Force, erfolgreich).">
+          <Tooltip hint={tr('actors.collect.hint')}>
             <Button onClick={() => collect.mutate([...checked])}>
-              <Box size={14} /> In IOC Box
+              <Box size={14} /> {tr('actors.toIocBox')}
             </Button>
           </Tooltip>
           <a
             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${[...checked].join(',')}`)}
           >
-            <Download size={14} /> Trace als CSV
+            <Download size={14} /> {tr('actors.traceCsv')}
           </a>
-          <Button variant="ghost" onClick={() => setChecked(new Set())}>Auswahl leeren</Button>
+          <Button variant="ghost" onClick={() => setChecked(new Set())}>{tr('common.clearSelection')}</Button>
         </div>
       )}
 
@@ -188,31 +201,31 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   checked={checked.size > 0 && checked.size === actors.length}
                   onChange={toggleAll} />
               </th>
-              <th className="px-2 py-2">Client</th>
+              <th className="px-2 py-2">{tr('table.client')}</th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Aktivität <InfoDot body={FIELD_EXPLAIN.sparkline} /></span>
+                <span className="inline-flex items-center gap-1">{tr('table.activity')} <InfoDot body={tr('field.sparkline')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Requests <InfoDot body={FIELD_EXPLAIN.requests} /></span>
+                <span className="inline-flex items-center gap-1">Requests <InfoDot body={tr('field.requests')} /></span>
               </th>
               <th className="px-2 py-2">
-                <span className="inline-flex items-center gap-1">Zeitraum <InfoDot body={FIELD_EXPLAIN.timespan} /></span>
+                <span className="inline-flex items-center gap-1">{tr('field.period')} <InfoDot body={tr('field.timespan')} /></span>
               </th>
               <th className="px-2 py-2 text-right">
                 <span className="inline-flex items-center gap-1">
-                  Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+                  Dauer <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
                 </span>
               </th>
-              <th className="px-2 py-2">Verhalten</th>
+              <th className="px-2 py-2">{tr('table.behaviour')}</th>
               <th className="px-2 py-2 text-right">
-                <span className="inline-flex items-center gap-1">Fehler <InfoDot body={FIELD_EXPLAIN.errors} /></span>
+                <span className="inline-flex items-center gap-1">Fehler <InfoDot body={tr('field.errors')} /></span>
               </th>
               <th className="w-24 px-3 py-2" />
             </tr>
           </thead>
           <tbody>
             {actors.map((a) => {
-              const badges = actorBadges(a)
+              const badges = actorBadges(a, tr)
               return (
                 <tr key={a.ip_id}
                   className="group border-b border-[var(--line-soft)] transition-colors last:border-0 hover:bg-[var(--panel-2)]">
@@ -230,11 +243,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                     <div className="flex items-center gap-2">
                       <IpFlag ip={a.ip} />
                       <span className="mono font-medium">{a.ip}</span>
-                      {a.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
-                      {/* Was in Findings entschieden wurde, gilt auch hier —
-                          sonst bewertet man dieselbe Adresse zweimal. */}
+                      {a.in_box && <Tag tone="accent" explain={tr('actors.inBox')}>IOC</Tag>}
+                      {/* What was decided in Findings holds here too --
+                          otherwise one assesses the same address twice. */}
                       {a.triage && a.triage !== 'new' && (
-                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                        <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                       )}
                     </div>
                   </td>
@@ -244,18 +257,18 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   </td>
                   <td className="px-2 py-2 text-right tabular">{formatCount(a.requests)}</td>
                   <td className="px-2 py-2 text-[12px] text-[var(--muted)]">
-                    <Tooltip title="Erste und letzte Anfrage"
+                    <Tooltip title={tr('actors.firstLast')}
                       body={`${formatDay(a.first_epoch, a.tz)} bis ${formatDay(a.last_epoch, a.tz)} (${relativeTime(a.last_epoch ? new Date(a.last_epoch * 1000).toISOString() : null)} zuletzt)`}>
                       <span>{formatDay(a.first_epoch, a.tz)} → {formatDay(a.last_epoch, a.tz)}</span>
                     </Tooltip>
                   </td>
-                  {/* Wie lange dieser Client aktiv war. Vier Minuten sind ein
-                      Werkzeuglauf, vier Wochen sind ein Dauergast — dieselbe
-                      Requestzahl bedeutet in beiden Fällen etwas anderes. */}
+                  {/* How long this client was active. Four minutes are a
+                      tool run, four weeks are a regular guest -- the same
+                      request count means something different in each. */}
                   <td className="mono px-2 py-2 text-right text-[12px] tabular text-[var(--muted)]">
-                    <Tooltip title="Dauer der Aktivität"
+                    <Tooltip title={tr('actors.durationTitle')}
                       body={`${formatLogTime(a.first_epoch, a.tz)} bis ${formatLogTime(a.last_epoch, a.tz)}`}
-                      hint={FIELD_EXPLAIN.duration_why}>
+                      hint={tr('field.duration_why')}>
                       <span>{formatSpan(a.first_epoch, a.last_epoch)}</span>
                     </Tooltip>
                   </td>
@@ -264,11 +277,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                       {badges.length
                         ? badges.slice(0, 3).map((b, i) => (
                           <Tag key={i} tone={b.tone}
-                            explain={BADGE_EXPLAIN[b.key]?.what} hint={BADGE_EXPLAIN[b.key]?.why}>
+                            explain={explain(tr, `badge.${b.key}`)?.what} hint={explain(tr, `badge.${b.key}`)?.why}>
                             {b.label}
                           </Tag>
                         ))
-                        : <span className="text-[12px] text-[var(--muted)]">unauffällig</span>}
+                        : <span className="text-[12px] text-[var(--muted)]">{tr('actors.unremarkable')}</span>}
                     </div>
                   </td>
                   <td className={clsx('px-2 py-2 text-right tabular text-[12px]',
@@ -277,10 +290,10 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                      {/* Nur Clients MIT Findings haben ein Artefakt — für
-                          alle anderen gibt es nichts zu entscheiden. */}
+                      {/* Only clients WITH findings have an artifact -- for
+                          all others there is nothing to decide. */}
                       {a.triage && (
-                        <Tooltip hint="Das Artefakt dieses Clients öffnen — dasselbe Fenster wie in Findings, mit Entscheidung.">
+                        <Tooltip hint={tr('actors.openArtifact')}>
                           <Button variant="ghost"
                             onClick={() => {
                               t.clearCollected()
@@ -297,7 +310,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                         onClick={() => {
                           setTraceMarks({
                             exact: a.alerts.map((al) => al.example).filter(Boolean),
-                            reason: 'dieser Aufruf hat den Alarm ausgelöst',
+                            reason: tr('marks.alertTrigger'),
                           })
                           setTraceIps([a.ip])
                         }}>
@@ -312,15 +325,15 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </table>
         {actors.length === 0 && (
           <EmptyState icon={<Users size={36} />}
-            title={hidden.size ? 'Alles ausgeblendet' : 'Noch keine Actors'}
+            title={hidden.size ? tr('actors.empty.hidden') : tr('actors.empty.title')}
             sub={hidden.size
-              ? 'Jeder verbliebene Client fällt unter einen ausgeblendeten Chip. Klick die durchgestrichenen Chips, um sie zurückzuholen.'
-              : 'Die Actors kommen aus den Access-Logs. Registriere die Logs als Evidence und starte die Analyse — danach steht hier jeder Client mit seiner Aktivität.'} />
+              ? tr('actors.empty.hiddenSub')
+              : tr('actors.empty.sub')} />
         )}
       </div>
       {data && data.total > actors.length && (
         <div className="text-[12px] text-[var(--muted)]">
-          {formatCount(actors.length)} von {formatCount(data.total)} Clients angezeigt — Filter/Suche verfeinern.
+          {tr('actors.capped', { shown: formatCount(actors.length), total: formatCount(data.total) })}
         </div>
       )}
 

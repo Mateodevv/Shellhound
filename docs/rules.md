@@ -1,48 +1,49 @@
-# Detektionsregeln
+# Detection rules
 
-Jede Regel, die in SHELLHOUND ein Finding erzeugt — was sie technisch
-auslöst, was sie **aussagt** und was sie **nicht** aussagt.
+Every rule that produces a finding in SHELLHOUND — what triggers it
+technically, what it **states** and what it does **not** state.
 
-Diese Datei ist Referenz, keine zweite Quelle: die Regeln stehen in
-[`server/engines/`](../server/engines), die Klartexte in
-[`web/src/explain.ts`](../web/src/explain.ts). Wer eine Regel ändert, ändert
-sie dort und zieht diese Datei nach.
+This file is a reference, not a second source: the rules live in
+[`server/engines/`](../server/engines), their plain-language texts in
+[`web/src/explain.ts`](../web/src/explain.ts) and the catalogues under
+[`web/src/i18n/`](../web/src/i18n). Whoever changes a rule changes it there
+and brings this file along.
 
-Die **Konto-Beobachtungen** der Database-Ansicht (Admin, kurz vor dem Export
-angelegt, schwacher Hash, nie angemeldet, offene Sitzung, gesperrt) sind
-ebenfalls keine Findings, sondern eine Sortierhilfe: ein Dump kann nicht
-sagen, dass ein Konto bösartig ist — nur, was an ihm auffällt.
+The **account observations** of the database view (admin, created shortly
+before the export, weak hash, never signed in, open session, blocked) are
+likewise not findings but a sorting aid: a dump cannot say that an account is
+malicious — only what stands out about it.
 
-Das **CMS-Inventar** erzeugt keine Findings — es beschreibt, was installiert
-ist. Jede Versionsangabe trägt die Datei mit sich, aus der sie gelesen wurde
-(Manifest, `style.css`, Plugin-Header, `version.php`), und lässt sich im
-Inventar von Hand korrigieren; der gemessene Wert bleibt daneben stehen.
+The **CMS inventory** produces no findings — it describes what is installed.
+Every version carries with it the file it was read from (manifest,
+`style.css`, plugin header, `version.php`) and can be corrected by hand in
+the inventory; the measured value stays visible next to it.
 
-## Zwei Prinzipien, die überall gelten
+## Two principles that hold everywhere
 
-**Probe-Regeln sind outcome-gated.** SQL-Injection, Path-Traversal und
-Zugriffe auf PHP in Upload-Verzeichnissen werden nur zum Finding, wenn
-mindestens eine dieser Anfragen mit **2xx** beantwortet wurde. Abgewehrte
-Versuche bleiben als Zähler am Actor sichtbar — eine geblockte Angriffswelle
-soll die Arbeitsliste nicht röten.
+**Probe rules are outcome-gated.** SQL injection, path traversal and requests
+for PHP in upload directories only become a finding when at least one of
+those requests was answered with **2xx**. Repelled attempts stay visible as a
+counter on the actor — a blocked wave of attacks should not redden the work
+list.
 
-**Was nicht bewertet werden konnte, verschwindet nicht.** Eine unlesbare oder
-zu große Datei am falschen Ort wird selbst zum Finding. Inerte PHP-Stubs und
-übersprungene Dateien landen in eigenen Tabellen (`inert_php`, `skipped`).
-Ein nicht geprüfter Fund wird gemeldet, nicht verschwiegen.
+**What could not be assessed does not disappear.** An unreadable or oversized
+file in the wrong place becomes a finding itself. Inert PHP stubs and skipped
+files land in their own tables (`inert_php`, `skipped`). An unexamined find
+is reported, not passed over in silence.
 
-## Schweregrade
+## Severities
 
-| Grad | Bedeutung |
+| Level | Meaning |
 |---|---|
-| **HIGH** (0) | Sachverhalt, für den es kaum eine harmlose Erklärung gibt. |
-| **MEDIUM** (1) | Auffällig, kann aber legitim sein — braucht Kontext. |
-| **LOW** (2) | Schwaches Signal, meist nur im Zusammenhang interessant. |
-| **INFO** (3) | Kontext ohne Aussage über *dieses* System. Standardmäßig ausgeblendet. |
+| **HIGH** (0) | A state of affairs for which there is hardly a harmless explanation. |
+| **MEDIUM** (1) | Conspicuous, but it can be legitimate — needs context. |
+| **LOW** (2) | Weak signal, usually interesting only in combination. |
+| **INFO** (3) | Context without a statement about *this* system. Hidden by default. |
 
-## Übersicht
+## Overview
 
-| Engine | Regel | Grad |
+| Engine | Rule | Level |
 |---|---|---|
 | Webshell | Unguarded PHP in writable upload directory | HIGH |
 | Webshell | Double extension disguise | HIGH |
@@ -62,423 +63,417 @@ Ein nicht geprüfter Fund wird gemeldet, nicht verschwiegen.
 | Webshell | chr() concatenation obfuscation | MEDIUM |
 | Webshell | goto-based control-flow obfuscation | MEDIUM |
 | Webshell | Standalone command-execution shell | MEDIUM |
-| Datenbank | PHP open tag in database value | HIGH |
-| Datenbank | eval/assert on decoded or request input | HIGH |
-| Datenbank | Obfuscation decode chain | HIGH |
-| Datenbank | Command execution call in database value | HIGH |
-| Datenbank | create_function / dynamic callback | HIGH |
-| Datenbank | Inline `<script>` in database value | MEDIUM |
-| Datenbank | Injected `<iframe>` in database value | MEDIUM |
-| Datenbank | document.write (script injection) | MEDIUM |
+| Database | PHP open tag in database value | HIGH |
+| Database | eval/assert on decoded or request input | HIGH |
+| Database | Obfuscation decode chain | HIGH |
+| Database | Command execution call in database value | HIGH |
+| Database | create_function / dynamic callback | HIGH |
+| Database | Inline `<script>` in database value | MEDIUM |
+| Database | Injected `<iframe>` in database value | MEDIUM |
+| Database | document.write (script injection) | MEDIUM |
 | Logs | Possible successful brute-force | HIGH |
 | Logs | Requested PHP in upload/cache directory answered 2xx | HIGH |
 | Logs | CMS login POST flood | MEDIUM |
 | Logs | SQL injection patterns in URIs answered 2xx | MEDIUM |
 | Logs | Path traversal patterns answered 2xx | MEDIUM |
-| Logs | Aufruf eines hinterlegten Musters | HIGH / LOW |
+| Logs | Request matching a stored pattern | HIGH / LOW |
 | Logs | Scanner tool User-Agent | INFO |
 
 ---
 
-# Webshell-Scan
+# Webshell scan
 
-Quelle: [`server/engines/webshell.py`](../server/engines/webshell.py) ·
-Artefakt: **Datei**
+Source: [`server/engines/webshell.py`](../server/engines/webshell.py) ·
+Artifact: **file**
 
-## Standort und Dateiname
+## Location and file name
 
 ### Unguarded PHP in writable upload directory — HIGH
 
-**Auslöser:** PHP-Datei in einem beschreibbaren Verzeichnis (`images`, `tmp`,
-`cache`, `media`, `files`, `assets`, `upload(s)`, `wp-content/uploads`,
-`wp-content/cache`) **und** kein CMS-Startschutz in den ersten 4 KB
-(`_JEXEC`, `JPATH_PLATFORM`, `ABSPATH`, `WPINC`, „restricted access")
-**und** ausführbare Oberfläche (Request-Superglobals, `eval`/`system`/…,
-Decoder, Schreibfunktionen, variable Funktionsaufrufe).
+**Trigger:** a PHP file in a writable directory (`images`, `tmp`, `cache`,
+`media`, `files`, `assets`, `upload(s)`, `wp-content/uploads`,
+`wp-content/cache`) **and** no CMS bootstrap guard in the first 4 KB
+(`_JEXEC`, `JPATH_PLATFORM`, `ABSPATH`, `WPINC`, "restricted access")
+**and** an executable surface (request superglobals, `eval`/`system`/…,
+decoders, write functions, variable function calls).
 
-**Was es sagt:** Eine ausführbare PHP-Datei liegt dort, wo Uploads landen,
-und trägt nicht den Startschutz, den jede echte CMS-Datei hat.
+**What it states:** an executable PHP file sits where uploads land, and it
+does not carry the bootstrap guard that every genuine CMS file has.
 
-**Warum es zählt:** Zusammen mit „kann etwas ausführen" ist das der
-klassische Fund einer abgelegten Shell. Der Guard ist der wirksamste
-Diskriminator aus den echten Joomla-Fällen — er trennt die Installation von
-dem, was jemand hineingelegt hat.
+**Why it counts:** together with "can execute something" this is the classic
+find of a dropped shell. The guard is the most effective discriminator from
+the real Joomla cases — it separates the installation from what someone put
+into it.
 
-**Grenzen:** Der Guard wird als Zeichenkette gesucht, nicht strukturell
-geprüft — ein `// _JEXEC` im Kommentar entwaffnet diese Regel. Die
-Inhaltsregeln unten greifen dann weiterhin. Ohne ausführbare Oberfläche wird
-die Datei als `inert` verbucht statt gemeldet; das hält die Liste frei von
-den Tausenden leerer `index.php`-Stubs, die ein CMS anlegt.
+**Limits:** the guard is searched for as a string, not checked structurally —
+a `// _JEXEC` in a comment disarms this rule. The content rules below still
+apply then. Without an executable surface the file is booked as `inert`
+rather than reported; that keeps the list free of the thousands of empty
+`index.php` stubs a CMS creates.
 
 ### Double extension disguise — HIGH
 
-**Auslöser:** Dateiname endet auf harmlose + ausführbare Endung, z. B.
-`logo.jpg.php`, `dokument.pdf.phtml`.
+**Trigger:** the file name ends in a harmless plus an executable extension,
+e.g. `logo.jpg.php`, `document.pdf.phtml`.
 
-**Was es sagt:** Der Name tarnt sich mit einer harmlosen Endung vor der
-echten.
+**What it states:** the name disguises itself with a harmless extension in
+front of the real one.
 
-**Warum es zählt:** Ausgeführt wird die **letzte** Endung. Diese Kombination
-entsteht praktisch nur beim Umgehen von Upload-Filtern.
+**Why it counts:** what gets executed is the **last** extension. This
+combination arises practically only when upload filters are being bypassed.
 
 ### PHP code hidden inside image file — HIGH
 
-**Auslöser:** `<?php` oder `<?=` in einer Datei mit Bild-Endung.
+**Trigger:** `<?php` or `<?=` in a file with an image extension.
 
-**Was es sagt:** In einer Bilddatei steht ein PHP-Tag.
+**What it states:** a PHP tag sits inside an image file.
 
-**Warum es zählt:** Ein echtes Bild enthält keinen PHP-Code. Typisch für
-Uploads, die an einer Bildprüfung vorbeigeschmuggelt wurden.
+**Why it counts:** a genuine image contains no PHP code. Typical for uploads
+smuggled past an image check.
 
 ### Unguarded-location PHP could not be read — HIGH
 
-**Auslöser:** PHP im Upload-Verzeichnis, aber Lese- oder Statfehler.
+**Trigger:** PHP in an upload directory, but a read or stat error.
 
-**Was es sagt:** Die Datei liegt am falschen Ort und war nicht lesbar
-(Rechte, defekte Kopie).
+**What it states:** the file sits in the wrong place and could not be read
+(permissions, damaged copy).
 
-**Warum es zählt:** Ein nicht geprüfter Fund wird gemeldet statt verschwiegen.
-Rechte prüfen und erneut sichern.
+**Why it counts:** an unexamined find is reported rather than passed over.
+Check permissions and secure it again.
 
-**Häufigste Ursache in der Praxis:** der **Virenscanner der Analyse-Maschine**.
-Er greift beim ZUGRIFF ein, nicht beim Kopieren — die Datei liegt also im
-Webroot-Abbild, lässt sich aber nicht öffnen (unter Windows Defender als
-`[Errno 22] Invalid argument`), oder verschwindet in die Quarantäne. Betroffen
-sind ausgerechnet die eindeutigsten Funde, etwa `eval()` auf Request-Eingaben.
-Wer eine echte Webroot-Kopie untersucht, nimmt den Evidence-Ordner deshalb von
-der Echtzeitprüfung aus — sonst fehlt genau das, wonach man sucht.
+**Most common cause in practice:** the **antivirus scanner of the analysis
+machine**. It intervenes on ACCESS, not on copying — so the file is present
+in the webroot image but cannot be opened (under Windows Defender as
+`[Errno 22] Invalid argument`), or it disappears into quarantine. Affected
+are, of all things, the clearest finds, such as `eval()` on request input.
+Whoever examines a real webroot copy therefore excludes the evidence folder
+from real-time scanning — otherwise exactly what one is looking for goes
+missing.
 
 ### PHP in writable upload directory (too large to inspect) — HIGH
 
-**Auslöser:** PHP im Upload-Verzeichnis, größer als 5 MB.
+**Trigger:** PHP in an upload directory, larger than 5 MB.
 
-**Was es sagt:** Die Datei liegt am falschen Ort, war aber zu groß für die
-Inhaltsprüfung.
+**What it states:** the file sits in the wrong place but was too large for
+the content check.
 
-**Warum es zählt:** Nicht bewertet, sondern gemeldet — hier lohnt der
-manuelle Blick.
+**Why it counts:** not assessed but reported — a manual look pays off here.
 
-## Inhalt
+## Content
 
-Zeilenweise gegen den Dateitext; die Fundzeile steht am Finding. Diese Regeln
-laufen gegen **jede** PHP-Datei, unabhängig vom Ort — anders als die
-Standortregel oben. Eine Shell mit gefälschtem Guard bleibt hier sichtbar.
+Line by line against the file text; the matching line is attached to the
+finding. These rules run against **every** PHP file, regardless of location —
+unlike the location rule above. A shell with a forged guard stays visible
+here.
 
 ### eval/assert on decoded or request input — HIGH
 
-**Auslöser:** `eval(` / `assert(` direkt auf `base64_decode`, `gzinflate`,
-`gzuncompress`, `str_rot13`, `strrev` oder `$_POST`/`$_GET`/`$_REQUEST`/
+**Trigger:** `eval(` / `assert(` directly on `base64_decode`, `gzinflate`,
+`gzuncompress`, `str_rot13`, `strrev` or `$_POST`/`$_GET`/`$_REQUEST`/
 `$_COOKIE`.
 
-**Was es sagt:** Der Code führt aus, was von außen hereinkommt oder gerade
-entpackt wurde.
+**What it states:** the code executes what comes in from outside or what was
+just unpacked.
 
-**Warum es zählt:** Damit kann der Aufrufer beliebigen Code ausführen lassen
-— das Kernstück fast jeder Webshell.
+**Why it counts:** this lets the caller have arbitrary code executed — the
+core piece of almost every web shell.
 
 ### Variable function called on request input — HIGH
 
-**Auslöser:** `$variable($_POST[...])` — Funktionsname aus einer Variablen,
-Argument aus dem Request.
+**Trigger:** `$variable($_POST[...])` — function name from a variable,
+argument from the request.
 
-**Was es sagt:** Welche Funktion aufgerufen wird, entscheidet ein Parameter
-aus dem Request.
+**What it states:** which function is called is decided by a parameter from
+the request.
 
-**Warum es zählt:** Verschleierte Form von „führe aus, was ich schicke".
-Legitimer Code tut das praktisch nie.
+**Why it counts:** an obfuscated form of "execute what I send". Legitimate
+code practically never does this.
 
 ### Command execution on request input — HIGH
 
-**Auslöser:** `system`, `exec`, `shell_exec`, `passthru`, `proc_open`,
-`popen`, `pcntl_exec` mit Request-Daten innerhalb von 40 Zeichen im Argument.
+**Trigger:** `system`, `exec`, `shell_exec`, `passthru`, `proc_open`,
+`popen`, `pcntl_exec` with request data within 40 characters in the argument.
 
-**Was es sagt:** Ein Systembefehl wird mit Werten aus dem Request
-zusammengebaut.
+**What it states:** a system command is assembled from values out of the
+request.
 
-**Warum es zählt:** Erlaubt Befehle auf dem Server. Wenn die Datei erreichbar
-war, ist das ein Zugang zum System.
+**Why it counts:** it allows commands on the server. If the file was
+reachable, this is a way into the system.
 
 ### preg_replace with /e modifier — HIGH
 
-**Auslöser:** `preg_replace` mit `e`-Modifier im Muster.
+**Trigger:** `preg_replace` with the `e` modifier in the pattern.
 
-**Was es sagt:** Eine veraltete PHP-Funktion, die den Ersetzungstext als
-**Code** ausführt.
+**What it states:** an obsolete PHP function that executes the replacement
+text as **code**.
 
-**Warum es zählt:** Seit PHP 7 entfernt — in aktuellem Code gibt es dafür
-keinen legitimen Grund.
+**Why it counts:** removed since PHP 7 — in current code there is no
+legitimate reason for it.
 
 ### create_function / callback on request input — HIGH
 
-**Auslöser:** `create_function('...` oder `call_user_func(_array)($_...)`.
+**Trigger:** `create_function('...` or `call_user_func(_array)($_...)`.
 
-**Was es sagt:** Code wird zur Laufzeit aus Text erzeugt bzw. der Aufruf kommt
-aus dem Request.
+**What it states:** code is generated from text at runtime, or the call comes
+from the request.
 
-**Warum es zählt:** Seit langem veraltet; in Webshells gängig, um die
-eigentliche Nutzlast zu verstecken.
+**Why it counts:** long deprecated; common in web shells to hide the actual
+payload.
 
 ### File dropper writing request input to disk — HIGH
 
-**Auslöser:** `move_uploaded_file`, `file_put_contents` oder `fwrite` mit
-`$_POST`/`$_GET`/`$_REQUEST`/`$_FILES` innerhalb von 80 Zeichen.
+**Trigger:** `move_uploaded_file`, `file_put_contents` or `fwrite` with
+`$_POST`/`$_GET`/`$_REQUEST`/`$_FILES` within 80 characters.
 
-**Was es sagt:** Die Datei schreibt hereinkommende Daten auf die Festplatte.
+**What it states:** the file writes incoming data to disk.
 
-**Warum es zählt:** So werden weitere Shells nachgeladen. Prüfe, was in der
-Umgebung sonst noch neu ist.
+**Why it counts:** this is how further shells are pulled in. Check what else
+is new in the surroundings.
 
 ### Obfuscation decode chain — MEDIUM
 
-**Auslöser:** Verschachtelte Decoder, z. B. `base64_decode(str_rot13(...))`,
+**Trigger:** nested decoders, e.g. `base64_decode(str_rot13(...))`,
 `gzinflate(base64_decode(...))`.
 
-**Was es sagt:** Mehrere Kodierungs-Schritte sind ineinander verschachtelt.
+**What it states:** several encoding steps are nested inside one another.
 
-**Warum es zählt:** Verschleierung dieser Bauart dient dem Verstecken. Was am
-Ende herauskommt, muss man sich ansehen.
+**Why it counts:** obfuscation of this kind serves to hide. What comes out at
+the end has to be looked at.
 
 ### Hex/octal string obfuscation — MEDIUM
 
-**Auslöser:** Mindestens 10 aufeinanderfolgende `\xNN`- oder `\NNN`-Escapes.
+**Trigger:** at least 10 consecutive `\xNN` or `\NNN` escapes.
 
-**Was es sagt:** Text ist als lange Kette von Escapes geschrieben statt als
-Klartext.
+**What it states:** text is written as a long chain of escapes instead of
+plain text.
 
-**Warum es zählt:** Macht Suchbegriffe unsichtbar. Legitimer Code schreibt
-URLs und Funktionsnamen ausgeschrieben.
+**Why it counts:** it makes search terms invisible. Legitimate code writes
+URLs and function names out in full.
 
 ### chr() concatenation obfuscation — MEDIUM
 
-**Auslöser:** Mindestens fünf `chr(n).`-Glieder hintereinander.
+**Trigger:** at least five `chr(n).` links in a row.
 
-**Was es sagt:** Zeichenketten werden aus einzelnen Zeichencodes
-zusammengesetzt.
+**What it states:** strings are assembled from individual character codes.
 
-**Warum es zählt:** Gleiches Ziel wie oben: nichts soll durchsuchbar sein.
+**Why it counts:** the same aim as above: nothing should be searchable.
 
 ### goto-based control-flow obfuscation — MEDIUM
 
-**Auslöser:** `goto label;`
+**Trigger:** `goto label;`
 
-**Was es sagt:** Der Programmfluss springt mit `goto` durcheinander.
+**What it states:** the program flow jumps around with `goto`.
 
-**Warum es zählt:** Typische Ausgabe automatischer Verschleierer.
-Handgeschriebener PHP-Code sieht so nicht aus.
+**Why it counts:** typical output of automatic obfuscators. Hand-written PHP
+code does not look like this.
 
 ### Standalone command-execution shell — MEDIUM
 
-**Auslöser:** `shell_exec`, `passthru`, `proc_open` oder `pcntl_exec` — ohne
-erkennbaren Request-Bezug.
+**Trigger:** `shell_exec`, `passthru`, `proc_open` or `pcntl_exec` — without
+a recognisable request reference.
 
-**Was es sagt:** Die Datei kann Systembefehle ausführen.
+**What it states:** the file can execute system commands.
 
-**Warum es zählt:** Allein noch kein Beweis — manche Admin-Tools tun das
-auch. Entscheidend ist, wo die Datei liegt und ob sie dorthin gehört.
+**Why it counts:** on its own not yet proof — some admin tools do this too.
+What matters is where the file sits and whether it belongs there.
 
 ## .htaccess
 
 ### .htaccess maps non-PHP extension to PHP handler — HIGH
 
-**Auslöser:** `AddHandler`, `AddType` oder `SetHandler` in Verbindung mit
+**Trigger:** `AddHandler`, `AddType` or `SetHandler` in connection with
 `php` / `x-httpd`.
 
-**Was es sagt:** Eine `.htaccess` lässt untypische Endungen als PHP
-ausführen.
+**What it states:** an `.htaccess` lets untypical extensions execute as PHP.
 
-**Warum es zählt:** So wird aus einer harmlos aussehenden Datei ausführbarer
-Code. Fast immer nachträglich eingebracht.
+**Why it counts:** this turns a harmless-looking file into executable code.
+Almost always introduced after the fact.
 
 ### .htaccess auto_prepend/append_file backdoor — HIGH
 
-**Auslöser:** `auto_prepend_file` oder `auto_append_file`.
+**Trigger:** `auto_prepend_file` or `auto_append_file`.
 
-**Was es sagt:** Eine `.htaccess` lädt bei **jedem** Aufruf eine zusätzliche
-Datei mit.
+**What it states:** an `.htaccess` loads an additional file on **every**
+request.
 
-**Warum es zählt:** Persistenz-Trick: Der Code läuft auch dann noch, wenn die
-eigentliche Shell gelöscht ist.
+**Why it counts:** a persistence trick: the code still runs once the actual
+shell has been deleted.
 
 ---
 
-# Datenbank-Dump
+# Database dump
 
-Quelle: [`server/engines/sqldump.py`](../server/engines/sqldump.py) ·
-Artefakt: **Tabelle**
+Source: [`server/engines/sqldump.py`](../server/engines/sqldump.py) ·
+Artifact: **table**
 
-Die Regeln laufen gegen **Datenwerte** in `INSERT`-Zeilen, nicht gegen das
-Schema. Zeilennummer und Auszug stehen am Finding.
+The rules run against **data values** in `INSERT` rows, not against the
+schema. Line number and excerpt are attached to the finding.
 
 ### PHP open tag in database value — HIGH
 
-**Auslöser:** `<?php` oder `<?=` in einer Spalte.
+**Trigger:** `<?php` or `<?=` in a column.
 
-**Was es sagt:** In einem Datenfeld der Datenbank steht PHP-Code.
+**What it states:** PHP code sits in a data field of the database.
 
-**Warum es zählt:** Ein CMS speichert Code in Dateien, nie in der Datenbank.
-Der Code überlebt jedes Bereinigen der Dateien.
+**Why it counts:** a CMS stores code in files, never in the database. The
+code survives every cleanup of the files.
 
 ### eval/assert on decoded or request input — HIGH
 
-**Auslöser:** `eval(`/`assert(` auf Decoder oder `$_`-Superglobals, in einem
-Datenwert.
+**Trigger:** `eval(`/`assert(` on decoders or `$_` superglobals, inside a
+data value.
 
-**Was es sagt:** Ausführbarer Code in einem Datenfeld.
+**What it states:** executable code in a data field.
 
-**Warum es zählt:** Wie oben — gehört nicht in Daten.
+**Why it counts:** as above — it does not belong in data.
 
 ### Obfuscation decode chain — HIGH
 
-**Auslöser:** Verschachtelte `base64_decode`/`gzinflate`/`gzuncompress`/
-`str_rot13` in einem Datenwert.
+**Trigger:** nested `base64_decode`/`gzinflate`/`gzuncompress`/`str_rot13`
+inside a data value.
 
-**Was es sagt:** Verschleierter Code in der Datenbank.
+**What it states:** obfuscated code in the database.
 
-**Warum es zählt:** In einer Datenspalte ist Verschleierung kein Grauton
-mehr, sondern eingeschleuster Code — deshalb hier HIGH statt MEDIUM wie in
-Dateien.
+**Why it counts:** in a data column, obfuscation is no longer a shade of grey
+but injected code — hence HIGH here instead of MEDIUM as in files.
 
 ### Command execution call in database value — HIGH
 
-**Auslöser:** `system`, `shell_exec`, `passthru`, `proc_open`, `popen`,
-`pcntl_exec` in einem Datenwert.
+**Trigger:** `system`, `shell_exec`, `passthru`, `proc_open`, `popen`,
+`pcntl_exec` inside a data value.
 
-**Was es sagt:** Ein Datenfeld enthält einen Aufruf zur Befehlsausführung.
+**What it states:** a data field contains a call to execute commands.
 
-**Warum es zählt:** Gehört nicht in Daten. Prüfe, wo dieser Inhalt ausgegeben
-wird.
+**Why it counts:** it does not belong in data. Check where this content gets
+rendered.
 
 ### create_function / dynamic callback — HIGH
 
-**Auslöser:** `create_function(` in einem Datenwert.
+**Trigger:** `create_function(` inside a data value.
 
-**Was es sagt:** Zur Laufzeit erzeugter Code in der Datenbank.
+**What it states:** code generated at runtime, in the database.
 
-**Warum es zählt:** Wie oben; zusätzlich ein Hinweis auf älteren
-Schadcode-Baukasten.
+**Why it counts:** as above; in addition a pointer to an older malware kit.
 
 ### Inline `<script>` in database value — MEDIUM
 
-**Auslöser:** `<script` gefolgt von Leerzeichen oder `>`.
+**Trigger:** `<script` followed by whitespace or `>`.
 
-**Was es sagt:** In einem Datenfeld steht JavaScript.
+**What it states:** JavaScript sits in a data field.
 
-**Warum es zählt:** Kann legitim sein (eingebettete Inhalte, Tracking) — hier
-zählt der Kontext: Passt das zu dieser Tabelle?
+**Why it counts:** it can be legitimate (embedded content, tracking) — here
+the context decides: does it fit this table?
 
 ### Injected `<iframe>` in database value — MEDIUM
 
-**Auslöser:** `<iframe` gefolgt von Leerzeichen oder `>`.
+**Trigger:** `<iframe` followed by whitespace or `>`.
 
-**Was es sagt:** Ein iframe steckt in einem Datenfeld.
+**What it states:** an iframe sits inside a data field.
 
-**Warum es zählt:** Klassisch für untergeschobene Weiterleitungen und Werbung
-— kann aber auch redaktionell eingebaut sein.
+**Why it counts:** classic for planted redirects and advertising — but it can
+also have been placed there editorially.
 
 ### document.write (script injection) — MEDIUM
 
-**Auslöser:** `document.write(`.
+**Trigger:** `document.write(`.
 
-**Was es sagt:** Ein Datenfeld schreibt per JavaScript weiteren Inhalt in die
-Seite.
+**What it states:** a data field writes further content into the page via
+JavaScript.
 
-**Warum es zählt:** Gängige Technik, um nachgeladenen Fremdcode zu
-verstecken. Ziel-Host im Auszug prüfen.
+**Why it counts:** a common technique to hide foreign code that is pulled in
+later. Check the target host in the excerpt.
 
 ---
 
-# Access-Logs
+# Access logs
 
-Quelle: [`server/engines/logindex.py`](../server/engines/logindex.py) ·
-Artefakt: **Client-IP**
+Source: [`server/engines/logindex.py`](../server/engines/logindex.py) ·
+Artifact: **client IP**
 
-Die Muster werden **einmal pro eindeutiger Zeichenkette** ausgewertet, nicht
-pro Zeile — deshalb kostet ein 10-Millionen-Zeilen-Log nicht das
-Zehnmillionenfache.
+The patterns are evaluated **once per distinct string**, not per line — which
+is why a ten-million-line log does not cost ten million times as much.
 
 ### Possible successful brute-force — HIGH
 
-**Auslöser:** ≥ 30 POSTs auf Login-Endpunkte **und** mindestens eine Antwort
-301/302/303.
+**Trigger:** ≥ 30 POSTs against login endpoints **and** at least one
+301/302/303 response.
 
-**Was es sagt:** Nach vielen Login-Versuchen kam eine Weiterleitung zurück.
+**What it states:** after many login attempts a redirect came back.
 
-**Warum es zählt:** Genau so sieht ein **geglückter** Login aus. Unbedingt
-prüfen: Welches Konto, und was passierte danach?
+**Why it counts:** this is exactly what a **successful** login looks like.
+Check without fail: which account, and what happened afterwards?
 
 ### Requested PHP in upload/cache directory answered 2xx — HIGH
 
-**Auslöser:** URI auf PHP in einem Upload-/Cache-Verzeichnis (Spiegel der
-Webshell-Standortregel) **und** mindestens eine 2xx-Antwort.
+**Trigger:** a URI for PHP in an upload/cache directory (the mirror of the
+webshell location rule) **and** at least one 2xx response.
 
-**Was es sagt:** Jemand hat PHP in einem Upload-Verzeichnis abgerufen — und
-der Server hat mit Erfolg geantwortet.
+**What it states:** someone requested PHP in an upload directory — and the
+server answered successfully.
 
-**Warum es zählt:** Das ist kein Scan ins Leere: Dort lag etwas Ausführbares
-und wurde ausgeliefert. Die stärkste Log-Spur einer benutzten Shell.
+**Why it counts:** this is not a scan into the void: something executable was
+there and was delivered. The strongest log trace of a shell in use.
 
 ### CMS login POST flood — MEDIUM
 
-**Auslöser:** ≥ 30 POSTs auf `wp-login.php`, `xmlrpc.php`,
-`/administrator/index.php`, `option=com_login`, `task=user.login` oder
+**Trigger:** ≥ 30 POSTs against `wp-login.php`, `xmlrpc.php`,
+`/administrator/index.php`, `option=com_login`, `task=user.login` or
 `option=com_users`.
 
-**Was es sagt:** Auffällig viele Login-Absendungen von derselben Adresse.
+**What it states:** a conspicuous number of login submissions from the same
+address.
 
-**Warum es zählt:** Ein Anmelde-Versuch in Serie. Erfolg zeigt erst der
-Statuscode — siehe Weiterleitungen.
+**Why it counts:** login attempts in series. Success only shows in the status
+code — see redirects.
 
 ### SQL injection patterns in URIs answered 2xx — MEDIUM
 
-**Auslöser:** `union select`, `information_schema`, `concat(`, `' or 1=1`,
-`benchmark(`, `sleep(` in der URI **und** 2xx.
+**Trigger:** `union select`, `information_schema`, `concat(`, `' or 1=1`,
+`benchmark(`, `sleep(` in the URI **and** 2xx.
 
-**Was es sagt:** Angriffs-Muster für Datenbank-Injektion in der URL, vom
-Server mit Erfolg beantwortet.
+**What it states:** attack patterns for database injection in the URL,
+answered successfully by the server.
 
-**Warum es zählt:** Nur „beantwortet" heißt noch nicht „geklappt" — aber es
-lohnt der Abgleich mit den Datenbank-Funden.
+**Why it counts:** "answered" does not yet mean "worked" — but comparing this
+against the database findings pays off.
 
 ### Path traversal patterns answered 2xx — MEDIUM
 
-**Auslöser:** Mindestens zwei `../` (auch `%2e%2e%2f`, `..%2f`) **und** 2xx.
+**Trigger:** at least two `../` (also `%2e%2e%2f`, `..%2f`) **and** 2xx.
 
-**Was es sagt:** Versuche, mit `../` aus dem Web-Verzeichnis auszubrechen,
-wurden erfolgreich beantwortet.
+**What it states:** attempts to break out of the web directory with `../`
+were answered successfully.
 
-**Warum es zählt:** Kann das Auslesen fremder Dateien bedeuten. Welche URLs
-betroffen sind, steht im Trace.
+**Why it counts:** it can mean that foreign files were read. Which URLs are
+affected is in the trace.
 
-### Aufruf eines hinterlegten Musters — HIGH / LOW
+### Request matching a stored pattern — HIGH / LOW
 
-**Auslöser:** Ein URL-Muster aus der **Muster-Bibliothek** des Analysten
-(Ansicht *Muster-Jagd*) passt auf eine abgerufene URI. Mit 2xx beantwortet →
-HIGH, nur Versuche → LOW.
+**Trigger:** a URL pattern from the analyst's **pattern library** (view
+*Pattern hunt*) matches a requested URI. Answered with 2xx → HIGH, attempts
+only → LOW.
 
-**Was es sagt:** Dieser Client hat einen Pfad abgerufen, von dem *du*
-festgelegt hast, dass er zu einem Exploit gehört.
+**What it states:** this client requested a path that *you* determined
+belongs to an exploit.
 
-**Warum es zählt:** Die einzige Regel, deren Aussagekraft von deiner Eingabe
-abhängt — sie ist so gut wie das Muster. Deshalb zeigt die Ansicht immer die
-tatsächlich getroffenen URLs mit an: ein Muster, das zu weit greift, erkennt
-man nur daran, *was* es getroffen hat.
+**Why it counts:** the only rule whose weight depends on your input — it is
+as good as the pattern. That is why the view always shows the URLs actually
+hit: a pattern that reaches too far can only be recognised by *what* it hit.
 
-**Besonderheit:** Die Bibliothek gehört dem **Workspace**, nicht dem Fall —
-einmal angelegt, steht ein Muster in jedem weiteren Fall bereit. Der Fall
-protokolliert, wonach in ihm gesucht wurde, **auch erfolglos**: „wir haben
-darauf geprüft, es war nichts" steht sonst nirgends, weil Findings nur Funde
-festhalten.
+**Particularity:** the library belongs to the **workspace**, not to the case
+— created once, a pattern is ready in every further case. The case records
+what was searched for in it, **including without success**: "we checked for
+this, there was nothing" is written down nowhere else, because findings only
+record finds.
 
 ### Scanner tool User-Agent — INFO
 
-**Auslöser:** User-Agent nennt ein bekanntes Werkzeug: sqlmap, nikto, nmap,
-masscan, dirbuster, gobuster, feroxbuster, wpscan, joomscan, hydra, acunetix,
-nessus, nuclei, zgrab, censys, httpx, wfuzz, ffuf.
+**Trigger:** the User-Agent names a known tool: sqlmap, nikto, nmap, masscan,
+dirbuster, gobuster, feroxbuster, wpscan, joomscan, hydra, acunetix, nessus,
+nuclei, zgrab, censys, httpx, wfuzz, ffuf.
 
-**Was es sagt:** Der Client hat sich als bekanntes Scan-Werkzeug zu erkennen
-gegeben.
+**What it states:** the client identified itself as a known scanning tool.
 
-**Warum es zählt:** Hintergrundrauschen, solange nichts erfolgreich war — als
-Vorgeschichte trotzdem interessant. Deshalb INFO und standardmäßig
-ausgeblendet: Scans passieren jedem Server rund um die Uhr und würden die
-echte Arbeit zudecken.
+**Why it counts:** background noise as long as nothing succeeded — still
+interesting as prior history. Hence INFO and hidden by default: scans happen
+to every server around the clock and would bury the real work.

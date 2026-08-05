@@ -44,6 +44,6 @@ DATA NOT SHIPPED WITH THIS SOFTWARE
       Supported as a drop-in alternative; not downloaded automatically and
       not redistributed here.
 
-No sample data in this repository is taken from a real incident. The
-example case (tools/sample_case.py) uses documentation-reserved addresses
+No sample data in this repository is taken from a real incident. The test
+fixtures (tests/fixtures.py) use documentation-reserved addresses
 (RFC 5737), .test domains (RFC 6761) and minimal detection-test files.

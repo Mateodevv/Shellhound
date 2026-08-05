@@ -1,45 +1,47 @@
-// ArtifactWindow.tsx — das Detail-Fenster EINES Artefakts: alles, was zur
-// Entscheidung nötig ist, in einer Ansicht.
+// ArtifactWindow.tsx -- the detail window of ONE artifact: everything needed
+// for the decision, in one view.
 //
-// Zentriert und breit statt als Streifen am Rand — beurteilt wird aus dem
-// ZUSAMMENHANG, und der entsteht erst, wenn Begründung, Dateiinhalt und die
-// Clients daran nebeneinander liegen statt hintereinander zu scrollen.
-// Links steht, was man entscheidet und warum; rechts, was man dafür ansieht.
-// Die Entscheidung selbst zuoberst, weil sie der Grund ist, aus dem das
-// Fenster offen ist.
+// Centred and wide rather than a strip at the edge -- judgement comes from
+// CONTEXT, and context only arises when reasoning, file content and the
+// clients on it lie side by side instead of scrolling one after another. On
+// the left is what one decides and why; on the right, what one looks at for
+// it. The decision itself at the very top, because it is the reason the
+// window is open.
 //
-// GETEILT zwischen Findings und Actors: dasselbe Artefakt sieht überall
-// gleich aus, und eine Entscheidung ist überall dieselbe Entscheidung.
+// SHARED between Findings and Actors: the same artifact looks the same
+// everywhere, and a decision is the same decision everywhere.
+import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Bug, Check, Crosshair, Eye, FileSearch, ShieldCheck, ShieldOff, X,
 } from 'lucide-react'
-import { KIND_ICON, KIND_LABEL } from '../artifactKinds'
+import { KIND_ICON } from '../artifactKinds'
 import {
   api, type ArtifactContext, type Finding, type TriageResult, type TriageState,
 } from '../api'
 import {
-  SEVERITY_VAR, TRIAGE_LABEL, absoluteTime, formatBytes, formatCount,
+  SEVERITY_VAR, absoluteTime, formatBytes, formatCount,
   formatDay, relativeTime, relativeToRoot, type EvidenceRoot,
 } from '../format'
 import { Button, CopyButton, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
 import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
-import { FIELD_EXPLAIN, explainRule } from '../explain'
+import { explainRule } from '../explain'
 
-// Mit Artikel, für die Frage im Detail-Fenster: „Ist dieses Datei" liest
-// sich wie eine Maschine, und der Satz ist die wichtigste Zeile darin.
+// With article, for the question in the detail window: "Is this file part of
+// the incident?" is the most important line in there, so each kind gets its
+// own phrasing instead of a generic noun.
 const KIND_THIS: Record<string, string> = {
-  file: 'diese Datei', table: 'diese Tabelle',
-  client: 'dieser Client', dump: 'dieser Dump',
+  file: 'artifact.this.file', table: 'artifact.this.table',
+  client: 'artifact.this.client', dump: 'artifact.this.dump',
 }
 
-/** Das Minimum, mit dem sich das Fenster öffnen lässt. Findings reicht seine
- *  volle Artefakt-Zeile herein; Actors kennt nur IP und Entscheidung — alles
- *  Weitere holt das Fenster selbst über den Kontext-Endpoint nach. */
+/** The minimum the window can be opened with. Findings hands in its full
+ *  artifact row; Actors only knows the IP and the decision -- everything else
+ *  the window fetches itself through the context endpoint. */
 export interface ArtifactStub {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
@@ -88,10 +90,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   onClose: () => void
   onTriage: (state: string, note?: string) => void
   onView: (path: string, line: number | null) => void
-  /** Der Trace bekommt mit, WAS er rot markieren soll — sonst steht man im
-   *  Trace vor tausend Zeilen und sucht die, um die es geht. */
+  /** The trace is told WHAT to mark red -- otherwise one stands in front of
+   *  a thousand lines looking for the one that matters. */
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
+  const tr = useT()
   const [note, setNote] = useState('')
   useEffect(() => { setNote(artifact?.triage_note ?? '') }, [artifact])
 
@@ -114,16 +117,16 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const Icon = KIND_ICON[kind] ?? Bug
 
-  // WAS im Trace rot wird, hängt an der Art des Artefakts:
-  //   Datei   -> die Aufrufe DIESER Datei. Der Pfad unterhalb der Evidence
-  //              ist bekannt, die Query-Varianten dahinter nicht -- deshalb
-  //              Teilstring statt exakter Liste.
-  //   Client  -> die URI, die seinen Alarm ausgelöst hat.
+  // WHAT turns red in the trace depends on the kind of artifact:
+  //   file   -> the requests for THIS file. The path below the evidence is
+  //             known, the query variants behind it are not -- hence a
+  //             substring instead of an exact list.
+  //   client -> the URI that triggered its alert.
   const marks: TraceMarks = kind === 'file'
     ? { contains: [root ? rel : artifact.artifact.replace(/\\/g, '/')],
-        reason: 'hier wurde diese Datei aufgerufen' }
+        reason: tr('marks.fileFetched') }
     : { exact: (actor?.alerts ?? []).map((a) => a.example).filter(Boolean),
-        reason: 'dieser Aufruf hat den Alarm ausgelöst' }
+        reason: tr('marks.alertTrigger') }
 
   return (
     <Modal open onClose={onClose}
@@ -131,13 +134,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
         <span className="mono truncate">{kind === 'file' && root ? rel : artifact.artifact}</span>
-        <TriageBadge state={state} label={TRIAGE_LABEL[state]} />
+        <TriageBadge state={state} label={tr(`triage.${state}`)} />
       </span>}>
       <div className="flex flex-col gap-4">
         {collected.length > 0 && (
           <div className="rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 animate-fade-up">
             <div className="mb-1 text-[12px] font-semibold text-[var(--ok)]">
-              In die IOC Box übernommen:
+              {tr('artifact.collected')}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {collected.map((c, i) => (
@@ -151,68 +154,67 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         )}
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start">
-          {/* ================= links: entscheiden und warum ================= */}
+          {/* ============== left: what to decide, and why ================== */}
           <div className="flex flex-col gap-4">
-            {/* ---- die Entscheidung ---- */}
+            {/* ---- the decision ---- */}
             <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-3">
               <div className="mb-2 text-[12.5px]">
-                Ist {KIND_THIS[kind] ?? 'dieses Artefakt'}{' '}
-                <span className="font-semibold">Teil des Vorfalls?</span>{' '}
+                {tr('artifact.question', {
+                  what: tr(KIND_THIS[kind] ?? 'artifact.this.generic'),
+                })}{' '}
+                <span className="font-semibold">{tr('artifact.question.tail')}</span>{' '}
                 <span className="text-[var(--muted)]">
-                  Die Entscheidung gilt für das ganze Artefakt — alle{' '}
-                  {formatCount(findings.length)} Finding{findings.length === 1 ? '' : 's'}{' '}
-                  darunter sind die Begründung dafür.
+                  {tr('artifact.question.scope', {
+                    n: formatCount(findings.length),
+                    findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
+                  })}
                 </span>
               </div>
               <textarea
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 rows={2}
-                placeholder="Begründung (wandert mit ins Fall-Archiv)"
+                placeholder={tr('artifact.note.placeholder')}
                 className="mb-2 w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
               />
               <div className="flex flex-wrap gap-2">
                 <Button variant="primary" onClick={() => onTriage('confirmed', note)}>
-                  <Check size={14} /> True Positive &amp; sammeln
+                  <Check size={14} /> {tr('artifact.truePositiveCollect')}
                 </Button>
                 <Button onClick={() => onTriage('reviewed', note)}>
-                  <Eye size={14} /> Gesichtet
+                  <Eye size={14} /> {tr('triage.reviewed')}
                 </Button>
                 <Button variant="danger" onClick={() => onTriage('dismissed', note)}>
                   <X size={14} /> False Positive
                 </Button>
                 {ctx?.triaged_at && (
                   <span className="self-center text-[11px] text-[var(--muted)]">
-                    zuletzt entschieden: {absoluteTime(ctx.triaged_at)}
+                    {tr('artifact.lastDecided')}: {absoluteTime(ctx.triaged_at)}
                   </span>
                 )}
               </div>
               <p className="mt-2 text-[11px] text-[var(--muted)]">
-                Nichts wird gelöscht: ein False Positive verschwindet nur aus der
-                Arbeitsliste und bleibt mit deiner Notiz über den Filter erreichbar.
-                True Positive bleibt stehen und legt das Artefakt (+ SHA-256 bei
-                Dateien) in die IOC Box, samt der anfragenden Clients aus dem
-                Log-Index.
+                {tr('artifact.triage.explain')}
               </p>
             </div>
 
-            {/* ---- was das Artefakt IST ---- */}
-            <Block title={KIND_LABEL[kind] ?? 'Artefakt'}>
+            {/* ---- what the artifact IS ---- */}
+            <Block title={tr(`kind.${kind}`)}>
               <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
                 <span className="min-w-0 flex-1">{artifact.artifact}</span>
-                <CopyButton value={artifact.artifact} label="Pfad kopieren"
+                <CopyButton value={artifact.artifact} label={tr('copy.path')}
                   className="shrink-0" />
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {kind === 'file' && file?.exists && (
                   <Button onClick={() => onView(artifact.artifact,
                                                 findings.find((f) => f.line)?.line ?? null)}>
-                    <FileSearch size={14} /> Datei ansehen (Raw &amp; Hex)
+                    <FileSearch size={14} /> {tr('artifact.viewFile')}
                   </Button>
                 )}
                 {kind === 'client' && (
                   <Button onClick={() => onTrace([artifact.artifact], marks)}>
-                    <Crosshair size={14} /> Trace öffnen
+                    <Crosshair size={14} /> {tr('artifact.openTrace')}
                   </Button>
                 )}
               </div>
@@ -221,17 +223,17 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- Datei-Kontext ---- */}
             {file && (
               <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Größe">{file.exists ? formatBytes(file.size) : 'Datei fehlt!'}</MetaCell>
-                <MetaCell label="Geändert"
-                  explain="Änderungszeitpunkt laut Dateisystem — mit Vorsicht: Angreifer können ihn fälschen (Timestomping).">
+                <MetaCell label={tr('artifact.size')}>{file.exists ? formatBytes(file.size) : tr('artifact.fileMissing')}</MetaCell>
+                <MetaCell label={tr('artifact.modified')}
+                  explain={tr('artifact.mtime.hint')}>
                   <Tooltip title={absoluteTime(file.mtime)}>
                     <span>{relativeTime(file.mtime)}</span>
                   </Tooltip>
                 </MetaCell>
-                <MetaCell label="CMS-Guard" explain={FIELD_EXPLAIN.cms_guard}>
+                <MetaCell label={tr('artifact.cmsGuard')} explain={tr('field.cms_guard')}>
                   {file.cms_guard == null ? '—' : file.cms_guard ? (
                     <span className="flex items-center gap-1 text-[var(--ok)]">
-                      <ShieldCheck size={12} /> vorhanden
+                      <ShieldCheck size={12} /> {tr('artifact.guard.present')}
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-[var(--sev-high)]">
@@ -239,17 +241,17 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     </span>
                   )}
                 </MetaCell>
-                <MetaCell label="Upload-Ordner" explain={FIELD_EXPLAIN.upload_dir}>
+                <MetaCell label={tr('artifact.uploadDir')} explain={tr('field.upload_dir')}>
                   {file.in_upload_dir
-                    ? <span className="text-[var(--sev-medium)]">ja — PHP gehört hier nicht hin</span>
+                    ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
                     : 'nein'}
                 </MetaCell>
                 {file.sha256 && (
                   <div className="col-span-2">
-                    <MetaCell label="SHA-256" explain={FIELD_EXPLAIN.sha256}>
+                    <MetaCell label="SHA-256" explain={tr('field.sha256')}>
                       <span className="mono flex items-center gap-2 break-all text-[11px]">
                         <span className="min-w-0 flex-1">{file.sha256}</span>
-                        <CopyButton value={file.sha256} label="Hash kopieren"
+                        <CopyButton value={file.sha256} label={tr('copy.hash')}
                           className="shrink-0" />
                       </span>
                     </MetaCell>
@@ -258,11 +260,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               </div>
             )}
 
-            {/* ---- WARUM es hier steht: jedes Finding auf diesem Artefakt ---- */}
-            <Block title={`Warum dieses Artefakt geflaggt wurde (${formatCount(findings.length)})`}>
+            {/* ---- WHY it is here: every finding on this artifact ---- */}
+            <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
               <div className="flex flex-col gap-1.5">
                 {findings.map((f) => {
-                  const e = explainRule(f.rule)
+                  const e = explainRule(tr, f.rule)
                   return (
                     <div key={f.fingerprint}
                       className="rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2"
@@ -274,7 +276,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                           <button
                             className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
                             onClick={() => onView(artifact.artifact, f.line)}>
-                            Zeile {f.line}
+                            {tr('artifact.line')} {f.line}
                           </button>
                         )}
                       </div>
@@ -296,12 +298,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </Block>
           </div>
 
-          {/* ================= rechts: was man dafür ansieht ================= */}
+          {/* ============== right: what one looks at for it ================ */}
           <div className="flex flex-col gap-4">
             {preview && !preview.error && !preview.binary && preview.lines && (
               <Block title={<>
-                Dateiinhalt {preview.focus ? `um Zeile ${preview.focus}` : '(Anfang)'}
-                {preview.truncated && ' — Datei gekürzt gelesen'}
+                {tr('artifact.fileContent')}{' '}
+                {preview.focus ? tr('artifact.aroundLine', { n: preview.focus }) : tr('artifact.fromStart')}
+                {preview.truncated && ` — ${tr('artifact.readTruncated')}`}
               </>}>
                 <pre className="mono max-h-[26rem] overflow-auto rounded-lg bg-[var(--code-bg)] px-0 py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
                   {preview.lines.map((l, i) => {
@@ -320,7 +323,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             )}
             {preview?.binary && (
               <div className="text-[12px] text-[var(--muted)]">
-                Binärdatei — kein Text-Preview. Die Hex-Ansicht zeigt sie unverfälscht.
+                {tr('artifact.binaryNoPreview')}
               </div>
             )}
 
@@ -328,14 +331,14 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {kind === 'client' && actor && (
               <div className="flex flex-col gap-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <MetaCell label="Requests">{formatCount(actor.actor.requests)}</MetaCell>
-                  <MetaCell label="Zeitraum">
+                  <MetaCell label={tr('table.requests')}>{formatCount(actor.actor.requests)}</MetaCell>
+                  <MetaCell label={tr('field.period')}>
                     {formatDay(actor.actor.first_epoch, actor.actor.tz)} → {formatDay(actor.actor.last_epoch, actor.actor.tz)}
                   </MetaCell>
-                  <MetaCell label="Fehler 4xx/5xx">
+                  <MetaCell label={tr('artifact.errors')}>
                     {formatCount(actor.actor.err4 + actor.actor.err5)}
                   </MetaCell>
-                  <MetaCell label="Login-POSTs">
+                  <MetaCell label={tr('artifact.loginPosts')}>
                     {formatCount(actor.actor.login_posts)}
                     {actor.actor.login_redirects > 0 &&
                       <span className="text-[var(--sev-high)]"> · {actor.actor.login_redirects} Redirects!</span>}
@@ -352,7 +355,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     ))}
                   </div>
                 )}
-                <Block title="Meistaufgerufene URIs">
+                <Block title={tr('artifact.topUris')}>
                   <div className="flex flex-col gap-0.5">
                     {actor.top_paths.map((p) => (
                       <div key={p.uri} className="flex items-center gap-2 text-[12px]">
@@ -364,22 +367,22 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </Block>
                 {actor.top_agents.length > 0 && (
                   <div className="text-[11px] text-[var(--muted)]">
-                    User-Agents: {actor.top_agents.map((a) => `${a.agent || '(leer)'} (${a.n}×)`).join(' · ')}
+                    User agents: {actor.top_agents.map((a) => `${a.agent || tr('artifact.emptyAgent')} (${a.n}×)`).join(' · ')}
                   </div>
                 )}
               </div>
             )}
 
-            {/* ---- die IPs an diesem Artefakt, jede sofort als Trace ---- */}
+            {/* ---- the IPs on this artifact, each traceable at once ---- */}
             <Block
               title={<span className="flex items-center gap-1.5">
-                <Crosshair size={12} /> Clients an diesem Artefakt ({ips.length})
+                <Crosshair size={12} /> {tr('artifact.clientsHere')} ({ips.length})
               </span>}
               right={ips.length > 1 && (
                 <button
                   className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
                   onClick={() => onTrace(ips.map((i) => i.ip), marks)}>
-                  alle zusammen tracen
+                  {tr('artifact.traceAll')}
                 </button>
               )}>
               {ips.length ? (
@@ -389,7 +392,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                       className="flex items-center gap-2 rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
                       <IpFlag ip={h.ip} />
                       <span className="mono font-medium">{h.ip}</span>
-                      {h.in_box && <Tag tone="accent" explain="Diese Adresse liegt bereits in der IOC Box.">IOC</Tag>}
+                      {h.in_box && <Tag tone="accent" explain={tr('artifact.ipInBox')}>IOC</Tag>}
                       <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--muted)]"
                         title={h.why}>
                         {h.why}
@@ -408,7 +411,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </div>
               ) : (
                 <div className="text-[12px] text-[var(--muted)]">
-                  Keine Adresse im Log-Index, die auf dieses Artefakt zeigt.
+                  {tr('artifact.noClients')}
                 </div>
               )}
             </Block>
@@ -416,13 +419,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- Tabellen-/Dump-Kontext ---- */}
             {ctx?.table && (
               <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Zeilen im Dump">{formatCount(ctx.table.rows)}</MetaCell>
-                <MetaCell label="Spalten">{ctx.table.columns}</MetaCell>
-                <MetaCell label="Dump-Bytes">{formatBytes(ctx.table.bytes)}</MetaCell>
+                <MetaCell label={tr('artifact.rowsInDump')}>{formatCount(ctx.table.rows)}</MetaCell>
+                <MetaCell label={tr('artifact.columns')}>{ctx.table.columns}</MetaCell>
+                <MetaCell label={tr('artifact.dumpBytes')}>{formatBytes(ctx.table.bytes)}</MetaCell>
                 <MetaCell label="CMS">{ctx.table.cms || '—'}</MetaCell>
                 {ctx.table.col_list && (
                   <div className="col-span-2">
-                    <MetaCell label="Spalten im Dump">
+                    <MetaCell label={tr('artifact.columnsInDump')}>
                       <span className="mono break-all text-[11px]">{ctx.table.col_list}</span>
                     </MetaCell>
                   </div>
@@ -432,9 +435,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {ctx?.dump && (
               <div className="grid grid-cols-2 gap-2">
                 <MetaCell label="Statements">{formatCount(ctx.dump.statements)}</MetaCell>
-                <MetaCell label="Größe">{formatBytes(ctx.dump.size)}</MetaCell>
+                <MetaCell label={tr('artifact.size')}>{formatBytes(ctx.dump.size)}</MetaCell>
                 <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
-                <MetaCell label="Erstellt">{ctx.dump.meta?.created || '—'}</MetaCell>
+                <MetaCell label={tr('database.fact.created')}>{ctx.dump.meta?.created || '—'}</MetaCell>
               </div>
             )}
           </div>

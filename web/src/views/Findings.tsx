@@ -1,23 +1,24 @@
-// Findings.tsx — die Arbeitsliste des Falls. Durchgearbeitet werden
-// ARTEFAKTE, nicht einzelne Findings.
+// Findings.tsx -- the work list of the case. What gets worked through are
+// ARTIFACTS, not individual findings.
 //
-// Ein Artefakt ist die Sache selbst: diese Datei, dieser Client, diese
-// Tabelle. Die Findings sind die Regeln, die darauf angesprochen haben —
-// sie sind der GRUND für die Entscheidung, nicht die Entscheidung selbst.
-// Acht Regeln auf einer abgelegten Shell sind acht Beobachtungen über EINE
-// Datei; die Frage („gehört das zum Vorfall?") stellt sich einmal.
+// An artifact is the thing itself: this file, this client, this table. The
+// findings are the rules that responded to it -- they are the REASON for the
+// decision, not the decision itself. Eight rules on one dropped shell are
+// eight observations about ONE file; the question ("does this belong to the
+// incident?") is asked once.
 //
-// Deshalb: markiert, gezählt und als True/False Positive entschieden wird
-// das Artefakt. Die Liste hat zwei Ebenen — Kategorie („Webshells &
-// Backdoors") und darunter die Artefakte. Die Findings eines Artefakts
-// stehen aufgeklappt darunter und im Detail-Fenster, das alles zusammenholt,
-// was zur Beurteilung nötig ist: Metadaten, Dateiinhalt, Actor-Profil und
-// jede IP, die daran hängt — jede davon direkt als Trace zu öffnen.
+// Hence: what gets checked, counted and decided as a true/false positive is
+// the artifact. The list has two levels -- category ("Web shells &
+// backdoors") and below it the artifacts. The findings of an artifact stand
+// expanded below it and in the detail window, which gathers everything
+// needed for the assessment: metadata, file content, actor profile and every
+// IP that hangs on it -- each of them openable directly as a trace.
 //
-// Die Zeile selbst soll SO VIEL SAGEN, dass man sie meistens nicht öffnen
-// muss: Symbol und Farbe für Art und Schweregrad, die Regeln als Chips, ein
-// Balken für die Verteilung der Findings, der Zustand als Pille. Eine Liste
-// aus lauter gleich aussehenden Zeilen zwingt zum Lesen jeder einzelnen.
+// The row itself should SAY SO MUCH that one mostly does not have to open
+// it: icon and colour for kind and severity, the rules as chips, a bar for
+// the distribution of the findings, the state as a pill. A list of
+// identical-looking rows forces one to read every single one.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -30,7 +31,7 @@ import {
   api, type ArtifactRow, type Finding, type FindingsResponse,
 } from '../api'
 import {
-  SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, formatCount,
+  SEVERITY_LABEL, SEVERITY_VAR, formatCount,
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
@@ -46,9 +47,9 @@ import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
 import type { ViewId } from '../App'
 
-// Ein Symbol je Kategorie. Die Kategorie ist die Gliederung, mit der man
-// anfängt — sie soll auf einen Blick unterscheidbar sein und nicht als
-// weitere Textzeile in einer Textliste stehen.
+// One icon per category. The category is the structure one starts from --
+// it should be distinguishable at a glance and not stand as yet another line
+// of text in a list of text.
 const CATEGORY_ICON: Record<string, typeof Bug> = {
   webshell: Bug,
   obfuscation: EyeOff,
@@ -62,10 +63,10 @@ const CATEGORY_ICON: Record<string, typeof Bug> = {
   other: CircleDashed,
 }
 
-/** Ein Artefakt mit allem, was der Server dazu aggregiert hat, plus seinen
- *  Findings. Die Kategorie kommt vom SCHWERSTEN Finding — wenn eine Datei
- *  sowohl „Verschleierung" als auch „führt Befehle aus" auslöst, steht sie
- *  dort, wo die stärkere Aussage sie hinstellt. */
+/** An artifact with everything the server aggregated for it, plus its
+ *  findings. The category comes from the WORST finding -- when a file
+ *  triggers both "obfuscation" and "executes commands", it stands where the
+ *  stronger statement puts it. */
 interface Artifact extends ArtifactRow {
   items: Finding[]
   cat: Category
@@ -78,10 +79,10 @@ interface CatGroup {
   worst: number
   confirmed: number
   dismissed: number
-  kind: string          // vorherrschende Artefakt-Art, für "12 Dateien"
+  kind: string          // predominant artifact kind, for "12 files"
 }
 
-// Zeilentypen der virtualisierten Liste.
+// Row types of the virtualised list.
 type Item =
   | { t: 'c'; c: CatGroup }
   | { t: 'a'; a: Artifact; c: CatGroup }
@@ -89,8 +90,8 @@ type Item =
 
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
-/** Ein Ausblende-Set umschalten: Klick versteckt die Klasse, der nächste
- *  Klick holt sie zurück. */
+/** Toggle a hide set: a click hides the class, the next click brings it
+ *  back. */
 function toggleHidden(set: Set<string>, value: string): Set<string> {
   const next = new Set(set)
   if (next.has(value)) next.delete(value)
@@ -99,10 +100,11 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
 }
 
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
-  // JEDER Filter-Chip ist ein Ausblende-Schalter: Klick versteckt seine
-  // Klasse, der nächste Klick bringt sie zurück, mehrere stapeln sich.
-  // Standardmäßig ausgeblendet: False Positives (gehören nicht zum Fall)
-  // und Info (Kontext ohne Aussage über dieses System).
+  const tr = useT()
+  // EVERY filter chip is a hide switch: a click hides its class, the next
+  // click brings it back, several of them stack. Hidden by default: false
+  // positives (they do not belong to the case) and info (context without a
+  // statement about this system).
   const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(new Set(['3']))
   const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(new Set(['dismissed']))
   const [hiddenSource, setHiddenSource] = useState<Set<string>>(new Set())
@@ -110,22 +112,22 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  // Zwei Mengen statt einer: ohne Filter sind Kategorien ZU (Übersicht) und
-  // `expandedCats` sagt, was offen ist; mit Filter sind sie AUF und
-  // `collapsedCats` sagt, was zu ist. So bleibt beides jeweils die Ausnahme,
-  // die der Analyst selbst gesetzt hat.
+  // Two sets instead of one: without a filter, categories are CLOSED
+  // (overview) and `expandedCats` says what is open; with a filter they are
+  // OPEN and `collapsedCats` says what is closed. That way each is the
+  // exception the analyst set themselves.
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Was der Trace rot markieren soll — kommt aus dem Artefakt-Fenster,
-  // das weiß, worum es geht (die Datei bzw. der Alarm des Clients).
+  // What the trace should mark red -- comes from the artifact window, which
+  // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
 
-  // Entscheidung + Nachsorge (Quittung, Übernahme-Meldung, Vorschläge) —
-  // geteilt mit Actors, damit es überall dieselbe Entscheidung ist.
+  // Decision plus follow-up (receipt, propagation message, suggestions) --
+  // shared with Actors, so that it is the same decision everywhere.
   const t = useTriage(slug, () => { setChecked(new Set()); setBulkNote('') })
 
   const query = useMemo(() => {
@@ -144,7 +146,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   })
   const roots: EvidenceRoot[] = useMemo(() => data?.roots ?? [], [data])
 
-  // Zwei Ebenen: Kategorie ("Webshells & Backdoors") -> die Artefakte darin.
+  // Two levels: category ("Web shells & backdoors") -> the artifacts in
+  // it.
   const categories = useMemo(() => {
     const byArtifact = new Map<string, Finding[]>()
     for (const f of data?.findings ?? []) {
@@ -156,7 +159,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     for (const row of data?.artifacts ?? []) {
       const items = byArtifact.get(row.artifact) ?? []
       const lead = items[0]
-      const cat = categorize(lead?.source ?? row.source, lead?.rule ?? '')
+      const cat = categorize(tr, lead?.source ?? row.source, lead?.rule ?? '')
       const artifact: Artifact = { ...row, items, cat }
       let c = byCat.get(cat.id)
       if (!c) {
@@ -171,13 +174,14 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       if (row.triage === 'dismissed') c.dismissed += 1
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
-  }, [data])
+  }, [data, tr])
 
-  // Ein aktiver Filter bedeutet: der Analyst sucht etwas Bestimmtes. Dann
-  // stehen die Kategorien offen, sonst wäre die Trefferliste hinter Klicks
-  // versteckt. Ohne Filter ist die Übersicht der Zweck — Kategorien zu.
-  // Nur die SUCHE öffnet die Kategorien automatisch — wer sucht, will die
-  // Treffer sehen. Ausblenden ist keine Suche: die Übersicht bleibt zu.
+  // An active filter means: the analyst is looking for something specific.
+  // Then the categories stand open, otherwise the hit list would be hidden
+  // behind clicks. Without a filter the overview is the purpose -- categories
+  // closed. Only the SEARCH opens the categories automatically -- whoever
+  // searches wants to see the hits. Hiding is not searching: the overview
+  // stays closed.
   const filtering = Boolean(search)
 
   const items = useMemo(() => {
@@ -197,7 +201,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   }, [categories, expanded, collapsedCats, expandedCats, filtering])
 
 
-  /** Markierte Artefakte, sonst das unter dem Cursor. */
+  /** Checked artifacts, otherwise the one under the cursor. */
   const bulkTriage = (state: string) => {
     const at = items[cursor]
     const names = checked.size
@@ -217,7 +221,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     overscan: 20,
   })
 
-  // Tastatur: j/k über Artefakt-Zeilen, x markieren, c/d/r entscheiden
+  // Keyboard: j/k over artifact rows, x checks, c/d/r decide
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (selected || viewing || traceIps || e.target instanceof HTMLInputElement ||
@@ -292,17 +296,17 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     <div className="flex h-[calc(100vh-40px)] flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Artefakte"
-          body="Die Dinge selbst: diese Datei, dieser Client, diese Tabelle. Geflaggt wurden sie von den Findings — entschieden wird über das Artefakt."
-          hint="Jeder Chip ist ein Ausblende-Schalter: Klick versteckt seine Einträge, der nächste Klick holt sie zurück. False Positives und Info starten ausgeblendet.">
-          <h1 className="mr-2 text-lg font-bold">Artefakte</h1>
+          body={tr('findings.title.body')}
+          hint={tr('findings.title.hint')}>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.findings')}</h1>
         </Tooltip>
         {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
            ['2', 'Low', 'var(--sev-low)'], ['3', 'Info', 'var(--muted)']] as const
         ).map(([s, label, color]) => (
           <Tooltip key={s}
             hint={hiddenSeverity.has(s)
-              ? `${label}-Artefakte sind ausgeblendet — Klick holt sie zurück.`
-              : `Klick blendet ${label}-Artefakte aus.`}>
+              ? tr('findings.hidden.back', { what: label })
+              : tr('filter.hide', { what: label })}>
             <Chip active={false} dimmed={hiddenSeverity.has(s)}
               onClick={() => setHiddenSeverity((prev) => toggleHidden(prev, s))}
               count={counts?.severity[s] ?? 0}>
@@ -314,30 +318,32 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         {(['new', 'confirmed', 'dismissed'] as const).map((state) => (
           <Tooltip key={state}
             hint={hiddenTriage.has(state)
-              ? `${TRIAGE_LABEL[state]} ist ausgeblendet — Klick holt sie zurück.`
-              : `Klick blendet »${TRIAGE_LABEL[state]}« aus.`}>
+              ? tr('findings.hidden.back', { what: tr(`triage.${state}`) })
+              : tr('filter.hide', { what: tr(`triage.${state}`) })}>
             <Chip active={false} dimmed={hiddenTriage.has(state)}
               onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
               count={counts?.triage[state] ?? 0}>
-              {TRIAGE_LABEL[state]}
+              {tr(`triage.${state}`)}
             </Chip>
           </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {Object.entries(SOURCE_LABEL).map(([key, label]) => (
+        {['webshell', 'sqldb', 'logs'].map((key) => {
+          const label = tr(`source.${key}`)
+          return (
           <Tooltip key={key}
             hint={hiddenSource.has(key)
-              ? `${label} ist ausgeblendet — Klick holt die Artefakte zurück.`
-              : `Klick blendet Artefakte aus dieser Quelle aus.`}>
+              ? tr('findings.hidden.back', { what: label })
+              : tr('filter.hide', { what: label })}>
             <Chip active={false} dimmed={hiddenSource.has(key)}
               onClick={() => setHiddenSource((prev) => toggleHidden(prev, key))}
               count={counts?.source[key] ?? 0}>
               {label}
             </Chip>
           </Tooltip>
-        ))}
+        )})}
         <div className="ml-auto">
-          <SearchInput value={search} onChange={setSearch} placeholder="Regel, Pfad, Evidence…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
       </div>
 
@@ -353,7 +359,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               setHiddenTriage(new Set())
               setHiddenSource(new Set())
             }}>
-            alles einblenden
+            {tr('findings.showAll')}
           </button>
         </div>
       )}
@@ -364,7 +370,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
             {checked.size} Artefakt{checked.size > 1 ? 'e' : ''} markiert
           </span>
           <Button variant="primary" onClick={() => bulkTriage('confirmed')}>
-            <Check size={14} /> True Positive &amp; sammeln
+            <Check size={14} /> {tr('artifact.truePositiveCollect')}
           </Button>
           <Button onClick={() => bulkTriage('reviewed')}>
             <Eye size={14} /> Gesichtet
@@ -375,18 +381,19 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           <input
             value={bulkNote}
             onChange={(e) => setBulkNote(e.target.value)}
-            placeholder="Notiz für alle markierten (optional)"
+            placeholder={tr('findings.bulkNote')}
             className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
-          <Button variant="ghost" onClick={() => setChecked(new Set())}>Auswahl leeren</Button>
+          <Button variant="ghost" onClick={() => setChecked(new Set())}>{tr('common.clearSelection')}</Button>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
           <span>
-            {formatCount(data?.total ?? 0)} Artefakt{(data?.total ?? 0) === 1 ? '' : 'e'}
-            {' aus '}{formatCount(data?.findings_total ?? 0)} Findings
-            {' in '}{formatCount(categories.length)}{' '}
-            Kategorie{categories.length === 1 ? '' : 'n'}
+            {tr('findings.count', {
+              artifacts: formatCount(data?.total ?? 0),
+              findings: formatCount(data?.findings_total ?? 0),
+              categories: formatCount(categories.length),
+            })}
           </span>
           <button
             className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
@@ -398,12 +405,12 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               if (filtering) setCollapsedCats(allOpen ? new Set(allIds) : new Set())
               else setExpandedCats(allOpen ? new Set() : new Set(allIds))
             }}>
-            alle auf-/zuklappen
+            {tr('findings.toggleAll')}
           </button>
           <span className="opacity-60">·</span>
           <span>
-            Tastatur: <kbd className="rounded bg-[var(--panel-2)] px-1">j</kbd>/<kbd className="rounded bg-[var(--panel-2)] px-1">k</kbd> navigieren,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> markieren,{' '}
+            {tr('findings.keys')}: <kbd className="rounded bg-[var(--panel-2)] px-1">j</kbd>/<kbd className="rounded bg-[var(--panel-2)] px-1">k</kbd> {tr('findings.keys.navigate')},{' '}
+            <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> {tr('findings.keys.check')},{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">c</kbd> True Positive,{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">d</kbd> False Positive,{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">Enter</kbd> Details
@@ -411,15 +418,15 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       )}
 
-      {/* Kein `flex-1`: die Box ist so hoch wie ihr Inhalt und schrumpft
-          erst, wenn die Liste länger wird als der Platz. Gestreckt auf die
-          volle Höhe stand unter der letzten Zeile sonst eine leere Fläche,
-          die aussah, als fehle da etwas. */}
+      {/* No `flex-1`: the box is as tall as its content and only shrinks
+          when the list grows longer than the space. Stretched to the full
+          height, an empty area used to stand below the last row that looked
+          as if something were missing there. */}
       <div ref={parentRef}
         className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
-          <EmptyState icon={<Bug size={36} />} title="Keine Artefakte"
-            sub={data ? 'Kein Treffer für die aktuellen Filter — oder die Analyse lief noch nicht.' : 'Lade…'} />
+          <EmptyState icon={<Bug size={36} />} title={tr('findings.empty.title')}
+            sub={data ? tr('findings.empty') : 'Lade…'} />
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vi) => {
@@ -443,14 +450,14 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   className={clsx(
                     'absolute left-0 top-0 flex w-full items-center gap-3 pr-4',
                     'border-y border-[var(--line)]',
-                    // Der Trennstrich nach oben nur, wenn eine Kategorie
-                    // gerade ZU ist -- offen geht sie in ihre Artefakte über.
+                    // The rule above only when a category is currently
+                    // CLOSED -- when open it flows into its artifacts.
                     open ? 'border-b-transparent' : '')}
                   style={{
                     ...style,
-                    // Ein Hauch des Schweregrads, der nach rechts ausläuft:
-                    // die Kategorie hebt sich vom Rest ab, ohne dass eine
-                    // volle Farbfläche die Namen darunter erschlägt.
+                    // A hint of the severity running off to the right: the
+                    // category stands out from the rest without a full
+                    // colour field drowning the names below it.
                     background:
                       `linear-gradient(90deg, color-mix(in srgb, ${tint} 13%, var(--panel-2)) 0%,` +
                       ' var(--panel-2) 55%)',
@@ -460,7 +467,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
                     onChange={() => toggleCategoryChecked(c)}
-                    title="Alle Artefakte dieser Kategorie markieren" />
+                    title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
                     {open
@@ -481,19 +488,18 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       <div className="truncate text-[11.5px] text-[var(--muted)]">
                         <span className="font-medium text-[var(--fg)]">
                           {formatCount(c.artifacts.length)}{' '}
-                          {artifactNoun(c.kind, c.artifacts.length)}
+                          {artifactNoun(tr, c.kind, c.artifacts.length)}
                         </span>
-                        {' aus '}
-                        {formatCount(c.findings)} Finding{c.findings === 1 ? '' : 's'}
-                        {decided > 0 && ` · ${decided} entschieden`}
+                        {' '}{tr('findings.fromN', { n: formatCount(c.findings) })}
+                        {decided > 0 && ` · ${tr('findings.decided', { n: decided })}`}
                       </div>
                     </div>
                   </button>
                   <SeverityBadge severity={c.worst} />
-                  {/* Fortschritt: wie viel dieser Kategorie ist entschieden? */}
+                  {/* Progress: how much of this category is decided? */}
                   <Tooltip
-                    title={`${decided} von ${c.artifacts.length} entschieden`}
-                    hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${c.artifacts.length - decided} offen`}>
+                    title={tr('findings.progress', { decided, total: c.artifacts.length })}
+                    hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${tr('findings.open', { n: c.artifacts.length - decided })}`}>
                     <div className="flex w-24 shrink-0 items-center gap-2">
                       <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)]">
                         {c.confirmed > 0 && (
@@ -514,7 +520,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               )
             }
 
-            // ---- Ebene 2: das Artefakt — die Einheit, über die entschieden wird ----
+            // ---- level 2: the artifact -- the unit decisions are about ----
             if (item.t === 'a') {
               const a = item.a
               const Icon = KIND_ICON[a.artifact_kind] ?? Bug
@@ -526,9 +532,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     'group absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-3',
                     'transition-colors hover:bg-[var(--panel-2)]',
                     vi.index === cursor && 'bg-[var(--accent-soft)]',
-                    // Abgeblendet heißt ABGEARBEITET, nicht unwichtig: ein
-                    // bestätigtes Artefakt bleibt stehen, tritt aber optisch
-                    // zurück, damit das Offene die Liste führt.
+                    // Dimmed means DONE, not unimportant: a confirmed
+                    // artifact stays but recedes visually, so that what is
+                    // still open leads the list.
                     a.triage === 'confirmed' && 'opacity-45')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
@@ -540,7 +546,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       else next.delete(a.artifact)
                       setChecked(next)
                     }} />
-                  <Tooltip hint={open ? 'Findings zuklappen' : 'Zeigt die Regeln, die auf dieses Artefakt angesprochen haben.'}>
+                  <Tooltip hint={open ? tr('findings.collapse') : tr('findings.expand')}>
                     <button onClick={() => toggleArtifact(a)}
                       className="shrink-0 cursor-pointer rounded p-0.5 text-[var(--muted)] hover:text-[var(--fg)]">
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -550,16 +556,15 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                     onClick={() => {
                       setCursor(vi.index)
-                      // Das Sammel-Ergebnis gehört zu DER Aktion, die es
-                      // erzeugt hat -- beim Öffnen eines anderen Artefakts
-                      // verfällt es, sonst liest es sich als Ergebnis für
-                      // dieses hier.
+                      // The collect result belongs to THE action that produced
+                      // it -- opening another artifact expires it, otherwise it
+                      // reads as a result for this one.
                       t.clearCollected()
                       setSelected(a)
                     }}>
-                    {/* Die Art des Artefakts als Symbol, eingefärbt nach dem
-                        Schweregrad: eine Datei sieht anders aus als ein
-                        Client, und Rot sticht aus einer Liste heraus. */}
+                    {/* The artifact kind as an icon, tinted by severity: a file
+                        looks different from a client, and red stands out of a
+                        list. */}
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
                       style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`,
                                color: tint }}>
@@ -568,7 +573,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
-                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                        <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                       </div>
                       <RuleChips items={a.items} />
                     </div>
@@ -576,7 +581,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   </button>
                   <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                     {a.artifact_kind === 'file' && (
-                      <Tooltip hint="Die Datei im Original ansehen — als Text und als Hex-Dump.">
+                      <Tooltip hint={tr('findings.viewFile.hint')}>
                         <button
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setViewing({ path: a.artifact, line: a.items[0]?.line ?? null })}>
@@ -585,7 +590,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       </Tooltip>
                     )}
                     {a.artifact_kind === 'client' && (
-                      <Tooltip hint="Jeden Request dieses Clients ansehen.">
+                      <Tooltip hint={tr('findings.trace.hint')}>
                         <button
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setTraceIps([a.artifact])}>
@@ -598,7 +603,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               )
             }
 
-            // ---- Ebene 3: ein Finding als BEGRÜNDUNG, nicht als Entscheidung ----
+            // ---- level 3: a finding as REASONING, not as a decision ----
             const f = item.f
             return (
               <div key={f.fingerprint}
@@ -606,8 +611,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   'absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-4',
                   item.a.triage === 'confirmed' && 'opacity-45')}
                 style={style}>
-                {/* Die Führungslinie hält die Findings sichtbar an ihrem
-                    Artefakt — eingerückter Text allein verliert den Bezug. */}
+                {/* The guide line keeps the findings visibly attached to
+                    their artifact -- indented text alone loses the tie. */}
                 <span className="ml-[3.25rem] h-full w-px shrink-0 bg-[var(--line)]" />
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ background: SEVERITY_VAR[f.severity] }} />
@@ -625,9 +630,10 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       </div>
 
-      {/* Alle drei sind zentrierte Fenster; die Ebene sagt, was davor liegt.
-          Trace und Datei-Viewer werden AUS dem Artefakt-Fenster geöffnet und
-          sind eine Stufe kleiner — man sieht am Rand, wohin man zurückkommt. */}
+      {/* All three are centred windows; the level says what lies in front.
+          Trace and file viewer are opened FROM the artifact window and are
+          one step smaller -- one sees at the edge where one comes back
+          to. */}
       <ArtifactWindow
         slug={slug}
         artifact={selected}
@@ -657,17 +663,18 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   )
 }
 
-/** Die Regeln eines Artefakts als Chips unter seinem Namen — man sieht in
- *  der Liste, WORUM es geht, ohne aufzuklappen oder zu öffnen. Mehr als drei
- *  wären eine zweite Liste in der Liste; der Rest steht als Zahl daneben. */
+/** The rules of an artifact as chips under its name -- one sees in the list
+ *  WHAT it is about without expanding or opening. More than three would be a
+ *  second list inside the list; the rest stands next to it as a number. */
 function RuleChips({ items }: { items: Finding[] }) {
+  const tr = useT()
   if (!items.length) return null
   const shown = items.slice(0, 3)
   const rest = items.length - shown.length
   return (
     <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
       {shown.map((f) => {
-        const e = explainRule(f.rule)
+        const e = explainRule(tr, f.rule)
         return (
           <Tooltip key={f.fingerprint} title={f.rule} body={e?.what} hint={e?.why} wide>
             <span className="max-w-[15rem] truncate rounded bg-[var(--panel-2)] px-1.5 py-px text-[10.5px] text-[var(--muted)]"
@@ -684,10 +691,10 @@ function RuleChips({ items }: { items: Finding[] }) {
   )
 }
 
-/** Wie sich die Findings eines Artefakts auf die Schweregrade verteilen.
- *  Zwei Artefakte mit „4 Findings" sind nicht dasselbe: viermal LOW ist ein
- *  anderes Bild als zweimal HIGH — und genau das soll man sehen, ohne die
- *  Zeile aufzuklappen. */
+/** How the findings of an artifact distribute across the severities. Two
+ *  artifacts with "4 findings" are not the same thing: four times LOW is a
+ *  different picture from twice HIGH -- and that is exactly what one should
+ *  see without expanding the row. */
 function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
   const counts = [0, 1, 2, 3].map((s) => items.filter((f) => f.severity === s).length)
   const sum = counts.reduce((a, b) => a + b, 0)
@@ -716,9 +723,10 @@ function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
   )
 }
 
-/** Der Regelname mit seiner Klartext-Erklärung im Tooltip. */
+/** The rule name with its plain-language explanation in the tooltip. */
 function RuleName({ rule, className }: { rule: string; className?: string }) {
-  const e = explainRule(rule)
+  const tr = useT()
+  const e = explainRule(tr, rule)
   return (
     <Tooltip title={rule} body={e?.what} hint={e?.why} wide
       className={clsx('truncate text-[12.5px] font-medium', className)}>
@@ -727,13 +735,14 @@ function RuleName({ rule, className }: { rule: string; className?: string }) {
   )
 }
 
-/** Ein Artefakt so benannt, wie ein Mensch es denkt: bei Dateien NUR der Pfad
- *  unterhalb der Evidence (`images/shell.php`) — das ist die Angabe, die im
- *  Bericht steht und die man auf dem Server wiederfindet. Der vollständige
- *  Pfad und die Evidence, unter der die Datei liegt, stehen im Tooltip. */
+/** An artifact named the way a human thinks of it: for files ONLY the path
+ *  below the evidence (`images/shell.php`) -- that is the fact that goes into
+ *  the report and that one finds again on the server. The full path and the
+ *  evidence the file sits under stand in the tooltip. */
 function ArtifactName({ artifact, kind, roots }: {
   artifact: string; kind: string; roots: EvidenceRoot[]
 }) {
+  const tr = useT()
   if (kind !== 'file') {
     return (
       <span className="mono min-w-0 truncate text-[13px] font-semibold">{artifact}</span>
@@ -746,7 +755,7 @@ function ArtifactName({ artifact, kind, roots }: {
     : null
   return (
     <Tooltip wide className="min-w-0"
-      title={rootName ? `unter: ${rootName}` : 'Vollständiger Pfad'}
+      title={rootName ? tr('findings.under', { root: rootName }) : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
         {root ? rel : shortPath(artifact, 80)}

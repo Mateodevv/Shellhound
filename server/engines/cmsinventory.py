@@ -107,12 +107,12 @@ def _wp_plugin_header(php_path):
     return name.group(1), version.group(1) if version else "(unknown)"
 
 
-# Jede Extension liefert (Typ, Name, Slug, Version, PFAD, QUELLE):
-#   PFAD   -- wo die Extension liegt (Verzeichnis oder Einzeldatei). Daran
-#             hängt die Zuordnung geflaggter Dateien.
-#   QUELLE -- die Datei, aus der die VERSION gelesen wurde, oder None.
-# Die beiden fallen auseinander, sobald das Manifest woanders liegt als die
-# Extension: ein WordPress-Theme IST das Verzeichnis, seine Version steht in
+# Every extension yields (type, name, slug, version, PATH, SOURCE):
+#   PATH   -- where the extension sits (directory or single file). The
+#             attribution of flagged files hangs on this.
+#   SOURCE -- the file the VERSION was read from, or None.
+# The two come apart as soon as the manifest sits somewhere other than the
+# extension: a WordPress theme IS the directory, its version sits in
 # style.css.
 
 def inventory_wordpress(root):
@@ -221,7 +221,7 @@ def scan(case_dir, targets, ctx=None):
             if ctx is not None and ctx.cancelled():
                 break
             if ctx is not None:
-                ctx.progress(0.05, f"Suche CMS-Installationen in {target}…")
+                ctx.progress(0.05, f"Searching CMS installations in {target}…")
             installs = find_installs(target)
             for n, install in enumerate(installs):
                 root = str(install["root"])
