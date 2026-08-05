@@ -1,7 +1,7 @@
 // App.tsx — shell: case selection + the left rail with the five views.
 import { useT } from './i18n'
 import { useEffect, useMemo, useState } from 'react'
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, ArrowLeft, Box, Bug, Database, FolderCog, FolderTree,
@@ -29,10 +29,7 @@ import { Files } from './views/Files'
 import { IocBox } from './views/IocBox'
 import { Cms } from './views/Cms'
 import { DatabaseView } from './views/Database'
-
-const qc = new QueryClient({
-  defaultOptions: { queries: { staleTime: 5000, retry: 1, refetchOnWindowFocus: false } },
-})
+import { queryClient } from './queryClient'
 
 export type ViewId =
   | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
@@ -245,7 +242,7 @@ function Root() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={qc}>
+    <QueryClientProvider client={queryClient}>
       <Root />
     </QueryClientProvider>
   )

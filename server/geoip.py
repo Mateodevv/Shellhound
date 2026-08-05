@@ -22,6 +22,8 @@ import os
 import threading
 from pathlib import Path
 
+from server.i18n import t
+
 try:
     import maxminddb
 except ImportError:                                        # pragma: no cover
@@ -77,38 +79,36 @@ def _get_reader(workspace):
         return _reader
 
 
-def status(workspace):
-    """Was die Oberfläche wissen muss: geht es, und woraus."""
+def status(workspace, lang="en"):
+    """What the interface needs to know: does it work, and out of what."""
     if maxminddb is None:
         return {"available": False, "source": "",
-                "why": "Python-Paket maxminddb ist nicht installiert."}
+                "why": t(lang, "geo.noPackage")}
     reader = _get_reader(workspace)
     if reader is None:
         return {"available": False, "source": "",
-                "why": "Keine GeoIP-Datenbank gefunden — eine *.mmdb in den "
-                       "Workspace legen (GeoLite2-Country oder DB-IP Lite) "
-                       "oder SHELLHOUND_GEOIP setzen."}
+                "why": t(lang, "geo.noDatabase")}
     return {"available": True, "source": os.path.basename(_reader_path),
             "why": ""}
 
 
-def _special(addr):
-    """Sonderbereiche VOR der Datenbank: die Standardbibliothek weiß das
-    sicher, und die Aussage ist forensisch oft wichtiger als ein Land."""
+def _special(addr, lang):
+    """Special ranges BEFORE the database: the standard library knows these
+    for certain, and forensically the statement is often more important than
+    a country."""
     for net in _DOC_NETS:
         if addr.version == net.version and addr in net:
-            return "Dokumentations-Bereich (RFC 5737/3849) — absichtlich unzuordenbar"
+            return t(lang, "geo.documentation")
     if addr.is_loopback:
-        return "Loopback — der Server selbst"
+        return t(lang, "geo.loopback")
     if addr.is_link_local:
         return "Link-local"
     if addr.is_multicast:
         return "Multicast"
     if addr.is_private:
-        return ("Privates Netz (RFC 1918) — der Verkehr kam durch einen "
-                "Proxy/Load-Balancer oder aus dem eigenen Netz")
+        return t(lang, "geo.private")
     if not addr.is_global:
-        return "Reservierter Bereich"
+        return t(lang, "geo.reserved")
     return None
 
 
@@ -171,19 +171,25 @@ def download(workspace):
             except OSError:
                 pass
             continue
-    return {"ok": False, "error": f"Download fehlgeschlagen: {last_error}"}
+    return {"ok": False, "error": f"download failed: {last_error}"}
 
 
-def lookup(workspace, ip):
-    """{'iso': 'de'|None, 'name': str, 'special': bool} oder None bei Müll."""
+def lookup(workspace, ip, lang="en"):
+    """{'iso': 'de'|None, 'name': str, 'special': bool}, or None for junk.
+
+    The cache is keyed by LANGUAGE AND ADDRESS: the country names and the
+    descriptions of the special ranges depend on the language, and a cache
+    keyed by address alone would hand out whichever language happened to
+    ask first."""
     ip = str(ip).strip()
-    if ip in _cache:
-        return _cache[ip]
+    key = (lang, ip)
+    if key in _cache:
+        return _cache[key]
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return None
-    special = _special(addr)
+    special = _special(addr, lang)
     if special:
         out = {"iso": None, "name": special, "special": True}
     else:
@@ -197,13 +203,13 @@ def lookup(workspace, ip):
             country = rec.get("country") or rec.get("registered_country") or {}
             iso = (country.get("iso_code") or "").lower()
             names = country.get("names") or {}
-            name = names.get("de") or names.get("en") or iso.upper()
+            name = names.get(lang) or names.get("en") or iso.upper()
             if iso:
                 out = {"iso": iso, "name": name, "special": False}
             else:
-                out = {"iso": None, "name": "in der Datenbank nicht verzeichnet",
+                out = {"iso": None, "name": t(lang, "geo.unlisted"),
                        "special": False}
     if len(_cache) > _CACHE_CAP:
         _cache.clear()
-    _cache[ip] = out
+    _cache[key] = out
     return out

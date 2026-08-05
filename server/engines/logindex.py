@@ -31,6 +31,7 @@ from pathlib import Path
 
 from server import db
 from server.engines import accesslog
+from server.i18n import t
 from server.engines.fsutil import (get_files_recursive, is_compressed,
                                    is_scannable_text, open_text_auto)
 
@@ -569,9 +570,9 @@ def _open_ro(case_dir):
     return conn
 
 
-def status(case_dir, targets=None):
+def status(case_dir, targets=None, lang="en"):
     """Whether the index exists and can be trusted for these targets."""
-    out = {"exists": False, "fresh": False, "reason": "kein Index gebaut",
+    out = {"exists": False, "fresh": False, "reason": t(lang, "index.none"),
            "lines": 0, "clients": 0, "unparsed": 0, "size": 0}
     conn = _open_ro(case_dir)
     if conn is None:
@@ -581,7 +582,7 @@ def status(case_dir, targets=None):
         out["size"] = db.log_db_path(case_dir).stat().st_size
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         if meta.get("schema") != SCHEMA_VERSION:
-            out["reason"] = "Index stammt von einer älteren Version"
+            out["reason"] = t(lang, "index.oldVersion")
             return out
         for k in ("lines", "clients", "unparsed"):
             out[k] = int(meta.get(k, 0) or 0)

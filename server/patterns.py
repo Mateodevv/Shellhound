@@ -25,7 +25,16 @@ MIN_PATTERN_LENGTH = 3
 
 
 class PatternError(ValueError):
-    """Eine Eingabe, die der Analyst korrigieren muss."""
+    """An input the analyst has to correct.
+
+    It carries a catalogue KEY next to its English message. The route turns
+    it into the language of the request; `import_text` recognises a known
+    pattern by the key rather than by a substring of the text -- a check
+    against wording breaks the moment the wording is translated."""
+
+    def __init__(self, message, key=""):
+        super().__init__(message)
+        self.key = key
 
 
 def library_path(workspace):
@@ -72,8 +81,9 @@ def _validate(pattern):
     pattern = str(pattern or "").strip()
     if len(pattern.replace("*", "")) < MIN_PATTERN_LENGTH:
         raise PatternError(
-            f"Das Muster ist zu unspezifisch — mindestens "
-            f"{MIN_PATTERN_LENGTH} Zeichen außer Platzhaltern.")
+            f"The pattern is too unspecific — at least "
+            f"{MIN_PATTERN_LENGTH} characters besides wildcards.",
+            "err.patternTooShort")
     return pattern
 
 
@@ -82,7 +92,8 @@ def add(workspace, pattern, label="", note=""):
     patterns = load(workspace)
     for existing in patterns:
         if existing["pattern"].lower() == pattern.lower():
-            raise PatternError("Dieses Muster steht schon in der Bibliothek.")
+            raise PatternError("This pattern is already in the library.",
+                               "err.patternKnown")
     entry = {"id": uuid.uuid4().hex[:12], "pattern": pattern,
              "label": str(label or "").strip(), "note": str(note or "").strip(),
              "added": datetime.now().isoformat(timespec="seconds")}
@@ -104,7 +115,7 @@ def update(workspace, pattern_id, pattern=None, label=None, note=None):
             entry["note"] = str(note).strip()
         save(workspace, patterns)
         return entry
-    raise PatternError("Unbekanntes Muster.")
+    raise PatternError("Unknown pattern.", "err.patternUnknown")
 
 
 def remove(workspace, pattern_id):
@@ -126,7 +137,7 @@ def import_text(workspace, text):
         try:
             data = json.loads(text)
         except ValueError as e:
-            raise PatternError(f"Kein gültiges JSON: {e}") from e
+            raise PatternError(f"not valid JSON: {e}", "err.patternJson") from e
         if isinstance(data, dict):
             data = data.get("patterns", [])
         for row in data if isinstance(data, list) else []:
@@ -152,7 +163,7 @@ def import_text(workspace, text):
             add(workspace, pattern, label, note)
             added += 1
         except PatternError as e:
-            if "schon in der Bibliothek" in str(e):
+            if e.key == "err.patternKnown":
                 skipped += 1
             else:
                 invalid += 1
