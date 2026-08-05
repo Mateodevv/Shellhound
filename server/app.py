@@ -35,7 +35,8 @@ from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
 from server.config import Config
-from server.engines import (cmsinventory, detect, logindex, sqldump, yarascan,
+from server.engines import (cmsinventory, detect, errorlog, logindex, sqldump,
+                            yarascan,
                             webrootdiff, webshell)
 from server.events import hub
 from server.jobs import manager
@@ -532,6 +533,16 @@ def create_app(config: Config) -> FastAPI:
 
             started.append({"kind": "index_logs",
                             "job": manager.submit(case_dir, "index_logs", run_logs)})
+
+            # The error logs sit in the same directory and were skipped by
+            # the index -- they name files the access log structurally
+            # cannot see. Own job: it reads the same directory but answers a
+            # different question.
+            def run_errors(ctx, paths=paths, case_dir=case_dir):
+                return errorlog.scan(case_dir, paths, ctx)
+
+            started.append({"kind": "errorlog",
+                            "job": manager.submit(case_dir, "errorlog", run_errors)})
 
         webroots = by_kind.get("webroot", [])
         if webroots:

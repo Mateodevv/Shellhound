@@ -873,4 +873,9 @@ export const de: Record<string, string> = {
   'yara.missing': 'yara-python nicht installiert',
   'yara.missing.hint': 'Optional wie die GeoIP-Datenbank: ohne das Paket läuft alles Übrige, nur die eigenen Regeln nicht.',
   'yara.broken': '{n} Regeldatei(en) ließen sich nicht übersetzen — sie stehen unter „übersprungen", der Rest lief.',
+  'source.errorlog': 'Error-Log',
+  'category.errorlog.label': 'Im Error-Log genannt',
+  'category.errorlog.what': 'Ein PHP-Fehler nennt diese Datei mit Zeilennummer — Beleg dafür, dass der Pfad existierte und LIEF. Kein Beleg dafür, dass er bösartig ist: legitimer Code wirft auch Warnungen. Gewicht bekommt er, wenn er auf derselben Datei landet wie etwas anderes.',
+  'rule.errorNames': 'Ein PHP-Fehler nennt diese Datei mit Zeilennummer.',
+  'rule.errorNames.why': 'Der Interpreter hat diesen Pfad in dem Moment ausgeführt. Das Access-Log kann das nicht zeigen, wenn eine Shell aus cron lief, per include hereinkam oder vor der Kopie gelöscht wurde.',
 }

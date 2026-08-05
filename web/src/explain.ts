@@ -63,6 +63,7 @@ const RULE_KEYS: [string, string][] = [
   ['SQL injection patterns in URIs answered 2xx', 'rule.sqliOk'],
   ['Path traversal patterns answered 2xx', 'rule.traversalOk'],
   ['Scanner tool User-Agent', 'rule.scannerUa'],
+  ['PHP error names this file', 'rule.errorNames'],
 ]
 
 export function explainRule(t: Translate, rule: string): Explanation | null {
@@ -91,7 +92,8 @@ export interface Category {
 const CATEGORY_ORDER: [string, number][] = [
   ['webshell', 1], ['obfuscation', 2], ['htaccess', 3], ['yara', 4],
   ['db_injected', 5], ['db_markup', 6], ['shell_access', 7],
-  ['bruteforce', 8], ['probes', 9], ['scanner', 10], ['other', 99],
+  ['bruteforce', 8], ['probes', 9], ['errorlog', 10], ['scanner', 11],
+  ['other', 99],
 ]
 
 export function categories(t: Translate): Record<string, Category> {
@@ -128,6 +130,7 @@ const CATEGORY_RULES: [string | null, string, string][] = [
   ['logs', 'SQL injection', 'probes'],
   ['logs', 'Path traversal', 'probes'],
   ['yara', '', 'yara'],
+  ['errorlog', '', 'errorlog'],
 ]
 
 export function categoryId(source: string, rule: string): string {
