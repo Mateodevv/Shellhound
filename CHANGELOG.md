@@ -4,6 +4,42 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [Semantic Versioning](https://semver.org/lang/de/).
 
+## [Unreleased]
+
+### Hinzugefügt — Test-Suite
+
+Der Beispiel-Fall diente der CI als End-to-End-Test. Mit seiner Entfernung
+prüfte sie nur noch, dass sich alles importieren lässt — und genau die
+Fehlerklasse, die zuletzt einen Nutzer traf, findet ein Import-Test nicht.
+
+`tests/` baut seine Beweismittel deshalb selbst: winzige erfundene Dateien,
+von denen jede **genau eine Regel** auslöst. Ein Fehlschlag benennt damit
+die kaputte Regel, statt auf einen großen Datenklumpen zu zeigen. Es
+braucht keine zusätzlichen Abhängigkeiten (`python -m unittest discover -s
+tests -t .`).
+
+- **21 Engine-Tests**: Webshell-Scan, CMS-Inventar mit Versionsquelle,
+  SQL-Dump mit Konten und eingeschleustem Code, Log-Index mit Trace,
+  Actor-Verhalten und Muster-Jagd. Darunter ein **Falsch-Positiv-Wächter**:
+  eine echte CMS-Datei mit Startschutz muss sauber bleiben, sonst bestünde
+  die Suite auch einen Scanner, der alles markiert.
+- **7 Datenbank-Tests**, darunter zwei Regressionswächter für den
+  Sperrfehler aus 0.1.1: Öffnen darf keine Transaktion offen lassen **und**
+  auf einem aktuellen Fall nichts schreiben (geprüft über `total_changes`).
+  Beide wurden gegen den absichtlich zurückgedrehten Fix verifiziert — ein
+  Regressionstest, der den Fehler nicht fängt, ist wertlos.
+- `BUSY_TIMEOUT_MS` ist konfigurierbar geworden, damit der Sperrtest ihn
+  herunterdrehen kann. Beim Produktionswert würde er den Fehler nicht
+  melden, sondern die Sperre zweieinhalb Minuten lang aussitzen und dann
+  bestehen.
+- Die CI führt die Suite auf Linux und Windows mit Python 3.10 und 3.13 aus.
+
+### Entfernt — Beispiel-Fall
+
+`tools/sample_case.py` und `tools/ci_check.py`. Der Demo-Fall war ein
+Nutzer-Feature; die Qualitätssicherung, die er nebenbei erfüllte, steht
+jetzt als Entwickler-Infrastruktur in `tests/`.
+
 ## [0.1.1] — 2026-08-05
 
 ### Behoben — „database is locked" während einer laufenden Analyse
