@@ -878,4 +878,9 @@ export const en: Record<string, string> = {
   'yara.missing': 'yara-python not installed',
   'yara.missing.hint': 'Optional, like the GeoIP database: without the package everything else works, only your own rules do not run.',
   'yara.broken': '{n} rule file(s) did not compile — they are listed under skipped, the rest ran.',
+  'source.errorlog': 'Error log',
+  'category.errorlog.label': 'Named in the error log',
+  'category.errorlog.what': 'A PHP error names this file with a line number — proof that the path existed and RAN. Not proof that it is malicious: legitimate code throws warnings too. It weighs when it lands on the same file as something else.',
+  'rule.errorNames': 'A PHP error names this file with a line number.',
+  'rule.errorNames.why': 'The interpreter executed this path at that moment. The access log cannot show that for a shell run from cron, pulled in by an include, or deleted before the copy was taken.',
 }

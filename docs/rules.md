@@ -78,6 +78,9 @@ is reported, not passed over in silence.
 | Logs | Path traversal patterns answered 2xx | MEDIUM |
 | Logs | Request matching a stored pattern | HIGH / LOW |
 | Logs | Scanner tool User-Agent | INFO |
+| Error log | PHP error names this file (fatal/parse) | MEDIUM |
+| Error log | PHP error names this file | LOW |
+| YARA | *your own rules* | from rule metadata |
 
 ---
 
@@ -477,3 +480,62 @@ nuclei, zgrab, censys, httpx, wfuzz, ffuf.
 **Why it counts:** background noise as long as nothing succeeded — still
 interesting as prior history. Hence INFO and hidden by default: scans happen
 to every server around the clock and would bury the real work.
+
+---
+
+# Error log
+
+Source: [`server/engines/errorlog.py`](../server/engines/errorlog.py) ·
+Artifact: **file**
+
+Apache and Nginx error logs were recognised and skipped until now — correctly,
+because they are not access logs, but it threw away the second most useful log
+on the server.
+
+### PHP error names this file — LOW / MEDIUM
+
+**Trigger:** a PHP fatal, parse error, warning or notice that names an absolute
+path ending in `.php`/`.phtml`/`.inc`/`.phar` with a line number. MEDIUM for a
+fatal, parse error or uncaught exception; LOW otherwise.
+
+**What it states:** the interpreter EXECUTED this path at that time. Nothing
+more.
+
+**Why it counts:** it catches what the access log structurally cannot — a shell
+run from cron or the CLI that produced no request line, a file pulled in by an
+`include` rather than requested, a shell that crashed on its own broken payload,
+and a file deleted before the copy was taken. For that last one the log is the
+only remaining evidence that the path existed at all.
+
+**Limits:** an error naming a file is NOT evidence that the file is malicious —
+legitimate code throws warnings all day. That is why it is LOW on its own; it
+earns its weight by landing on the same artifact as something else, which is
+what artifact-level triage is for.
+
+**Restraint:** a path is only written when it resolves to a file under a
+registered webroot. An error log mentions every file on the server, and a case
+must not fill up with findings about paths nobody can open. Unresolvable paths
+are counted in the job stats rather than dropped in silence.
+
+---
+
+# YARA
+
+Source: [`server/engines/yarascan.py`](../server/engines/yarascan.py) ·
+Artifact: **file**
+
+Optional (`pip install shellhound[yara]`). Rules come from `<workspace>/yara/`
+and belong to the workspace, not to a case — a rule set grows across cases.
+
+**Severity** comes from the rule's own `meta: severity = "high" | "medium" |
+"low" | "info"`. Without it a match is MEDIUM: a hit is "somebody's rule
+matched", and until a human looks that is what it is. Defaulting to HIGH would
+let a foreign rule set decide the colour of the work list.
+
+**Evidence** names the string identifiers that matched and their offsets
+(`$a@6`), never the matched bytes — a rule can match on a credential, and the
+evidence line travels into the case archive.
+
+**A broken rule file costs one rule, not the run.** Each file is compiled on its
+own; one that does not compile is listed by name under skipped, and the rest
+still run.

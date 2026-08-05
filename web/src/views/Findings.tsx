@@ -328,7 +328,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {['webshell', 'sqldb', 'logs', 'yara'].map((key) => {
+        {['webshell', 'sqldb', 'logs', 'yara', 'errorlog'].map((key) => {
           const label = tr(`source.${key}`)
           return (
           <Tooltip key={key}
