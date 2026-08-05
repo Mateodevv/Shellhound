@@ -1,5 +1,6 @@
-// Start.tsx — die Landing-View: offenen Fall wählen, neuen anlegen, oder
-// einen abgeschlossenen Fall aus dem Archiv zurückholen.
+// Start.tsx -- the landing view: pick an open case, create a new one, or
+// restore a closed case from the archive.
+import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -15,6 +16,7 @@ import { ThemeSwitcher } from '../components/ThemeSwitcher'
 interface State { workspace: string; cases: CaseInfo[] }
 
 export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['state'],
@@ -59,7 +61,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         <div>
           <h1 className="text-xl font-bold tracking-tight">SHELLHOUND</h1>
           <p className="text-[13px] text-[var(--muted)]">
-            Webserver-Forensik — Findings · Actors · IOC Box · CMS · Database
+            {tr('start.tagline')}
           </p>
         </div>
         <div className="ml-auto">
@@ -74,7 +76,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
       )}
 
       <div className="flex flex-col gap-2">
-        {isLoading && <div className="text-[var(--muted)]">Lade Cases…</div>}
+        {isLoading && <div className="text-[var(--muted)]">{tr('common.loading')}</div>}
         {data?.cases.map((c, i) => (
           <Card
             key={c.slug}
@@ -87,12 +89,12 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 <div className="font-semibold">{c.name}</div>
                 <div className="mt-0.5 text-xs text-[var(--muted)]">
                   {c.reference && <span className="mr-3">{c.reference}</span>}
-                  angelegt {c.created?.slice(0, 10)}
+                  {tr('start.created')} {c.created?.slice(0, 10)}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular">
-                <span>{c.artifacts ?? 0} Artefakte</span>
-                <span className="text-[var(--danger-text)]">{c.confirmed ?? 0} bestätigt</span>
+                <span>{tr('start.artifacts', { n: c.artifacts ?? 0 })}</span>
+                <span className="text-[var(--danger-text)]">{tr('start.confirmed', { n: c.confirmed ?? 0 })}</span>
                 <span>{c.iocs ?? 0} IOCs</span>
               </div>
             </button>
@@ -102,10 +104,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         {data && data.cases.length === 0 && !creating && (
           <EmptyState
             icon={<FolderSearch size={40} />}
-            title="Kein offener Fall"
-            sub={archiveList.length
-              ? 'Lege einen neuen Fall an — oder hole einen abgeschlossenen aus dem Archiv zurück.'
-              : 'Lege den ersten Fall an — danach registrierst du Evidence (Webroot, Access-Logs, SQL-Dump) und startest die Analyse.'}
+            title={tr('start.empty.title')}
+            sub={archiveList.length ? tr('start.empty') : tr('start.empty.first')}
           />
         )}
       </div>
@@ -119,21 +119,21 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) create.mutate() }}
-                placeholder="Case-Name, z.B. Musterfirma GmbH — Joomla"
+                placeholder={tr('start.name.placeholder')}
                 className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 outline-none focus:border-[var(--accent)]/70"
               />
               <input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Referenz / Ticket (optional)"
+                placeholder={tr('start.reference.placeholder')}
                 className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
               />
               <div className="flex gap-2">
                 <Button variant="primary" disabled={!name.trim() || create.isPending}
                   onClick={() => create.mutate()}>
-                  Case anlegen
+                  {tr('start.create')}
                 </Button>
-                <Button variant="ghost" onClick={() => setCreating(false)}>Abbrechen</Button>
+                <Button variant="ghost" onClick={() => setCreating(false)}>{tr('common.cancel')}</Button>
               </div>
               {create.isError && (
                 <div className="text-xs text-[var(--danger-text)]">{String(create.error)}</div>
@@ -143,10 +143,10 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         ) : (
           <>
             <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus size={15} /> Neuer Case
+              <Plus size={15} /> {tr('start.newCase')}
             </Button>
             <Button onClick={() => setShowImport(!showImport)}>
-              <ArchiveRestore size={15} /> Fall importieren
+              <ArchiveRestore size={15} /> {tr('start.importCase')}
             </Button>
           </>
         )}
@@ -162,12 +162,12 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
               if (e.key === 'Enter' && importPath.trim())
                 importCase.mutate({ path: importPath })
             }}
-            placeholder="Pfad zu einem Fall-Archiv (.zip) — z.B. von einem anderen Rechner"
+            placeholder={tr('start.import.placeholder')}
             className="mono min-w-64 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="primary" disabled={!importPath.trim() || importCase.isPending}
             onClick={() => importCase.mutate({ path: importPath })}>
-            Importieren
+            {tr('start.import')}
           </Button>
         </Card>
       )}
@@ -183,7 +183,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           <div className="mb-2 flex items-baseline justify-between gap-3">
             <h2 className="flex items-center gap-2 text-[15px] font-semibold">
               <Archive size={15} className="text-[var(--muted)]" />
-              Abgeschlossene Fälle
+              {tr('start.archived')}
             </h2>
             <span className="mono truncate text-[11px] text-[var(--muted)]"
               title={archives?.archive_dir}>
@@ -202,37 +202,33 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                     {a.summary?.reference && <Tag>{a.summary.reference}</Tag>}
                     {!a.readable && (
                       <Tag tone="danger">
-                        <TriangleAlert size={11} /> unlesbar
+                        <TriangleAlert size={11} /> {tr('start.unreadable')}
                       </Tag>
                     )}
                   </div>
                   <div className="mono mt-0.5 truncate text-[11px] text-[var(--muted)]">
-                    {a.file} · {formatBytes(a.size)} · abgeschlossen{' '}
+                    {a.file} · {formatBytes(a.size)} · {tr('start.closed')}{' '}
                     {(a.summary?.closed ?? a.modified).slice(0, 16).replace('T', ' ')}
                   </div>
                 </div>
                 {a.summary && (
                   <div className="hidden shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular sm:flex">
-                    <span>{formatCount(a.summary.artifacts ?? a.summary.findings)} Artefakte</span>
+                    <span>{tr('start.artifacts', { n: formatCount(a.summary.artifacts ?? a.summary.findings) })}</span>
                     <span className="text-[var(--danger-text)]">
-                      {formatCount(a.summary.confirmed)} bestätigt
+                      {tr('start.confirmed', { n: formatCount(a.summary.confirmed) })}
                     </span>
                     <span>{formatCount(a.summary.iocs)} IOCs</span>
                   </div>
                 )}
                 <Button disabled={!a.readable || importCase.isPending}
                   onClick={() => importCase.mutate({ file: a.file })}>
-                  <ArchiveRestore size={14} /> Zurückholen
+                  <ArchiveRestore size={14} /> {tr('start.restore')}
                 </Button>
               </Card>
             ))}
           </div>
           <p className="mt-2 text-[11px] text-[var(--muted)]">
-            Ein abgeschlossener Fall liegt nur noch als ZIP vor. Beim Zurückholen
-            kommt alles wieder — Findings, Triage-Entscheidungen, IOC Box, CMS- und
-            Datenbank-Ergebnisse. Nur der Log-Index wird nicht mitarchiviert (er ist
-            aus der Evidence jederzeit neu baubar) und wird bei der nächsten Analyse
-            wieder aufgebaut.
+            {tr('start.archived.note')}
           </p>
         </div>
       )}

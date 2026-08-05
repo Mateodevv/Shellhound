@@ -263,10 +263,10 @@ def _safe_member(name):
         return None                      # directory entry: created implicitly
     normalized = name.replace("\\", "/")
     if normalized.startswith("/") or ":" in normalized.split("/")[0]:
-        raise ImportError_(f"Archiv enthält einen absoluten Pfad: {name}")
+        raise ImportError_(f"archive contains an absolute path: {name}")
     parts = [p for p in normalized.split("/") if p not in ("", ".")]
     if any(p == ".." for p in parts):
-        raise ImportError_(f"Archiv enthält einen Pfad mit '..': {name}")
+        raise ImportError_(f"archive contains a path with '..': {name}")
     return Path(*parts) if parts else None
 
 
@@ -285,17 +285,17 @@ def import_archive(workspace, zip_path):
     try:
         zf = zipfile.ZipFile(zip_path)
     except (OSError, zipfile.BadZipFile) as e:
-        raise ImportError_(f"Kein lesbares ZIP-Archiv: {e}") from e
+        raise ImportError_(f"not a readable ZIP archive: {e}") from e
     with zf:
         names = zf.namelist()
         if CASE_FILE not in names:
             raise ImportError_(
-                f"Das Archiv enthält kein {CASE_FILE} — es stammt nicht aus "
-                "diesem Toolkit.")
+                f"the archive contains no {CASE_FILE} -- it does not come from "
+                "this toolkit.")
         try:
             identity = json.loads(zf.read(CASE_FILE))
         except ValueError as e:
-            raise ImportError_(f"{CASE_FILE} im Archiv ist beschädigt: {e}") from e
+            raise ImportError_(f"{CASE_FILE} in the archive is damaged: {e}") from e
         members = [(n, _safe_member(n)) for n in names]
 
         wanted = slug(identity.get("name") or zip_path.stem)

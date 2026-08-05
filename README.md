@@ -1,23 +1,22 @@
 # SHELLHOUND
 
-Lokale DFIR-Werkbank für kompromittierte Webserver (WordPress, Joomla).
+Local DFIR workbench for compromised web servers (WordPress, Joomla).
 
-Webroot-Kopie, Access-Logs und Datenbank-Export werden einmal indiziert.
-Danach ist jede Auswertung eine Datenbank-Abfrage: Triage über Artefakte,
-Chronologie aus gemessenen Zeiten, IOC-Export als CSV, JSON oder STIX 2.1.
+A copy of the webroot, the access logs and a database export are indexed
+once. After that every analysis is a database query: triage over artifacts,
+a chronology built from measured times, IOC export as CSV, JSON or STIX 2.1.
 
-Läuft vollständig offline auf der Analyse-Maschine. Kein Dienst, kein
-Konto, keine Telemetrie.
+Runs entirely offline on the analysis machine. No service, no account, no
+telemetry.
 
-> Oberfläche und Dokumentation sind auf Deutsch. *The interface and
-> documentation are in German by design; see [SECURITY.md](SECURITY.md)
-> for an English summary.*
+The interface ships in English and German and can be switched at runtime
+from the sidebar.
 
-<!-- SCREENSHOT: Dashboard mit Chronologie und Log-Abdeckung -->
+<!-- SCREENSHOT: Dashboard with chronology and log coverage -->
 
 ## Installation
 
-Voraussetzungen: Python ≥ 3.10, Node ≥ 20.
+Requirements: Python ≥ 3.10, Node ≥ 20.
 
 ```bash
 git clone https://github.com/Mateodevv/shellhound.git
@@ -27,160 +26,160 @@ cd web && npm ci && npm run build && cd ..
 python -m server.main
 ```
 
-Die Oberfläche öffnet sich auf `http://127.0.0.1:8710`.
+The interface opens at `http://127.0.0.1:8710`.
 
-## Funktionsumfang
+## Features
 
-**Analyse**
+**Analysis**
 
-- Access-Log-Index mit rund 55.000 Zeilen/s, GB-tauglich
-- 33 Detektionsregeln über Webroot, Datenbank-Export und Logs, dokumentiert
+- Access log index at roughly 55,000 lines/s, sized for gigabytes
+- 33 detection rules across webroot, database export and logs, documented
   in [`docs/rules.md`](docs/rules.md)
-- CMS-Inventar mit Versionserkennung und Quellenangabe
-- Vergleich des Webroots gegen eine bekannt saubere Referenzkopie
+- CMS inventory with version detection and the source of every version
+- Comparison of the webroot against a known-clean reference copy
 
-**Auswertung**
+**Assessment**
 
-- Triage auf Artefakt-Ebene statt je Finding
-- Chronologie der bestätigten Artefakte, ausschließlich aus gemessenen
-  Zeiten
-- Trace beliebig vieler Clients mit Filter, Sortierung und Verlaufskurve
-- Muster-Jagd: eigene URL-Muster, fallübergreifend gespeichert
-- Länderzuordnung von IP-Adressen aus einer lokalen GeoIP-Datenbank
-- Volltextsuche über den Fall (<kbd>Strg</kbd>+<kbd>K</kbd>)
+- Triage at artifact level rather than per finding
+- Chronology of the confirmed artifacts, from measured times only
+- Trace of any number of clients with filter, sorting and a timeline
+- Pattern hunt: your own URL patterns, stored across cases
+- Country attribution for IP addresses from a local GeoIP database
+- Full-text search across the case (<kbd>Ctrl</kbd>+<kbd>K</kbd>)
 
-**Ausgabe**
+**Output**
 
-- IOC-Box mit Beziehungen zwischen Indikatoren
-- Export als CSV, JSON und STIX 2.1
-- Trace-Export als ZIP mit Manifest und SHA-256
-- Fall-Archivierung als ZIP
+- IOC box with relationships between indicators
+- Export as CSV, JSON and STIX 2.1
+- Trace export as a ZIP with manifest and SHA-256
+- Case archival as a ZIP
 
-## Verwendung
+## Usage
 
-### Beweismittel registrieren
+### Register evidence
 
-Unter *Evidence & Jobs* die Pfade eintragen:
+Enter the paths under *Evidence & jobs*:
 
-| Art | Inhalt |
+| Kind | Content |
 |---|---|
-| Webroot | Kopie des Web-Verzeichnisses |
-| Access-Logs | Apache- oder Nginx-Logs, auch komprimiert |
-| SQL-Dump | Datenbank-Export des CMS |
-| Referenzkopie | Sauberes CMS-Release derselben Version (optional) |
+| Webroot | Copy of the web directory |
+| Access logs | Apache or Nginx logs, compressed ones included |
+| SQL dump | Database export of the CMS |
+| Reference copy | Clean CMS release of the same version (optional) |
 
-Alternativ durchsucht *Fall-Ordner durchsuchen* ein Verzeichnis und schlägt
-Kandidaten vor.
+Alternatively, *Search case folder* scans a directory and suggests
+candidates.
 
-<!-- SCREENSHOT: Evidence-Ansicht mit erkannten Kandidaten -->
+<!-- SCREENSHOT: Evidence view with detected candidates -->
 
 ### Triage
 
-Entschieden wird über das Artefakt, nicht über einzelne Findings. Mehrere
-Regeln auf derselben Datei sind Beobachtungen zu einem Objekt.
+The decision is made about the artifact, not about individual findings.
+Several rules on the same file are observations about one object.
 
-| Taste | Funktion |
+| Key | Function |
 |---|---|
-| <kbd>j</kbd> / <kbd>k</kbd> | Nächstes / vorheriges Artefakt |
-| <kbd>Enter</kbd> | Detailfenster |
-| <kbd>c</kbd> | True Positive |
-| <kbd>d</kbd> | False Positive |
-| <kbd>r</kbd> | Gesichtet |
-| <kbd>x</kbd> | Markieren |
+| <kbd>j</kbd> / <kbd>k</kbd> | Next / previous artifact |
+| <kbd>Enter</kbd> | Detail window |
+| <kbd>c</kbd> | True positive |
+| <kbd>d</kbd> | False positive |
+| <kbd>r</kbd> | Reviewed |
+| <kbd>x</kbd> | Check |
 
-Ein True Positive überträgt Pfad und SHA-256 in die IOC-Box und entscheidet
-Clients mit, die die Datei laut Log geladen haben. Clients mit erfolglosen
-Anfragen werden vorgeschlagen, nicht entschieden.
+A true positive carries path and SHA-256 into the IOC box and decides along
+with it the clients that loaded the file according to the log. Clients whose
+requests were never answered successfully are suggested, not decided.
 
-<!-- SCREENSHOT: Findings-Ansicht mit gruppierten Artefakten -->
-<!-- SCREENSHOT: Artefakt-Detailfenster mit Dateiinhalt und Clients -->
+<!-- SCREENSHOT: Findings view with grouped artifacts -->
+<!-- SCREENSHOT: Artifact detail window with file content and clients -->
 
-### Weitere Ansichten
+### Further views
 
-- **Actors** — alle Clients aus den Logs mit Verhalten, Länderflagge und
-  Aktivitätsdauer. Mehrfachauswahl ergibt einen kombinierten Trace.
-- **Muster-Jagd** — hinterlegte URL-Muster gegen den Log-Index. Kennzahlen
-  je Suche, Protokoll auch erfolgloser Läufe.
-- **Database** — Konten mit benannten Auffälligkeiten, eingeschleuster Code
-  in Datenfeldern, Tabellen-Inventar.
-- **Dateien** — Evidence durchsuchen, Dateien manuell als IOC aufnehmen,
-  Vergleich gegen die Referenzkopie.
-- **IOC Box** — gesammelte Indikatoren mit Verknüpfungen und Export.
+- **Actors** — every client from the logs with its behaviour, country flag
+  and duration of activity. A multiple selection yields one combined trace.
+- **Pattern hunt** — stored URL patterns against the log index. Key figures
+  per search, and a record of unsuccessful runs as well.
+- **Database** — accounts with named observations, code injected into data
+  fields, table inventory.
+- **Files** — browse the evidence, take files into the IOC box by hand,
+  compare against the reference copy.
+- **IOC box** — collected indicators with their relationships, and export.
 
-<!-- SCREENSHOT: Actors-Liste mit Flaggen und Verhaltens-Badges -->
-<!-- SCREENSHOT: Muster-Jagd mit Kennzahlen und Trefferliste -->
-<!-- SCREENSHOT: Webroot-Diff mit zusätzlich/verändert/fehlt -->
-<!-- SCREENSHOT: IOC Box mit aufgeklappten Verknüpfungen -->
+<!-- SCREENSHOT: Actors list with flags and behaviour badges -->
+<!-- SCREENSHOT: Pattern hunt with key figures and hit list -->
+<!-- SCREENSHOT: Webroot diff with extra/modified/missing -->
+<!-- SCREENSHOT: IOC box with relationships expanded -->
 
-### Chronologie
+### Chronology
 
-Die bestätigten Artefakte in zeitlicher Abfolge. Jede Zeile nennt ihre
-Quelle (Access-Log oder Datenbank-Export). Die Chronologie ordnet gemessene
-Beobachtungen und leitet keine Ursachen ab.
+The confirmed artifacts in temporal order. Every line names its source
+(access log or database export). The chronology orders measured
+observations and derives no causes.
 
-Der Zeitpunkt, zu dem eine Datei vorlag, wird über ihren ersten
-erfolgreichen Abruf belegt, nicht über die mtime der Kopie. Zeitliche Lücken
-werden ausgewiesen. Abweichende Uhren zwischen Log- und Datenbankserver
-lassen sich als Versatz je Quelle setzen; der Versatz wird gespeichert und
-in der Chronologie vermerkt.
+The point in time at which a file was present is established through its
+first successful request, not through the mtime of the copy. Temporal gaps
+are stated. Diverging clocks between log and database server can be set as
+an offset per source; the offset is stored and reported in the chronology.
 
-<!-- SCREENSHOT: Chronologie mit Lücken und Herkunftsangaben -->
+<!-- SCREENSHOT: Chronology with gaps and source attributions -->
 
-## Konfiguration
+## Configuration
 
-| Option | Bedeutung |
+| Option | Meaning |
 |---|---|
-| `--workspace PFAD` | Ablage der Fälle, Standard `~/ShellhoundCases` |
-| `--port PORT` | Standard `8710` |
-| `--host HOST` | Standard `127.0.0.1`; abweichende Bindung erfordert `--token` |
-| `--token TOKEN` | Fester Zugriffstoken statt eines zufälligen je Start |
-| `--no-browser` | Browser nicht automatisch öffnen |
+| `--workspace PATH` | Where cases are kept, default `~/ShellhoundCases` |
+| `--port PORT` | Default `8710` |
+| `--host HOST` | Default `127.0.0.1`; a different bind requires `--token` |
+| `--token TOKEN` | Fixed access token instead of a random one per start |
+| `--no-browser` | Do not open a browser automatically |
 
-Umgebungsvariablen: `SHELLHOUND_WORKSPACE`, `SHELLHOUND_GEOIP`.
+Environment variables: `SHELLHOUND_WORKSPACE`, `SHELLHOUND_GEOIP`.
 
-Ein Fall ist ein Verzeichnis. `logindex.db` ist abgeleitet und wird nicht
-archiviert.
+A case is a directory. `logindex.db` is derived and is not archived.
 
-## Sicherheit
+## Security
 
-SHELLHOUND ist ein Einzelplatz-Werkzeug ohne Benutzerkonten und ohne TLS.
-Für den Zugriff von einem anderen Rechner ist ein SSH-Tunnel vorgesehen,
-keine Bindung an `0.0.0.0`.
+SHELLHOUND is a single-seat tool without user accounts and without TLS. For
+access from another machine an SSH tunnel is the intended route, not a bind
+to `0.0.0.0`.
 
-Der einzige ausgehende Netzwerkzugriff ist der optionale Download der
-GeoIP-Länderdatenbank; er erfolgt nur nach ausdrücklicher Bestätigung und
-überträgt keine Falldaten.
+The only outbound network access is the optional download of the GeoIP
+country database; it happens only after an explicit confirmation and
+transmits no case data.
 
-Untersuchtes Material enthält funktionsfähigen Angriffscode. Empfohlen sind
-eine isolierte Maschine, ausschließlich Kopien der Originale und eine
-Virenscanner-Ausnahme für das Evidence-Verzeichnis.
+The material under examination contains working attack code. An isolated
+machine, copies of the originals only, and an antivirus exception for the
+evidence directory are recommended.
 
-Vollständiges Bedrohungsmodell und Meldeweg für Schwachstellen:
+Full threat model and how to report vulnerabilities:
 [SECURITY.md](SECURITY.md).
 
-## Architektur
+## Architecture
 
 ```
 <workspace>/       hunt_patterns.json, *.mmdb (optional)
-  <fall>/          case.db, logindex.db (abgeleitet), evidence/
-server/            FastAPI, SQLite aus der Standardbibliothek
+  <case>/          case.db, logindex.db (derived), evidence/
+server/            FastAPI, SQLite from the standard library
   engines/         accesslog, logindex, webshell, cmsinventory,
                    sqldump, webrootdiff, detect
 web/               Vite, React, TypeScript, Tailwind
-docs/rules.md      Detektionsregeln mit Auslöser, Aussage und Grenzen
+docs/rules.md      Detection rules with trigger, statement and limits
 ```
 
-Grundsätze:
+Principles:
 
-- Triage-Zustände überleben Re-Scans; Fingerprints sind stabil.
-- Verworfene Findings werden nicht gelöscht, sondern bleiben filterbar.
-- Log-Alarme sind outcome-gated: ein mit 404 beantworteter Angriffsversuch
-  wird anders bewertet als ein erfolgreicher.
-- Evidence wird nie ausgeliefert. Findings enthalten Text-Exzerpte,
-  Dateiinhalte werden als JSON-Daten übertragen.
-- Gefilterte Artefakte werden immer vollständig geliefert.
+- Triage states survive re-scans; fingerprints are stable.
+- Dismissed findings are not deleted but stay reachable through the filter.
+- Log alerts are outcome-gated: an attack attempt answered with 404 is
+  weighted differently from a successful one.
+- Evidence is never served. Findings carry text excerpts; file contents are
+  transferred as JSON data.
+- Filtered artifacts are always delivered in full.
+- Everything the case stores is written in English — origins, notes,
+  evidence lines. An archive whose wording depends on the language selected
+  at the time of a click is worthless as evidence.
 
-### Entwicklung
+### Development
 
 ```bash
 cd web && npm run dev
@@ -188,16 +187,27 @@ python -m server.main --no-browser --token dev
 # http://localhost:5173/?token=dev
 ```
 
-## Mitwirken
+## Contributing
 
-Fehlerberichte und Pull Requests sind willkommen. Schwachstellen bitte
-nicht als öffentliches Issue melden, siehe [SECURITY.md](SECURITY.md).
+Bug reports and pull requests are welcome. Please do not report
+vulnerabilities as a public issue, see [SECURITY.md](SECURITY.md).
 
-Beiträge dürfen keine Daten aus realen Vorfällen enthalten. Für
-Reproduktionen beschreibe stattdessen die Form der Daten oder baue ein
-Minimalbeispiel. Neue Detektionsregeln gehören mit Auslöser, Aussage und
-Grenzen nach [`docs/rules.md`](docs/rules.md).
+Contributions must not contain data from real incidents. For a
+reproduction, describe the shape of the data instead, or build a minimal
+example. New detection rules belong in [`docs/rules.md`](docs/rules.md) with
+their trigger, statement and limits — and with a test in `tests/` proving
+that they fire.
 
-## Lizenz
+Tests run without additional dependencies:
 
-[Apache-2.0](LICENSE). Drittanbieter-Komponenten: [NOTICE](NOTICE).
+```bash
+python -m unittest discover -s tests -t .
+```
+
+They build their own evidence: tiny, invented files, each of which triggers
+exactly one rule. A failure therefore names the broken rule instead of
+pointing at a large lump of data.
+
+## License
+
+[Apache-2.0](LICENSE). Third-party components: [NOTICE](NOTICE).

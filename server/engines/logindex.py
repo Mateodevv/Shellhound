@@ -31,10 +31,11 @@ from pathlib import Path
 
 from server import db
 from server.engines import accesslog
+from server.i18n import t
 from server.engines.fsutil import (get_files_recursive, is_compressed,
                                    is_scannable_text, open_text_auto)
 
-# 3: days.ok (mit 2xx beantwortete Anfragen je Tag) für die Verlaufskurven.
+# 3: days.ok (requests answered with 2xx per day) for the timeline curves.
 SCHEMA_VERSION = "3"
 _BATCH = 20000
 
@@ -113,9 +114,9 @@ CREATE TABLE alerts (
 );
 CREATE TABLE days (
     day TEXT PRIMARY KEY, requests INTEGER, errors INTEGER, new_clients INTEGER,
-    -- Mit 2xx beantwortet. Getrennt von `requests`, weil erst das Verhältnis
-    -- etwas sagt: 500 Anfragen mit 20 Erfolgen sind ein Abklopfen, 500 mit
-    -- 480 Erfolgen sind Betrieb.
+    -- Answered with 2xx. Separate from `requests`, because only the ratio
+    -- says anything: 500 requests with 20 successes are probing, 500 with
+    -- 480 successes are business as usual.
     ok INTEGER
 );
 """
@@ -411,7 +412,7 @@ def build(case_dir, targets, ctx=None):
             batch.clear()
 
         if ctx is not None:
-            ctx.progress(0.86, "Schreibe Interning-Tabellen…")
+            ctx.progress(0.86, "Writing interning tables…")
         conn.executemany("INSERT INTO strings (id, text) VALUES (?,?)",
                          ((i, t) for t, i in strings.items()))
         conn.executemany("INSERT INTO ips (id, ip) VALUES (?,?)",
@@ -419,7 +420,7 @@ def build(case_dir, targets, ctx=None):
 
         # --- actors + first-seen day ------------------------------------
         if ctx is not None:
-            ctx.progress(0.88, "Berechne Actor-Statistiken…")
+            ctx.progress(0.88, "Computing actor statistics…")
         import json as _json
         ip_by_id = {i: ip for ip, i in ips.items()}
         actor_rows = []
@@ -449,7 +450,7 @@ def build(case_dir, targets, ctx=None):
 
         # --- alerts (outcome-gated, see module docstring) ----------------
         if ctx is not None:
-            ctx.progress(0.90, "Leite Alerts ab…")
+            ctx.progress(0.90, "Deriving alerts…")
         alert_rows = []
         for ip_id, a in actors.items():
             if a.login_posts >= BF_THRESHOLD:
@@ -493,7 +494,7 @@ def build(case_dir, targets, ctx=None):
         stats["clients"] = len(actors)
 
         if ctx is not None:
-            ctx.progress(0.92, "Baue Indizes…")
+            ctx.progress(0.92, "Building indexes…")
         conn.execute("CREATE INDEX idx_req_ip ON requests(ip, epoch)")
         conn.execute("CREATE INDEX idx_req_leaf ON requests(leaf)")
         conn.execute("CREATE INDEX idx_req_epoch ON requests(epoch)")
@@ -569,9 +570,9 @@ def _open_ro(case_dir):
     return conn
 
 
-def status(case_dir, targets=None):
+def status(case_dir, targets=None, lang="en"):
     """Whether the index exists and can be trusted for these targets."""
-    out = {"exists": False, "fresh": False, "reason": "kein Index gebaut",
+    out = {"exists": False, "fresh": False, "reason": t(lang, "index.none"),
            "lines": 0, "clients": 0, "unparsed": 0, "size": 0}
     conn = _open_ro(case_dir)
     if conn is None:
@@ -581,7 +582,7 @@ def status(case_dir, targets=None):
         out["size"] = db.log_db_path(case_dir).stat().st_size
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         if meta.get("schema") != SCHEMA_VERSION:
-            out["reason"] = "Index stammt von einer älteren Version"
+            out["reason"] = t(lang, "index.oldVersion")
             return out
         for k in ("lines", "clients", "unparsed"):
             out[k] = int(meta.get(k, 0) or 0)
@@ -600,8 +601,7 @@ def status(case_dir, targets=None):
     if current != stored:
         added = len(current - stored)
         gone = len(stored - current)
-        out["reason"] = (f"Evidence hat sich geändert ({added} Datei(en) "
-                         f"neu/verändert, {gone} entfernt) — Index neu bauen")
+        out["reason"] = t(lang, "index.stale", added=added, gone=gone)
         return out
     out["fresh"] = True
     out["reason"] = ""
@@ -610,7 +610,7 @@ def status(case_dir, targets=None):
 
 # The flag conditions, usable in BOTH directions: `flag=` selects a class,
 # `hide=` removes it from view. One source of truth so the two can never
-# drift apart. "Auffällig" means something happened TO THIS SYSTEM: a client
+# drift apart. "Conspicuous" means something happened TO THIS SYSTEM: a client
 # whose only mark is "announced itself as a scanner" is context and belongs
 # under the Scanner flag, not here -- otherwise the useful list is 39 rows of
 # background noise plus 4 real ones.
@@ -627,10 +627,10 @@ def _flag_condition(flag):
         return ("(sqli_attempts > 0 OR traversal_attempts > 0 "
                 "OR upload_php_attempts > 0)", [])
     if flag == "quiet":
-        # "Unauffällig" ist genau das Gegenteil dessen, was in der Liste ein
-        # Abzeichen erzeugt -- die Bedingung spiegelt actorBadges() in der
-        # Oberfläche, damit „unauffällig ausblenden" exakt die Zeilen
-        # entfernt, an denen „unauffällig" steht.
+        # "Inconspicuous" is exactly the opposite of what produces a badge
+        # in the list -- the condition mirrors actorBadges() in the
+        # interface, so that "hide inconspicuous" removes precisely the rows
+        # marked "inconspicuous".
         return ("NOT ((login_redirects > 0 AND login_posts >= "
                 f"{BF_THRESHOLD}) OR upload_php_ok > 0 OR login_posts >= "
                 f"{BF_THRESHOLD} OR scanner_uas != '[]' OR sqli_ok > 0 "
@@ -638,23 +638,24 @@ def _flag_condition(flag):
     return None, []
 
 
-# SQLite bindet nur eine begrenzte Zahl von Variablen pro Anweisung (999 in
-# älteren Builds). Eine IN-Liste, deren Länge von den DATEN abhängt statt von
-# einer Auswahl, läuft damit irgendwann in "too many SQL variables" -- auf
-# einem Testfall nie, auf einem echten mit zehntausenden Adressen sofort.
+# SQLite binds only a limited number of variables per statement (999 in
+# older builds). An IN list whose length depends on the DATA rather than on a
+# selection therefore runs into "too many SQL variables" sooner or later --
+# never on a test case, immediately on a real one with tens of thousands of
+# addresses.
 _VAR_CHUNK = 500
 
 
 def _alerts_by_ip(conn, ip_ids):
-    """Die Alarme zu diesen Clients, stückweise abgefragt.
+    """The alerts for these clients, queried in chunks.
 
-    Die Normalisierung steht hier und nicht bei den Aufrufern: der KIND
-    entscheidet über den Schweregrad, damit ein Index aus einer früheren
-    Version eine Scanner-Sichtung nicht in Warnfarben zeigt.
+    The normalisation sits here and not at the callers: the KIND decides the
+    severity, so that an index from an earlier version does not show a
+    scanner sighting in warning colours.
 
-    `example` reist mit: es ist die URI, DIE DEN ALARM AUSGELÖST hat, und der
-    Trace kann sie damit rot markieren -- sonst sucht man die auslösende
-    Zeile unter tausenden von Hand."""
+    `example` travels along: it is the URI THAT TRIGGERED THE ALERT, and the
+    trace can mark it red with it -- otherwise one hunts for the triggering
+    line among thousands by hand."""
     out = {}
     for chunk in _chunks(list(ip_ids), _VAR_CHUNK):
         marks = ",".join("?" * len(chunk))
@@ -669,12 +670,12 @@ def _alerts_by_ip(conn, ip_ids):
 
 
 def actors_by_ip(case_dir, ips):
-    """Die Actor-Zeilen zu GENAU diesen Adressen.
+    """The actor rows for EXACTLY these addresses.
 
-    Wer nur ein paar ausgewählte Clients nachschlagen will, hat vorher die
-    ganze Tabelle geholt und darin gesucht. Auf einem echten Fall sind das
-    zehntausende Zeilen für eine Handvoll Treffer -- und die Alarm-Abfrage
-    darüber sprengte SQLites Variablen-Limit."""
+    Whoever only wants to look up a few selected clients used to fetch the
+    whole table and search inside it. On a real case that is tens of
+    thousands of rows for a handful of hits -- and the alert query on top of
+    it blew SQLite's variable limit."""
     wanted = [w for w in dict.fromkeys(str(i).strip() for i in ips) if w]
     conn = _open_ro(case_dir)
     if conn is None or not wanted:
@@ -801,11 +802,11 @@ def actor_profile(case_dir, ip):
         conn.close()
 
 
-# Sortierungen des Trace. Der Zeitverlauf ist die Voreinstellung, weil ein
-# Trace eine GESCHICHTE ist -- die anderen Ordnungen beantworten Fragen
-# ("was war erfolgreich?", "was war groß?"), die man im Verlauf sonst suchen
-# müsste. Feste Liste statt durchgereichtem SQL: der Sortierschlüssel geht in
-# die Abfrage ein und darf deshalb nie vom Client bestimmt werden.
+# Sort orders of the trace. Chronological is the default, because a trace is
+# a STORY -- the other orders answer questions ("what succeeded?", "what was
+# large?") one would otherwise have to search for in the sequence. A fixed
+# list instead of pass-through SQL: the sort key goes into the query and must
+# therefore never be determined by the client.
 TRACE_SORTS = {
     "time": "r.epoch ASC, r.rowid ASC",
     "time_desc": "r.epoch DESC, r.rowid DESC",
@@ -814,8 +815,8 @@ TRACE_SORTS = {
     "uri": "uri ASC, r.epoch ASC",
 }
 
-# Statusklassen als Filter: "2xx" ist die Frage "was hat der Server
-# ausgeliefert?", "err" fasst 4xx und 5xx zusammen.
+# Status classes as a filter: "2xx" is the question "what did the server
+# deliver?", "err" gathers 4xx and 5xx.
 _STATUS_RANGES = {
     "2xx": (200, 299), "3xx": (300, 399), "4xx": (400, 499),
     "5xx": (500, 599), "err": (400, 599),
@@ -827,9 +828,9 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
     """Every request of these clients -- THE instant trace. Twenty clients
     cost one indexed query, not twenty log passes.
 
-    `search` sucht in URI und User-Agent, `status` filtert eine Statusklasse,
-    `method` die HTTP-Methode. Gefiltert wird in SQL, damit auch der zwölfte
-    Blättern-Klick noch dieselbe Antwortzeit hat wie der erste."""
+    `search` searches URI and user agent, `status` filters a status class,
+    `method` the HTTP method. Filtering happens in SQL, so that the twelfth
+    paging click still has the same response time as the first."""
     conn = _open_ro(case_dir)
     if conn is None:
         return {"total": 0, "rows": [], "methods": []}
@@ -859,8 +860,9 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
                           .replace("%", "\\%").replace("_", "\\_")) + "%"
             params += [like, like]
         clause = " AND ".join(where)
-        # Die Joins auf u/a stehen auch in der COUNT-Abfrage, weil `search`
-        # auf ihnen filtert -- sonst zählte sie etwas anderes als die Liste.
+        # The joins on u/a are in the COUNT query too, because `search`
+        # filters on them -- otherwise it would count something other than
+        # the list.
         joins = ("LEFT JOIN strings u ON u.id = r.uri "
                  "LEFT JOIN strings a ON a.id = r.agent")
         total = conn.execute(
@@ -879,8 +881,8 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
                 ORDER BY {TRACE_SORTS.get(sort, TRACE_SORTS['time'])}
                 LIMIT ? OFFSET ?""",
             params + [limit, offset]).fetchall()
-        # Welche Methoden überhaupt vorkommen -- der Filter soll nur
-        # anbieten, was es hier auch gibt.
+        # Which methods occur at all -- the filter should only offer what
+        # actually exists here.
         methods = [r[0] for r in conn.execute(
             f"SELECT DISTINCT r.method FROM requests r "
             f"WHERE r.ip IN (SELECT id FROM ips WHERE ip IN ({marks})) "
@@ -917,46 +919,46 @@ def who_requested(case_dir, names, limit=200):
         conn.close()
 
 
-# --- Muster-Jagd ------------------------------------------------------------
-# Der Analyst hinterlegt URL-Pfade, von denen er weiß, dass sie zu einem
-# Exploit gehören; das Werkzeug sagt, WER sie abgerufen hat.
+# --- pattern hunt -----------------------------------------------------------
+# The analyst stores URL paths they know belong to an exploit; the tool says
+# WHO requested them.
 #
-# Das läuft in zwei Stufen, damit es auch auf einem 10-Millionen-Zeilen-Log
-# eine Abfrage bleibt und keinen neuen Index braucht:
-#   1. Das Muster wird gegen die DISTINKTEN URIs geprüft (Tabelle `strings`) --
-#      einmal je eindeutiger Zeichenkette, nicht je Logzeile.
-#   2. Die Requests dazu holt der BESTEHENDE leaf-Index: aus jeder getroffenen
-#      URI ergibt sich ihr Dateiname, und `requests(leaf)` ist indiziert. Die
-#      volle URI entscheidet dann, welche Zeile wirklich zählt.
+# This runs in two stages so that it stays one query even on a ten-million-
+# line log and needs no new index:
+#   1. The pattern is checked against the DISTINCT URIs (table `strings`) --
+#      once per unique string, not once per log line.
+#   2. The requests for them are fetched by the EXISTING leaf index: every
+#      URI hit yields its file name, and `requests(leaf)` is indexed. The
+#      full URI then decides which row really counts.
 
-# Wie viele DISTINKTE URIs ein Muster höchstens einsammelt. Wer ein Muster
-# schreibt, das mehr trifft, hat kein Muster, sondern eine Suche -- das sagt
-# die Antwort dann auch (`truncated`), statt stillschweigend zu kürzen.
+# How many DISTINCT URIs a pattern collects at most. Whoever writes a
+# pattern that hits more has no pattern but a search -- and the response says
+# so (`truncated`) instead of truncating in silence.
 _PATTERN_URI_CAP = 4000
 
-# Wie viele davon die Antwort einzeln aufzählt. Die Liste dient der
-# Stichprobe ("passt mein Muster?"), die Gesamtzahl steht daneben.
+# How many of those the response enumerates individually. The list serves as
+# a sample ("does my pattern fit?"), the total stands next to it.
 _PATTERN_URI_SHOWN = 50
 
 
 def _like_from_pattern(pattern):
-    """Teilstring, Groß-/Kleinschreibung egal, `*` als Platzhalter.
+    """Substring, case-insensitive, `*` as a wildcard.
 
-    Bewusst kein Regex: was ein Muster trifft, muss man in einem Bericht
-    erklären können. %/_ werden entwertet, sonst wäre jedes `_` im Pfad
-    ein stiller Platzhalter."""
+    Deliberately not a regex: what a pattern hits has to be explainable in a
+    report. %/_ are escaped, otherwise every `_` in a path would be a silent
+    wildcard."""
     esc = (str(pattern).replace("\\", "\\\\")
            .replace("%", "\\%").replace("_", "\\_"))
     return "%" + esc.replace("*", "%") + "%"
 
 
 def match_pattern(case_dir, pattern, limit=200):
-    """Wer hat URIs abgerufen, auf die dieses Muster passt?
+    """Who requested URIs that this pattern matches?
 
-    Liefert die getroffenen URIs (damit sichtbar ist, ob das Muster zu weit
-    greift), je Client Trefferzahl, davon 2xx, sowie erste/letzte Anfrage --
-    und die Kennzahlen der Suche selbst, damit ein Lauf in einem Satz
-    zusammenfassbar ist."""
+    Returns the URIs hit (so that it is visible whether the pattern reaches
+    too far), per client the hit count, of those the 2xx, plus first/last
+    request -- and the key figures of the search itself, so a run can be
+    summarised in one sentence."""
     empty = {"pattern": pattern, "uris": [], "clients": [], "hits": 0,
              "ok_hits": 0, "clients_total": 0, "ok_clients": 0, "uri_total": 0,
              "first_epoch": None, "last_epoch": None, "tz": 0,
@@ -976,8 +978,8 @@ def match_pattern(case_dir, pattern, limit=200):
         if not rows:
             return empty
 
-        # `strings` interniert AUCH User-Agents und Referrer. Erst der Join
-        # über requests.uri entscheidet, was wirklich eine abgerufene URI war.
+        # `strings` interns user agents and referrers TOO. Only the join
+        # over requests.uri decides what really was a requested URI.
         conn.execute("CREATE TEMP TABLE want_uri (id INTEGER PRIMARY KEY)")
         conn.executemany("INSERT OR IGNORE INTO want_uri VALUES (?)",
                          [(r["id"],) for r in rows])
@@ -1011,9 +1013,10 @@ def match_pattern(case_dir, pattern, limit=200):
                JOIN strings s ON s.id = r.uri
                GROUP BY s.text ORDER BY hits DESC LIMIT ?""",
             (_PATTERN_URI_SHOWN,))]
-        # Wie viele es WIRKLICH sind. Die Liste oben ist gedeckelt, und "50
-        # getroffene URLs" ist eine falsche Angabe, wenn es 3.000 waren --
-        # gerade diese Zahl soll ja verraten, dass das Muster zu weit greift.
+        # How many there REALLY are. The list above is capped, and "50 URLs
+        # hit" is a false statement when there were 3,000 -- that number of
+        # all things is supposed to reveal that the pattern reaches too
+        # far.
         uri_total = conn.execute(
             """SELECT count(DISTINCT r.uri) FROM requests r
                JOIN want_leaf wl ON wl.id = r.leaf
@@ -1024,9 +1027,9 @@ def match_pattern(case_dir, pattern, limit=200):
         return {"pattern": pattern, "uris": uris, "clients": clients,
                 "hits": sum(c["hits"] for c in clients),
                 "ok_hits": sum(c["ok_hits"] for c in clients),
-                # Die Kennzahlen der Suche. `ok_clients` ist die Zahl, die im
-                # Bericht steht: nicht wie oft geklopft wurde, sondern wie
-                # viele durchkamen.
+                # The key figures of the search. `ok_clients` is the number
+                # that goes into the report: not how often someone knocked,
+                # but how many got through.
                 "clients_total": len(clients),
                 "ok_clients": sum(1 for c in clients if c["ok_hits"] > 0),
                 "uri_total": uri_total,
@@ -1081,23 +1084,22 @@ def requests_for_names(case_dir, names, limit=20000):
 
 
 def chain_facts(case_dir, leaves=(), ips=()):
-    """Die Zeitanker für die Fall-Chronologie -- alles GEMESSEN, nichts
-    geschlossen.
+    """The time anchors for the case chronology -- all MEASURED, nothing
+    inferred.
 
-    Für jeden Dateinamen: wann wurde er zum ersten Mal angefragt, wann zum
-    ersten Mal mit 2xx beantwortet, wann zuletzt. Der erste 2xx ist der
-    belastbarste Anker, den ein Fall für "diese Datei lag da" hat -- die
-    mtime der Kopie auf der Forensik-Maschine ist es nicht, weil niemand ihr
-    ansieht, ob sie vom Original stammt oder vom Kopiervorgang.
+    For every file name: when was it first requested, when was it first
+    answered with 2xx, when last. The first 2xx is the most defensible anchor
+    a case has for "this file was there" -- the mtime of the copy on the
+    forensic machine is not, because nobody can tell from it whether it comes
+    from the original or from the copying.
 
-    Für jeden Client: erste und letzte Anfrage sowie der Zeitpunkt der URI,
-    die seinen Alarm ausgelöst hat -- die Alarm-Tabelle selbst führt keine
-    Zeit, wohl aber die Anfrage dahinter.
+    For every client: first and last request as well as the time of the URI
+    that triggered its alert -- the alert table itself carries no time, but
+    the request behind it does.
 
-    Die Zuordnung Name -> Pfad passiert beim Aufrufer: hier steht nur der
-    Dateiname, weil `requests(leaf)` der indizierte Zugriff ist. Welche der
-    Treffer wirklich zu DIESEM Pfad gehören, entscheidet dort der Vergleich
-    der vollen URI."""
+    The mapping name -> path happens at the caller: only the file name stands
+    here, because `requests(leaf)` is the indexed access. Which of the hits
+    really belong to THAT path is decided there by comparing the full URI."""
     out = {"files": {}, "clients": {}}
     names = [w for w in dict.fromkeys(_leaf(n) for n in leaves) if w]
     wanted_ips = [w for w in dict.fromkeys(str(i).strip() for i in ips) if w]
@@ -1145,9 +1147,10 @@ def chain_facts(case_dir, leaves=(), ips=()):
         for ip_id, alerts in _alerts_by_ip(conn, ids).items():
             ip = ids[ip_id]
             for a in alerts:
-                # Wann diese URI von diesem Client zum ersten Mal kam. Ohne
-                # Beispiel-URI bleibt der Alarm ohne Zeit -- dann steht er in
-                # der Kette nicht, statt an einer erfundenen Stelle.
+                # When this URI first came from this client. Without an
+                # example URI the alert stays without a time -- then it is
+                # absent from the chain instead of sitting at an invented
+                # place.
                 stamp = None
                 if a["example"]:
                     stamp = conn.execute(
@@ -1161,11 +1164,11 @@ def chain_facts(case_dir, leaves=(), ips=()):
 
 
 def timeline(case_dir):
-    """Requests/2xx/Fehler/neue Clients je Tag -- die Verlaufskurve.
+    """Requests/2xx/errors/new clients per day -- the timeline curve.
 
-    Ein Index aus einer älteren Version kennt `days.ok` noch nicht. Das darf
-    das Dashboard nicht sprengen: dann fehlt eben die Erfolgskurve, bis der
-    Index neu gebaut ist (worauf die Evidence-Ansicht ohnehin hinweist)."""
+    An index from an older version does not know `days.ok` yet. That must not
+    blow up the dashboard: the success curve is simply missing until the
+    index is rebuilt (which the evidence view points out anyway)."""
     conn = _open_ro(case_dir)
     if conn is None:
         return []
@@ -1180,12 +1183,12 @@ def timeline(case_dir):
 
 
 def timeline_for_ips(case_dir, ips):
-    """Dieselbe Auswertung, aber nur für diese Clients -- der Verlauf, den
-    man beim Tracen sehen will: wann war dieser Client aktiv, und hat der
-    Server ihm geantwortet?
+    """The same evaluation, but only for these clients -- the timeline one
+    wants to see while tracing: when was this client active, and did the
+    server answer it?
 
-    Läuft über idx_req_ip(ip, epoch), ist also eine indizierte Abfrage und
-    kein Durchlauf durch das Log."""
+    Runs over idx_req_ip(ip, epoch), so it is an indexed query and not a pass
+    through the log."""
     conn = _open_ro(case_dir)
     if conn is None:
         return []

@@ -1,14 +1,15 @@
-// Hunt.tsx — die Muster-Jagd: hinterlegte Exploit-Pfade gegen den Log-Index.
+// Hunt.tsx -- the pattern hunt: stored exploit paths against the log index.
 //
-// Die Gegenrichtung zu allem anderen im Werkzeug. Findings und Actors zeigen,
-// was die MITGELIEFERTEN Regeln gefunden haben; hier bringt der Analyst sein
-// eigenes Wissen ein — „diesen Pfad ruft nur auf, wer diesen Exploit fährt" —
-// und das Werkzeug sagt, wer ihn abgerufen hat.
+// The opposite direction from everything else in the tool. Findings and
+// Actors show what the SHIPPED rules found; here the analyst brings in their
+// own knowledge -- "this path is only requested by someone running this
+// exploit" -- and the tool says who requested it.
 //
-// DIE BIBLIOTHEK GEHÖRT DEM WORKSPACE, NICHT DEM FALL: einmal angelegt, steht
-// ein Muster in jedem weiteren Fall bereit. Der Fall protokolliert nur, wonach
-// in ihm gesucht wurde — auch erfolglos, denn „wir haben darauf geprüft, es
-// war nichts" steht sonst nirgends.
+// THE LIBRARY BELONGS TO THE WORKSPACE, NOT TO THE CASE: created once, a
+// pattern is ready in every further case. The case only records what was
+// searched for in it -- unsuccessfully included, because "we checked for
+// this, there was nothing" is written down nowhere else.
+import { plural, useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -27,10 +28,10 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { FIELD_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [pattern, setPattern] = useState('')
   const [label, setLabel] = useState('')
@@ -39,13 +40,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Die vom Muster getroffenen URLs — im Trace rot markiert, damit man den
-  // Aufruf, um den es geht, nicht zwischen tausend anderen sucht.
+  // The URLs hit by the pattern -- marked red in the trace, so that one does
+  // not hunt for the request that matters among a thousand others.
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
-  // Offen, solange man noch am Zusammenstellen ist; mit wachsender
-  // Bibliothek klappt man sie zu und arbeitet mit den Ergebnissen.
+  // Open while one is still assembling; as the library grows one collapses
+  // it and works with the results.
   const [libOpen, setLibOpen] = useState(true)
 
   const { data: lib } = useQuery({
@@ -74,7 +75,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
       setImportText('')
       setShowImport(false)
       setError(r.invalid
-        ? `${r.added} übernommen, ${r.skipped} schon bekannt, ${r.invalid} unbrauchbar.`
+        ? tr('hunt.import.result', { added: r.added, skipped: r.skipped, invalid: r.invalid })
         : '')
       refresh()
     },
@@ -104,53 +105,53 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="Muster-Jagd"
-          body="Hinterlegte URL-Pfade — typischerweise die Aufrufe, die zu einem bekannten Exploit gehören. Das Werkzeug sucht im Log-Index, wer sie abgerufen hat."
-          hint="Die Muster gehören dem Workspace: einmal angelegt, stehen sie in jedem weiteren Fall bereit. Treffer werden zu Findings auf dem Client — mit 2xx beantwortet HIGH, reine Versuche LOW.">
-          <h1 className="mr-2 text-lg font-bold">Muster-Jagd</h1>
+        <Tooltip title={tr('nav.hunt')}
+          body={tr('hunt.title.body')}
+          hint={tr('hunt.title.hint')}>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.hunt')}</h1>
         </Tooltip>
         <Button variant="primary" disabled={!patterns.length || run.isPending}
           onClick={() => run.mutate([])}>
           <Play size={14} />
           {run.isPending
-            ? 'sucht…'
-            : `Alle ${formatCount(patterns.length)} Muster laufen lassen`}
+            ? tr('hunt.searching')
+            : tr('hunt.runAll', { n: formatCount(patterns.length) })}
         </Button>
         <Button onClick={() => setShowImport(!showImport)}>
-          <Upload size={14} /> Liste einlesen
+          <Upload size={14} /> {tr('hunt.import')}
         </Button>
         <a className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
           href={downloadUrl('/api/patterns/export')}>
-          <Download size={14} /> Bibliothek sichern
+          <Download size={14} /> {tr('hunt.backup')}
         </a>
         {run.data && (
           <span className="text-[12px] text-[var(--muted)]">
             {run.data.findings > 0
-              ? <>{formatCount(run.data.findings)} Finding(s) geschrieben —{' '}
+              ? <>{tr('hunt.findingsWritten', { n: formatCount(run.data.findings) })} —{' '}
                 <button className="cursor-pointer text-[var(--accent-text)] hover:underline"
-                  onClick={() => gotoView('findings')}>in der Arbeitsliste ansehen</button></>
-              : 'keine Treffer — im Fall protokolliert'}
+                  onClick={() => gotoView('findings')}>{tr('hunt.seeInList')}</button></>
+              : tr('hunt.noHits')}
           </span>
         )}
       </div>
 
-      {/* ---- ein Muster anlegen ---- */}
+      {/* ---- add a pattern ---- */}
       <Card className="flex flex-wrap items-end gap-2 px-4 py-3">
         <label className="flex min-w-72 flex-1 flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            URL-Muster
+            {tr('hunt.field.pattern')}
           </span>
           <input
             value={pattern}
             onChange={(e) => setPattern(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && pattern.trim()) add.mutate() }}
-            placeholder="option=com_jce&task=plugin   ·   * ist Platzhalter"
+            placeholder={tr('hunt.field.pattern.placeholder')}
             className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
         </label>
         <label className="flex w-56 flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Name
+            {tr('hunt.field.name')}
           </span>
           <input
             value={label}
@@ -161,7 +162,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         </label>
         <label className="flex w-48 flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Notiz
+            {tr('hunt.field.note')}
           </span>
           <input
             value={note}
@@ -171,28 +172,27 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
           />
         </label>
         <Button variant="primary" disabled={!pattern.trim()} onClick={() => add.mutate()}>
-          <Plus size={14} /> Hinterlegen
+          <Plus size={14} /> {tr('hunt.store')}
         </Button>
       </Card>
 
       {showImport && (
         <Card className="flex flex-col gap-2 px-4 py-3">
           <div className="text-[12px] text-[var(--muted)]">
-            Eine Zeile je Muster, optional <span className="mono">Muster | Name | Notiz</span>.
-            Zeilen mit <span className="mono">#</span> sind Kommentare. Eine gesicherte
-            Bibliothek (JSON) wird ebenso erkannt — bekannte Muster werden übersprungen.
+            {tr('hunt.import.a')} <span className="mono">pattern | name | note</span>.{' '}
+            {tr('hunt.import.b')} <span className="mono">#</span> {tr('hunt.import.c')}
           </div>
           <textarea
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
             rows={5}
-            placeholder={'# aus dem Team-Repo\n/administrator/components/com_adsmanager/ | AdsManager LFI\nwp-content/plugins/revslider/temp/ | RevSlider Upload'}
+            placeholder={`# ${tr('hunt.import.example')}\n/administrator/components/com_adsmanager/ | AdsManager LFI\nwp-content/plugins/revslider/temp/ | RevSlider Upload`}
             className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70"
           />
           <div className="flex gap-2">
             <Button variant="primary" disabled={!importText.trim()}
-              onClick={() => bulk.mutate()}>Einlesen</Button>
-            <Button variant="ghost" onClick={() => setShowImport(false)}>Abbrechen</Button>
+              onClick={() => bulk.mutate()}>{tr('hunt.read')}</Button>
+            <Button variant="ghost" onClick={() => setShowImport(false)}>{tr('common.cancel')}</Button>
           </div>
         </Card>
       )}
@@ -203,10 +203,10 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         </div>
       )}
 
-      {/* ---- die Bibliothek ----
-          Zuklappbar, weil sie mit jedem Fall wächst: wer zwanzig Muster
-          gesammelt hat, will beim Auswerten die Ergebnisse sehen und nicht
-          erst an der Liste vorbeiscrollen, aus der sie stammen. */}
+      {/* ---- the library ----
+          Collapsible, because it grows with every case: whoever has
+          collected twenty patterns wants to see the results while assessing,
+          not scroll past the list they came from first. */}
       <Card className="overflow-hidden">
         <button onClick={() => setLibOpen(!libOpen)}
           className="flex w-full cursor-pointer items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2 text-left transition-colors hover:bg-[var(--panel)]">
@@ -214,17 +214,17 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                    : <ChevronRight size={14} className="shrink-0 text-[var(--muted)]" />}
           <Radar size={14} className="shrink-0 text-[var(--muted)]" />
           <span className="shrink-0 text-[12px] font-semibold">
-            Bibliothek — {formatCount(patterns.length)} Muster
+            {tr('hunt.library', { n: formatCount(patterns.length) })}
           </span>
           <InfoDot
-            title="Die Muster-Bibliothek"
-            body={`Gespeichert unter ${lib?.path ?? '—'}.`}
-            hint="Die Datei gehört zum WORKSPACE, nicht zum Fall: einmal angelegt, steht ein Muster in jedem weiteren Fall darin bereit. Der einzelne Fall protokolliert nur, wonach in ihm gesucht wurde — auch erfolglos." />
+            title={tr('hunt.library.title')}
+            body={tr('hunt.library.body', { path: lib?.path ?? '—' })}
+            hint={tr('hunt.library.hint')} />
           <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]">
             {lib?.path}
           </span>
           <span className="shrink-0 text-[11px] text-[var(--muted)]">
-            {libOpen ? 'zuklappen' : 'aufklappen'}
+            {libOpen ? tr('common.collapse') : tr('common.expand')}
           </span>
         </button>
         {libOpen && patterns.map((p) => {
@@ -249,28 +249,35 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                 </div>
               </div>
               {last && (
-                <Tooltip title={`zuletzt gesucht: ${last.ran_at.replace('T', ' ')}`}
+                <Tooltip title={tr('hunt.lastRun', { at: last.ran_at.replace('T', ' ') })}
                   hint={last.hits
-                    ? `${formatCount(last.hits)} Treffer bei ${formatCount(last.clients)} Client(s), davon ${formatCount(last.ok_clients)} mit 2xx beantwortet (${formatCount(last.ok_hits)} Anfragen). Getroffene URLs: ${formatCount(last.uris)}. Zeitraum: ${formatLogTime(last.first_epoch, last.tz)} → ${formatLogTime(last.last_epoch, last.tz)} (${formatSpan(last.first_epoch, last.last_epoch)}).`
-                    : 'In diesem Fall kein Treffer — das ist im Fall protokolliert und damit belegbar.'}>
+                    ? tr('hunt.lastRun.hint', {
+                        hits: formatCount(last.hits), clients: formatCount(last.clients),
+                        ok: formatCount(last.ok_clients), okHits: formatCount(last.ok_hits),
+                        uris: formatCount(last.uris),
+                        from: formatLogTime(last.first_epoch, last.tz),
+                        to: formatLogTime(last.last_epoch, last.tz),
+                        span: formatSpan(last.first_epoch, last.last_epoch),
+                      })
+                    : tr('hunt.lastRun.none')}>
                   <span className={clsx('shrink-0 text-[11px] tabular',
                     last.ok_hits ? 'text-[var(--sev-high)]'
                       : last.hits ? 'text-[var(--sev-low)]' : 'text-[var(--muted)]')}>
-                    {last.hits ? `${formatCount(last.hits)} Treffer` : 'kein Treffer'}
+                    {last.hits ? tr('hunt.hits', { n: formatCount(last.hits) }) : tr('hunt.noHit')}
                   </span>
                 </Tooltip>
               )}
               <Button variant="ghost" onClick={() => run.mutate([p.id])}>
-                <Play size={13} /> Suchen
+                <Play size={13} /> {tr('hunt.search')}
               </Button>
-              <Tooltip hint="Muster, Name oder Notiz ändern — gilt danach für alle Fälle.">
+              <Tooltip hint={tr('hunt.edit.hint')}>
                 <button
                   className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                   onClick={() => setEditing(p.id)}>
                   <PencilLine size={14} />
                 </button>
               </Tooltip>
-              <Tooltip hint="Entfernt das Muster aus der Bibliothek — auch für künftige Fälle. Bereits geschriebene Findings bleiben.">
+              <Tooltip hint={tr('hunt.delete.hint')}>
                 <button
                   className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
                   onClick={() => remove.mutate(p.id)}>
@@ -282,17 +289,17 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
           )
         })}
         {libOpen && !patterns.length && (
-          <EmptyState icon={<Radar size={36} />} title="Noch kein Muster hinterlegt"
-            sub="Trage oben einen URL-Pfad ein, den du aus einem Exploit kennst — etwa den Aufruf, mit dem eine bekannte Lücke ausgelöst wird. Die Bibliothek gehört zum Workspace und steht danach in jedem Fall bereit." />
+          <EmptyState icon={<Radar size={36} />} title={tr('hunt.empty.title')}
+            sub={tr('hunt.empty.sub')} />
         )}
       </Card>
 
-      {/* ---- die Ergebnisse ---- */}
+      {/* ---- the results ---- */}
       {shown.map((r) => (
         <ResultCard key={r.id} slug={slug} result={r}
           onTrace={(ips) => {
             setTraceMarks({ exact: r.uris.map((u) => u.uri),
-                            reason: 'dieser Aufruf passt auf das Muster' })
+                            reason: tr('hunt.traceReason') })
             setTraceIps(ips)
           }} />
       ))}
@@ -303,13 +310,14 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   )
 }
 
-/** Ein Muster nachbessern. Änderungen gelten für ALLE Fälle — die Bibliothek
- *  gehört dem Workspace, und genau das steht auch am Knopf. */
+/** Amend a pattern. Changes apply to ALL cases -- the library belongs to the
+ *  workspace, and that is exactly what the button says. */
 function PatternEditor({ slug, entry, onDone }: {
   slug: string
   entry: HuntPattern
   onDone: () => void
 }) {
+  const tr = useT()
   const [pattern, setPattern] = useState(entry.pattern)
   const [label, setLabel] = useState(entry.label)
   const [note, setNote] = useState(entry.note)
@@ -341,20 +349,19 @@ function PatternEditor({ slug, entry, onDone }: {
         </label>
         <label className="flex w-40 flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Notiz
+            {tr('hunt.field.note')}
           </span>
           <input value={note} onChange={(e) => setNote(e.target.value)}
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
         </label>
         <Button variant="primary" disabled={!pattern.trim() || save.isPending}
           onClick={() => save.mutate()}>
-          Speichern
+          {tr('common.save')}
         </Button>
-        <Button variant="ghost" onClick={onDone}>Abbrechen</Button>
+        <Button variant="ghost" onClick={onDone}>{tr('common.cancel')}</Button>
       </div>
       <div className="text-[11px] text-[var(--muted)]">
-        Die Änderung gilt für alle Fälle. Bereits geschriebene Findings bleiben
-        stehen — sie halten fest, was zum Zeitpunkt der Suche galt.
+        {tr('hunt.edit.note')}
       </div>
       {error && <div className="text-[12px] text-[var(--danger-text)]">{error}</div>}
     </div>
@@ -362,62 +369,64 @@ function PatternEditor({ slug, entry, onDone }: {
 }
 
 function ResultBadge({ result }: { result: HuntResult }) {
+  const tr = useT()
   if (!result.hits) {
-    return <Tag>kein Treffer</Tag>
+    return <Tag>{tr('hunt.noHit')}</Tag>
   }
   return (
     <Tag tone={result.ok_hits ? 'danger' : 'warn'}>
-      {formatCount(result.clients.length)} Client{result.clients.length === 1 ? '' : 's'}
+      {plural(tr, result.clients.length, 'hunt.client.one', 'hunt.client.many',
+              { n: formatCount(result.clients.length) })}
     </Tag>
   )
 }
 
-/** Die Kennzahlen einer Suche in einem Block — was in den Bericht wandert.
+/** The key figures of a search in one block -- what travels into the report.
  *
- *  Die entscheidende Zahl ist nicht, wie oft geklopft wurde, sondern wie
- *  viele Adressen durchkamen: 300 Anfragen von 40 Adressen, von denen genau
- *  eine eine 2xx bekam, ist ein völlig anderer Befund als 300 Anfragen mit
- *  300 Erfolgen. Und die Spanne trennt die eine Kampagne (Minuten) vom
- *  Hintergrundrauschen, das seit Monaten mitläuft. */
+ *  The decisive number is not how often someone knocked, but how many
+ *  addresses got through: 300 requests from 40 addresses of which exactly
+ *  one got a 2xx is a completely different finding from 300 requests with
+ *  300 successes. And the span separates the one campaign (minutes) from the
+ *  background noise that has been running for months. */
 function HuntSummary({ result }: { result: HuntResult }) {
+  const tr = useT()
   const durch = result.ok_clients > 0
   return (
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-[var(--line)] px-4 py-2.5">
-      {/* Der Befund, in der Größe, die er verdient. */}
-      <Tooltip
-        hint="Bei wie vielen der getroffenen Adressen der Server mit 2xx geantwortet hat. Ein Versuch ins Leere ist kein Zugriff — deshalb steht diese Zahl hier und nicht die Zahl der Anfragen.">
+      {/* The finding, in the size it deserves. */}
+      <Tooltip hint={tr('hunt.gotThrough.hint')}>
         <div className="flex items-baseline gap-1.5">
           <span className={clsx('text-[19px] font-bold leading-none tabular',
             durch ? 'text-[var(--sev-high)]' : 'text-[var(--muted)]')}>
             {formatCount(result.ok_clients)}
           </span>
-          {/* Das Zahlwort richtet sich nach der Gesamtzahl, das Verb nach
-              der ersten: „1 von 2 Adressen KAM durch". */}
+          {/* The noun follows the total, the verb the first number:
+              "1 of 2 addresses GOT through". */}
           <span className="flex items-center gap-1 text-[13px] text-[var(--muted)]">
-            von {formatCount(result.clients_total)}{' '}
-            {result.clients_total === 1 ? 'Adresse' : 'Adressen'}{' '}
-            {result.ok_clients === 1 ? 'kam' : 'kamen'} durch
-            {/* Sichtbar, sonst hovert niemand über einer Kennzahl: die
-                übrigen Angaben der Zeile erklären sich beim Überfahren. */}
+            {plural(tr, result.clients_total, 'hunt.gotThrough.one', 'hunt.gotThrough.many',
+                    { n: formatCount(result.clients_total) })}
+            {/* Visible, otherwise nobody hovers over a key figure: the
+                remaining facts of the line explain themselves on hover. */}
             <HelpCircle size={11} className="shrink-0 opacity-50" />
           </span>
         </div>
       </Tooltip>
 
-      {/* Alles Weitere ist Beleg dazu und steht als Fließzeile daneben —
-          so, wie man es in den Bericht schreibt. */}
+      {/* Everything else is evidence for it and stands next to it as a
+          running line -- the way one writes it into the report. */}
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px] text-[var(--muted)]">
-        <Tooltip hint="Alle Anfragen auf die getroffenen URLs, und wie viele davon erfolgreich beantwortet wurden.">
+        <Tooltip hint={tr('hunt.requests.hint')}>
           <span>
-            <span className="mono tabular text-[var(--fg)]">{formatCount(result.hits)}</span> Anfragen,
-            davon <span className={clsx('mono tabular',
+            <span className="mono tabular text-[var(--fg)]">{formatCount(result.hits)}</span>
+            {' '}{tr('hunt.requests')}, {tr('hunt.ofWhich')}{' '}
+            <span className={clsx('mono tabular',
               result.ok_hits ? 'text-[var(--sev-high)]' : '')}>
               {formatCount(result.ok_hits)}×
-            </span> mit 2xx
+            </span> {tr('hunt.with2xx')}
           </span>
         </Tooltip>
         <span className="opacity-40">·</span>
-        <Tooltip hint="Zeiten aus dem Log, in dessen eigener Zeitzone — nicht die Uhr dieses Rechners. Minuten sprechen für einen einzelnen Zugriff, Monate eher für Hintergrundrauschen.">
+        <Tooltip hint={tr('hunt.time.hint')}>
           <span>
             <span className="mono tabular text-[var(--fg)]">
               {formatLogTime(result.first_epoch, result.tz)}
@@ -430,11 +439,11 @@ function HuntSummary({ result }: { result: HuntResult }) {
           </span>
         </Tooltip>
         <span className="opacity-40">·</span>
-        <Tooltip hint="Wie viele verschiedene URLs das Muster überhaupt getroffen hat. Eine hohe Zahl heißt meist: das Muster greift zu weit.">
+        <Tooltip hint={tr('hunt.urls.hint')}>
           <span>
             <span className="mono tabular text-[var(--fg)]">
               {formatCount(result.uri_total)}
-            </span> URL{result.uri_total === 1 ? '' : 's'}
+            </span> {result.uri_total === 1 ? 'URL' : 'URLs'}
           </span>
         </Tooltip>
       </div>
@@ -445,9 +454,9 @@ function HuntSummary({ result }: { result: HuntResult }) {
 type SortCol = 'ip' | 'hits' | 'ok_hits' | 'first' | 'last' | 'dauer'
 type Sort = { col: SortCol; desc: boolean }
 
-/** Eine Adresse als Zahl, damit 2 vor 10 steht. IPv6 fällt auf den
- *  Textvergleich zurück — dort ist die Reihenfolge ohnehin nur eine
- *  Gruppierung, keine Aussage. */
+/** An address as a number, so that 2 comes before 10. IPv6 falls back to a
+ *  text comparison -- there the order is only a grouping anyway, not a
+ *  statement. */
 function ipKey(ip: string): string {
   const parts = ip.split('.')
   if (parts.length !== 4) return ip
@@ -479,17 +488,18 @@ function SortHead({ col, sort, onSort, className, children }: {
   )
 }
 
-/** Was ein Muster gefunden hat. Die getroffenen URIs stehen mit dabei: ein
- *  Muster, das zu weit greift, sieht man nur, wenn man sieht, WAS es traf. */
+/** What a pattern found. The URIs hit are included: a pattern that reaches
+ *  too far can only be recognised by seeing WHAT it hit. */
 function ResultCard({ slug, result, onTrace }: {
   slug: string
   result: HuntResult
   onTrace: (ips: string[]) => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [showUris, setShowUris] = useState(false)
-  // Voreinstellung wie vom Server geliefert: Erfolge zuerst. Das ist die
-  // Reihenfolge, in der man die Liste zuerst lesen will.
+  // The default as delivered by the server: successes first. That is the
+  // order one wants to read the list in to begin with.
   const [sort, setSort] = useState<Sort>({ col: 'ok_hits', desc: true })
 
   const sorted = useMemo(() => {
@@ -503,18 +513,19 @@ function ResultCard({ slug, result, onTrace }: {
         return dir * (s(a) - s(b))
       }
       const d = dir * (a[sort.col] - b[sort.col])
-      // Gleichstand bricht nach Anfragen, sonst springen Zeilen bei jedem
-      // Neuzeichnen -- 40 Adressen mit je einem Treffer sind keine Seltenheit.
+      // A tie breaks by request count, otherwise rows jump on every redraw
+      // -- 40 addresses with one hit each are not a rarity.
       return d || b.hits - a.hits
     })
   }, [result.clients, sort])
 
-  // Die Herkunft nennt das Muster: "hat den Exploit-Pfad abgerufen" ist die
-  // Aussage, die im Bericht zählt — nicht "aus einer Liste eingesammelt".
+  // The origin names the pattern: "requested the exploit path" is the
+  // statement that counts in the report -- not "collected from a list".
+  // It is written into the case and therefore stays English.
   const collect = useMutation({
     mutationFn: (ips: string[]) => post<{ added: number }>(
       `/api/cases/${slug}/actors/collect`,
-      { ips, origin: `Muster-Treffer: ${result.label || result.pattern}` }),
+      { ips, origin: `pattern hit: ${result.label || result.pattern}` }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['iocs'] })
       qc.invalidateQueries({ queryKey: ['actors'] })
@@ -535,13 +546,13 @@ function ResultCard({ slug, result, onTrace }: {
         </div>
         {result.clients.length > 1 && (
           <Button onClick={() => onTrace(result.clients.map((c) => c.ip))}>
-            <Crosshair size={13} /> alle tracen
+            <Crosshair size={13} /> {tr('hunt.traceAll')}
           </Button>
         )}
-        <Tooltip hint="Übernimmt alle hier gelisteten Adressen als Indikatoren — mit dem Muster als Herkunft, damit im Bericht steht, WARUM sie drinstehen. Einzeln geht auch: der Knopf steht an jeder Zeile.">
+        <Tooltip hint={tr('hunt.collectAll.hint')}>
           <Button variant="primary" disabled={collect.isPending}
             onClick={() => collect.mutate(result.clients.map((c) => c.ip))}>
-            <Box size={13} /> Alle {formatCount(result.clients.length)} in die IOC Box
+            <Box size={13} /> {tr('hunt.collectAll', { n: formatCount(result.clients.length) })}
           </Button>
         </Tooltip>
       </div>
@@ -550,15 +561,14 @@ function ResultCard({ slug, result, onTrace }: {
 
       {collect.data && (
         <div className="border-b border-[var(--line)] bg-[rgba(12,163,12,0.08)] px-4 py-1.5 text-[12px] text-[var(--ok)] animate-fade-up">
-          {formatCount(collect.data.added)} Adresse(n) in die IOC Box übernommen —
-          Herkunft: „Muster-Treffer: {result.label || result.pattern}"
+          {tr('hunt.collected', { n: formatCount(collect.data.added) })}{' '}
+          &ldquo;pattern hit: {result.label || result.pattern}&rdquo;
         </div>
       )}
 
       {result.truncated && (
         <div className="border-b border-[var(--line)] bg-[rgba(250,178,25,0.10)] px-4 py-1.5 text-[11.5px] text-[var(--sev-low)]">
-          Das Muster trifft sehr viele verschiedene URLs — die Auswertung wurde
-          begrenzt. Ein engeres Muster liefert ein belastbareres Ergebnis.
+          {tr('hunt.truncated')}
         </div>
       )}
 
@@ -569,19 +579,19 @@ function ResultCard({ slug, result, onTrace }: {
               Client
             </SortHead>
             <SortHead className="px-2 py-2 text-right" col="hits" sort={sort} onSort={setSort}>
-              Anfragen
+              {tr('hunt.requests')}
             </SortHead>
             <SortHead className="px-2 py-2 text-right" col="ok_hits" sort={sort} onSort={setSort}>
-              davon 2xx
+              {tr('hunt.ofWhich2xx')}
             </SortHead>
             <SortHead className="px-2 py-2" col="first" sort={sort} onSort={setSort}>
-              Erster Treffer
+              {tr('hunt.firstHit')}
             </SortHead>
             <SortHead className="px-2 py-2" col="last" sort={sort} onSort={setSort}>
-              Letzter Treffer
+              {tr('hunt.lastHit')}
             </SortHead>
             <SortHead className="px-2 py-2 text-right" col="dauer" sort={sort} onSort={setSort}>
-              Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+              {tr('hunt.duration')} <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
             </SortHead>
             <th className="w-28 px-4 py-2" />
           </tr>
@@ -597,7 +607,7 @@ function ResultCard({ slug, result, onTrace }: {
                 </span>
                 {c.ok_hits > 0 && (
                   <Tag tone="danger"
-                    hint="Der Server hat auf diesen Aufruf mit Erfolg geantwortet — nicht nur ein Versuch ins Leere.">
+                    hint={tr('hunt.successful.hint')}>
                     erfolgreich
                   </Tag>
                 )}
@@ -607,23 +617,23 @@ function ResultCard({ slug, result, onTrace }: {
                 c.ok_hits ? 'text-[var(--sev-high)]' : 'text-[var(--muted)]')}>
                 {formatCount(c.ok_hits)}
               </td>
-              {/* Auf die Sekunde: bei einem Muster-Treffer ist die Uhrzeit
-                  die halbe Aussage — sie sagt, ob die Aufrufe in einem
-                  Schwung kamen oder über Wochen verteilt. */}
+              {/* To the second: on a pattern hit the time of day is half
+                  the statement -- it says whether the requests came in one
+                  burst or spread over weeks. */}
               <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
                 {formatLogTime(c.first_epoch, c.tz)}
               </td>
               <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
                 {formatLogTime(c.last_epoch, c.tz)}
               </td>
-              {/* Die Angriffslänge: 40 Aufrufe in zwei Minuten sind ein
-                  Werkzeug, 40 über drei Wochen sind etwas anderes. */}
+              {/* The length of the attack: 40 requests in two minutes are a
+                  tool, 40 across three weeks are something else. */}
               <td className="mono px-2 py-1.5 text-right text-[12px] tabular">
                 {formatSpan(c.first_epoch, c.last_epoch)}
               </td>
               <td className="px-4 py-1.5 text-right">
                 <div className="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Tooltip hint="Nur diese Adresse in die IOC Box — mit dem Muster als Herkunft.">
+                  <Tooltip hint={tr('hunt.collectOne.hint')}>
                     <Button variant="ghost" disabled={collect.isPending}
                       onClick={() => collect.mutate([c.ip])}>
                       <Box size={13} /> IOC
@@ -642,11 +652,12 @@ function ResultCard({ slug, result, onTrace }: {
       <button onClick={() => setShowUris(!showUris)}
         className="flex w-full cursor-pointer items-center gap-2 border-t border-[var(--line)] px-4 py-1.5 text-[11.5px] text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
         {showUris ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        {formatCount(result.uri_total)} getroffene URL{result.uri_total === 1 ? '' : 's'}
+        {plural(tr, result.uri_total, 'hunt.urlsHit.one', 'hunt.urlsHit.many',
+                { n: formatCount(result.uri_total) })}
         <span className="opacity-70">
           {result.uri_total > result.uris.length
-            ? `— die ${formatCount(result.uris.length)} häufigsten, zum Prüfen ob das Muster passt`
-            : '— prüfen, ob das Muster passt'}
+            ? `— ${tr('hunt.topUrls', { n: formatCount(result.uris.length) })}`
+            : `— ${tr('hunt.checkPattern')}`}
         </span>
       </button>
       {showUris && (

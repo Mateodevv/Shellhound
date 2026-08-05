@@ -1,4 +1,5 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -13,10 +14,8 @@ import {
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
 import { Button, Card, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
-import { EVIDENCE_EXPLAIN, EVIDENCE_LABEL, FIELD_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import type { ViewId } from '../App'
-
-const KIND_LABEL = EVIDENCE_LABEL
 
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
@@ -30,6 +29,7 @@ export function Evidence({ slug, onClosed }: {
   gotoView: (v: ViewId) => void
   onClosed?: () => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
@@ -80,11 +80,11 @@ export function Evidence({ slug, onClosed }: {
     <div className="flex flex-col gap-6">
       <Section
         title="Evidence"
-        sub="Webroot-Kopie, Access-Logs und SQL-Dumps dieses Falls. »Analysieren« indiziert alles einmal — danach sind Traces und Suchen reine Abfragen."
+        sub={tr('evidence.sub')}
         right={
           <Button variant="primary" disabled={!evidence.length || analyze.isPending}
             onClick={() => analyze.mutate()}>
-            <Play size={14} /> Analysieren
+            <Play size={14} /> {tr('evidence.analyze')}
           </Button>
         }
       >
@@ -100,18 +100,18 @@ export function Evidence({ slug, onClosed }: {
           {!evidence.length && (
             <EmptyState
               icon={<FolderOpen size={36} />}
-              title="Noch keine Evidence registriert"
-              sub="Damit SHELLHOUND etwas findet, braucht es die Beweismittel: eine Kopie des Web-Verzeichnisses, die Access-Logs und/oder einen Datenbank-Export. Unten hinzufügen — oder einen Fall-Ordner automatisch durchsuchen lassen."
+              title={tr('evidence.empty.title')}
+              sub={tr('evidence.empty.sub')}
             />
           )}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
           {(['webroot', 'access_logs', 'sql_dump', 'reference'] as const).map((kind) => (
-            <Tooltip key={kind} title={EVIDENCE_EXPLAIN[kind]?.what}
-              hint={EVIDENCE_EXPLAIN[kind]?.why} wide>
+            <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
+              hint={explain(tr, `evidence.${kind}`)?.why} wide>
               <Button onClick={() => setBrowsing(kind)}>
-                <FolderOpen size={14} /> {KIND_LABEL[kind]} hinzufügen
+                <FolderOpen size={14} /> {tr('evidence.add', { what: tr(`evidence.${kind}`) })}
               </Button>
             </Tooltip>
           ))}
@@ -123,12 +123,15 @@ export function Evidence({ slug, onClosed }: {
               {index.fresh
                 ? <CheckCircle2 size={15} className="text-[var(--ok)]" />
                 : <TriangleAlert size={15} className="text-[var(--sev-low)]" />}
-              <span className="font-medium">Log-Index</span>
-              <InfoDot body={FIELD_EXPLAIN.log_index} wide />
+              <span className="font-medium">{tr('evidence.logIndex')}</span>
+              <InfoDot body={tr('field.log_index')} wide />
               {index.fresh ? (
                 <span className="text-[var(--muted)]">
-                  aktuell — {formatCount(index.lines)} Log-Zeilen, {formatCount(index.clients)} Clients,{' '}
-                  {formatBytes(index.size)}. Traces und Suchen laufen jetzt als Abfrage.
+                  {tr('evidence.logIndex.fresh', {
+                    lines: formatCount(index.lines),
+                    clients: formatCount(index.clients),
+                    size: formatBytes(index.size),
+                  })}
                 </span>
               ) : (
                 <span className="text-[var(--muted)]">{index.reason}</span>
@@ -139,18 +142,18 @@ export function Evidence({ slug, onClosed }: {
       </Section>
 
       <Section
-        title="Evidence automatisch erkennen"
-        sub="Kein Kopfzerbrechen mit Pfaden: Gib den Ordner an, in dem die Beweismittel liegen. SHELLHOUND erkennt Webroot, Logs und Datenbank-Export am Inhalt (CMS-Marker, parsende Log-Zeilen, Dump-Header) und schlägt sie mit Begründung vor."
+        title={tr('evidence.detect')}
+        sub={tr('evidence.detect.hint')}
       >
         <div className="flex gap-2">
           <input
             value={detectFolder}
             onChange={(e) => setDetectFolder(e.target.value)}
-            placeholder="z.B. D:\Evidence\musterfirma"
+            placeholder={tr('evidence.detect.placeholder')}
             className="mono flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button onClick={() => detect.mutate()} disabled={!detectFolder.trim() || detect.isPending}>
-            <FolderSearch size={14} /> Durchsuchen
+            <FolderSearch size={14} /> {tr('evidence.scan')}
           </Button>
         </div>
         {detected && (
@@ -159,31 +162,31 @@ export function Evidence({ slug, onClosed }: {
             {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) =>
               detected.candidates[kind]?.slice(0, 4).map((c) => (
                 <Card key={kind + c.path} className="flex items-center gap-3 px-4 py-2.5">
-                  <Tag tone="accent">{KIND_LABEL[kind]}</Tag>
+                  <Tag tone="accent">{tr(`evidence.${kind}`)}</Tag>
                   <div className="min-w-0 flex-1">
                     <div className="mono truncate text-[12px]">{c.path}</div>
                     <div className="truncate text-[11px] text-[var(--muted)]">{c.why}</div>
                   </div>
                   <Button onClick={() => addEvidence.mutate({ kind, path: c.path })}>
-                    Übernehmen
+                    {tr('common.apply')}
                   </Button>
                 </Card>
               )))}
             {!detected.error &&
               Object.values(detected.candidates).every((c) => !c.length) && (
                 <div className="text-[13px] text-[var(--muted)]">
-                  Keine Kandidaten gefunden ({detected.scanned} Verzeichnisse durchsucht).
+                  {tr('evidence.noCandidates', { n: detected.scanned })}
                 </div>
               )}
           </div>
         )}
       </Section>
 
-      <Section title="Jobs" sub="Analyse-Läufe dieses Falls, neueste zuerst.">
+      <Section title="Jobs" sub={tr('evidence.jobs.sub')}>
         <div className="flex flex-col gap-2">
           {(jobs ?? []).map((j) => <JobRow key={j.id} job={j} slug={slug} />)}
           {jobs && !jobs.length && (
-            <div className="text-[13px] text-[var(--muted)]">Noch keine Jobs gelaufen.</div>
+            <div className="text-[13px] text-[var(--muted)]">{tr('evidence.noJobs')}</div>
           )}
         </div>
       </Section>
@@ -212,6 +215,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
   onRename: (label: string) => void
   onRemove: () => void
 }) {
+  const tr = useT()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const Icon = KIND_ICON[item.kind] ?? HardDrive
@@ -219,7 +223,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
 
   return (
     <Card className="flex items-center gap-3 px-4 py-3">
-      <Tooltip title={EVIDENCE_EXPLAIN[item.kind]?.what} hint={EVIDENCE_EXPLAIN[item.kind]?.why} wide>
+      <Tooltip title={explain(tr, `evidence.${item.kind}`)?.what} hint={explain(tr, `evidence.${item.kind}`)?.why} wide>
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
           <Icon size={16} className="text-[var(--muted)]" />
         </div>
@@ -242,11 +246,11 @@ function EvidenceCard({ item, onRename, onRemove }: {
             <span className="truncate text-[14px] font-semibold">{displayName}</span>
             <button onClick={() => { setName(''); setEditing(true) }}
               className="shrink-0 cursor-pointer text-[var(--muted)] opacity-60 transition-opacity hover:opacity-100"
-              title="Umbenennen">
+              title={tr('common.rename')}>
               <Pencil size={12} />
             </button>
-            <Tag explain={EVIDENCE_EXPLAIN[item.kind]?.what}>{KIND_LABEL[item.kind]}</Tag>
-            {!item.exists && <Tag tone="danger">Pfad nicht gefunden</Tag>}
+            <Tag explain={explain(tr, `evidence.${item.kind}`)?.what}>{tr(`evidence.${item.kind}`)}</Tag>
+            {!item.exists && <Tag tone="danger">{tr('evidence.pathMissing')}</Tag>}
           </div>
         )}
         <div className="mono mt-1 truncate text-[11.5px] text-[var(--muted)]" title={item.path}>
@@ -256,26 +260,26 @@ function EvidenceCard({ item, onRename, onRemove }: {
 
       <div className="flex shrink-0 items-center gap-4 text-[12px] text-[var(--muted)]">
         {item.exists && (item.files ?? 0) > 0 && (
-          <Tooltip title="Umfang der Evidence"
-            body={`${formatCount(item.files)} Datei(en), ${formatBytes(item.bytes)}${item.meta_partial ? ' (Teilzählung — sehr groß)' : ''}`}>
+          <Tooltip title={tr('evidence.scope')}
+            body={`${tr('evidence.fileCount', { n: formatCount(item.files) })}, ${formatBytes(item.bytes)}${item.meta_partial ? ` (${tr('evidence.partialCount')})` : ''}`}>
             <span className="tabular whitespace-nowrap">
               {formatBytes(item.bytes)}
-              <span className="ml-1 opacity-70">· {formatCount(item.files)} Dateien</span>
+              <span className="ml-1 opacity-70">· {tr('evidence.fileCount', { n: formatCount(item.files) })}</span>
             </span>
           </Tooltip>
         )}
         {item.scanned_at ? (
-          <Tooltip title="Zuletzt analysiert" body={absoluteTime(item.scanned_at)}>
+          <Tooltip title={tr('evidence.lastAnalyzed')} body={absoluteTime(item.scanned_at)}>
             <span className="flex items-center gap-1 whitespace-nowrap text-[var(--ok)]">
               <CheckCircle2 size={13} /> {relativeTime(item.scanned_at)}
             </span>
           </Tooltip>
         ) : (
-          <Tag tone="warn">noch nicht analysiert</Tag>
+          <Tag tone="warn">{tr('evidence.notAnalyzed')}</Tag>
         )}
       </div>
 
-      <Button variant="ghost" title="Aus dem Fall entfernen (Beweismittel bleibt auf der Platte)"
+      <Button variant="ghost" title={tr('evidence.remove')}
         onClick={onRemove}>
         <Trash2 size={14} />
       </Button>
@@ -286,6 +290,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
 function CloseCase({ slug, caseName, onClosed }: {
   slug: string; caseName: string; onClosed?: () => void
 }) {
+  const tr = useT()
   const [asking, setAsking] = useState(false)
   const [typed, setTyped] = useState('')
 
@@ -298,32 +303,30 @@ function CloseCase({ slug, caseName, onClosed }: {
   const close = useMutation({
     mutationFn: () => post<{ file: string; archive: string; summary: CaseSummary }>(
       `/api/cases/${slug}/archive`),
-    // Der Fall existiert nach dem Abschluss nicht mehr — direkt zurück zur
-    // Startseite, wo er unter »Abgeschlossene Fälle« auftaucht.
+    // After closing, the case no longer exists -- straight back to the start
+    // page, where it appears under "closed cases".
     onSuccess: () => onClosed?.(),
   })
 
   return (
     <Section
-      title="Fall abschließen"
-      sub="Packt den kompletten Fall in ein ZIP im Archiv-Ordner und entfernt die Arbeitskopie — der Fall ist danach aus der Plattform raus, bis er importiert wird."
+      title={tr('evidence.close')}
+      sub={tr('evidence.close.sub')}
     >
       {!asking ? (
         <Button variant="danger" onClick={() => { setAsking(true); setTyped('') }}>
-          <Archive size={14} /> Fall abschließen &amp; archivieren
+          <Archive size={14} /> {tr('evidence.close.cta')}
         </Button>
       ) : (
         <Card className="flex flex-col gap-3 border-[var(--sev-high)]/40 p-4 animate-fade-up">
           <div className="flex items-start gap-2">
             <TriangleAlert size={16} className="mt-0.5 shrink-0 text-[var(--sev-high)]" />
             <div className="text-[13px]">
-              <div className="font-semibold">Arbeitskopie wird gelöscht</div>
+              <div className="font-semibold">{tr('evidence.workingCopyDeleted')}</div>
               <div className="mt-0.5 text-[var(--muted)]">
-                Alles wandert ins Archiv-ZIP: Findings mit Triage-Stand, IOC Box,
-                CMS- und Datenbank-Ergebnisse, Evidence-Pfade und die Job-Historie.
-                Der Log-Index wird <em>nicht</em> mitarchiviert (aus der Evidence neu
-                baubar) — er ist nach einem Import wieder aufzubauen.
-                Die Evidence selbst wird nicht angefasst.
+                {tr('evidence.close.body.a')}{' '}
+                {tr('evidence.close.body.b')} <em>{tr('common.not')}</em>{' '}
+                {tr('evidence.close.body.c')}
               </div>
             </div>
           </div>
@@ -332,7 +335,7 @@ function CloseCase({ slug, caseName, onClosed }: {
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               {[
                 ['Findings', formatCount(summary.findings)],
-                ['Bestätigt', formatCount(summary.confirmed)],
+                [tr('triage.confirmed'), formatCount(summary.confirmed)],
                 ['False Positives', formatCount(summary.dismissed)],
                 ['IOCs', formatCount(summary.iocs)],
               ].map(([label, value]) => (
@@ -348,7 +351,7 @@ function CloseCase({ slug, caseName, onClosed }: {
 
           <div>
             <label className="text-[12px] text-[var(--muted)]">
-              Zum Bestätigen den Fallnamen eintippen: <span className="mono text-[var(--fg)]">{caseName}</span>
+              {tr('evidence.close.typeName')}: <span className="mono text-[var(--fg)]">{caseName}</span>
             </label>
             <input
               autoFocus
@@ -365,9 +368,9 @@ function CloseCase({ slug, caseName, onClosed }: {
             <Button variant="danger"
               disabled={typed.trim() !== caseName.trim() || close.isPending}
               onClick={() => close.mutate()}>
-              <Archive size={14} /> {close.isPending ? 'Archiviere…' : 'Endgültig abschließen'}
+              <Archive size={14} /> {close.isPending ? 'Archiviere…' : tr('evidence.closeFinal')}
             </Button>
-            <Button variant="ghost" onClick={() => setAsking(false)}>Abbrechen</Button>
+            <Button variant="ghost" onClick={() => setAsking(false)}>{tr('common.cancel')}</Button>
           </div>
           {close.isError && (
             <div className="text-[12px] text-[var(--danger-text)]">
@@ -388,6 +391,7 @@ const JOB_LABEL: Record<string, string> = {
 }
 
 function JobRow({ job, slug }: { job: Job; slug: string }) {
+  const tr = useT()
   const cancel = useMutation({
     mutationFn: () => post(`/api/cases/${slug}/jobs/${job.id}/cancel`),
   })
@@ -434,7 +438,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
           )}
         </div>
         {(job.state === 'running' || job.state === 'queued') && (
-          <Button variant="ghost" onClick={() => cancel.mutate()}>Abbrechen</Button>
+          <Button variant="ghost" onClick={() => cancel.mutate()}>{tr('common.cancel')}</Button>
         )}
       </div>
     </Card>
@@ -446,9 +450,10 @@ function PathBrowser({ kind, onClose, onPick }: {
   onClose: () => void
   onPick: (path: string) => void
 }) {
+  const tr = useT()
   const [path, setPath] = useState('')
-  // Eine angeklickte Datei gewinnt gegen das Verzeichnis, in dem sie liegt —
-  // sonst müsste man für einen SQL-Dump den Pfad doch wieder tippen.
+  // A clicked file wins against the directory it sits in -- otherwise one
+  // would have to type the path for a SQL dump after all.
   const [picked, setPicked] = useState('')
   useEffect(() => { setPicked('') }, [path])
   const { data, isError, error } = useQuery({
@@ -460,9 +465,9 @@ function PathBrowser({ kind, onClose, onPick }: {
       <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} />
       <Card className="relative z-10 flex max-h-[80vh] w-[min(640px,92vw)] flex-col animate-fade-up">
         <div className="border-b border-[var(--line)] px-4 py-3">
-          <div className="text-[14px] font-semibold">{KIND_LABEL[kind]} auswählen</div>
+          <div className="text-[14px] font-semibold">{tr('evidence.pick', { what: tr(`evidence.${kind}`) })}</div>
           <div className="mono mt-1 truncate text-[12px] text-[var(--muted)]">
-            {data?.path || 'Laufwerke'}
+            {data?.path || tr('evidence.drives')}
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -471,7 +476,7 @@ function PathBrowser({ kind, onClose, onPick }: {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[13px] text-[var(--muted)] hover:bg-[var(--panel-2)] cursor-pointer"
               onClick={() => setPath(data.parent!)}
             >
-              .. (übergeordnet)
+              {tr('evidence.parentDir')}
             </button>
           )}
           {isError && <div className="px-3 py-2 text-[13px] text-[var(--danger-text)]">{String(error)}</div>}
@@ -486,8 +491,8 @@ function PathBrowser({ kind, onClose, onPick }: {
               <ChevronRight size={14} className="text-[var(--muted)] opacity-0 transition-opacity group-hover:opacity-100" />
             </button>
           ))}
-          {/* Dateien sind wählbar, nicht nur Beiwerk: ein SQL-Dump IST eine
-              Datei, und wer sie nicht sieht, kann sie nicht registrieren. */}
+          {/* Files are selectable, not just decoration: a SQL dump IS a file,
+              and whoever cannot see it cannot register it. */}
           {data?.files.map((f) => (
             <button
               key={f.path}
@@ -507,8 +512,7 @@ function PathBrowser({ kind, onClose, onPick }: {
           ))}
           {data?.truncated && (
             <div className="px-3 py-2 text-[12px] text-[var(--sev-low)]">
-              Sehr viele Einträge — die Liste wurde gekürzt. Tippe den Pfad
-              unten direkt ein, wenn das Gesuchte fehlt.
+              {tr('evidence.truncated')}
             </div>
           )}
         </div>
@@ -516,13 +520,13 @@ function PathBrowser({ kind, onClose, onPick }: {
           <input
             value={path}
             onChange={(e) => setPath(e.target.value)}
-            placeholder="oder Pfad direkt eintippen"
+            placeholder={tr('evidence.typePath')}
             className="mono min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
           />
-          <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
+          <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
           <Button variant="primary" disabled={!picked && !data?.path && !path.trim()}
             onClick={() => onPick(picked || path || data!.path)}>
-            {picked ? 'Diese Datei verwenden' : 'Diesen Ordner verwenden'}
+            {picked ? tr('evidence.useFile') : tr('evidence.useFolder')}
           </Button>
         </div>
       </Card>

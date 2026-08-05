@@ -10,6 +10,7 @@ from pathlib import Path
 
 from server.engines import accesslog
 from server.engines.fsutil import open_text_auto
+from server.i18n import t
 
 MAX_DEPTH = 5
 MAX_DIRS = 4000
@@ -44,7 +45,7 @@ DUMP_MARKERS = ("CREATE TABLE", "INSERT INTO", "MySQL dump", "MariaDB dump",
 LOG_SUFFIXES = (".log", ".gz", ".bz2", ".txt", "")
 
 
-def _looks_like_dump(path):
+def _looks_like_dump(path, lang="en"):
     try:
         with open_text_auto(path) as f:
             head = f.read(SNIFF_BYTES)
@@ -53,7 +54,7 @@ def _looks_like_dump(path):
     hits = [m for m in DUMP_MARKERS if m.lower() in head.lower()]
     if not hits:
         return False, ""
-    return True, "enthält " + ", ".join(hits[:3])
+    return True, t(lang, "detect.contains") + " " + ", ".join(hits[:3])
 
 
 def _log_score(directory, files):
@@ -103,16 +104,16 @@ def _cms_score(directory, entries):
     return best
 
 
-def scan(folder):
+def scan(folder, lang="en"):
     """{"candidates": {kind: [...]}, "scanned": n, "truncated": bool, ...}"""
     root = Path(str(folder or "")).expanduser()
     out = {"candidates": {"webroot": [], "access_logs": [], "sql_dump": []},
            "scanned": 0, "truncated": False, "root": str(root), "error": ""}
     if not str(folder or "").strip():
-        out["error"] = "kein Ordner angegeben"
+        out["error"] = t(lang, "err.noFolder")
         return out
     if not root.is_dir():
-        out["error"] = f"{root} ist kein Verzeichnis"
+        out["error"] = f"{root} is not a directory"
         return out
 
     seen_dirs = 0
@@ -171,7 +172,7 @@ def scan(folder):
             if not low.endswith(DUMP_SUFFIXES):
                 continue
             path = here / name
-            ok, why = _looks_like_dump(path)
+            ok, why = _looks_like_dump(path, lang)
             if not ok:
                 continue
             try:

@@ -17,11 +17,10 @@ _STREAM_CHUNK = 1 << 20
 
 SQL_EXTS = (".sql", ".sql.gz", ".sql.bz2")
 
-# `#` gehört in die Zeichenklasse: Joomla-Erweiterungen liefern ihr SQL mit
-# dem Platzhalter-Präfix `#__` aus. Ohne ihn greift keine der beiden Regeln,
-# und eingeschleuster Code in einer manipulierten install.sql wäre für den
-# Scanner unsichtbar -- genau in der Datei, die bei der nächsten
-# Installation wieder anläuft.
+# `#` belongs in the character class: Joomla extensions ship their SQL with
+# the placeholder prefix `#__`. Without it neither of the two rules matches,
+# and injected code in a manipulated install.sql would be invisible to the
+# scanner -- in exactly the file that runs again on the next installation.
 INSERT_RE = re.compile(
     r"INSERT\s+(?:IGNORE\s+)?INTO\s+`?(?P<table>[A-Za-z0-9_$#]+)`?\s*"
     r"(?:\((?P<cols>[^)]*)\))?\s+VALUES",
@@ -56,17 +55,17 @@ RULES = [
      re.compile(r"(?i)document\s*\.\s*write\s*\(")),
 ]
 
-# --- Export oder mitgelieferte Schema-Datei? --------------------------------
-# Ein Webroot enthält Dutzende .sql-Dateien, die KEINE Datenbank-Exports sind:
-# jede Joomla-Erweiterung bringt install/uninstall/updates mit. Sie haben
-# keinen Export-Kopf, keine Daten und keine Konten -- in der Datenbank-Ansicht
-# verschütten sie den einen echten Export.
+# --- export or shipped schema file? -----------------------------------------
+# A webroot contains dozens of .sql files that are NOT database exports: every
+# Joomla extension brings install/uninstall/updates along. They have no export
+# header, no data and no accounts -- in the database view they bury the one
+# real export.
 #
-# Der verlässlichste Unterschied steht im Inhalt: Joomla schreibt in
-# Schema-Dateien den PLATZHALTER-PRÄFIX `#__`, den der Installer erst durch
-# das echte Tabellen-Präfix ersetzt. In einem mysqldump kommt er nie vor.
-# Der Pfad (.../<erweiterung>/sql/...) stützt das, entscheidet aber nicht
-# allein -- jemand kann einen echten Export dort ablegen.
+# The most reliable difference sits in the content: in schema files Joomla
+# writes the PLACEHOLDER PREFIX `#__`, which the installer only replaces with
+# the real table prefix. In a mysqldump it never occurs. The path
+# (.../<extension>/sql/...) supports this but does not decide on its own --
+# someone can put a real export there.
 _PREFIX_PLACEHOLDER = "#__"
 _SCHEMA_DIR_RE = re.compile(r"(?i)[\\/]sql[\\/]")
 _SCHEMA_NAME_RE = re.compile(
@@ -74,9 +73,9 @@ _SCHEMA_NAME_RE = re.compile(
 
 
 def classify_dump(path, meta, placeholder_seen, data_rows):
-    """'export' oder 'schema'. Im Zweifel 'export': eine Datei fälschlich als
-    Beiwerk einzustufen würde echte Evidence verstecken, umgekehrt steht sie
-    nur an der falschen Stelle."""
+    """'export' or 'schema'. When in doubt 'export': wrongly classifying a
+    file as incidental would hide real evidence, the other way round it
+    merely stands in the wrong place."""
     if any(meta.get(k) for k in ("tool", "database", "server", "created")):
         return "export"
     if placeholder_seen:
@@ -85,8 +84,8 @@ def classify_dump(path, meta, placeholder_seen, data_rows):
     if _SCHEMA_DIR_RE.search(path) and _SCHEMA_NAME_RE.match(name):
         return "schema"
     if not data_rows:
-        # Nur CREATE/DROP, keine einzige Datenzeile -- ein Export ohne Daten
-        # ist möglich, aber selten; ein Installationsskript ist genau das.
+        # Only CREATE/DROP, not a single data row -- an export without data
+        # is possible but rare; an installation script is exactly that.
         return "schema"
     return "export"
 
@@ -292,9 +291,9 @@ def _hash_type(pw):
     return "other" if pw else "-"
 
 
-# Ein Zeitstempel, den das CMS als "nie" schreibt. MySQL kennt dafür kein
-# NULL-Idiom, sondern die Null-Datumsangabe -- wer sie als Datum liest, hält
-# einen nie angemeldeten Admin für einen von 1899.
+# A timestamp the CMS writes for "never". MySQL has no NULL idiom for this
+# but a zero date -- whoever reads it as a date takes an admin who never
+# signed in for one from 1899.
 _NEVER = ("", "-", "0000-00-00 00:00:00", "0000-00-00", "1970-01-01 00:00:00")
 
 
@@ -304,13 +303,13 @@ def _clean_stamp(value):
 
 
 def _extract_users(table, rows, cms):
-    """(uid, login, email, registriert, hash, letzter_login, gesperrt).
+    """(uid, login, email, registered, hash, last_login, blocked).
 
-    Letzter Login und Sperrstatus stehen NUR dort, wo das CMS sie führt:
-    Joomla hat beides fest im Schema (lastvisitDate, block), WordPress hat
-    im Kern keinen letzten Login -- der kommt dort, wenn überhaupt, aus
-    usermeta eines Plugins und wird später ergänzt. Was fehlt, bleibt leer;
-    ein geratener Zeitstempel wäre schlimmer als keiner."""
+    Last login and block status only exist where the CMS carries them: Joomla
+    has both fixed in its schema (lastvisitDate, block), WordPress core has no
+    last login at all -- there it comes, if at all, from the usermeta of a
+    plugin and is added later. What is missing stays empty; a guessed
+    timestamp would be worse than none."""
     users = []
     for row in rows:
         if len(row) < 4:
@@ -319,8 +318,8 @@ def _extract_users(table, rows, cms):
         last, blocked = "", 0
         if cms == "WordPress" and _looks_wordpress(row):
             login, pw, email, reg = row[1], row[2], row[4], row[6]
-            # user_status: im Kern kaum genutzt, aber wenn gesetzt, dann als
-            # Sperre gemeint.
+            # user_status: barely used in core, but when set, meant as a
+            # block.
             if len(row) > 8:
                 try:
                     blocked = 1 if int(str(row[8]).strip() or 0) else 0
@@ -350,15 +349,15 @@ def _extract_users(table, rows, cms):
     return users
 
 
-# WordPress führt den letzten Login nicht im Kern. Was es gibt, steht in
-# usermeta -- entweder als Plugin-Feld oder als aktive Sitzung. Beides ist
-# eine Aussage: "war zuletzt da" bzw. "ist GERADE angemeldet".
+# WordPress does not carry the last login in core. What exists sits in
+# usermeta -- either as a plugin field or as an active session. Both are a
+# statement: "was last here" resp. "is signed in RIGHT NOW".
 _LAST_LOGIN_KEYS = ("last_login", "wfls-last-login", "last_activity",
                     "wp_last_login", "_last_login")
 
 
 def _wp_user_meta_signals(rows):
-    """user_id -> {"last": str, "sessions": int} aus der usermeta-Tabelle."""
+    """user_id -> {"last": str, "sessions": int} from the usermeta table."""
     out = {}
     for row in rows:
         if len(row) < 4:
@@ -599,8 +598,9 @@ def _scan_dump(path, size, total_size, done_before, ctx):
         for uid, login, email, reg, htype, last, blocked in _extract_users(
                 table, rows, tbl_cms):
             admin = (uid in wp_admin_ids) or (uid in joomla_super_ids)
-            # NICHT `meta` nennen: in dieser Funktion sind das die Kopfdaten
-            # des Dumps, und die stehen weiter unten im Rückgabewert.
+            # Do NOT call this `meta`: in this function that is the header
+            # data of the dump, which appears further down in the return
+            # value.
             signals = wp_meta.get(uid, {})
             accounts.append(_Account(tbl_cms, table, uid, login, email, reg,
                                      htype, admin,

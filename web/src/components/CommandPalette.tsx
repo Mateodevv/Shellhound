@@ -1,15 +1,16 @@
-// CommandPalette.tsx — EIN Feld über den ganzen Fall (Strg+K).
+// CommandPalette.tsx -- ONE field across the whole case (Ctrl+K).
 //
-// Mit neun Ansichten wird „wo war nochmal…" zur echten Reibung, und die
-// Antwort liegt immer in genau einer davon. Die Palette ist ein
-// SPRUNGBRETT, keine Ergebnisliste: jede Gruppe ist hart gedeckelt, ein
-// Treffer öffnet das Artefakt-Fenster direkt oder springt in die Ansicht.
+// With nine views, "where was that again…" turns into real friction, and the
+// answer always sits in exactly one of them. The palette is a SPRINGBOARD,
+// not a result list: every group is hard-capped, and a hit either opens the
+// artifact window directly or jumps into the view.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Box, CornerDownLeft, Search, User, Users } from 'lucide-react'
 import { api } from '../api'
-import { TRIAGE_LABEL, formatCount } from '../format'
+import { formatCount } from '../format'
 import { KIND_ICON } from '../artifactKinds'
 import { SeverityBadge, TriageBadge } from './ui'
 import type { ArtifactStub } from './ArtifactWindow'
@@ -37,6 +38,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
   gotoView: (v: ViewId) => void
   onOpenArtifact: (stub: ArtifactStub) => void
 }) {
+  const tr = useT()
   const [q, setQ] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -45,7 +47,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     if (open) {
       setQ('')
       setCursor(0)
-      // Nach dem Rendern fokussieren — die Palette ist eine Tastatur-Sache.
+      // Focus after rendering -- the palette is a keyboard affair.
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [open])
@@ -65,13 +67,13 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
       const Icon = KIND_ICON[a.artifact_kind] ?? Box
       out.push({
         key: `art:${a.artifact}`,
-        group: 'Artefakte',
+        group: tr('nav.findings'),
         render: (
           <>
             <Icon size={14} className="shrink-0 text-[var(--muted)]" />
             <span className="mono min-w-0 flex-1 truncate">{a.artifact}</span>
             <SeverityBadge severity={a.worst} />
-            <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+            <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
           </>
         ),
         run: () => onOpenArtifact({
@@ -85,7 +87,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const a of data.actors) {
       out.push({
         key: `actor:${a.ip}`,
-        group: 'Actors',
+        group: tr('nav.actors'),
         render: (
           <>
             <Users size={14} className="shrink-0 text-[var(--muted)]" />
@@ -96,7 +98,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
             </span>
           </>
         ),
-        // Ein Actor IST das Client-Artefakt — dasselbe Fenster wie überall.
+        // An actor IS the client artifact -- the same window as everywhere.
         run: () => onOpenArtifact({
           artifact: a.ip, artifact_kind: 'client', worst: 3,
           triage: 'new', triage_note: '',
@@ -106,7 +108,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const i of data.iocs) {
       out.push({
         key: `ioc:${i.id}`,
-        group: 'IOC Box',
+        group: tr('nav.iocbox'),
         render: (
           <>
             <Box size={14} className="shrink-0 text-[var(--muted)]" />
@@ -120,7 +122,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     for (const a of data.accounts) {
       out.push({
         key: `acc:${a.id}`,
-        group: 'Konten',
+        group: tr('nav.database'),
         render: (
           <>
             <User size={14} className="shrink-0 text-[var(--muted)]" />
@@ -137,7 +139,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
       })
     }
     return out
-  }, [data, gotoView, onOpenArtifact])
+  }, [data, gotoView, onOpenArtifact, tr])
 
   useEffect(() => { setCursor(0) }, [items.length, q])
 
@@ -172,7 +174,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
                 pick(items[cursor])
               }
             }}
-            placeholder="IP, Pfad, Hash, Login, Tabelle … (mind. 2 Zeichen)"
+            placeholder={tr('palette.placeholder')}
             className="min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--muted)]"
           />
           <span className="shrink-0 rounded border border-[var(--line)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
@@ -206,12 +208,12 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
           })}
           {q.trim().length >= 2 && data && !items.length && (
             <div className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
-              Nichts gefunden — auch das ist eine Aussage.
+              {tr('palette.nothing')}
             </div>
           )}
           {q.trim().length < 2 && (
             <div className="px-4 py-6 text-center text-[12px] text-[var(--muted)]">
-              Sucht in Artefakten, Indikatoren, Actors und Konten dieses Falls.
+              {tr('palette.scope')}
             </div>
           )}
         </div>

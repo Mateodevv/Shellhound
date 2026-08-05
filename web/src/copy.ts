@@ -1,10 +1,10 @@
-// copy.ts — in die Zwischenablage, mit Rückfallweg.
+// copy.ts -- to the clipboard, with a fallback.
 //
-// `navigator.clipboard` gibt es nur in einem "secure context". Localhost
-// zählt dazu, ein LAN-Bind über http NICHT — und genau den unterstützt
-// dieses Werkzeug (`--host 0.0.0.0 --token …`, wenn die Forensik-VM von
-// einem anderen Rechner aus bedient wird). Ohne den Rückfallweg täte jeder
-// Kopier-Knopf dort wortlos nichts.
+// `navigator.clipboard` only exists in a "secure context". Localhost counts
+// as one, a LAN bind over http does NOT -- and that is exactly what this
+// tool supports (`--host 0.0.0.0 --token …`, when the forensic VM is
+// operated from another machine). Without the fallback every copy button
+// there would silently do nothing.
 export async function copyText(value: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
@@ -12,7 +12,7 @@ export async function copyText(value: string): Promise<boolean> {
       return true
     }
   } catch {
-    // weiter zum alten Weg — auch ein verweigertes Recht landet hier
+    // on to the old route -- a denied permission also lands here
   }
   try {
     const ta = document.createElement('textarea')

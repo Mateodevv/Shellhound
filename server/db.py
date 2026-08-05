@@ -19,6 +19,13 @@ from pathlib import Path
 CASE_DB = "case.db"
 LOG_DB = "logindex.db"
 
+# How long a connection waits on a held lock before giving up. Generous,
+# because an engine may well hold a write transaction for seconds -- better
+# to wait than to abort the analyst's request. The tests turn the value down;
+# otherwise a test that deliberately provokes a lock would stand around for
+# minutes.
+BUSY_TIMEOUT_MS = 30000
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT
@@ -82,22 +89,22 @@ CREATE TABLE IF NOT EXISTS iocs (
     origin TEXT NOT NULL DEFAULT '',
     added TEXT NOT NULL
 );
--- WIE ZWEI INDIKATOREN ZUSAMMENHÄNGEN.
--- Ein Hash und der Pfad, dessen Datei er beschreibt, entstehen im selben
--- Moment aus demselben Fund -- bisher überlebte davon nur der Satz
--- "sha-256 of kb-media.php" im origin-Feld. Das ist Prosa: sie liest sich
--- gut und lässt sich nicht auswerten. Die Kante hier hält dieselbe Aussage
--- so fest, dass der Export sie mit hinausträgt (STIX kennt dafür
--- relationship-Objekte) und die Box sie am Eintrag zeigen kann.
+-- HOW TWO INDICATORS BELONG TOGETHER.
+-- A hash and the path whose file it describes come into being in the same
+-- moment from the same find -- until now only the sentence
+-- "sha-256 of kb-media.php" in the origin field survived that. This is
+-- prose: it reads well and cannot be evaluated. The edge here records the
+-- same statement in a form the export carries out with it (STIX has
+-- relationship objects for this) and the box can show on the entry.
 --
--- ALLE Kanten entstehen automatisch beim Einsammeln. Es gibt bewusst kein
--- "verknüpfe diese beiden von Hand": eine Kante, die der Analyst pflegen
--- muss, wird nach dem dritten Fall nicht mehr gepflegt. Und sie trägt nur
--- Information, wenn sie SPEZIFISCH ist -- "gehört zum selben Fall" gilt für
--- jedes Paar in dieser Tabelle und sagt deshalb nichts.
+-- ALL edges arise automatically on collection. There is deliberately no
+-- "link these two by hand": an edge the analyst has to maintain will not be
+-- maintained after the third case. And it only carries information when it
+-- is SPECIFIC -- "belongs to the same case" holds for every pair in this
+-- table and therefore says nothing.
 CREATE TABLE IF NOT EXISTS ioc_links (
     id INTEGER PRIMARY KEY,
-    src INTEGER NOT NULL,              -- iocs.id, die Aussage geht von hier aus
+    src INTEGER NOT NULL,              -- iocs.id, the statement starts here
     dst INTEGER NOT NULL,              -- iocs.id
     kind TEXT NOT NULL,                -- hash-of | requested | host-in
     note TEXT NOT NULL DEFAULT '',
@@ -111,10 +118,9 @@ CREATE TABLE IF NOT EXISTS cms_installs (
     root TEXT UNIQUE NOT NULL,
     cms TEXT NOT NULL,
     version TEXT NOT NULL DEFAULT '',
-    -- Die Datei, AUS DER die Version gelesen wurde (wp-includes/version.php
-    -- bzw. libraries/.../version.php). Ohne sie ist die Versionsangabe nicht
-    -- nachprüfbar -- und eine Angabe, die man nicht prüfen kann, gehört in
-    -- keinen Bericht.
+    -- The file the version was READ FROM (wp-includes/version.php resp.
+    -- libraries/.../version.php). Without it the version cannot be verified
+    -- -- and a fact that cannot be checked belongs in no report.
     version_source TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS cms_items (
@@ -124,19 +130,19 @@ CREATE TABLE IF NOT EXISTS cms_items (
     name TEXT NOT NULL,
     slug TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL DEFAULT '',
-    -- Wo die Extension LIEGT (Verzeichnis oder Einzeldatei) ...
+    -- Where the extension SITS (directory or single file) ...
     path TEXT NOT NULL DEFAULT '',
-    -- ... und woraus die Version stammt: Manifest-XML, style.css,
-    -- Plugin-Header. Leer, wenn keine Version zu finden war.
+    -- ... and where the version comes from: manifest XML, style.css,
+    -- plugin header. Empty when no version could be found.
     version_source TEXT NOT NULL DEFAULT ''
 );
--- KORREKTUREN DES ANALYSTEN, GETRENNT VON DER MESSUNG.
--- cms_items/cms_installs sind abgeleitet: jede Analyse löscht und schreibt
--- sie neu. Eine von Hand gesetzte Version ist das Gegenteil davon -- sie ist
--- eine Aussage des Analysten und darf durch eine Re-Analyse nicht
--- verschwinden. Deshalb steht sie in einer eigenen Tabelle und wird beim
--- Lesen über die gemessene Version gelegt; der Messwert bleibt daneben
--- sichtbar, damit die Korrektur nachvollziehbar ist.
+-- CORRECTIONS BY THE ANALYST, SEPARATE FROM THE MEASUREMENT.
+-- cms_items/cms_installs are derived: every analysis deletes and rewrites
+-- them. A version set by hand is the opposite of that -- it is a statement
+-- of the analyst and must not disappear through a re-analysis. It therefore
+-- sits in its own table and is laid over the measured version on read; the
+-- measured value stays visible next to it so the correction can be
+-- followed.
 CREATE TABLE IF NOT EXISTS cms_version_overrides (
     id INTEGER PRIMARY KEY,
     scope TEXT NOT NULL,               -- install | item
@@ -153,13 +159,13 @@ CREATE TABLE IF NOT EXISTS db_dumps (
     statements INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0,
     cms TEXT NOT NULL DEFAULT '',
-    -- export = ein echter Datenbank-Export (mysqldump/phpMyAdmin).
-    -- schema = eine mit einer Erweiterung AUSGELIEFERTE SQL-Datei
-    --          (install/uninstall/updates). Sie enthält keine Daten und
-    --          keinen Export-Kopf; als Datenbank-Evidence ist sie wertlos
-    --          und verschüttet in der Ansicht den einen echten Export.
-    --          Geprüft wird sie trotzdem: eine manipulierte install.sql
-    --          läuft bei der nächsten Installation wieder an.
+    -- export = a real database export (mysqldump/phpMyAdmin).
+    -- schema = a SQL file SHIPPED with an extension
+    --          (install/uninstall/updates). It contains no data and no
+    --          export header; as database evidence it is worthless and in
+    --          the view it buries the one real export. It is scanned all
+    --          the same: a manipulated install.sql runs again on the next
+    --          installation.
     kind TEXT NOT NULL DEFAULT 'export'
 );
 CREATE TABLE IF NOT EXISTS db_tables (
@@ -182,19 +188,20 @@ CREATE TABLE IF NOT EXISTS db_accounts (
     registered TEXT NOT NULL DEFAULT '',
     hash_type TEXT NOT NULL DEFAULT '',
     admin INTEGER NOT NULL DEFAULT 0,
-    -- Leer heißt NICHT "nie angemeldet", sondern "der Dump sagt es nicht":
-    -- Joomla führt lastvisitDate im Schema, WordPress im Kern gar nicht.
+    -- Empty does NOT mean "never signed in" but "the dump does not say":
+    -- Joomla carries lastvisitDate in its schema, WordPress core not at
+    -- all.
     last_login TEXT NOT NULL DEFAULT '',
     blocked INTEGER NOT NULL DEFAULT 0,
-    -- Eine offene Sitzung im Dump: das Konto war zum Zeitpunkt des Exports
-    -- angemeldet.
+    -- An open session in the dump: the account was signed in at the time
+    -- of the export.
     sessions INTEGER NOT NULL DEFAULT 0
 );
--- Wonach in DIESEM Fall gesucht wurde. Die Muster selbst leben im Workspace
--- (server/patterns.py) und gelten fallübergreifend; hier steht das Protokoll:
--- welches Muster wann lief und was es fand. Ein Lauf OHNE Treffer ist dabei
--- die wertvollere Zeile -- "wir haben darauf geprüft, es war nichts" steht
--- sonst nirgends, weil Findings nur Funde festhalten.
+-- What was searched for in THIS case. The patterns themselves live in the
+-- workspace (server/patterns.py) and hold across cases; here stands the
+-- record: which pattern ran when, and what it found. A run WITHOUT hits is
+-- the more valuable row -- "we checked for this, there was nothing" is
+-- written down nowhere else, because findings only record finds.
 CREATE TABLE IF NOT EXISTS hunt_runs (
     id INTEGER PRIMARY KEY,
     pattern TEXT NOT NULL,
@@ -203,9 +210,9 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     hits INTEGER NOT NULL DEFAULT 0,
     ok_hits INTEGER NOT NULL DEFAULT 0,
     clients INTEGER NOT NULL DEFAULT 0,
-    -- Die Kennzahlen des Laufs, damit das Protokoll ohne einen zweiten Lauf
-    -- aussagt, was gefunden wurde. ok_clients ist die Zahl, die zählt: wie
-    -- viele Adressen kamen durch, nicht wie oft geklopft wurde.
+    -- The key figures of the run, so the record states what was found
+    -- without a second run. ok_clients is the number that counts: how many
+    -- addresses got through, not how often someone knocked.
     ok_clients INTEGER NOT NULL DEFAULT 0,
     uris INTEGER NOT NULL DEFAULT 0,
     first_epoch INTEGER,
@@ -213,13 +220,13 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     tz INTEGER NOT NULL DEFAULT 0,
     UNIQUE(pattern)
 );
--- Das Ergebnis des letzten Webroot-Vergleichs (engines/webrootdiff.py).
--- Eine Ableitung aus zwei Bäumen, keine Historie: jeder Lauf ersetzt den
--- vorherigen. Pfade relativ zum jeweiligen Root, mit /.
+-- The result of the last webroot comparison (engines/webrootdiff.py).
+-- A derivation from two trees, not a history: every run replaces the
+-- previous one. Paths relative to the respective root, with /.
 CREATE TABLE IF NOT EXISTS webroot_diff (
     id INTEGER PRIMARY KEY,
-    webroot_id INTEGER NOT NULL,       -- evidence.id des Webroots
-    reference_id INTEGER NOT NULL,     -- evidence.id der Referenzkopie
+    webroot_id INTEGER NOT NULL,       -- evidence.id of the webroot
+    reference_id INTEGER NOT NULL,     -- evidence.id of the reference copy
     status TEXT NOT NULL,              -- extra | missing | modified | too_big
     path TEXT NOT NULL,
     size INTEGER NOT NULL DEFAULT 0,
@@ -288,26 +295,26 @@ _ADDED_COLUMNS = {
 }
 
 
-# Die Fassung des Fall-Schemas. HOCHZÄHLEN, wenn SCHEMA, _ADDED_COLUMNS
-# oder eine der Datenkorrekturen in _upgrade() sich ändert -- daran erkennt
-# eine bestehende Fall-Datenbank, dass sie einmal angefasst werden muss.
+# The version of the case schema. BUMP IT when SCHEMA, _ADDED_COLUMNS or one
+# of the data corrections in _upgrade() changes -- that is how an existing
+# case database recognises that it has to be touched once.
 CASE_SCHEMA_VERSION = 1
 
 
 def _stored_version(conn):
-    """Die Fassung, auf der diese Datei steht. 0 = neu oder von vor der
-    Versionierung. Reiner Lesezugriff -- er darf niemals blockieren."""
+    """The version this file stands at. 0 = new, or from before versioning.
+    Read-only -- it must never block."""
     try:
         row = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         return int(row[0]) if row and str(row[0]).isdigit() else 0
     except sqlite3.Error:
-        # meta gibt es noch nicht: frische Datei.
+        # `meta` does not exist yet: a fresh file.
         return 0
 
 
 def _is_fresh(conn):
-    """Hat diese Datei überhaupt schon Tabellen? Reiner Lesezugriff."""
+    """Does this file have any tables at all yet? Read-only."""
     row = conn.execute(
         "SELECT count(*) FROM sqlite_master WHERE type = 'table' "
         "AND name = 'findings'").fetchone()
@@ -315,8 +322,8 @@ def _is_fresh(conn):
 
 
 def _upgrade(conn):
-    """Schema anlegen und Datenkorrekturen nachziehen -- der EINZIGE Pfad,
-    auf dem eine Verbindung schreibt, bevor der Aufrufer etwas will."""
+    """Create the schema and bring data corrections along -- the ONLY path on
+    which a connection writes before the caller wants anything."""
     conn.executescript(SCHEMA)
     for table, columns in _ADDED_COLUMNS.items():
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -341,13 +348,12 @@ def _upgrade(conn):
 
 
 def _relativize_ioc_paths(conn):
-    """Pfad-IOCs aus früheren Läufen auf die fallrelative Form bringen.
+    """Bring path IOCs from earlier runs into the case-relative form.
 
-    Ein Fall soll nicht halb absolute, halb relative Pfade führen. Läuft
-    idempotent (ein bereits relativer Pfad passt auf keine Wurzel mehr) und
-    weicht jedem Konflikt aus: existiert der Zielwert schon, bleibt der alte
-    Eintrag, wie er ist -- ein Datenverlust wäre schlimmer als zwei
-    Schreibweisen."""
+    A case should not carry half absolute, half relative paths. Runs
+    idempotently (an already relative path no longer matches any root) and
+    steps around every conflict: if the target value already exists, the old
+    entry stays as it is -- losing data would be worse than two spellings."""
     try:
         rows = conn.execute(
             "SELECT id, value FROM iocs WHERE type = 'path'").fetchall()
@@ -367,24 +373,23 @@ def _relativize_ioc_paths(conn):
 def connect(case_dir):
     """Open (and if needed create) the case database.
 
-    ÖFFNEN DARF NICHT SCHREIBEN. Diese Funktion läuft bei JEDER Anfrage --
-    auch bei rein lesenden wie der Job-Liste, die die Oberfläche im
-    Sekundentakt abfragt, solange eine Analyse läuft. Solange sie
-    bedingungslos Schema und Datenkorrekturen schrieb, traf jede dieser
-    Leseanfragen auf die Schreibsperre der laufenden Engine und starb mit
-    "database is locked" -- mitten in der Arbeit, sichtbar als Absturz im
-    Server-Fenster.
+    OPENING MUST NOT WRITE. This function runs on EVERY request -- including
+    purely reading ones such as the job list the interface polls once per
+    second while an analysis runs. As long as it wrote schema and data
+    corrections unconditionally, every one of those read requests met the
+    write lock of the running engine and died with "database is locked" --
+    in the middle of the work, visible as a crash in the server window.
 
-    Geschrieben wird deshalb nur noch, wenn die gespeicherte Fassung von
-    CASE_SCHEMA_VERSION abweicht: einmal je Fall statt einmal je Anfrage.
-    Der Normalfall ist damit reines Lesen und kollidiert mit nichts."""
+    A write therefore only happens when the stored version differs from
+    CASE_SCHEMA_VERSION: once per case instead of once per request. The
+    normal path is thereby read-only and collides with nothing."""
     path = case_db_path(case_dir)
-    conn = sqlite3.connect(str(path), timeout=30)
-    # Ausdrücklich, nicht nur über `timeout`: SQLite wartet damit auf eine
-    # belegte Sperre, statt sofort aufzugeben.
-    conn.execute("PRAGMA busy_timeout = 30000")
-    # WAL nur setzen, wenn nötig -- der Wechsel des Journal-Modus verlangt
-    # kurz exklusiven Zugriff, das Auslesen nicht.
+    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
+    # Explicitly, not only via `timeout`: this makes SQLite wait on a held
+    # lock instead of giving up immediately.
+    conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_MS)}")
+    # Set WAL only when needed -- switching the journal mode briefly requires
+    # exclusive access, reading it does not.
     if (conn.execute("PRAGMA journal_mode").fetchone() or [""])[0] != "wal":
         conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -392,18 +397,17 @@ def connect(case_dir):
 
     if _stored_version(conn) != CASE_SCHEMA_VERSION:
         if _is_fresh(conn):
-            # Ohne Tabellen kann der Aufrufer nichts tun -- hier MUSS
-            # geschrieben werden, und ein Fehler gehört nach oben.
+            # Without tables the caller can do nothing -- here a write MUST
+            # happen, and an error belongs upstairs.
             _upgrade(conn)
         else:
             try:
                 _upgrade(conn)
             except sqlite3.OperationalError:
-                # Die Aktualisierung ist WARTUNG, keine Antwort auf die
-                # Frage des Aufrufers. Hält gerade eine Engine die
-                # Schreibsperre, bekommt sie den nächsten Versuch -- die
-                # laufende Leseanfrage scheitert deswegen nicht. Die
-                # Tabellen stehen bereits.
+                # The upgrade is MAINTENANCE, not an answer to the caller's
+                # question. If an engine currently holds the write lock, the
+                # upgrade gets the next attempt -- the running read request
+                # does not fail because of it. The tables are already there.
                 conn.rollback()
     return conn
 
@@ -447,12 +451,12 @@ def _norm(path):
 
 
 def evidence_bases(conn):
-    """Je registrierter Evidence-Wurzel: (Wurzel, Basis).
+    """Per registered evidence root: (root, base).
 
-    Die BASIS ist der Ordner ÜBER der Wurzel -- so bleibt deren eigener Name
-    im relativen Pfad stehen (`webroot/images/shell.php`, nicht
-    `images/shell.php`). Der Ordnername sagt, um welche Evidence es geht,
-    und bei zwei Webroots im selben Fall ist er der Unterschied."""
+    The BASE is the folder ABOVE the root -- that way the root's own name
+    stays in the relative path (`webroot/images/shell.php`, not
+    `images/shell.php`). The folder name says which evidence this is about,
+    and with two webroots in the same case it is the difference."""
     out = []
     for row in conn.execute("SELECT path FROM evidence"):
         root = _norm(row[0])
@@ -460,19 +464,19 @@ def evidence_bases(conn):
             continue
         base = root.rsplit("/", 1)[0] if "/" in root else ""
         out.append((root, base))
-    # Längste Wurzel zuerst: liegt ein Webroot IN einem anderen Pfad, gewinnt
-    # der spezifischere.
+    # Longest root first: if a webroot lies INSIDE another path, the more
+    # specific one wins.
     return sorted(out, key=lambda p: -len(p[0]))
 
 
 def case_relative_path(conn, path):
-    """`webroot/images/shell.php` statt `D:/Arbeit/Kopien/webroot/images/…`.
+    """`webroot/images/shell.php` instead of `D:/Work/copies/webroot/images/…`.
 
-    Der absolute Pfad beschreibt, wo die KOPIE auf dem Rechner des Analysten
-    liegt -- eine Angabe, die in einem Bericht niemandem hilft und die auf
-    einem anderen Rechner falsch ist. Relevant ist, wo die Datei im Webroot
-    lag. Passt keine Evidence-Wurzel, bleibt der Wert unverändert: lieber ein
-    absoluter Pfad als ein erfundener."""
+    The absolute path describes where the COPY sits on the analyst's machine
+    -- a fact that helps nobody in a report and that is wrong on another
+    machine. What matters is where the file sat in the webroot. If no
+    evidence root matches, the value stays unchanged: better an absolute path
+    than an invented one."""
     norm = _norm(path)
     low = norm.lower()
     for root, base in evidence_bases(conn):
@@ -485,10 +489,9 @@ def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
     """Insert an IOC or merge tags into the existing entry. Existing type and
     note win -- the analyst's correction must never be overwritten by a sync.
 
-    Gibt die id zurück (auch beim Zusammenführen), damit der Aufrufer die
-    Kante zum Nachbar-Indikator ziehen kann: Pfad und Hash entstehen in
-    derselben Schleife, und nur dort ist noch bekannt, dass sie
-    zusammengehören."""
+    Returns the id (on a merge as well) so the caller can draw the edge to
+    the neighbouring indicator: path and hash come into being in the same
+    loop, and only there is it still known that they belong together."""
     value = str(value).strip()
     if not value:
         return None
@@ -506,11 +509,11 @@ def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
 
 
 def link_iocs(conn, src_id, dst_id, kind, note=""):
-    """Eine Kante zwischen zwei Indikatoren ziehen.
+    """Draw an edge between two indicators.
 
-    Verträgt None auf beiden Seiten: der Aufrufer hat add_ioc-Ergebnisse in
-    der Hand, und ein leerer Wert liefert dort None. Eine Kante auf sich
-    selbst wäre eine Aussage ohne Inhalt und fällt ebenfalls weg."""
+    Tolerates None on both sides: the caller holds add_ioc results, and an
+    empty value yields None there. An edge onto itself would be a statement
+    without content and is dropped as well."""
     if not src_id or not dst_id or src_id == dst_id:
         return
     conn.execute(
@@ -519,11 +522,11 @@ def link_iocs(conn, src_id, dst_id, kind, note=""):
 
 
 def ioc_links(conn):
-    """Alle Kanten mit den Werten beider Enden.
+    """All edges with the values of both ends.
 
-    Der INNER JOIN ist zugleich die Aufräumfunktion: eine Kante, deren
-    Indikator gelöscht wurde, verschwindet aus jeder Ansicht, ohne dass ein
-    Löschpfad daran gedacht haben muss."""
+    The INNER JOIN doubles as the cleanup: an edge whose indicator was
+    deleted disappears from every view without any delete path having had to
+    think of it."""
     return rows(conn, """
         SELECT l.id, l.kind, l.note, l.added,
                l.src AS src_id, s.value AS src_value, s.type AS src_type,

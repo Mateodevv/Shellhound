@@ -1,14 +1,15 @@
-// FileViewer.tsx — die betroffene Datei ansehen: Raw und Hex.
+// FileViewer.tsx -- looking at the file in question: raw and hex.
 //
-// Der Inhalt kommt als JSON-Daten vom Server und wird hier als TEXT
-// gerendert. Er wird nie als Dokument geladen: eine bösartige .html aus
-// einem kompromittierten Webroot ist hier eine Zeichenkette in einem <pre>,
-// keine Seite, die der Browser ausführt.
+// The content comes from the server as JSON data and is rendered here as
+// TEXT. It is never loaded as a document: a malicious .html from a
+// compromised webroot is a string in a <pre> here, not a page the browser
+// executes.
 //
-// Große Dateien werden seitenweise gelesen (256 KB Raw, 16 KB Hex), damit
-// ein 200-MB-Log den Browser nicht umbringt. Die Seite sagt immer, welcher
-// BYTE-BEREICH gerade zu sehen ist — bei Evidence ist "ich sehe Teil X von
-// Y" eine Aussage, die man belegen können muss.
+// Large files are read page by page (256 KB raw, 16 KB hex), so that a
+// 200 MB log does not kill the browser. The page always says which BYTE
+// RANGE is currently visible -- with evidence, "I am looking at part X of Y"
+// is a statement one has to be able to back up.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -22,10 +23,11 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   path: string | null
   focusLine?: number | null
   onClose: () => void
-  /** Standardmäßig ganz vorne: der Viewer wird fast immer AUS einem
-   *  Artefakt-Detail heraus geöffnet und muss darüber liegen. */
+  /** In front by default: the viewer is almost always opened FROM an
+   *  artifact detail and has to lie above it. */
   layer?: number
 }) {
+  const tr = useT()
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
   const [offset, setOffset] = useState(0)
 
@@ -51,7 +53,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
           <span className="mono truncate">{name}</span>
           {data && <Tag>{formatBytes(data.size)}</Tag>}
-          {data?.binary && <Tag tone="warn" explain="Die Datei enthält Null-Bytes — sie ist keine reine Textdatei. Die Hex-Ansicht zeigt sie unverfälscht.">binär</Tag>}
+          {data?.binary && <Tag tone="warn" explain={tr('viewer.binary.hint')}>{tr('viewer.binary')}</Tag>}
         </span>
       }>
       <div className="flex flex-col gap-3">
@@ -81,7 +83,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
                 <ChevronLeft size={14} />
               </Button>
               <span className="tabular whitespace-nowrap">
-                Seite {page} / {pages}
+                {tr('viewer.page')} {page} / {pages}
               </span>
               <Button variant="ghost" disabled={data.eof}
                 onClick={() => setOffset(offset + data.window)}>
@@ -92,14 +94,14 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
 
           {data && (
             <span className="tabular text-[11.5px] text-[var(--muted)]">
-              Byte {formatCount(data.offset)}–{formatCount(data.offset + data.length)}
-              {' von '}{formatCount(data.size)}
-              {isFetching && ' · lädt…'}
+              {tr('viewer.byte')} {formatCount(data.offset)}–{formatCount(data.offset + data.length)}
+              {' '}{tr('viewer.of')}{' '}{formatCount(data.size)}
+              {isFetching && ` · ${tr('common.loading')}`}
             </span>
           )}
 
           <span className="ml-auto">
-            <CopyButton value={path} label="Pfad kopieren" />
+            <CopyButton value={path} label={tr('copy.path')} />
           </span>
         </div>
 
@@ -145,8 +147,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
 
         {data && data.from_line == null && data.mode === 'raw' && (
           <p className="text-[11px] text-[var(--muted)]">
-            Diese Seite beginnt mitten in der Datei — Zeilennummern wären geraten
-            und werden deshalb nicht angezeigt. Die Byte-Angabe oben ist exakt.
+            {tr('viewer.midFile')}
           </p>
         )}
       </div>

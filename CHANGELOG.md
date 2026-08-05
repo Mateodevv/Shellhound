@@ -1,594 +1,638 @@
 # Changelog
 
-Alle nennenswerten Änderungen an SHELLHOUND. Format nach
-[Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
-nach [Semantic Versioning](https://semver.org/lang/de/).
+All notable changes to SHELLHOUND. Format after
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning after
+[Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added — test suite
+
+The sample case served the CI as an end-to-end test. With its removal the CI
+only checked that everything imports — and the very class of bug that last
+hit a user is not something an import test finds.
+
+`tests/` therefore builds its own evidence: tiny invented files, each of
+which triggers **exactly one rule**. A failure thereby names the broken rule
+instead of pointing at a large lump of data. It needs no additional
+dependencies (`python -m unittest discover -s tests -t .`).
+
+- **21 engine tests**: webshell scan, CMS inventory with version source, SQL
+  dump with accounts and injected code, log index with trace, actor
+  behaviour and pattern hunt. Among them a **false-positive guard**: a
+  genuine CMS file with its bootstrap guard has to stay clean, otherwise the
+  suite would also pass a scanner that flags everything.
+- **7 database tests**, among them two regression guards for the locking bug
+  from 0.1.1: opening must not leave a transaction open **and** must write
+  nothing on an up-to-date case (checked via `total_changes`). Both were
+  verified against the deliberately reverted fix — a regression test that
+  does not catch the bug is worthless.
+- `BUSY_TIMEOUT_MS` became configurable so the locking test can turn it
+  down. At the production value it would not report the bug but sit out the
+  lock for two and a half minutes and then pass.
+- The CI runs the suite on Linux and Windows with Python 3.10 and 3.13.
+
+### Added — English interface, switchable at runtime
+
+English is the project language now: interface, documentation and
+everything the code writes down. German remains as a complete translation
+and can be switched from the sidebar at any time.
+
+- Flat, dotted catalogues (`web/src/i18n/`) in the frontend and
+  `server/i18n.py` for the prose the server assembles — the chronology of a
+  case, the GeoIP descriptions, the observations on an account, the API
+  error messages. A key can be grepped across both halves.
+- The language travels in the `X-Lang` header on every API call; a download
+  link cannot set headers and gets `?lang=` instead.
+- Switching the language drops the query cache. Without that the chronology
+  would stay in the old language until it happened to go stale.
+- The GeoIP cache is now keyed by (language, address); country names come
+  from the MMDB in the requested language.
+- **What gets stored stays English**: the origin of an indicator, the
+  evidence line of a finding, the detail of an alert, the relationship
+  labels in the exports, the progress messages of the jobs. Those travel
+  into the case archive and into reports, and an archive whose wording
+  depends on the language selected at the time of a click is worthless as
+  evidence.
+- README, SECURITY.md, `docs/rules.md`, the release notes and this changelog
+  are in English, and so are the comments in the source. The reasoning for
+  the decisions lives in those comments; in German they were the point at
+  which most readers closed the tab.
+- `tests/test_i18n.py` guards both catalogues: every server key has every
+  language, the placeholders agree across languages, and `en.ts` and `de.ts`
+  cover the same keys. A key only one side knows shows up as a raw dotted
+  name in the interface, and nobody notices until someone switches the
+  language.
+
+### Removed — sample case
+
+`tools/sample_case.py` and `tools/ci_check.py`. The demo case was a user
+feature; the quality assurance it happened to provide now sits in `tests/`
+as developer infrastructure.
 
 ## [0.1.1] — 2026-08-05
 
-### Behoben — „database is locked" während einer laufenden Analyse
+### Fixed — "database is locked" during a running analysis
 
-Jede geöffnete Datenbankverbindung schrieb, bevor der Aufrufer irgendetwas
-wollte: `connect()` legte bedingungslos das Schema an und zog zwei
-Datenkorrekturen nach (Scanner-Findings auf INFO herabstufen, IOC-Pfade
-relativieren). Damit begann **jede Anfrage** mit einer Schreib-Transaktion
-— auch eine rein lesende wie die Job-Liste, die die Oberfläche im
-Sekundentakt abfragt, solange eine Analyse läuft.
+Every opened database connection wrote before the caller wanted anything:
+`connect()` created the schema unconditionally and applied two data
+corrections (downgrade scanner findings to INFO, relativise IOC paths). So
+**every request** began with a write transaction — even a read-only one such
+as the job list the interface polls once per second while an analysis runs.
 
-Trifft diese Transaktion auf die Schreibsperre der arbeitenden Engine,
-scheitert sie mit `sqlite3.OperationalError: database is locked` — als
-Traceback im Server-Fenster und als fehlgeschlagene Anfrage in der
-Oberfläche. Verschärfend: die Transaktion blieb offen, bis der Aufrufer
-committete oder die Verbindung schloss; jede Leseanfrage hielt also
-ihrerseits eine Schreibsperre.
+If that transaction met the write lock of the working engine, it failed with
+`sqlite3.OperationalError: database is locked` — as a traceback in the
+server window and as a failed request in the interface. Aggravating factor:
+the transaction stayed open until the caller committed or closed the
+connection; every read request therefore held a write lock of its own.
 
-- Das Fall-Schema trägt jetzt eine **Fassungsnummer** (`schema_version` in
-  `meta`). Geschrieben wird nur, wenn sie abweicht: **einmal je Fall statt
-  einmal je Anfrage**. Der Normalfall ist reines Lesen und kollidiert mit
-  nichts.
-- `PRAGMA busy_timeout` wird ausdrücklich gesetzt, damit eine belegte
-  Sperre abgewartet statt sofort aufgegeben wird.
-- Der Journal-Modus wird nur umgestellt, wenn er noch nicht auf WAL steht —
-  der Wechsel verlangt kurz exklusiven Zugriff, das Auslesen nicht.
-- Scheitert die Aktualisierung an einer Sperre, gilt sie als **Wartung**
-  und wird vertagt: die laufende Anfrage wird davon nicht mitgerissen. Bei
-  einer noch leeren Datei muss sie dagegen gelingen, dort wird der Fehler
-  durchgereicht.
+- The case schema now carries a **version number** (`schema_version` in
+  `meta`). A write happens only when it differs: **once per case instead of
+  once per request**. The normal path is read-only and collides with
+  nothing.
+- `PRAGMA busy_timeout` is set explicitly so a held lock is waited for
+  rather than given up on immediately.
+- The journal mode is only switched when it is not already WAL — the switch
+  briefly requires exclusive access, reading the mode does not.
+- If the upgrade fails on a lock it counts as **maintenance** and is
+  deferred: the running request is not dragged down with it. On a still-empty
+  file it must succeed, and there the error is propagated.
 
-Bestehende Fälle brauchen nichts: sie stehen auf Fassung 0, werden beim
-nächsten Öffnen einmal nachgezogen und danach gestempelt.
+Existing cases need nothing: they sit at version 0, get upgraded once on the
+next open, and are stamped afterwards.
 
 ## [0.1.0] — 2026-08-05
 
-**Erste öffentliche Veröffentlichung.**
+**First public release.**
 
-Alles darunter ist die Entwicklung bis dahin — sie steht hier vollständig,
-weil die Begründungen zu den Entscheidungen gehören. Ab dieser Fassung gibt
-es ein LICENSE (Apache-2.0), eine SECURITY.md mit dem Bedrohungsmodell, ein
-installierbares Paket (`pip install .`, Kommando `shellhound`) und CI, die
-Linux und Windows mit Python 3.10 und 3.13 abdeckt.
+Everything below is the development up to that point — it stands here in
+full, because the reasoning belongs to the decisions. From this version on
+there is a LICENSE (Apache-2.0), a SECURITY.md with the threat model, an
+installable package (`pip install .`, command `shellhound`) and CI covering
+Linux and Windows with Python 3.10 and 3.13.
 
-### Hinzugefügt — Länderflaggen an IP-Adressen
+### Added — country flags on IP addresses
 
-Jede IP in Actors, Muster-Jagd, IOC Box, Trace, Artefakt-Fenster und
-Chronologie trägt ihre Länderflagge — mit einem Tooltip, der sagt, was
-GeoIP ist: **eine Schätzung der Registrierung, kein Aufenthaltsort.**
-VPNs, Proxys, Tor und Botnetz-Knoten stehen woanders.
+Every IP in Actors, Pattern hunt, IOC box, Trace, artifact window and
+chronology carries its country flag — with a tooltip that says what GeoIP
+is: **an estimate of the registration, not a location.** VPNs, proxies, Tor
+and botnet nodes are somewhere else.
 
-- **Vollständig offline.** Gelesen wird eine lokale MMDB aus dem Workspace
-  (`SHELLHOUND_GEOIP` oder `*.mmdb` im Workspace-Ordner). Fall-IPs verlassen
-  den Rechner nie.
-- **Banner statt Suchen:** fehlt die Datenbank, sagt es ein Banner im
-  Dashboard — wie beim fehlenden Evidence. Der Download startet nicht auf
-  den ersten Klick: ein Bestätigungsfenster sagt vorher, **was gleich
-  passiert** (eine Datei von download.db-ip.com, DB-IP Country Lite,
-  CC BY 4.0, ~8 MB, keine Falldaten) — der einzige Netz-Kontakt des ganzen
-  Werkzeugs, und wer auf einer abgeschotteten Maschine arbeitet, kann Nein
-  sagen, bevor irgendetwas den Rechner verlässt. Alternativ eine
-  GeoLite2-Country.mmdb von Hand hineinlegen. „Nicht mehr zeigen" bleibt
-  gemerkt.
-- **Sonderbereiche kommen ohne Datenbank:** private Netze (RFC 1918),
-  Loopback, Dokumentations-Bereiche tragen ein gestricheltes Kürzel statt
-  einer Flagge — im Log ist „die Quell-IP ist privat" oft die wichtigere
-  Aussage als jedes Land (Proxy davor oder Verkehr aus dem eigenen Netz).
-- Flaggen sind lokal gebündelte SVGs (flag-icons, MIT): Windows rendert
-  Flaggen-Emojis nicht, und ein Forensik-Werkzeug lädt nichts von CDNs.
-- Abfragen laufen gebündelt (ein Batch je Ansicht) gegen `POST /api/geo`,
-  mit modulweitem Cache.
+- **Entirely offline.** A local MMDB from the workspace is read
+  (`SHELLHOUND_GEOIP` or `*.mmdb` in the workspace folder). Case IPs never
+  leave the machine.
+- **A banner instead of a search:** if the database is missing, a banner in
+  the dashboard says so — as with missing evidence. The download does not
+  start on the first click: a confirmation window says beforehand **what is
+  about to happen** (one file from download.db-ip.com, DB-IP Country Lite,
+  CC BY 4.0, ~8 MB, no case data) — the only network contact of the entire
+  tool, and whoever works on an isolated machine can say no before anything
+  leaves the computer. Alternatively, put a GeoLite2-Country.mmdb in by
+  hand. "Do not show again" is remembered.
+- **Special ranges come without a database:** private networks (RFC 1918),
+  loopback and documentation ranges carry a dashed abbreviation instead of a
+  flag — in a log, "the source IP is private" is often the more important
+  statement than any country (a proxy in front, or traffic from the local
+  network).
+- Flags are locally bundled SVGs (flag-icons, MIT): Windows does not render
+  flag emoji, and a forensic tool loads nothing from CDNs.
+- Lookups run batched (one batch per view) against `POST /api/geo`, with a
+  module-wide cache.
 
-### Hinzugefügt — Webroot-Diff gegen eine Referenzkopie
+### Added — webroot diff against a reference copy
 
-Die klassische Handarbeit nach jedem Webserver-Vorfall, als Abfrage: das
-kompromittierte Webroot neben ein bekannt sauberes Release derselben
-CMS-Version legen und fragen, was abweicht.
+The classic manual work after every web server incident, as a query: put the
+compromised webroot next to a known-clean release of the same CMS version
+and ask what deviates.
 
-- Neue Evidence-Art **Referenzkopie** — sie ist der Maßstab, nicht Evidence:
-  die Engines scannen sie nicht.
-- Der Vergleich läuft als Job (Dateien-Ansicht): **zusätzlich** (hier wohnen
-  abgelegte Shells), **verändert** (eingeschleuster Code in legitimen
-  Dateien, per Größe und SHA-256), **fehlt** (oft die Spur eines
-  Aufräumversuchs). Gleiche Größe über der Hash-Grenze wird als
-  **ungeprüft** gemeldet statt still als gleich durchgewunken.
-- Jede Abweichung lässt sich ansehen und direkt als IOC flaggen; was schon
-  in der Box liegt, trägt ein Abzeichen. Ein Treffer ist ein **Kandidat,
-  kein Fund** — die Bewertung bleibt beim Analysten.
+- New evidence kind **reference copy** — it is the yardstick, not evidence:
+  the engines do not scan it.
+- The comparison runs as a job (Files view): **extra** (this is where
+  dropped shells live), **modified** (injected code in legitimate files, via
+  size and SHA-256), **missing** (often the trace of a cleanup attempt).
+  Equal size above the hashing limit is reported as **unchecked** rather
+  than silently waved through as identical.
+- Every deviation can be viewed and flagged directly as an IOC; what is
+  already in the box carries a badge. A hit is a **candidate, not a find** —
+  the assessment stays with the analyst.
 
-### Hinzugefügt — Globale Suche (Strg+K)
+### Added — global search (Ctrl+K)
 
-Ein Feld über den ganzen Fall: Artefakte, Indikatoren, Actors und Konten.
-Ein Treffer öffnet das Artefakt-Fenster direkt — egal, welche Ansicht
-gerade offen ist. Die Palette ist ein Sprungbrett, keine Ergebnisliste:
-jede Gruppe ist hart gedeckelt, für mehr sind die Ansichten mit ihren
-Filtern da.
+One field across the whole case: artifacts, indicators, actors and accounts.
+A hit opens the artifact window directly — no matter which view is open. The
+palette is a springboard, not a result list: every group is hard-capped, and
+for more there are the views with their filters.
 
-### Hinzugefügt — Uhren-Abgleich Log ↔ Datenbank-Export
+### Added — clock alignment between log and database export
 
-Log-Server und Datenbank-Server können verschiedene Uhren führen, und ein
-Versatz kann die Reihenfolge der Chronologie drehen. Der Analyst kann je
-Quelle einen Versatz setzen (am Chronologie-Kopf); er wird im Fall
-gespeichert, auf alle Ketten-Zeiten angewendet und **in der Kette
-ausgewiesen** — eine Aussage des Analysten, keine Vermutung des Werkzeugs.
+Log server and database server can run different clocks, and an offset can
+turn the order of the chronology around. The analyst can set an offset per
+source (at the head of the chronology); it is stored in the case, applied to
+all chain times and **reported in the chain** — a statement of the analyst,
+not a guess by the tool.
 
-### Geändert — Exporte belegen sich selbst
+### Changed — exports prove themselves
 
-- Der **Trace-Export** ist jetzt ein ZIP aus `trace.csv` und `MANIFEST.txt`:
-  Fall, Abfrage (Clients **und aktive Filter**), Zeilenzahl und SHA-256 der
-  CSV samt Prüfbefehl. Damit ist er zitierfähig — jeder Empfänger kann die
-  Unversehrtheit nachrechnen. Vorher ignorierte der Export die Filter der
-  Ansicht.
-- Der **JSON-Export** trägt die Chronologie mit (`chain`): Ereignisse,
-  Lücken, undatierte Artefakte und gesetzte Uhren-Versätze. Die Reihenfolge
-  ist die Aussage, die den Fall ausmacht — sie stand bisher nur im
-  Dashboard.
+- The **trace export** is now a ZIP of `trace.csv` and `MANIFEST.txt`: case,
+  query (clients **and active filters**), row count and SHA-256 of the CSV
+  along with the verification command. That makes it citable — every
+  recipient can recompute its integrity. Before, the export ignored the
+  filters of the view.
+- The **JSON export** carries the chronology (`chain`): events, gaps,
+  undated artifacts and any clock offsets set. The order is the statement
+  that makes up the case — until now it existed only in the dashboard.
 
-### Aufgeräumt
+### Cleaned up
 
-- Verirrte leere `package-lock.json` aus dem Repo-Wurzelverzeichnis
-  entfernt.
-- Konstanten und Hooks aus Komponenten-Dateien gelöst
-  (`artifactKinds.ts`, `useTriage.ts`, `copy.ts`) — oxlint ist wieder
-  still, und Fast Refresh funktioniert überall.
+- Removed a stray empty `package-lock.json` from the repository root.
+- Pulled constants and hooks out of component files (`artifactKinds.ts`,
+  `useTriage.ts`, `copy.ts`) — oxlint is quiet again, and Fast Refresh works
+  everywhere.
 
-### Hinzugefügt — Bedienbarkeit quer durch die Ansichten
+### Added — usability across the views
 
-- **IOC Box: Kopier-Knopf an jedem Indikator**, mit Quittung (Häkchen) und
-  sichtbarem Fehlschlag (rotes ×). Der Rückfallweg über ein verstecktes
-  Textfeld deckt den LAN-Bind ohne HTTPS ab, wo `navigator.clipboard` gar
-  nicht existiert — vorher hätte der Knopf dort wortlos nichts getan. Die
-  bestehenden Kopier-Knöpfe (Artefakt-Pfad, SHA-256, Datei-Viewer) nutzen
-  denselben Weg.
-- **Dauer-Spalte in Actors und Muster-Jagd**: erster bis letzter Treffer in
-  einer Zeiteinheit („4 Minuten", „3 Tage"). 40 Aufrufe in zwei Minuten sind
-  ein Werkzeuglauf, 40 über drei Wochen ein Dauergast — dieselbe Requestzahl
-  bedeutet zweierlei. In der Muster-Jagd sortierbar.
-- **Chronologie zuklappbar** (Zustand: offen), mit Zähler im Kopf.
-- **Muster-Bibliothek zuklappbar**: sie wächst mit jedem Fall, und beim
-  Auswerten will man die Ergebnisse sehen, nicht die Liste, aus der sie
-  stammen.
-- **Rogue-Konto als IOC** (Database): ein Knopf an jeder Konto-Zeile nimmt
-  den **Login** in die Box (`user`, im STIX-Export als
-  `user-account:account_login`) und die **E-Mail** als eigenen, verknüpften
-  Eintrag (`account-of`-Kante). Die Bewertung bleibt beim Analysten — ein
-  Dump kann nicht sagen, dass ein Admin bösartig ist, deshalb ist es ein
-  Knopf und keine Regel. Bereits aufgenommene Konten zeigen ein Abzeichen
-  statt des Knopfs.
-- **Sichtbare Erklär-Punkte** überall dort, wo Tooltips bisher unsichtbar
-  waren: Muster-Summary, Chronologie-Titel, IOC-Tags-Zeile, Dauer-Spalten.
-  Ohne sichtbare Einladung hovert niemand über einer Kennzahl.
+- **IOC box: a copy button on every indicator**, with a receipt (check mark)
+  and a visible failure (red ×). The fallback via a hidden text field covers
+  the LAN bind without HTTPS, where `navigator.clipboard` does not exist at
+  all — before, the button would have silently done nothing there. The
+  existing copy buttons (artifact path, SHA-256, file viewer) use the same
+  route.
+- **Duration column in Actors and Pattern hunt**: first to last hit in one
+  time unit ("4 minutes", "3 days"). 40 requests in two minutes are a tool
+  run, 40 across three weeks are a regular guest — the same request count
+  means two different things. Sortable in the pattern hunt.
+- **Chronology collapsible** (state: open), with a counter in the head.
+- **Pattern library collapsible**: it grows with every case, and while
+  assessing one wants to see the results, not the list they came from.
+- **Rogue account as an IOC** (Database): a button on every account row
+  takes the **login** into the box (`user`, in the STIX export as
+  `user-account:account_login`) and the **e-mail** as its own linked entry
+  (`account-of` edge). The assessment stays with the analyst — a dump cannot
+  say that an admin is malicious, hence a button and not a rule. Accounts
+  already taken in show a badge instead of the button.
+- **Visible explanation dots** everywhere tooltips used to be invisible:
+  pattern summary, chronology title, IOC tag row, duration columns. Without
+  a visible invitation nobody hovers over a key figure.
 
-### Geändert — Database: Konten zuerst, Export-Summary erklärt sich
+### Changed — Database: accounts first, the export summary explains itself
 
-- **Eingeschleuster Code steht jetzt nach den Konten.** Wer diese Ansicht
-  öffnet, sucht zuerst das untergeschobene Konto; der eingeschleuste Code ist
-  der zweite Befund und liest sich erst richtig, wenn man weiß, wessen Konto
-  ihn geschrieben haben könnte.
-- **Die Summary des Exports** (Datenbank / Erstellt / Server / Werkzeug)
-  erklärt jede Angabe statt nur einer: was sie ist und was sie für den Fall
-  bedeutet — etwa dass das Export-Werkzeug bestimmt, was überhaupt im Dump
-  steht (manche Backup-Plugins lassen Sitzungen oder Log-Tabellen weg).
-  Ein Fragezeichen in jeder Kachel zeigt, dass es dort etwas zu lesen gibt;
-  ohne diese Einladung hovert niemand über einer Kennzahl.
+- **Injected code now comes after the accounts.** Whoever opens this view
+  looks for the planted account first; the injected code is the second
+  finding and only reads properly once one knows whose account might have
+  written it.
+- **The summary of the export** (database / created / server / tool)
+  explains every fact instead of only one: what it is and what it means for
+  the case — for instance that the export tool determines what ends up in
+  the dump at all (some backup plugins leave out sessions or log tables). A
+  question mark in every tile shows that there is something to read; without
+  that invitation nobody hovers over a key figure.
 
-### Hinzugefügt — Chronologie des Falls
+### Added — chronology of the case
 
-Jede Ansicht beantwortete „was": welche Datei, welcher Client, welches
-Konto. Keine beantwortete **„in welcher Reihenfolge"** — und genau das ist
-der erste Absatz jedes Berichts. Bisher tippte man ihn ab, indem man
-zwischen Actors, Findings und Database hin- und hersprang und Zeitstempel im
-Kopf sortierte.
+Every view answered "what": which file, which client, which account. None
+answered **"in which order"** — and that is exactly the first paragraph of
+every report. Until now one typed it out by jumping between Actors, Findings
+and Database and sorting timestamps in one's head.
 
-Neu in der Fall-Zusammenfassung, keine sechste Ansicht daneben: die
-Geschichte **ist** der Fall.
+New in the case summary, not a sixth view beside it: the story **is** the
+case.
 
-- **Sie ordnet gemessene Tatsachen und behauptet keine Ursache.** „09:12
-  erste Anfrage dieser Adresse, 09:13 erster erfolgreicher Abruf der Shell"
-  ist eine Beobachtung; „der Angreifer lud die Shell hoch" ist eine
-  Schlussfolgerung — die gehört dem Analysten. An jeder Zeile steht, woraus
-  die Zeit stammt (Access-Log oder Datenbank-Export).
-- **Nur bestätigte Artefakte.** Die Triage entscheidet, was zur Geschichte
-  gehört, nicht die Erkennung.
-- **Der erste 2xx statt der mtime.** Dass eine Datei dalag, belegt der erste
-  erfolgreiche Abruf — der mtime einer Kopie sieht niemand an, ob sie vom
-  Original stammt oder vom Kopiervorgang. Lief davor eine Anfrage auf
-  denselben Pfad ins Leere, grenzt das die Entstehung ein: „die Datei
-  entstand zwischen 07-07 04:02 und 07-08 09:13" ist rein gemessen.
-- **Konten**, deren Anlagedatum in den Log-Zeitraum fällt, stehen mit drin —
-  das Fenster des Logs ist das ehrlichste, das der Fall dafür hat.
-- **Lücken werden benannt, nicht überbrückt**: Abstände über einer Stunde
-  stehen als „ohne belegte Beobachtung" in der Leiste, und ein bestätigtes
-  Artefakt, für das der Fall keine Zeit hergibt (eine injizierte Tabelle
-  etwa), erscheint unter „bestätigt, aber ohne Zeitbezug" statt stillschweigend
-  zu verschwinden.
-- Aus jeder Zeile lassen sich Artefakt-Fenster und Trace direkt öffnen.
-- Beide Uhren stehen ohne Zone da — die Logzeile in ihrer Serverzeit, der
-  Kontozeitstempel in der des Datenbankservers. Sie werden verglichen, wie
-  sie dastehen; alles andere hieße, eine Zeitzone zu erfinden.
+- **It orders measured facts and claims no cause.** "09:12 first request
+  from this address, 09:13 first successful retrieval of the shell" is an
+  observation; "the attacker uploaded the shell" is a conclusion — that
+  belongs to the analyst. Every line says where the time comes from (access
+  log or database export).
+- **Only confirmed artifacts.** The triage decides what belongs to the
+  story, not the detection.
+- **The first 2xx instead of the mtime.** That a file was present is proven
+  by the first successful request — nobody can tell from the mtime of a copy
+  whether it comes from the original or from the copying. If a request for
+  the same path came up empty before that, it bounds the moment it appeared:
+  "the file appeared between 07-07 04:02 and 07-08 09:13" is purely
+  measured.
+- **Accounts** whose creation date falls into the period of the log are
+  included — the window of the log is the most honest one the case has.
+- **Gaps are named, not bridged**: intervals over an hour stand in the bar
+  as "no proven observation", and a confirmed artifact for which the case
+  yields no time (an injected table, say) appears under "confirmed, but
+  without a time reference" instead of quietly disappearing.
+- The artifact window and the trace can be opened from every line.
+- Both clocks stand there without a zone — the log line in its server time,
+  the account timestamp in that of the database server. They are compared as
+  they stand; anything else would mean inventing a time zone.
 
-### Hinzugefügt — Kennzahlen je Muster-Suche
+### Added — key figures per pattern search
 
-Die Muster-Jagd zeigte drei Zahlen in einer Zeile. Jetzt steht über jedem
-Ergebnis, was in den Bericht wandert: **Adressen** (davon erfolgreiche),
-**Anfragen** (davon 2xx), **erster und letzter Treffer** sowie die
-**Zeitspanne** und die Zahl der getroffenen URLs.
+The pattern hunt showed three numbers in a row. Now, above every result,
+stands what travels into the report: **addresses** (of those, successful),
+**requests** (of those, 2xx), **first and last hit** as well as the **span**
+and the number of URLs hit.
 
-- `ok_clients` ist die Zahl, die zählt: 300 Anfragen von 40 Adressen, von
-  denen genau eine eine 2xx bekam, ist ein anderer Befund als 300 Anfragen
-  mit 300 Erfolgen.
-- Die Spanne trennt die einzelne Kampagne (Minuten) vom Hintergrundrauschen,
-  das seit Monaten mitläuft.
-- Die Zahl der getroffenen URLs war **falsch**: angezeigt wurde die Länge
-  der gedeckelten Liste, also höchstens 50, auch wenn das Muster 3.000 URLs
-  traf. Gerade diese Zahl soll verraten, dass ein Muster zu weit greift.
-- `hunt_runs` speichert die Kennzahlen mit, damit das Protokoll ohne einen
-  zweiten Lauf aussagt, was gefunden wurde.
-- Die Kennzahlen stehen als **eine Zeile** statt als vier gleich große
-  Kacheln: der Befund („1 von 2 Adressen kam durch") groß und farbig voran,
-  die Belege dahinter im Fließtext. Vier gleich gewichtete Kästen gaben der
-  entscheidenden Zahl dasselbe Gewicht wie der nebensächlichsten.
-- Der **Zeitraum je Client** steht jetzt auf die Sekunde genau in zwei
-  Spalten (erster / letzter Treffer) statt als Datum ohne Uhrzeit — bei einem
-  Muster-Treffer sagt erst die Uhrzeit, ob die Aufrufe in einem Schwung kamen
-  oder über Wochen verteilt.
-- Die Trefferliste ist nach jeder Spalte **sortierbar**, Adressen numerisch
-  (`192.0.2.9` vor `192.0.2.10`).
+- `ok_clients` is the number that counts: 300 requests from 40 addresses of
+  which exactly one got a 2xx is a different finding from 300 requests with
+  300 successes.
+- The span separates the single campaign (minutes) from the background noise
+  that has been running for months.
+- The number of URLs hit was **wrong**: what was shown was the length of the
+  capped list, so at most 50, even when the pattern hit 3,000 URLs. That
+  number of all things is supposed to reveal that a pattern reaches too far.
+- `hunt_runs` stores the key figures along, so the record states what was
+  found without a second run.
+- The key figures stand as **one line** instead of four equally sized tiles:
+  the finding ("1 of 2 addresses got through") large and coloured in front,
+  the evidence behind it as running text. Four equally weighted boxes gave
+  the decisive number the same weight as the most incidental one.
+- The **period per client** is now given to the second in two columns (first
+  / last hit) instead of a date without a time — on a pattern hit only the
+  time says whether the requests came in one burst or spread over weeks.
+- The hit list is **sortable** by every column, addresses numerically
+  (`192.0.2.9` before `192.0.2.10`).
 
-### Hinzugefügt — Indikatoren tragen ihre Beziehungen
+### Added — indicators carry their relationships
 
-Ein Hash und der Pfad, dessen Datei er beschreibt, entstehen im selben
-Moment aus demselben Fund. Davon überlebte bisher nur ein Satz im
-`origin`-Feld („sha-256 of kb-media.php"): gut lesbar, nicht auswertbar, und
-im Export gar nicht vorhanden. Wer den Pfad später verwarf, ließ seinen Hash
-verwaist stehen. Die IOC Box hielt eine flache Liste, obwohl die Daten eine
-Kette hergeben — *diese IP rief diese Shell auf, die diesen Hash hat*.
+A hash and the path whose file it describes come into being in the same
+moment from the same find. Of that, only a sentence in the `origin` field
+survived until now ("sha-256 of kb-media.php"): readable, not machine-usable,
+and not present in the export at all. Whoever later dismissed the path left
+its hash orphaned. The IOC box held a flat list although the data yield a
+chain — *this IP requested this shell, which has this hash*.
 
-- Neue Tabelle `ioc_links`. Drei Arten, alle **automatisch beim Einsammeln**:
-  `hash-of` (Hash ↔ Pfad, aus dem Bestätigen und aus dem Datei-Browser),
-  `requested` (Client ↔ abgerufener Pfad, mit Trefferzahl und 2xx-Anteil) und
-  `host-in` (eingeschleuste Domain ↔ Fundort). Bestehende Fälle bekommen die
-  Tabelle beim Öffnen; alte Einträge bleiben unverknüpft, weil die
-  Zusammengehörigkeit nachträglich nicht mehr feststellbar ist.
-- **Kein Verknüpfen von Hand.** Eine Kante, die der Analyst pflegen muss,
-  wird nach dem dritten Fall nicht mehr gepflegt. Und sie trägt nur
-  Information, wenn sie spezifisch ist — „gehört zum selben Fall" gilt für
-  jedes Paar in der Box.
-- Die Box zeigt sie am Eintrag: ein Zähler klappt die Nachbarn auf, jeder in
-  der Leserichtung dieses Eintrags (am Pfad „hat den SHA-256", am Hash „ist
-  der SHA-256 von"), Klick springt zum Nachbarn und hebt ihn kurz hervor.
-  Keine eigene Ansicht und kein Graph: bei 40 Knoten aus einem Fall ist ein
-  Graph hübsch und unlesbar.
-- **Export.** CSV bekommt eine Spalte `Related`, JSON ein Feld `related`, und
-  das STIX-Bundle echte `relationship`-Objekte — bisher empfing ein SIEM eine
-  Handvoll unverbundener Indicators. Kanten auf Indikatoren ohne
-  STIX-Pattern (Tabellennamen etwa) entfallen, statt das Bundle ungültig zu
-  machen.
-- Löschen räumt die Kanten mit ab.
+- New table `ioc_links`. Three kinds, all **automatic on collection**:
+  `hash-of` (hash ↔ path, from confirming and from the file browser),
+  `requested` (client ↔ requested path, with hit count and 2xx share) and
+  `host-in` (injected domain ↔ place of the find). Existing cases get the
+  table on opening; old entries stay unlinked, because their belonging
+  together can no longer be established after the fact.
+- **No linking by hand.** An edge the analyst has to maintain will not be
+  maintained after the third case. And it only carries information when it
+  is specific — "belongs to the same case" holds for every pair in the box.
+- The box shows them on the entry: a counter expands the neighbours, each in
+  the reading direction of this entry (on the path "has the SHA-256", on the
+  hash "is the SHA-256 of"), a click jumps to the neighbour and highlights it
+  briefly. No separate view and no graph: with 40 nodes from one case a graph
+  is pretty and unreadable.
+- **Export.** CSV gets a `Related` column, JSON a `related` field, and the
+  STIX bundle real `relationship` objects — until now a SIEM received a
+  handful of unconnected indicators. Edges on indicators without a STIX
+  pattern (table names, say) are dropped rather than making the bundle
+  invalid.
+- Deleting clears the edges along with it.
 
-### Behoben — IPs einsammeln scheiterte auf großen Fällen
+### Fixed — collecting IPs failed on large cases
 
-`POST /actors/collect` (aus der Muster-Jagd und aus Actors) holte die
-**gesamte** Actor-Tabelle, um darin die paar ausgewählten Adressen zu
-suchen. Die Alarm-Abfrage darüber band eine SQL-Variable pro Client — auf
-einem echten Fall mit zehntausenden Adressen brach das mit
-`sqlite3.OperationalError: too many SQL variables` ab, und zwar schon beim
-Aufnehmen einer **einzelnen** IP.
+`POST /actors/collect` (from the pattern hunt and from Actors) fetched the
+**entire** actor table in order to find the few selected addresses in it. The
+alert query on top of that bound one SQL variable per client — on a real case
+with tens of thousands of addresses this aborted with
+`sqlite3.OperationalError: too many SQL variables`, and it did so already
+when taking in a **single** IP.
 
-- Neu `logindex.actors_by_ip()`: schlägt gezielt die angefragten Adressen
-  nach, in Blöcken von 500.
-- Die Alarm- und Sparkline-Abfragen gehen durch dieselbe Blockbildung, damit
-  eine datenabhängige Listenlänge das nicht wieder auslösen kann.
-- Geprüft mit 3.185 Adressen in einem Aufruf: keine Ausnahme, echte
-  Adressen behalten ihre Verhaltens-Tags.
+- New `logindex.actors_by_ip()`: looks up exactly the requested addresses, in
+  blocks of 500.
+- The alert and sparkline queries go through the same chunking, so a
+  data-dependent list length cannot trigger this again.
+- Verified with 3,185 addresses in one call: no exception, and real addresses
+  keep their behaviour tags.
 
-### Geändert — Triage läuft über Artefakte, nicht über einzelne Findings
+### Changed — triage runs over artifacts, not over individual findings
 
-Die Einheit der Arbeit ist jetzt das **Artefakt**: diese Datei, dieser
-Client, diese Tabelle. Acht Regeln auf einer abgelegten Shell sind acht
-Beobachtungen über *eine* Datei — die Frage „gehört das zum Vorfall?" stellt
-sich einmal. Vorher wurde jedes Finding einzeln entschieden; das erzeugte
-Antworten, die einander widersprechen konnten, und eine Zahl, die den Fall
-größer aussehen ließ, als er war („119 Findings" waren 14 Dateien).
+The unit of work is now the **artifact**: this file, this client, this table.
+Eight rules on one dropped shell are eight observations about *one* file —
+the question "does this belong to the incident?" is asked once. Before, every
+finding was decided individually; that produced answers which could
+contradict each other, and a number that made the case look bigger than it
+was ("119 findings" were 14 files).
 
-- Die Findings-View listet **Artefakte** als Zeilen, gruppiert nach
-  Kategorie. Die Findings eines Artefakts stehen aufgeklappt darunter — als
-  Begründung, nicht als eigene Entscheidung.
-- Markieren, Bulk-Aktionen und die Tastenkürzel (`c` True Positive, `d`
-  False Positive, `r` gesichtet, `x` markieren, `Enter` Detail) wirken auf
-  Artefakte.
-- Filter, Chip-Zähler, Dashboard-Kacheln und die Fall-Zusammenfassung zählen
-  Artefakte: Schweregrad ist der schwerste Fund des Artefakts, Triage seine
-  Entscheidung. Die Zahl der Findings steht als Größenangabe daneben.
-- Ein gefiltertes Artefakt kommt **immer vollständig** — auch bei einem
-  Suchtreffer auf nur einer Regel. Ein Filter darf nichts verstecken, worauf
-  eine Entscheidung beruht.
-- `POST /api/cases/{slug}/triage` nimmt `artifacts`; `fingerprints` werden
-  weiter akzeptiert und als Zeiger auf ihr Artefakt gelesen. Der frühere
-  `cascade`-Schalter entfällt — Bestätigen und Verwerfen sind jetzt
-  symmetrisch, weil beides über dasselbe entscheidet.
-- Bestehende Fälle brauchen keine Migration: der Zustand eines Artefakts
-  wird aus seinen Findings gefaltet (ein „bestätigt" gewinnt, „verworfen"
-  zählt nur einstimmig), damit auch per-Finding triagierte Altfälle lesbar
-  bleiben.
+- The findings view lists **artifacts** as rows, grouped by category. The
+  findings of an artifact stand expanded below it — as the reasoning, not as
+  a separate decision.
+- Checking, bulk actions and the keyboard shortcuts (`c` true positive, `d`
+  false positive, `r` reviewed, `x` check, `Enter` detail) act on artifacts.
+- Filters, chip counters, dashboard tiles and the case summary count
+  artifacts: severity is the worst find of the artifact, triage its decision.
+  The number of findings stands next to it as a size.
+- A filtered artifact always comes **in full** — even on a search hit against
+  only one rule. A filter must not hide anything a decision rests on.
+- `POST /api/cases/{slug}/triage` takes `artifacts`; `fingerprints` are still
+  accepted and read as a pointer to their artifact. The former `cascade`
+  switch is gone — confirming and dismissing are symmetric now, because both
+  decide about the same thing.
+- Existing cases need no migration: the state of an artifact is folded from
+  its findings (one "confirmed" wins, "dismissed" counts only unanimously),
+  so that old cases triaged per finding stay readable.
 
-### Geändert
+### Changed
 
-- **IOC-Pfade sind fallrelativ statt absolut** (`webroot/images/shell.php`
-  statt `D:/Arbeit/real-world-data/…/webroot/images/shell.php`). Der absolute
-  Pfad beschreibt, wo die *Kopie* auf der Forensik-Maschine liegt — eine
-  Angabe, die in einem Bericht niemandem hilft, auf einem anderen Rechner
-  falsch ist und beim Export die eigene Verzeichnisstruktur mit hinausträgt.
-  Der Name der Evidence-Wurzel bleibt enthalten, weil er sagt, um welche
-  Evidence es geht. Gilt für die Bestätigungs-Kette *und* das manuelle
-  Flaggen; **auch die Herkunft trägt keinen absoluten Pfad mehr**, und
-  bestehende Einträge werden beim Öffnen des Falls mitgezogen (Konflikte
-  bleiben unangetastet).
-- **Reihenfolge im Menü:** IOC Box → Database → CMS Inventory → Dateien →
-  Evidence & Jobs.
+- **IOC paths are case-relative instead of absolute**
+  (`webroot/images/shell.php` instead of
+  `D:/Work/real-world-data/…/webroot/images/shell.php`). The absolute path
+  describes where the *copy* sits on the forensic machine — a fact that helps
+  nobody in a report, is wrong on another machine, and carries one's own
+  directory structure out with the export. The name of the evidence root
+  stays included, because it says which evidence this is about. Holds for the
+  confirmation chain *and* manual flagging; **the origin no longer carries an
+  absolute path either**, and existing entries are brought along when the
+  case is opened (conflicts are left untouched).
+- **Order in the menu:** IOC box → Database → CMS inventory → Files →
+  Evidence & jobs.
 
-### Hinzugefügt
+### Added
 
-- **Beispiel-Fall zum Ausprobieren** (`tools/sample_case.py`): baut einen
-  vollständigen erfundenen Fall — WordPress + Joomla im Webroot, zwei Wochen
-  Access-Logs, ein Datenbank-Export — und lässt die **normalen Engines**
-  darüber laufen. Nichts wird in die Datenbank geschrieben, was die Erkennung
-  nicht selbst gefunden hat; das Beispiel ist damit zugleich ein
-  End-to-End-Test. Der Fall erzählt eine Geschichte (Abklopfen → Shell
-  abgelegt → benutzt, daneben Brute-Force und normaler Verkehr), sodass jede
-  Ansicht etwas zu zeigen hat, und druckt am Ende einen Rundgang.
-  Alle Adressen stammen aus den Dokumentations-Bereichen (RFC 5737), Domains
-  enden auf `.test`, und die »Webshells« sind die kürzestmöglichen
-  Prüfmuster — kein funktionsfähiges Werkzeug.
-- In [`docs/rules.md`](docs/rules.md) dokumentiert, dass „could not be read"
-  in der Praxis meist der **Virenscanner der Analyse-Maschine** ist: er
-  blockiert den Zugriff auf genau die eindeutigsten Funde. Der Generator
-  prüft seine eigenen Dateien nach dem Schreiben und sagt es, statt still
-  einen halben Fall zu bauen.
+- **Sample case to try things out** (`tools/sample_case.py`): builds a
+  complete invented case — WordPress + Joomla in the webroot, two weeks of
+  access logs, a database export — and lets the **normal engines** run over
+  it. Nothing is written to the database that the detection did not find
+  itself; the sample is thereby also an end-to-end test. The case tells a
+  story (probing → shell dropped → used, alongside brute force and normal
+  traffic), so every view has something to show, and it prints a tour at the
+  end. All addresses come from the documentation ranges (RFC 5737), domains
+  end in `.test`, and the "web shells" are the shortest possible test
+  patterns — not a working tool.
+- Documented in [`docs/rules.md`](docs/rules.md) that "could not be read" is
+  in practice usually the **antivirus scanner of the analysis machine**: it
+  blocks access to exactly the clearest finds. The generator checks its own
+  files after writing them and says so, instead of quietly building half a
+  case.
 
-- **Actors: „Unauffällig" ausblenden.** Der Chip entfernt genau die Zeilen,
-  an denen „unauffällig" steht — die Bedingung spiegelt exakt die Regeln, die
-  ein Abzeichen erzeugen. Übrig bleibt, woran etwas dran ist.
-- **Der Trace markiert die auslösende Zeile rot** — überall, wo er aufgeht.
-  Aus Actors sind das die Beispiel-URIs der Alarme, aus der Muster-Jagd die
-  getroffenen URLs, und **aus dem Artefakt-Fenster die Zeilen, in denen das
-  Artefakt aufgerufen wurde**: bei einer Datei ihr Pfad (Teilstring, weil die
-  Query-Varianten dahinter nicht vorher bekannt sind), bei einem Client der
-  Aufruf, der seinen Alarm ausgelöst hat. Eine Legende sagt jeweils, was
-  markiert ist und warum. Ohne das sucht man den einen Aufruf, um den es
-  geht, unter tausenden von Hand — im Beispielfall 32 markierte Zeilen unter
-  52 beim Datei-Artefakt, 15 beim Client.
-- **Einzelne Treffer-Adressen in die IOC Box**: neben dem Sammelknopf steht
-  der Knopf jetzt auch an jeder Client-Zeile der Muster-Ergebnisse.
-- **Dateien** (neuer Menüpunkt): durch die registrierte Evidence klicken und
-  markieren, was den Regeln entgangen ist — die Datei, die am falschen Ort
-  liegt, deren Name nicht passt, deren Änderungsdatum in die Nacht des
-  Vorfalls fällt. Aufgenommen wird **Pfad und SHA-256**: der Pfad sagt, wo
-  etwas auf diesem Server lag, der Hash erkennt dieselbe Datei überall
-  wieder. Einzeln oder gesammelt, mit Notiz. Jeder Eintrag zeigt gleich, was
-  der Fall über ihn schon weiß (Findings, bereits in der IOC Box), damit man
-  nicht von Hand markiert, was längst erfasst ist. Man beginnt bei den
-  Evidence-Wurzeln, und tiefer geht es nur innerhalb davon — dieselbe
-  Schranke wie beim Datei-Viewer, auf dem *aufgelösten* Pfad.
-- **Der Pfad-Dialog zeigt Dateien**, nicht nur Ordner — mit Größe und direkt
-  auswählbar. Nicht jede Evidence ist ein Ordner: ein SQL-Dump ist eine
-  einzelne Datei, und wer sie nicht sieht, kann sie nicht registrieren.
-- **Muster lassen sich nachträglich bearbeiten** (Pfad, Name, Notiz). Die
-  Änderung gilt für alle Fälle; bereits geschriebene Findings bleiben stehen
-  — sie halten fest, was zum Zeitpunkt der Suche galt.
-- **Treffer-Adressen gesammelt in die IOC Box**: ein Knopf je Muster-Ergebnis
-  übernimmt alle gefundenen Clients, mit dem Muster als Herkunft — „hat den
-  Exploit-Pfad abgerufen" ist die Angabe, die im Bericht zählt, nicht „aus
-  einer Liste eingesammelt".
-- **Der Verlauf zeigt jetzt drei Reihen:** Balken für alle Anfragen, dazu
-  Kurven für die **beantworteten (2xx)** und die **abgewiesenen (4xx/5xx)**.
-  Die Gesamtzahl sagt, wie viel los war; das Verhältnis sagt, *was* los war —
-  500 Anfragen mit 20 Erfolgen sind ein Abklopfen, 500 mit 480 sind Betrieb,
-  und eine Erfolgskurve, die mitten in einer Fehlerwelle nach oben geht, ist
-  der Moment, in dem etwas funktioniert hat, das vorher nicht funktionierte.
-  Dafür führt der Log-Index eine neue Spalte (`days.ok`, Schema 3) — **offene
-  Fälle melden ihren Index als veraltet und wollen einmal neu gebaut werden.**
-  Ohne Neubau fehlt nur die Erfolgskurve, nichts stürzt ab.
-- **Der Trace bringt den Verlauf seiner Auswahl mit** — dieselbe Kurve, nur
-  auf die getracten Clients eingeschränkt. Erst daran sieht man, ob 185
-  Requests über zwei Wochen verteilt sind oder an einem Nachmittag passiert
-  sind. Sie beschreibt immer den ganzen Zeitraum und ändert sich beim
-  Blättern oder Filtern nicht.
-- **Der Trace lässt sich filtern und sortieren:** Suche über URI und
-  User-Agent, Statusklasse (2xx/3xx/4xx/5xx), HTTP-Methode (angeboten werden
-  nur die vorkommenden), Sortierung nach Zeit (vorwärts/rückwärts), Status,
-  Größe oder URI. Beides läuft in SQL über den ganzen Trace — eine Suche, die
-  nur die angezeigten 500 Zeilen durchsucht, hätte alles davor und danach
-  übersehen.
-- Die Diagramme folgen dem **Theme** statt in fest verdrahtetem Blau zu
-  stehen; 2xx trägt die OK-Farbe, Fehler die Warnfarbe — dieselbe Bedeutung
-  wie überall sonst in der Oberfläche.
+- **Actors: hide "inconspicuous".** The chip removes exactly the rows marked
+  "inconspicuous" — the condition mirrors precisely the rules that produce a
+  badge. What remains is what there is something to.
+- **The trace marks the triggering line red** — everywhere it opens. From
+  Actors those are the example URIs of the alerts, from the pattern hunt the
+  URLs hit, and **from the artifact window the lines in which the artifact
+  was requested**: for a file its path (as a substring, because the query
+  variants behind it are not known in advance), for a client the request that
+  triggered its alert. A legend says in each case what is marked and why.
+  Without it one searches for the one request that matters among thousands by
+  hand — in the sample case 32 marked lines out of 52 for the file artifact,
+  15 for the client.
+- **Individual hit addresses into the IOC box**: besides the collect button,
+  the button now also stands on every client row of the pattern results.
+- **Files** (new menu item): click through the registered evidence and mark
+  what escaped the rules — the file in the wrong place, whose name does not
+  fit, whose modification date falls into the night of the incident. What is
+  taken in is **path and SHA-256**: the path says where something sat on this
+  server, the hash recognises the same file anywhere. Individually or in
+  bulk, with a note. Every entry shows right away what the case already knows
+  about it (findings, already in the IOC box), so that one does not mark by
+  hand what has long been recorded. One begins at the evidence roots, and
+  going deeper only happens within them — the same fence as in the file
+  viewer, on the *resolved* path.
+- **The path dialog shows files**, not only folders — with size and directly
+  selectable. Not every piece of evidence is a folder: a SQL dump is a single
+  file, and whoever cannot see it cannot register it.
+- **Patterns can be edited after the fact** (path, name, note). The change
+  applies to all cases; findings already written stay as they are — they
+  record what held at the time of the search.
+- **Hit addresses into the IOC box in bulk**: one button per pattern result
+  takes in all clients found, with the pattern as origin — "requested the
+  exploit path" is the fact that counts in the report, not "collected from a
+  list".
+- **The timeline now shows three series:** bars for all requests, plus curves
+  for the **answered (2xx)** and the **rejected (4xx/5xx)** ones. The total
+  says how much was going on; the ratio says *what* was going on — 500
+  requests with 20 successes are probing, 500 with 480 are business as usual,
+  and a success curve that rises in the middle of a wave of errors is the
+  moment something worked that had not worked before. For this the log index
+  carries a new column (`days.ok`, schema 3) — **open cases report their
+  index as stale and want to be rebuilt once.** Without a rebuild only the
+  success curve is missing; nothing crashes.
+- **The trace brings the timeline of its selection along** — the same curve,
+  restricted to the traced clients. Only there does one see whether 185
+  requests are spread over two weeks or happened in one afternoon. It always
+  describes the whole period and does not change when paging or filtering.
+- **The trace can be filtered and sorted:** search across URI and user agent,
+  status class (2xx/3xx/4xx/5xx), HTTP method (only the ones that occur are
+  offered), sorting by time (forwards/backwards), status, size or URI. Both
+  run in SQL across the whole trace — a search that only searched the 500
+  displayed rows would have missed everything before and after.
+- The charts follow the **theme** instead of standing in hard-wired blue; 2xx
+  carries the OK colour, errors the warning colour — the same meaning as
+  everywhere else in the interface.
 
-- **Muster-Jagd** (neuer Menüpunkt): eigene URL-Muster hinterlegen — die
-  Aufrufe, die zu einem bekannten Exploit gehören — und das Werkzeug sagt,
-  welche Clients sie abgerufen haben. Die Gegenrichtung zum Rest: nicht was
-  die mitgelieferten Regeln finden, sondern was *du* suchst.
-  - **Die Bibliothek gehört dem Workspace**, nicht dem Fall (`hunt_patterns.json`
-    neben den Fällen): einmal angelegt, steht ein Muster in jedem weiteren
-    Fall bereit. Als lesbares JSON, das zugleich das Austauschformat ist —
-    Import (auch als einfache Zeilenliste mit `Muster | Name | Notiz`) und
-    Export lesen dieselbe Datei.
-  - **Treffer werden Findings** auf dem Client-Artefakt: mit 2xx beantwortet
-    HIGH, reine Versuche LOW — damit laufen Triage, Übernahme auf Dateien
-    und IOC-Sammlung unverändert weiter, statt eine zweite Arbeitsliste
-    aufzumachen.
-  - **Der Fall protokolliert auch die Fehlschläge** (`hunt_runs`): „wir haben
-    darauf geprüft, es war nichts" steht sonst nirgends, weil Findings nur
-    Funde festhalten.
-  - Matching ist Teilstring mit `*` als Platzhalter, nicht Regex — was ein
-    Muster trifft, muss man in einem Bericht erklären können. Die getroffenen
-    URLs stehen im Ergebnis, damit ein zu weites Muster auffällt.
-  - Läuft ohne Neu-Indizierung: das Muster wird gegen die *distinkten* URIs
-    geprüft, die Requests holt der bestehende `leaf`-Index als Vorfilter.
-    Bewusst **kein** Online-Abgleich gegen CVE-Datenbanken.
+- **Pattern hunt** (new menu item): store your own URL patterns — the
+  requests that belong to a known exploit — and the tool says which clients
+  requested them. The opposite direction from the rest: not what the shipped
+  rules find, but what *you* are looking for.
+  - **The library belongs to the workspace**, not to the case
+    (`hunt_patterns.json` next to the cases): created once, a pattern is
+    ready in every further case. As readable JSON that is at the same time
+    the exchange format — import (also as a simple line list with
+    `pattern | name | note`) and export read the same file.
+  - **Hits become findings** on the client artifact: answered with 2xx HIGH,
+    attempts only LOW — so triage, propagation onto files and IOC collection
+    carry on unchanged instead of opening a second work list.
+  - **The case records the failures too** (`hunt_runs`): "we checked for
+    this, there was nothing" is written down nowhere else, because findings
+    only record finds.
+  - Matching is a substring with `*` as a wildcard, not a regex — what a
+    pattern hits has to be explainable in a report. The URLs hit stand in the
+    result so that a pattern reaching too far becomes conspicuous.
+  - Runs without re-indexing: the pattern is checked against the *distinct*
+    URIs, and the existing `leaf` index fetches the requests as a prefilter.
+    Deliberately **no** online comparison against CVE databases.
 
-- **Eine Entscheidung wird nicht zweimal getroffen.** Wer eine Webshell als
-  True Positive entscheidet, hat damit auch über die Clients entschieden, die
-  sie geladen haben — bisher standen die als eigene Artefakte nochmal zur
-  Bewertung an. Jetzt wandert die Entscheidung **einen Schritt** entlang
-  dessen, was der Log-Index belegen kann, in beide Richtungen (Datei →
-  Clients und Client → Dateien):
-  - **stark** (der Client hat genau diese Datei geladen und 2xx bekommen):
-    wird mitentschieden, mit Vermerk „übernommen: hat *x* geladen (n× 2xx)".
-    Eine Meldung nennt jedes mitentschiedene Artefakt und bietet
-    **Rückgängig** — das den Zustand von davor exakt wiederherstellt.
-  - **mittel** (gleicher Pfad, nie erfolgreich): wird **vorgeschlagen**, nicht
-    entschieden. Eine Sondierung ins Leere ist etwas anderes als ein Zugriff.
-  - Von Hand vergebene Entscheidungen werden nie überschrieben, und die
-    Übernahme geht genau einen Schritt weit — sonst stünde am Ende ein ganzer
-    Fall auf einer einzigen Entscheidung.
-- **Artefakt-Detail** (`GET /api/cases/{slug}/artifact`): eine Antwort mit
-  allem, was zur Entscheidung nötig ist — jede Regel mit Erklärung und
-  Evidence, Dateimetadaten (Größe, mtime, SHA-256, CMS-Guard, Upload-Ordner),
-  Dateiinhalt um die stärkste Fundstelle, Actor-Profil, Tabellen-/Dump-Fakten.
-  Die Entscheidung samt Notiz steht oben im Drawer, nicht am Ende.
-- **IPs als Traces**: `related_ips` sammelt jede Adresse, die an einem
-  Artefakt hängt — wer die Datei angefragt hat, den Client selbst, Adressen
-  aus der Evidence — mit dem Grund, warum sie dort steht, und dem Hinweis, ob
-  sie schon in der IOC Box liegt. Jede öffnet direkt einen Trace, einzeln
-  oder alle zusammen.
-- Der Trace-Drawer ist eine geteilte Komponente (`components/TraceDrawer`)
-  und damit überall verfügbar, wo eine IP steht — nicht mehr nur in Actors.
+- **A decision is not made twice.** Whoever decides a web shell to be a true
+  positive has thereby also decided about the clients that loaded it — until
+  now those stood up for assessment again as separate artifacts. Now the
+  decision travels **one step** along what the log index can prove, in both
+  directions (file → clients and client → files):
+  - **strong** (the client loaded exactly this file and got a 2xx): decided
+    along, with the note "propagated: loaded *x* (n× 2xx)". A message names
+    every artifact decided along and offers **undo** — which restores the
+    previous state exactly.
+  - **medium** (same path, never successful): **suggested**, not decided. A
+    probe into the void is something other than an access.
+  - Decisions made by hand are never overwritten, and the propagation goes
+    exactly one step — otherwise a whole case would in the end rest on a
+    single decision.
+- **Artifact detail** (`GET /api/cases/{slug}/artifact`): one response with
+  everything needed for the decision — every rule with its explanation and
+  evidence, file metadata (size, mtime, SHA-256, CMS guard, upload folder),
+  file content around the strongest find, actor profile, table/dump facts.
+  The decision and its note stand at the top of the drawer, not at the end.
+- **IPs as traces**: `related_ips` collects every address attached to an
+  artifact — whoever requested the file, the client itself, addresses from
+  the evidence — with the reason why it is there and a hint whether it is
+  already in the IOC box. Each opens a trace directly, individually or all
+  together.
+- The trace drawer is a shared component (`components/TraceDrawer`) and thus
+  available everywhere an IP appears — no longer only in Actors.
 
-- **Alle Detailansichten sind zentrierte Fenster** statt Drawer am Rand.
-  Das Artefakt-Detail (1280 px) zweispaltig: links die Entscheidung mit
-  Metadaten und jeder Regel, die angesprochen hat, rechts Dateiinhalt,
-  Actor-Profil und die Clients — beurteilt wird aus dem Zusammenhang, und der
-  entsteht nebeneinander, nicht untereinander. Unter 1024 px eine Spalte.
-  Datei-Viewer und Trace ebenso; sie werden aus dem Artefakt-Fenster geöffnet
-  und sind je Stufe etwas kleiner, damit sichtbar bleibt, wohin man
-  zurückkommt. Die Drawer-Komponente entfällt.
-- **Die Artefakt-Liste zeigt, worum es geht, ohne dass man sie öffnen muss:**
-  Symbol und Farbe für Art und Schweregrad, die Regeln als Chips unter dem
-  Namen, ein Balken für die Verteilung der Findings über die Schweregrade
-  (viermal LOW ist ein anderes Bild als zweimal HIGH) und der Zustand als
-  Pille. Kategorien tragen ein eigenes Symbol, einen nach rechts auslaufenden
-  Farbverlauf in ihrem Schweregrad und einen Fortschrittsbalken „x von y
-  entschieden".
-- **Mitgelieferte SQL-Dateien verschütten den Export nicht mehr.** Ein
-  Webroot enthält Dutzende `install.mysql.utf8.sql`, `uninstall…` und
-  `updates/mysql/2.0.1.sql` — jede Erweiterung bringt ihre eigenen mit. Sie
-  sind keine Datenbank-Exports (keine Daten, keine Konten, kein Kopf) und
-  standen bisher gleichberechtigt neben dem einen echten Dump. Sie stehen
-  jetzt zusammengefaltet in einer Zeile; erkannt am Joomla-Platzhalter-Präfix
-  `#__`, der in einem `mysqldump` nie vorkommt, gestützt durch Pfad und
-  Fehlen von Daten. Ihre Tabellen fluten auch das Inventar nicht mehr.
-  **Gescannt werden sie weiter:** eine manipulierte `install.sql` läuft bei
-  der nächsten Installation wieder an und überlebt jedes Aufräumen im
-  Dateisystem — trägt eine Findings, steht das vorne an der Zeile.
-- **Behoben: `#__`-Tabellen wurden gar nicht geparst.** Die Regex für
-  Tabellennamen kannte kein `#`, womit `CREATE TABLE \`#__x\`` und
-  `INSERT INTO \`#__x\`` durchfielen — eingeschleuster Code in genau diesen
-  Dateien war für den Scanner unsichtbar.
-- **Database neu aufgebaut.** Die Seite war ein Stapel aus vier
-  unverbundenen Tabellen; sie beantwortet jetzt die Frage, wegen der man sie
-  öffnet — was hat der Angreifer in der Datenbank hinterlassen?
-  - Oben steht der **Export selbst**: Datenbankname, Server, Werkzeug und vor
-    allem der **Erstellungszeitpunkt** — ein Dump von vor dem Vorfall zeigt
-    einen anderen Zustand als einer von danach.
-  - **Konten stehen nach Auffälligkeit**, mit benannten Beobachtungen statt
-    einer Punktzahl: Admin, kurz vor dem Export angelegt, schwacher Hash, nie
-    angemeldet, offene Sitzung, gesperrt. Die Engine liest dafür neu den
-    letzten Login und den Sperrstatus (Joomla: `lastvisitDate`/`block`;
-    WordPress: `user_status` und, falls ein Plugin sie schreibt, Login-Meta
-    bzw. offene Sitzungen). Fehlt die Angabe, steht »nicht im Dump« — das
-    heißt ausdrücklich nicht »nie angemeldet«.
-  - **Eingeschleuster Code ist anklickbar** und öffnet die Tabelle im
-    Artefakt-Fenster; die Seite ist damit Arbeitsort statt Anzeigeort.
-  - **Tabellen kennen ihre Findings** und markieren leere Tabellen sichtbar.
-  - **CSV-Export der Konten** (alle oder nur Admins) für die Reset-Liste —
-    ausdrücklich **ohne Passwort-Hashes**: das Werkzeug dokumentiert einen
-    Vorfall, es bereitet keinen Angriff vor.
-- **CMS Inventory neu aufgebaut.** Statt eines Kachel-Mosaiks aus 10–15
-  Typ-Tabellen (Joomla machte jede Plugin-Gruppe zur eigenen Karte) zeigt
-  jede Installation EINE durchgehende Liste mit Gruppen-Bändern; die Typen
-  falten sich auf Plugin/Theme/Template/Component/Module zusammen —
-  Plugin-Gruppe und Site/Admin stehen als Tag an der Zeile. Der Install-Kopf
-  ist eine Karte mit der Version als wichtigster Zahl. Neu ist der
-  Fall-Bezug: der Server verknüpft jede Erweiterung mit den geflaggten
-  Dateien unter ihrem Pfad — ein Badge »n Artefakte« beantwortet „welche
-  Erweiterung ist kompromittiert?" und öffnet das Artefakt-Fenster direkt.
-  Einzeldatei-Extensions (hello.php) erben dabei nie ihren Container, sonst
-  würde jede Shell im plugins-Ordner jedem Einzeldatei-Plugin zugerechnet.
-  Filter im Ausblende-Schema: Typ-Chips plus »mit/ohne Version«. Die
-  Gruppen-Bänder lassen sich zuklappen (ein Filter oder eine Suche klappt
-  wieder auf, damit kein Treffer hinter einem Klick verschwindet).
-- Die Kürzel an den Extension-Zeilen **erklären sich**: »Site« und »Admin«
-  sagen, ob der Teil ohne Anmeldung erreichbar ist, die Joomla-Plugin-Gruppe
-  sagt, wann Joomla das Plugin aufruft (`system` läuft bei jedem
-  Seitenaufruf — die begehrteste Gruppe für Persistenz). Dabei behoben: die
-  Engine lässt den Bereich bei Komponenten aus `administrator/components`
-  weg, bei Modulen und Templates dagegen bei den *Site*-Verzeichnissen — ein
-  unbeschriftetes »Component« stand also für Backend, ein unbeschriftetes
-  »Module« für Frontend. Die Ansicht schreibt den stillen Bereich jetzt aus.
-- **Versionen sind prüfbar und korrigierbar.** Die Engine merkt sich, aus
-  welcher Datei eine Version gelesen wurde — Manifest-XML, `style.css`,
-  Plugin-Header, `version.php` —, und ein Klick auf die Versionszelle öffnet
-  ein Fenster, das die Quelle nennt und die Datei aufmacht. Dort lässt sich
-  die Version von Hand setzen (mit Begründung), wenn das Manifest fehlt oder
-  gefälscht ist. Die Korrektur **ersetzt den Messwert nicht**, sondern legt
-  sich darüber: beides bleibt nebeneinander sichtbar, und weil die Korrektur
-  in einer eigenen Tabelle liegt, überlebt sie jede Re-Analyse — anders als
-  das Inventar selbst, das bei jedem Lauf neu geschrieben wird.
-- **Alle Filter-Chips sind Ausblende-Schalter.** Ein Klick versteckt die
-  Klasse (durchgestrichener Chip), der nächste holt sie zurück; beliebig
-  viele stapeln sich — Scanner weg, Brute-Force weg, übrig bleibt das
-  Unerklärte. Gilt für Schweregrade, Triage-Zustände und Quellen in
-  Findings, die Verhaltens-Flags in Actors und Typen/Tags in der IOC Box.
-  Die Checkboxen »False Positives/Info ausblenden« gehen darin auf (beide
-  Klassen starten ausgeblendet); »x Artefakte ausgeblendet« mit
-  »alles einblenden« steht unter der Chip-Leiste. In der IOC Box
-  verschwindet ein Eintrag erst, wenn *alle* seine Tags ausgeblendet sind —
-  ein sichtbares Tag genügt zum Bleiben.
-- **Actors ist die Jagd, Findings die Entscheidung** — und beide kennen
-  denselben Stand. Actors öffnet standardmäßig mit **allen** Clients (die
-  Grundgesamtheit ist das, was die Seite einzigartig macht; „Auffällig"
-  bleibt als Chip). Clients mit Findings tragen ihr Triage-Badge direkt in
-  der Zeile und öffnen per **Artefakt**-Knopf dasselbe Detail-Fenster wie in
-  Findings — mit Entscheidung, Übernahme und Meldung. Niemand bewertet in
-  Actors neu, was drüben schon beantwortet ist. Technisch sind
-  Artefakt-Fenster und Triage-Nachsorge jetzt geteilte Komponenten
-  (`ArtifactWindow`, `useTriage`/`TriageFollowUp`).
-- **Die Arbeitsliste blendet jetzt False Positives aus, nicht True
-  Positives.** Bestätigte Artefakte bleiben stehen und treten nur optisch
-  zurück — sie sind das Ergebnis, und der Bericht entsteht aus derselben
-  Liste, in der gearbeitet wurde. Verworfene verschwinden aus der
-  Arbeitsliste und bleiben über den Filter »False Positive« mit ihrer Notiz
-  erreichbar. Der Parameter heißt entsprechend `hide_dismissed`.
-- Die **Listenbox umschließt ihren Inhalt**, statt immer die volle Fensterhöhe
-  zu füllen. Unter der letzten Zeile stand sonst eine leere Fläche, die
-  aussah, als fehle dort etwas.
+- **All detail views are centred windows** instead of drawers at the edge.
+  The artifact detail (1280 px) in two columns: on the left the decision with
+  metadata and every rule that responded, on the right file content, actor
+  profile and the clients — judgement comes from the context, and context
+  arises side by side, not one below the other. Below 1024 px, one column.
+  File viewer and trace likewise; they are opened from the artifact window
+  and are slightly smaller per level, so that it stays visible where one
+  comes back to. The drawer component is gone.
+- **The artifact list shows what it is about without having to be opened:**
+  icon and colour for kind and severity, the rules as chips under the name, a
+  bar for the distribution of findings across severities (four times LOW is a
+  different picture from twice HIGH) and the state as a pill. Categories
+  carry their own icon, a gradient running off to the right in their severity
+  and a progress bar "x of y decided".
+- **Shipped SQL files no longer bury the export.** A webroot contains dozens
+  of `install.mysql.utf8.sql`, `uninstall…` and `updates/mysql/2.0.1.sql` —
+  every extension brings its own. They are not database exports (no data, no
+  accounts, no header) and until now stood as equals beside the one real
+  dump. They now stand folded together into one row; recognised by the Joomla
+  placeholder prefix `#__`, which never occurs in a `mysqldump`, supported by
+  the path and the absence of data. Their tables no longer flood the
+  inventory either. **They are still scanned:** a manipulated `install.sql`
+  runs again on the next installation and survives every cleanup in the file
+  system — if it carries a finding, that stands at the front of the row.
+- **Fixed: `#__` tables were not parsed at all.** The regex for table names
+  did not know `#`, so `CREATE TABLE \`#__x\`` and `INSERT INTO \`#__x\`` fell
+  through — injected code in exactly those files was invisible to the
+  scanner.
+- **Database rebuilt.** The page was a stack of four unconnected tables; it
+  now answers the question one opens it for — what did the attacker leave
+  behind in the database?
+  - At the top stands the **export itself**: database name, server, tool and
+    above all the **creation time** — a dump from before the incident shows a
+    different state from one taken afterwards.
+  - **Accounts are ordered by conspicuousness**, with named observations
+    instead of a score: admin, created shortly before the export, weak hash,
+    never signed in, open session, blocked. For this the engine newly reads
+    the last login and the block status (Joomla: `lastvisitDate`/`block`;
+    WordPress: `user_status` and, if a plugin writes them, login meta resp.
+    open sessions). If the value is missing, it says "not in the dump" — which
+    explicitly does not mean "never signed in".
+  - **Injected code is clickable** and opens the table in the artifact
+    window; the page is thereby a place of work rather than a place of
+    display.
+  - **Tables know their findings** and mark empty tables visibly.
+  - **CSV export of the accounts** (all or only admins) for the reset list —
+    explicitly **without password hashes**: the tool documents an incident, it
+    does not prepare an attack.
+- **CMS inventory rebuilt.** Instead of a mosaic of 10–15 type tables (Joomla
+  made every plugin group its own card), each installation shows ONE
+  continuous list with group bands; the types fold together into
+  plugin/theme/template/component/module — plugin group and site/admin stand
+  as a tag on the row. The install head is a card with the version as the
+  most important number. New is the tie to the case: the server links every
+  extension to the flagged files under its path — a badge "n artifacts"
+  answers "which extension is compromised?" and opens the artifact window
+  directly. Single-file extensions (hello.php) never inherit their container,
+  otherwise every shell in the plugins folder would be attributed to every
+  single-file plugin. Filters in the hide scheme: type chips plus "with /
+  without version". The group bands can be collapsed (a filter or a search
+  expands them again, so that no hit disappears behind a click).
+- The abbreviations on the extension rows **explain themselves**: "site" and
+  "admin" say whether that part is reachable without signing in, the Joomla
+  plugin group says when Joomla calls the plugin (`system` runs on every page
+  view — the most coveted group for persistence). Fixed along the way: the
+  engine omits the scope for components from `administrator/components`, but
+  for modules and templates it omits it for the *site* directories — so an
+  unlabelled "component" stood for backend, an unlabelled "module" for
+  frontend. The view now spells the silent scope out.
+- **Versions can be checked and corrected.** The engine remembers which file
+  a version was read from — manifest XML, `style.css`, plugin header,
+  `version.php` — and a click on the version cell opens a window that names
+  the source and opens the file. There the version can be set by hand (with a
+  reason) when the manifest is missing or forged. The correction **does not
+  replace the measured value** but overlays it: both stay visible side by
+  side, and because the correction sits in its own table it survives every
+  re-analysis — unlike the inventory itself, which is rewritten on every run.
+- **All filter chips are hide switches.** One click hides the class
+  (struck-through chip), the next brings it back; any number of them stack —
+  scanners gone, brute force gone, what remains is the unexplained. Holds for
+  severities, triage states and sources in Findings, the behaviour flags in
+  Actors and types/tags in the IOC box. The checkboxes "hide false
+  positives/info" are absorbed into it (both classes start hidden); "x
+  artifacts hidden" with "show everything" stands below the chip bar. In the
+  IOC box an entry disappears only when *all* of its tags are hidden — one
+  visible tag is enough to stay.
+- **Actors is the hunt, Findings the decision** — and both know the same
+  state. Actors opens with **all** clients by default (the total population
+  is what makes the page unique; "conspicuous" remains as a chip). Clients
+  with findings carry their triage badge right in the row and open the same
+  detail window as in Findings via the **artifact** button — with decision,
+  propagation and message. Nobody re-assesses in Actors what has already been
+  answered over there. Technically, the artifact window and the triage
+  follow-up are now shared components (`ArtifactWindow`,
+  `useTriage`/`TriageFollowUp`).
+- **The work list now hides false positives, not true positives.** Confirmed
+  artifacts stay and only recede visually — they are the result, and the
+  report arises from the same list one worked in. Dismissed ones disappear
+  from the work list and stay reachable with their note through the "false
+  positive" filter. The parameter is named `hide_dismissed` accordingly.
+- The **list box wraps its content** instead of always filling the full
+  window height. Below the last row there used to be an empty area that
+  looked as if something were missing there.
 
-### Behoben
+### Fixed
 
-- **Der Datei-Viewer öffnete hinter der Detail-Ansicht.** Overlays haben jetzt
-  Ebenen: was man aus dem Artefakt-Fenster heraus öffnet (Datei, Trace), liegt
-  davor. `Escape` schließt nur das oberste, statt die ganze Kette abzuräumen.
-- Ein bestätigtes Datei-Artefakt kam **ohne SHA-256** in die IOC Box, wenn
-  der Hash nicht schon aus dem Scan vorlag — obwohl das Detail ihn anzeigte.
-  Er wird jetzt an derselben Grenze (32 MB) nachberechnet.
-- **Der Hunt verglich nur den Dateinamen, nicht den Pfad.** Eine Shell namens
-  `index.php` sammelte damit jeden Besucher jeder beliebigen Startseite als
-  IOC in den Fall — Menschen, die mit dem Vorfall nichts zu tun haben.
-  Verglichen wird jetzt der Pfad unterhalb der Evidence-Wurzel; das gilt für
-  die IOC-Sammlung, die Client-Liste im Artefakt-Detail und die Übernahme.
-- Die Sammel-Quittung nach dem Bestätigen zeigte denselben Indikator mehrfach,
-  einmal je Regel des Artefakts.
+- **The file viewer opened behind the detail view.** Overlays now have
+  levels: what is opened from the artifact window (file, trace) lies in front
+  of it. `Escape` closes only the topmost one instead of clearing the whole
+  chain.
+- A confirmed file artifact came into the IOC box **without a SHA-256** when
+  the hash was not already present from the scan — although the detail
+  displayed it. It is now recomputed at the same limit (32 MB).
+- **The hunt compared only the file name, not the path.** A shell named
+  `index.php` thereby collected every visitor of every arbitrary start page
+  as an IOC into the case — people who have nothing to do with the incident.
+  What is compared now is the path below the evidence root; this holds for
+  the IOC collection, the client list in the artifact detail and the
+  propagation.
+- The collection receipt after confirming showed the same indicator several
+  times, once per rule of the artifact.
 
-### Entfernt
+### Removed
 
-- Die Themes **Terminal**, **Ember** und **Arctic**. Es bleiben **Synthwave**
-  (neuer Standard) und **Shellhound**. Ein gespeichertes Theme, das es nicht
-  mehr gibt, fällt sauber auf den Standard zurück, statt `<html>` auf ein
-  Theme ohne CSS-Block zu setzen.
-- `GET /api/cases/{slug}/findings/{fingerprint}/context` — ersetzt durch das
-  Artefakt-Detail.
+- The themes **Terminal**, **Ember** and **Arctic**. What remains is
+  **Synthwave** (the new default) and **Shellhound**. A stored theme that no
+  longer exists falls back cleanly to the default instead of setting `<html>`
+  to a theme without a CSS block.
+- `GET /api/cases/{slug}/findings/{fingerprint}/context` — replaced by the
+  artifact detail.
 
-### Grundlage — die erste Fassung (2026-08-02, nie veröffentlicht)
+### Foundation — the first version (2026-08-02, never released)
 
-Ausgangspunkt: web-native DFIR-Workbench für Webserver-Kompromittierungen.
-Fünf Views über einem Fall (Findings, Actors, IOC Box, CMS Inventory,
-Database), Engines für Access-Log-Index, Webshell-Scan, CMS-Inventar und
-SQL-Dump-Analyse, Fall-Archivierung als ZIP.
+Starting point: a web-native DFIR workbench for web server compromises. Five
+views over a case (Findings, Actors, IOC box, CMS inventory, Database),
+engines for the access log index, webshell scan, CMS inventory and SQL dump
+analysis, case archival as a ZIP.
