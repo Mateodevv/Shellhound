@@ -303,8 +303,8 @@ function CloseCase({ slug, caseName, onClosed }: {
   const close = useMutation({
     mutationFn: () => post<{ file: string; archive: string; summary: CaseSummary }>(
       `/api/cases/${slug}/archive`),
-    // Der Fall existiert nach dem Abschluss nicht mehr — direkt zurück zur
-    // Startseite, wo er unter »Abgeschlossene Fälle« auftaucht.
+    // After closing, the case no longer exists -- straight back to the start
+    // page, where it appears under "closed cases".
     onSuccess: () => onClosed?.(),
   })
 
@@ -451,8 +451,8 @@ function PathBrowser({ kind, onClose, onPick }: {
 }) {
   const tr = useT()
   const [path, setPath] = useState('')
-  // Eine angeklickte Datei gewinnt gegen das Verzeichnis, in dem sie liegt —
-  // sonst müsste man für einen SQL-Dump den Pfad doch wieder tippen.
+  // A clicked file wins against the directory it sits in -- otherwise one
+  // would have to type the path for a SQL dump after all.
   const [picked, setPicked] = useState('')
   useEffect(() => { setPicked('') }, [path])
   const { data, isError, error } = useQuery({

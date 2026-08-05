@@ -1,19 +1,19 @@
-// TraceWindow.tsx — was ein Client (oder eine Handvoll davon) getan hat:
-// jeder Request aus dem Log-Index.
+// TraceWindow.tsx -- what a client (or a handful of them) did: every request
+// from the log index.
 //
-// Der Trace ist eine ABFRAGE gegen den Index, kein Log-Durchlauf — deshalb
-// darf er überall aufgehen, wo eine IP-Adresse steht: in der Actors-Liste,
-// im Artefakt-Detail, neben einem Hunt-Treffer. `layer` entscheidet, auf
-// welcher Ebene er liegt, wenn er AUS einem anderen Fenster geöffnet wird.
+// The trace is a QUERY against the index, not a pass through the log -- which
+// is why it may open anywhere an IP address appears: in the actors list, in
+// the artifact detail, next to a hunt hit. `layer` decides which level it
+// lies on when it is opened FROM another window.
 //
-// Oben der VERLAUF dieser Auswahl (dieselbe Kurve wie im Dashboard, nur auf
-// die Clients eingeschränkt): erst daran sieht man, ob die Requests über
-// Wochen verteilt sind oder in neun Minuten passiert sind. Er beschreibt
-// immer den ganzen Zeitraum, nie die gerade angezeigte Seite.
+// At the top the TIMELINE of this selection (the same curve as in the
+// dashboard, only restricted to the clients): only there does one see whether
+// the requests are spread over weeks or happened in nine minutes. It always
+// describes the whole period, never the page currently displayed.
 //
-// Gefiltert und sortiert wird in SQL, nicht im Browser — sonst würde eine
-// Suche nur die 500 Zeilen der aktuellen Seite durchsuchen und alles davor
-// und danach übersehen.
+// Filtering and sorting happen in SQL, not in the browser -- otherwise a
+// search would only search the 500 rows of the current page and miss
+// everything before and after.
 import { useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -28,8 +28,8 @@ import { TimelineChart, type TimelinePoint } from './TimelineChart'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
 
-// Nur Schlüssel auf Modulebene: eine hier übersetzte Beschriftung wäre in
-// der Sprache eingefroren, die beim Laden des Moduls galt.
+// Keys only at module level: a label translated here would be frozen in
+// whichever language was active when the module loaded.
 const STATUS_FILTERS = [
   { id: '', key: 'common.all' },
   { id: '2xx', key: null },
@@ -46,12 +46,12 @@ const SORTS = [
   { id: 'uri', key: null },
 ] as const
 
-/** Was im Trace rot markiert wird — und warum.
+/** What gets marked red in the trace -- and why.
  *
- *  `exact` für Stellen, an denen die auslösenden URIs BEKANNT sind (die
- *  Beispiel-URI eines Alarms, die vom Muster getroffenen URLs). `contains`
- *  für die Fälle, in denen es um eine DATEI geht: dort kennt man den Pfad,
- *  aber nicht jede Query-Variante, mit der sie aufgerufen wurde. */
+ *  `exact` for places where the triggering URIs are KNOWN (the example URI of
+ *  an alert, the URLs hit by a pattern). `contains` for the cases that are
+ *  about a FILE: there one knows the path, but not every query variant it
+ *  was requested with. */
 export interface TraceMarks {
   exact?: string[]
   contains?: string[]
@@ -63,8 +63,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   ips: string[] | null
   onClose: () => void
   layer?: number
-  /** Ohne diese Markierung sucht man die auslösende Zeile unter tausenden
-   *  von Hand. */
+  /** Without this marking one hunts for the triggering line among thousands
+   *  by hand. */
   marks?: TraceMarks
 }) {
   const tr = useT()
@@ -75,11 +75,12 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   const [sort, setSort] = useState('time')
   const pageSize = 500
 
-  // Ein neuer Trace startet auf Seite 1 und ohne Filter des vorigen.
+  // A new trace starts on page 1 and without the filters of the previous.
   useEffect(() => {
     setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
   }, [ips])
-  // Ein Filter verkleinert die Menge — auf Seite 7 stünde man sonst im Leeren.
+  // A filter shrinks the set -- on page 7 one would otherwise stand in the
+  // void.
   useEffect(() => { setPage(0) }, [search, status, method, sort])
 
   const { data, isFetching } = useQuery({
@@ -90,8 +91,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
     enabled: !!ips?.length,
   })
 
-  // Der Verlauf hängt NUR an der Auswahl: er darf sich beim Blättern und
-  // Filtern nicht ändern, sonst beschriebe er nicht mehr den Zeitraum.
+  // The timeline depends ONLY on the selection: it must not change when
+  // paging or filtering, otherwise it would no longer describe the period.
   const { data: timeline } = useQuery({
     queryKey: ['trace-timeline', slug, ips],
     queryFn: () => post<{ timeline: TimelinePoint[] }>(

@@ -1,15 +1,16 @@
-// GeoBanner.tsx — der Weg zu den Länderflaggen, wenn die Datenbank fehlt.
+// GeoBanner.tsx -- the route to the country flags when the database is
+// missing.
 //
-// Ein Banner wie das für fehlende Evidence: gut sichtbar im Dashboard,
-// verschwindet von selbst, sobald es erledigt ist. Der Download selbst
-// startet NICHT auf den ersten Klick — vorher sagt ein Fenster, was gleich
-// passiert. Das ist der einzige Netz-Kontakt des ganzen Werkzeugs, und
-// genau deshalb darf er nicht nebenbei geschehen: wer auf einer
-// abgeschotteten Forensik-Maschine arbeitet, muss NEIN sagen können, bevor
-// irgendetwas den Rechner verlässt.
+// A banner like the one for missing evidence: clearly visible in the
+// dashboard, disappearing by itself once it is done. The download itself
+// does NOT start on the first click -- a window says beforehand what is
+// about to happen. This is the only network contact of the entire tool, and
+// precisely for that reason it must not happen in passing: whoever works on
+// an isolated forensic machine has to be able to say NO before anything
+// leaves the computer.
 //
-// »Nicht mehr zeigen« bleibt gemerkt (localStorage): wer bewusst ohne
-// GeoIP arbeitet, soll nicht in jedem Fall aufs Neue vertröstet werden.
+// "Do not show again" is remembered (localStorage): whoever deliberately
+// works without GeoIP should not be put off anew in every case.
 import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'

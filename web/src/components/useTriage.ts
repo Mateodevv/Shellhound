@@ -1,28 +1,28 @@
-// useTriage.ts — die Entscheidung als wiederverwendbarer Baustein.
+// useTriage.ts -- the decision as a reusable building block.
 //
-// Entschieden wird an mehreren Stellen (Findings-Liste, Artefakt-Fenster,
-// Actors, Dashboard), aber was danach passiert, muss überall dasselbe sein:
-// die Quittung der IOC Box, die Meldung über mitentschiedene Artefakte mit
-// Rückgängig, das Vorschlagsfenster für die mittlere Stufe. Wer den Hook
-// benutzt, rendert dazu einmal <TriageFollowUp> (triage.tsx).
+// Deciding happens in several places (findings list, artifact window,
+// Actors, dashboard), but what happens afterwards has to be the same
+// everywhere: the receipt of the IOC box, the message about artifacts
+// decided along with undo, the suggestion window for the middle tier.
+// Whoever uses the hook renders <TriageFollowUp> (triage.tsx) once for it.
 //
-// Eigene Datei, weil ein Hook neben einer Komponente Fast Refresh für die
-// ganze Datei bricht.
+// Its own file, because a hook next to a component breaks Fast Refresh for
+// the whole file.
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { post, type TriageLink, type TriageResult } from '../api'
 
 export interface TriageController {
-  /** Artefakte entscheiden. `propagate: false` für Rücknahmen und
-   *  Vorschläge — die dürfen keine neue Übernahme-Welle auslösen. */
+  /** Decide artifacts. `propagate: false` for undos and suggestions -- those
+   *  must not trigger a new wave of propagation. */
   decide: (artifacts: string[], state: string, note?: string,
            propagate?: boolean) => void
-  /** Eine Übernahme zurücknehmen: jedes Artefakt zurück auf den Zustand,
-   *  den der Server mitgeliefert hat. */
+  /** Take a propagation back: every artifact returns to the state the
+   *  server supplied. */
   undo: (links: TriageLink[]) => Promise<void>
   collected: TriageResult['collected']
   clearCollected: () => void
-  /** Für TriageFollowUp. */
+  /** For TriageFollowUp. */
   notice: { linked: TriageLink[]; suggested: TriageLink[] } | null
   dismissNotice: () => void
   reviewing: TriageLink[] | null
@@ -48,9 +48,9 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
     onSuccess: (result) => {
       setCollected(result.collected)
-      // Mitentschiedenes und Vorschläge sind eine MELDUNG, keine Frage: der
-      // Analyst hat gerade entschieden und soll erfahren, was daraus folgte,
-      // ohne aus seinem Ablauf gerissen zu werden.
+      // What was decided along and what is suggested are a MESSAGE, not a
+      // question: the analyst has just decided and should learn what
+      // followed from it without being torn out of their flow.
       if (result.linked?.length || result.suggested?.length) {
         setNotice({ linked: result.linked ?? [], suggested: result.suggested ?? [] })
       }
@@ -62,8 +62,8 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
   return {
     decide: (artifacts, state, note, propagate) =>
       mutation.mutate({ artifacts, state, note, propagate }),
-    // Nach Zustand gruppiert, damit es ein Aufruf je Gruppe bleibt.
-    // `propagate: false`, sonst löst das Zurücknehmen eine neue Welle aus.
+    // Grouped by state so that it stays one call per group.
+    // `propagate: false`, otherwise taking it back triggers a new wave.
     undo: async (links) => {
       const groups = new Map<string, { state: string; note: string; names: string[] }>()
       for (const l of links) {

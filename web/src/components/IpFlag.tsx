@@ -1,16 +1,16 @@
-// IpFlag.tsx — die Länderflagge an einer IP, mit ehrlichem Tooltip.
+// IpFlag.tsx -- the country flag on an IP, with an honest tooltip.
 //
-// GeoIP wird gern überinterpretiert, deshalb sagt der Tooltip an jeder
-// Flagge dazu, was sie ist: eine Schätzung der REGISTRIERUNG, kein
-// Aufenthaltsort — VPNs, Proxys, Tor und Botnetz-Knoten stehen woanders.
+// GeoIP is readily over-interpreted, so the tooltip on every flag says what
+// it is: an estimate of the REGISTRATION, not a location -- VPNs, proxies,
+// Tor and botnet nodes are somewhere else.
 //
-// Sonderbereiche (privat, Loopback, Dokumentation) bekommen statt einer
-// Flagge ein gestricheltes Kürzel: »die Quell-IP ist privat« ist im Log
-// oft die wichtigere Aussage als jedes Land — sie heißt Proxy davor oder
-// Verkehr aus dem eigenen Netz.
+// Special ranges (private, loopback, documentation) get a dashed
+// abbreviation instead of a flag: "the source IP is private" is often the
+// more important statement in a log than any country -- it means a proxy in
+// front, or traffic from the local network.
 //
-// Flaggen sind lokal gebündelte SVGs (flag-icons, MIT): Windows rendert
-// Flaggen-Emojis nicht, und ein Forensik-Werkzeug lädt nichts von CDNs.
+// Flags are locally bundled SVGs (flag-icons, MIT): Windows does not render
+// flag emoji, and a forensic tool loads nothing from CDNs.
 import { useT } from '../i18n'
 import { useGeo } from '../geo'
 import { Tooltip } from './Tooltip'

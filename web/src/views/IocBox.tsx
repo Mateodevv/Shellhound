@@ -1,4 +1,4 @@
-// IocBox.tsx — die Fall-Indikatoren: sammeln, taggen, annotieren, exportieren.
+// IocBox.tsx -- the indicators of the case: collect, tag, annotate, export.
 import { useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -35,21 +35,21 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     queryKey: ['iocs', slug],
     queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`),
   })
-  // Ausblende-Schalter wie überall: Klick versteckt Typ bzw. Tag, der
-  // nächste Klick holt sie zurück, mehrere stapeln sich.
+  // Hide switches as everywhere: a click hides the type resp. the tag, the
+  // next click brings it back, several of them stack.
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const [hiddenTags, setHiddenTags] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [newValue, setNewValue] = useState('')
   const [newNote, setNewNote] = useState('')
-  // Aufgeklappte Nachbarschaften und der kurz hervorgehobene Eintrag, zu dem
-  // gerade gesprungen wurde.
+  // Expanded neighbourhoods, and the briefly highlighted entry that was
+  // just jumped to.
   const [opened, setOpened] = useState<Set<number>>(new Set())
   const [flash, setFlash] = useState<number | null>(null)
 
-  // Ein Sprung ist nur dann einer, wenn man am Ziel merkt, dass man da ist:
-  // in einer Liste aus 40 gleich aussehenden Zeilen wäre ein stiller Scroll
-  // dasselbe wie gar nichts.
+  // A jump is only a jump when one notices at the destination that one has
+  // arrived: in a list of 40 identical-looking rows a silent scroll would be
+  // the same as nothing at all.
   const jumpTo = (id: number) => {
     setFlash(id)
     document.getElementById(`ioc-${id}`)
@@ -84,10 +84,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     onSuccess: invalidate,
   })
 
-  // Ein IOC verschwindet, wenn sein Typ ausgeblendet ist oder JEDES seiner
-  // Tags — ein Eintrag mit einem sichtbaren Tag bleibt stehen, sonst würde
-  // »hunt« ausblenden auch die bestätigten Funde mitreißen, die zufällig
-  // beides tragen.
+  // An IOC disappears when its type is hidden, or EVERY one of its tags --
+  // an entry with one visible tag stays, otherwise hiding "hunt" would drag
+  // the confirmed finds along that happen to carry both.
   const filtered = useMemo(() => (iocs ?? []).filter((i) =>
     !hiddenTypes.has(i.type) &&
     !(i.tags.length > 0 && i.tags.every((tg) => hiddenTags.has(tg))) &&
@@ -222,9 +221,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
                 <span className="min-w-0 truncate">{ioc.value}</span>
               </span>
-              {/* Der Wert wandert von hier in ein Ticket, eine Firewall-Regel
-                  oder eine Suchmaske. Abtippen wäre bei einem SHA-256 eine
-                  Fehlerquelle, und Markieren scheitert am truncate. */}
+              {/* The value travels from here into a ticket, a firewall rule
+                  or a search box. Typing it out would be a source of errors
+                  for a SHA-256, and selecting it fails on the truncate. */}
               <CopyButton value={ioc.value} label={tr('iocbox.copy')}
                 className="shrink-0" />
               {links.length > 0 && (

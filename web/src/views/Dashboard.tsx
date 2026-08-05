@@ -19,9 +19,9 @@ import type { ViewId } from '../App'
 
 export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
-  // Aus der Chronologie heraus soll man dasselbe tun können wie überall: das
-  // Artefakt aufmachen, den Client tracen. Eine Zeitleiste, aus der man
-  // nicht in den Beleg springen kann, ist eine Behauptungsliste.
+  // From the chronology one should be able to do the same as everywhere:
+  // open the artifact, trace the client. A timeline from which one cannot
+  // jump into the evidence is a list of claims.
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
@@ -63,8 +63,8 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         </Card>
       )}
 
-      {/* Wie das Evidence-Banner: sichtbar, solange etwas fehlt, weg,
-          sobald es erledigt ist. */}
+      {/* Like the evidence banner: visible while something is missing,
+          gone once it is done. */}
       <GeoBanner />
 
       {data.jobs_running.length > 0 && (

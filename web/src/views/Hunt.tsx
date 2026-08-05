@@ -1,14 +1,14 @@
-// Hunt.tsx — die Muster-Jagd: hinterlegte Exploit-Pfade gegen den Log-Index.
+// Hunt.tsx -- the pattern hunt: stored exploit paths against the log index.
 //
-// Die Gegenrichtung zu allem anderen im Werkzeug. Findings und Actors zeigen,
-// was die MITGELIEFERTEN Regeln gefunden haben; hier bringt der Analyst sein
-// eigenes Wissen ein — „diesen Pfad ruft nur auf, wer diesen Exploit fährt" —
-// und das Werkzeug sagt, wer ihn abgerufen hat.
+// The opposite direction from everything else in the tool. Findings and
+// Actors show what the SHIPPED rules found; here the analyst brings in their
+// own knowledge -- "this path is only requested by someone running this
+// exploit" -- and the tool says who requested it.
 //
-// DIE BIBLIOTHEK GEHÖRT DEM WORKSPACE, NICHT DEM FALL: einmal angelegt, steht
-// ein Muster in jedem weiteren Fall bereit. Der Fall protokolliert nur, wonach
-// in ihm gesucht wurde — auch erfolglos, denn „wir haben darauf geprüft, es
-// war nichts" steht sonst nirgends.
+// THE LIBRARY BELONGS TO THE WORKSPACE, NOT TO THE CASE: created once, a
+// pattern is ready in every further case. The case only records what was
+// searched for in it -- unsuccessfully included, because "we checked for
+// this, there was nothing" is written down nowhere else.
 import { plural, useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -40,13 +40,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Die vom Muster getroffenen URLs — im Trace rot markiert, damit man den
-  // Aufruf, um den es geht, nicht zwischen tausend anderen sucht.
+  // The URLs hit by the pattern -- marked red in the trace, so that one does
+  // not hunt for the request that matters among a thousand others.
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [editing, setEditing] = useState<string | null>(null)
   const [error, setError] = useState('')
-  // Offen, solange man noch am Zusammenstellen ist; mit wachsender
-  // Bibliothek klappt man sie zu und arbeitet mit den Ergebnissen.
+  // Open while one is still assembling; as the library grows one collapses
+  // it and works with the results.
   const [libOpen, setLibOpen] = useState(true)
 
   const { data: lib } = useQuery({
@@ -203,10 +203,10 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         </div>
       )}
 
-      {/* ---- die Bibliothek ----
-          Zuklappbar, weil sie mit jedem Fall wächst: wer zwanzig Muster
-          gesammelt hat, will beim Auswerten die Ergebnisse sehen und nicht
-          erst an der Liste vorbeiscrollen, aus der sie stammen. */}
+      {/* ---- the library ----
+          Collapsible, because it grows with every case: whoever has
+          collected twenty patterns wants to see the results while assessing,
+          not scroll past the list they came from first. */}
       <Card className="overflow-hidden">
         <button onClick={() => setLibOpen(!libOpen)}
           className="flex w-full cursor-pointer items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2 text-left transition-colors hover:bg-[var(--panel)]">
@@ -454,9 +454,9 @@ function HuntSummary({ result }: { result: HuntResult }) {
 type SortCol = 'ip' | 'hits' | 'ok_hits' | 'first' | 'last' | 'dauer'
 type Sort = { col: SortCol; desc: boolean }
 
-/** Eine Adresse als Zahl, damit 2 vor 10 steht. IPv6 fällt auf den
- *  Textvergleich zurück — dort ist die Reihenfolge ohnehin nur eine
- *  Gruppierung, keine Aussage. */
+/** An address as a number, so that 2 comes before 10. IPv6 falls back to a
+ *  text comparison -- there the order is only a grouping anyway, not a
+ *  statement. */
 function ipKey(ip: string): string {
   const parts = ip.split('.')
   if (parts.length !== 4) return ip
@@ -488,8 +488,8 @@ function SortHead({ col, sort, onSort, className, children }: {
   )
 }
 
-/** Was ein Muster gefunden hat. Die getroffenen URIs stehen mit dabei: ein
- *  Muster, das zu weit greift, sieht man nur, wenn man sieht, WAS es traf. */
+/** What a pattern found. The URIs hit are included: a pattern that reaches
+ *  too far can only be recognised by seeing WHAT it hit. */
 function ResultCard({ slug, result, onTrace }: {
   slug: string
   result: HuntResult
@@ -498,8 +498,8 @@ function ResultCard({ slug, result, onTrace }: {
   const tr = useT()
   const qc = useQueryClient()
   const [showUris, setShowUris] = useState(false)
-  // Voreinstellung wie vom Server geliefert: Erfolge zuerst. Das ist die
-  // Reihenfolge, in der man die Liste zuerst lesen will.
+  // The default as delivered by the server: successes first. That is the
+  // order one wants to read the list in to begin with.
   const [sort, setSort] = useState<Sort>({ col: 'ok_hits', desc: true })
 
   const sorted = useMemo(() => {
@@ -513,8 +513,8 @@ function ResultCard({ slug, result, onTrace }: {
         return dir * (s(a) - s(b))
       }
       const d = dir * (a[sort.col] - b[sort.col])
-      // Gleichstand bricht nach Anfragen, sonst springen Zeilen bei jedem
-      // Redraw -- 40 addresses with one hit each are not a rarity.
+      // A tie breaks by request count, otherwise rows jump on every redraw
+      // -- 40 addresses with one hit each are not a rarity.
       return d || b.hits - a.hits
     })
   }, [result.clients, sort])
@@ -617,17 +617,17 @@ function ResultCard({ slug, result, onTrace }: {
                 c.ok_hits ? 'text-[var(--sev-high)]' : 'text-[var(--muted)]')}>
                 {formatCount(c.ok_hits)}
               </td>
-              {/* Auf die Sekunde: bei einem Muster-Treffer ist die Uhrzeit
-                  die halbe Aussage — sie sagt, ob die Aufrufe in einem
-                  Schwung kamen oder über Wochen verteilt. */}
+              {/* To the second: on a pattern hit the time of day is half
+                  the statement -- it says whether the requests came in one
+                  burst or spread over weeks. */}
               <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
                 {formatLogTime(c.first_epoch, c.tz)}
               </td>
               <td className="mono px-2 py-1.5 text-[12px] tabular text-[var(--muted)]">
                 {formatLogTime(c.last_epoch, c.tz)}
               </td>
-              {/* Die Angriffslänge: 40 Aufrufe in zwei Minuten sind ein
-                  Werkzeug, 40 über drei Wochen sind etwas anderes. */}
+              {/* The length of the attack: 40 requests in two minutes are a
+                  tool, 40 across three weeks are something else. */}
               <td className="mono px-2 py-1.5 text-right text-[12px] tabular">
                 {formatSpan(c.first_epoch, c.last_epoch)}
               </td>

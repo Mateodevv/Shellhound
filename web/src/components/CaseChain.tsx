@@ -1,15 +1,15 @@
-// CaseChain.tsx — die Chronologie des Falls.
+// CaseChain.tsx -- the chronology of the case.
 //
-// Jede andere Ansicht beantwortet „was": welche Datei, welcher Client,
-// welches Konto. Diese beantwortet „in welcher Reihenfolge" — der erste
-// Absatz jedes Berichts, den man bisher abtippte, indem man zwischen drei
-// Ansichten hin- und hersprang und Zeitstempel im Kopf sortierte.
+// Every other view answers "what": which file, which client, which account.
+// This one answers "in which order" -- the first paragraph of every report,
+// which until now one typed out by jumping between three views and sorting
+// timestamps in one's head.
 //
-// SIE ORDNET GEMESSENE TATSACHEN UND BEHAUPTET KEINE URSACHE. Was hier
-// steht, ist eine Beobachtung mit Zeitstempel und Herkunft; welche davon
-// auseinander folgt, entscheidet der Analyst. Deshalb steht an jeder Zeile,
-// WORAUS die Zeit stammt, und deshalb stehen die Lücken so sichtbar wie die
-// Ereignisse: „dazwischen ist nichts belegt" ist eine Aussage des Falls.
+// IT ORDERS MEASURED FACTS AND CLAIMS NO CAUSE. What stands here is an
+// observation with a timestamp and a source; which of them follows from
+// which is for the analyst to decide. That is why every line says WHERE the
+// time comes from, and why the gaps stand as visibly as the events:
+// "nothing is proven in between" is a statement of the case.
 import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -33,8 +33,8 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   konto: UserPlus,
 }
 
-// Nur Schlüssel: die Ereignisarten kommen englisch benannt vom Server und
-// werden hier beschriftet, nicht umbenannt.
+// Keys only: the event kinds come from the server under English names and
+// are labelled here, not renamed.
 const KIND_KEY: Record<ChainEvent['kind'], string> = {
   erstkontakt: 'chain.kind.firstContact',
   versuch: 'chain.kind.attempts',
@@ -49,12 +49,12 @@ const SOURCE_KEY: Record<ChainEvent['source'], string> = {
   dump: 'chain.source.dump',
 }
 
-/** Der Uhren-Abgleich: ein vom Analysten gesetzter Versatz je Quelle.
+/** The clock alignment: an offset per source, set by the analyst.
  *
- *  Log-Server und Datenbank-Server können verschiedene Uhren führen, und
- *  bei „Konto 03:17, Erstkontakt 09:12" kann ein 6-Stunden-Versatz die
- *  Reihenfolge der Geschichte drehen. Das Werkzeug rät nicht — der Versatz
- *  ist eine Aussage des Analysten und steht sichtbar in der Kette. */
+ *  Log server and database server can run different clocks, and with
+ *  "account 03:17, first contact 09:12" a six-hour offset can turn the order
+ *  of the story around. The tool does not guess -- the offset is a statement
+ *  of the analyst and stands visibly in the chain. */
 function ClockEditor({ slug, offsets, onClose }: {
   slug: string
   offsets: { logs: number; dump: number }
@@ -62,8 +62,8 @@ function ClockEditor({ slug, offsets, onClose }: {
 }) {
   const tr = useT()
   const qc = useQueryClient()
-  // In Stunden bedient, in Sekunden gespeichert: Uhren gehen um Zeitzonen
-  // auseinander, nicht um Sekunden — und halbe Stunden gibt es (Indien).
+  // Operated in hours, stored in seconds: clocks diverge by time zones, not
+  // by seconds -- and half hours exist (India).
   const [logs, setLogs] = useState(String(offsets.logs / 3600))
   const [dump, setDump] = useState(String(offsets.dump / 3600))
   useEffect(() => {
@@ -109,13 +109,13 @@ function ClockEditor({ slug, offsets, onClose }: {
 
 export function CaseChain({ slug, onOpen, onTrace }: {
   slug: string
-  /** Ein Artefakt öffnen — dieselbe Ansicht wie aus Findings. */
+  /** Open an artifact -- the same view as from Findings. */
   onOpen: (artifact: string, kind: string) => void
   onTrace: (ip: string) => void
 }) {
-  // Sie steht offen, weil sie der erste Absatz des Berichts ist. Zuklappen
-  // ist für die Fälle, in denen man die Kennzahlen darüber vergleichen will,
-  // ohne 40 Zeilen dazwischen.
+  // It stands open because it is the first paragraph of the report.
+  // Collapsing is for the cases where one wants to compare the key figures
+  // above it without 40 lines in between.
   const tr = useT()
   const [open, setOpen] = useState(true)
   const [clockOpen, setClockOpen] = useState(false)
@@ -168,8 +168,8 @@ export function CaseChain({ slug, onOpen, onTrace }: {
         {data.events.map((e, i) => {
           const Icon = KIND_ICON[e.kind] ?? CircleHelp
           const prev = data.events[i - 1]
-          // Gleiche Sekunde = ein Moment, keine zwei. Die Zeit steht dann
-          // nur einmal da, sonst liest sich eine Beobachtung wie zwei.
+          // Same second = one moment, not two. The time then appears only
+          // once, otherwise one observation reads like two.
           const sameMoment = prev?.at === e.at
           const gapBefore = prev && e.at - prev.at > 3600
           return (
@@ -231,8 +231,8 @@ export function CaseChain({ slug, onOpen, onTrace }: {
         })}
       </Card>
 
-      {/* Was der Fall NICHT belegt, gehört genauso in den Bericht wie das,
-          was er belegt — und es steht sonst nirgends. */}
+      {/* What the case does NOT prove belongs in the report just as much as
+          what it does prove -- and it is written down nowhere else. */}
       {data.gaps.length > 0 && (
         <div className="mt-2 flex flex-col gap-1.5">
           {data.gaps.map((g) => (

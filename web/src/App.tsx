@@ -52,9 +52,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const [view, setView] = useState<ViewId>('dashboard')
   const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
-  // Die globale Suche gehört der Shell: sie muss aus JEDER Ansicht heraus
-  // erreichbar sein, und ihr Treffer öffnet das Artefakt-Fenster direkt —
-  // egal, welche Ansicht gerade offen ist.
+  // The global search belongs to the shell: it has to be reachable from
+  // EVERY view, and its hit opens the artifact window directly -- no matter
+  // which view is currently open.
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [paletteArtifact, setPaletteArtifact] = useState<ArtifactStub | null>(null)
   const [paletteTrace, setPaletteTrace] = useState<string[] | null>(null)
@@ -192,8 +192,8 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         gotoView={setView}
         onOpenArtifact={(stub) => { t.clearCollected(); setPaletteArtifact(stub) }}
       />
-      {/* Das Artefakt-Fenster der Palette lebt in der Shell: ein Treffer
-          soll sich öffnen, egal welche Ansicht gerade darunter liegt. */}
+      {/* The palette's artifact window lives in the shell: a hit should
+          open no matter which view lies below it. */}
       <ArtifactWindow
         slug={slug}
         artifact={paletteArtifact}

@@ -1,23 +1,23 @@
-// Findings.tsx — die Arbeitsliste des Falls. Durchgearbeitet werden
-// ARTEFAKTE, nicht einzelne Findings.
+// Findings.tsx -- the work list of the case. What gets worked through are
+// ARTIFACTS, not individual findings.
 //
-// Ein Artefakt ist die Sache selbst: diese Datei, dieser Client, diese
-// Tabelle. Die Findings sind die Regeln, die darauf angesprochen haben —
-// sie sind der GRUND für die Entscheidung, nicht die Entscheidung selbst.
-// Acht Regeln auf einer abgelegten Shell sind acht Beobachtungen über EINE
-// Datei; die Frage („gehört das zum Vorfall?") stellt sich einmal.
+// An artifact is the thing itself: this file, this client, this table. The
+// findings are the rules that responded to it -- they are the REASON for the
+// decision, not the decision itself. Eight rules on one dropped shell are
+// eight observations about ONE file; the question ("does this belong to the
+// incident?") is asked once.
 //
-// Deshalb: markiert, gezählt und als True/False Positive entschieden wird
-// das Artefakt. Die Liste hat zwei Ebenen — Kategorie („Webshells &
-// Backdoors") und darunter die Artefakte. Die Findings eines Artefakts
-// stehen aufgeklappt darunter und im Detail-Fenster, das alles zusammenholt,
-// was zur Beurteilung nötig ist: Metadaten, Dateiinhalt, Actor-Profil und
-// jede IP, die daran hängt — jede davon direkt als Trace zu öffnen.
+// Hence: what gets checked, counted and decided as a true/false positive is
+// the artifact. The list has two levels -- category ("Web shells &
+// backdoors") and below it the artifacts. The findings of an artifact stand
+// expanded below it and in the detail window, which gathers everything
+// needed for the assessment: metadata, file content, actor profile and every
+// IP that hangs on it -- each of them openable directly as a trace.
 //
-// Die Zeile selbst soll SO VIEL SAGEN, dass man sie meistens nicht öffnen
-// muss: Symbol und Farbe für Art und Schweregrad, die Regeln als Chips, ein
-// Balken für die Verteilung der Findings, der Zustand als Pille. Eine Liste
-// aus lauter gleich aussehenden Zeilen zwingt zum Lesen jeder einzelnen.
+// The row itself should SAY SO MUCH that one mostly does not have to open
+// it: icon and colour for kind and severity, the rules as chips, a bar for
+// the distribution of the findings, the state as a pill. A list of
+// identical-looking rows forces one to read every single one.
 import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -47,9 +47,9 @@ import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
 import type { ViewId } from '../App'
 
-// Ein Symbol je Kategorie. Die Kategorie ist die Gliederung, mit der man
-// anfängt — sie soll auf einen Blick unterscheidbar sein und nicht als
-// weitere Textzeile in einer Textliste stehen.
+// One icon per category. The category is the structure one starts from --
+// it should be distinguishable at a glance and not stand as yet another line
+// of text in a list of text.
 const CATEGORY_ICON: Record<string, typeof Bug> = {
   webshell: Bug,
   obfuscation: EyeOff,
@@ -63,10 +63,10 @@ const CATEGORY_ICON: Record<string, typeof Bug> = {
   other: CircleDashed,
 }
 
-/** Ein Artefakt mit allem, was der Server dazu aggregiert hat, plus seinen
- *  Findings. Die Kategorie kommt vom SCHWERSTEN Finding — wenn eine Datei
- *  sowohl „Verschleierung" als auch „führt Befehle aus" auslöst, steht sie
- *  dort, wo die stärkere Aussage sie hinstellt. */
+/** An artifact with everything the server aggregated for it, plus its
+ *  findings. The category comes from the WORST finding -- when a file
+ *  triggers both "obfuscation" and "executes commands", it stands where the
+ *  stronger statement puts it. */
 interface Artifact extends ArtifactRow {
   items: Finding[]
   cat: Category
@@ -79,10 +79,10 @@ interface CatGroup {
   worst: number
   confirmed: number
   dismissed: number
-  kind: string          // vorherrschende Artefakt-Art, für "12 Dateien"
+  kind: string          // predominant artifact kind, for "12 files"
 }
 
-// Zeilentypen der virtualisierten Liste.
+// Row types of the virtualised list.
 type Item =
   | { t: 'c'; c: CatGroup }
   | { t: 'a'; a: Artifact; c: CatGroup }
@@ -90,8 +90,8 @@ type Item =
 
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
-/** Ein Ausblende-Set umschalten: Klick versteckt die Klasse, der nächste
- *  Klick holt sie zurück. */
+/** Toggle a hide set: a click hides the class, the next click brings it
+ *  back. */
 function toggleHidden(set: Set<string>, value: string): Set<string> {
   const next = new Set(set)
   if (next.has(value)) next.delete(value)
@@ -101,10 +101,10 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
 
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
-  // JEDER Filter-Chip ist ein Ausblende-Schalter: Klick versteckt seine
-  // Klasse, der nächste Klick bringt sie zurück, mehrere stapeln sich.
-  // Standardmäßig ausgeblendet: False Positives (gehören nicht zum Fall)
-  // und Info (Kontext ohne Aussage über dieses System).
+  // EVERY filter chip is a hide switch: a click hides its class, the next
+  // click brings it back, several of them stack. Hidden by default: false
+  // positives (they do not belong to the case) and info (context without a
+  // statement about this system).
   const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(new Set(['3']))
   const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(new Set(['dismissed']))
   const [hiddenSource, setHiddenSource] = useState<Set<string>>(new Set())
@@ -112,22 +112,22 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  // Zwei Mengen statt einer: ohne Filter sind Kategorien ZU (Übersicht) und
-  // `expandedCats` sagt, was offen ist; mit Filter sind sie AUF und
-  // `collapsedCats` sagt, was zu ist. So bleibt beides jeweils die Ausnahme,
-  // die der Analyst selbst gesetzt hat.
+  // Two sets instead of one: without a filter, categories are CLOSED
+  // (overview) and `expandedCats` says what is open; with a filter they are
+  // OPEN and `collapsedCats` says what is closed. That way each is the
+  // exception the analyst set themselves.
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Was der Trace rot markieren soll — kommt aus dem Artefakt-Fenster,
-  // das weiß, worum es geht (die Datei bzw. der Alarm des Clients).
+  // What the trace should mark red -- comes from the artifact window, which
+  // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
 
-  // Entscheidung + Nachsorge (Quittung, Übernahme-Meldung, Vorschläge) —
-  // geteilt mit Actors, damit es überall dieselbe Entscheidung ist.
+  // Decision plus follow-up (receipt, propagation message, suggestions) --
+  // shared with Actors, so that it is the same decision everywhere.
   const t = useTriage(slug, () => { setChecked(new Set()); setBulkNote('') })
 
   const query = useMemo(() => {
@@ -146,7 +146,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   })
   const roots: EvidenceRoot[] = useMemo(() => data?.roots ?? [], [data])
 
-  // Zwei Ebenen: Kategorie ("Webshells & Backdoors") -> die Artefakte darin.
+  // Two levels: category ("Web shells & backdoors") -> the artifacts in
+  // it.
   const categories = useMemo(() => {
     const byArtifact = new Map<string, Finding[]>()
     for (const f of data?.findings ?? []) {
@@ -175,11 +176,12 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
   }, [data, tr])
 
-  // Ein aktiver Filter bedeutet: der Analyst sucht etwas Bestimmtes. Dann
-  // stehen die Kategorien offen, sonst wäre die Trefferliste hinter Klicks
-  // versteckt. Ohne Filter ist die Übersicht der Zweck — Kategorien zu.
-  // Nur die SUCHE öffnet die Kategorien automatisch — wer sucht, will die
-  // Treffer sehen. Ausblenden ist keine Suche: die Übersicht bleibt zu.
+  // An active filter means: the analyst is looking for something specific.
+  // Then the categories stand open, otherwise the hit list would be hidden
+  // behind clicks. Without a filter the overview is the purpose -- categories
+  // closed. Only the SEARCH opens the categories automatically -- whoever
+  // searches wants to see the hits. Hiding is not searching: the overview
+  // stays closed.
   const filtering = Boolean(search)
 
   const items = useMemo(() => {
@@ -199,7 +201,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   }, [categories, expanded, collapsedCats, expandedCats, filtering])
 
 
-  /** Markierte Artefakte, sonst das unter dem Cursor. */
+  /** Checked artifacts, otherwise the one under the cursor. */
   const bulkTriage = (state: string) => {
     const at = items[cursor]
     const names = checked.size
@@ -219,7 +221,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     overscan: 20,
   })
 
-  // Tastatur: j/k über Artefakt-Zeilen, x markieren, c/d/r entscheiden
+  // Keyboard: j/k over artifact rows, x checks, c/d/r decide
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (selected || viewing || traceIps || e.target instanceof HTMLInputElement ||
@@ -416,10 +418,10 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       )}
 
-      {/* Kein `flex-1`: die Box ist so hoch wie ihr Inhalt und schrumpft
-          erst, wenn die Liste länger wird als der Platz. Gestreckt auf die
-          volle Höhe stand unter der letzten Zeile sonst eine leere Fläche,
-          die aussah, als fehle da etwas. */}
+      {/* No `flex-1`: the box is as tall as its content and only shrinks
+          when the list grows longer than the space. Stretched to the full
+          height, an empty area used to stand below the last row that looked
+          as if something were missing there. */}
       <div ref={parentRef}
         className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
@@ -448,14 +450,14 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   className={clsx(
                     'absolute left-0 top-0 flex w-full items-center gap-3 pr-4',
                     'border-y border-[var(--line)]',
-                    // Der Trennstrich nach oben nur, wenn eine Kategorie
-                    // gerade ZU ist -- offen geht sie in ihre Artefakte über.
+                    // The rule above only when a category is currently
+                    // CLOSED -- when open it flows into its artifacts.
                     open ? 'border-b-transparent' : '')}
                   style={{
                     ...style,
-                    // Ein Hauch des Schweregrads, der nach rechts ausläuft:
-                    // die Kategorie hebt sich vom Rest ab, ohne dass eine
-                    // volle Farbfläche die Namen darunter erschlägt.
+                    // A hint of the severity running off to the right: the
+                    // category stands out from the rest without a full
+                    // colour field drowning the names below it.
                     background:
                       `linear-gradient(90deg, color-mix(in srgb, ${tint} 13%, var(--panel-2)) 0%,` +
                       ' var(--panel-2) 55%)',
@@ -518,7 +520,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               )
             }
 
-            // ---- Ebene 2: das Artefakt — die Einheit, über die entschieden wird ----
+            // ---- level 2: the artifact -- the unit decisions are about ----
             if (item.t === 'a') {
               const a = item.a
               const Icon = KIND_ICON[a.artifact_kind] ?? Bug
@@ -530,9 +532,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     'group absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-3',
                     'transition-colors hover:bg-[var(--panel-2)]',
                     vi.index === cursor && 'bg-[var(--accent-soft)]',
-                    // Abgeblendet heißt ABGEARBEITET, nicht unwichtig: ein
-                    // bestätigtes Artefakt bleibt stehen, tritt aber optisch
-                    // zurück, damit das Offene die Liste führt.
+                    // Dimmed means DONE, not unimportant: a confirmed
+                    // artifact stays but recedes visually, so that what is
+                    // still open leads the list.
                     a.triage === 'confirmed' && 'opacity-45')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
@@ -601,7 +603,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               )
             }
 
-            // ---- Ebene 3: ein Finding als BEGRÜNDUNG, nicht als Entscheidung ----
+            // ---- level 3: a finding as REASONING, not as a decision ----
             const f = item.f
             return (
               <div key={f.fingerprint}
@@ -609,8 +611,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                   'absolute left-0 top-0 flex w-full items-center gap-2.5 border-b border-[var(--line-soft)] pr-4',
                   item.a.triage === 'confirmed' && 'opacity-45')}
                 style={style}>
-                {/* Die Führungslinie hält die Findings sichtbar an ihrem
-                    Artefakt — eingerückter Text allein verliert den Bezug. */}
+                {/* The guide line keeps the findings visibly attached to
+                    their artifact -- indented text alone loses the tie. */}
                 <span className="ml-[3.25rem] h-full w-px shrink-0 bg-[var(--line)]" />
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ background: SEVERITY_VAR[f.severity] }} />
@@ -628,9 +630,10 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         </div>
       </div>
 
-      {/* Alle drei sind zentrierte Fenster; die Ebene sagt, was davor liegt.
-          Trace und Datei-Viewer werden AUS dem Artefakt-Fenster geöffnet und
-          sind eine Stufe kleiner — man sieht am Rand, wohin man zurückkommt. */}
+      {/* All three are centred windows; the level says what lies in front.
+          Trace and file viewer are opened FROM the artifact window and are
+          one step smaller -- one sees at the edge where one comes back
+          to. */}
       <ArtifactWindow
         slug={slug}
         artifact={selected}
@@ -660,9 +663,9 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
   )
 }
 
-/** Die Regeln eines Artefakts als Chips unter seinem Namen — man sieht in
- *  der Liste, WORUM es geht, ohne aufzuklappen oder zu öffnen. Mehr als drei
- *  wären eine zweite Liste in der Liste; der Rest steht als Zahl daneben. */
+/** The rules of an artifact as chips under its name -- one sees in the list
+ *  WHAT it is about without expanding or opening. More than three would be a
+ *  second list inside the list; the rest stands next to it as a number. */
 function RuleChips({ items }: { items: Finding[] }) {
   const tr = useT()
   if (!items.length) return null
@@ -688,10 +691,10 @@ function RuleChips({ items }: { items: Finding[] }) {
   )
 }
 
-/** Wie sich die Findings eines Artefakts auf die Schweregrade verteilen.
- *  Zwei Artefakte mit „4 Findings" sind nicht dasselbe: viermal LOW ist ein
- *  anderes Bild als zweimal HIGH — und genau das soll man sehen, ohne die
- *  Zeile aufzuklappen. */
+/** How the findings of an artifact distribute across the severities. Two
+ *  artifacts with "4 findings" are not the same thing: four times LOW is a
+ *  different picture from twice HIGH -- and that is exactly what one should
+ *  see without expanding the row. */
 function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
   const counts = [0, 1, 2, 3].map((s) => items.filter((f) => f.severity === s).length)
   const sum = counts.reduce((a, b) => a + b, 0)
@@ -720,7 +723,7 @@ function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
   )
 }
 
-/** Der Regelname mit seiner Klartext-Erklärung im Tooltip. */
+/** The rule name with its plain-language explanation in the tooltip. */
 function RuleName({ rule, className }: { rule: string; className?: string }) {
   const tr = useT()
   const e = explainRule(tr, rule)
@@ -732,10 +735,10 @@ function RuleName({ rule, className }: { rule: string; className?: string }) {
   )
 }
 
-/** Ein Artefakt so benannt, wie ein Mensch es denkt: bei Dateien NUR der Pfad
- *  unterhalb der Evidence (`images/shell.php`) — das ist die Angabe, die im
- *  Bericht steht und die man auf dem Server wiederfindet. Der vollständige
- *  Pfad und die Evidence, unter der die Datei liegt, stehen im Tooltip. */
+/** An artifact named the way a human thinks of it: for files ONLY the path
+ *  below the evidence (`images/shell.php`) -- that is the fact that goes into
+ *  the report and that one finds again on the server. The full path and the
+ *  evidence the file sits under stand in the tooltip. */
 function ArtifactName({ artifact, kind, roots }: {
   artifact: string; kind: string; roots: EvidenceRoot[]
 }) {
