@@ -163,7 +163,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
             <Tooltip hint={tr('database.csv.hint')}>
               <a className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] font-medium hover:border-[var(--accent)]/60"
                 href={downloadUrl(`/api/cases/${slug}/database/accounts.csv`)}>
-                <Download size={13} /> Alle
+                <Download size={13} /> {tr('database.csvAll')}
               </a>
             </Tooltip>
             <Tooltip hint={tr('database.csvAdmins.hint')}>

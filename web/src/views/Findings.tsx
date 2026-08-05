@@ -350,7 +350,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       {!search && data && counts != null && counts.total > data.total && (
         <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
           <span className="opacity-70">
-            {formatCount(counts.total - data.total)} Artefakt{counts.total - data.total === 1 ? '' : 'e'} ausgeblendet
+            {tr('findings.hidden', { n: formatCount(counts.total - data.total) })}
           </span>
           <button
             className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
@@ -426,7 +426,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
           <EmptyState icon={<Bug size={36} />} title={tr('findings.empty.title')}
-            sub={data ? tr('findings.empty') : 'Lade…'} />
+            sub={data ? tr('findings.empty') : tr('common.loading')} />
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vi) => {

@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import coverage, db, enrich, fstimeline, geoip, iocs as ioclib
+from server import coverage, db, enrich, geoip, iocs as ioclib
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
@@ -421,18 +421,6 @@ def create_app(config: Config) -> FastAPI:
         quiet night look identical from here, so this points at the question
         rather than answering it."""
         return coverage.report(case_dir_or_404(slug), lang)
-
-    @app.get("/api/cases/{slug}/fstimeline", dependencies=[auth])
-    def fs_timeline(slug: str, noise: bool = False):
-        """Bursts of files written at about the same time -- a LEAD, never a
-        proof, and deliberately not part of the chronology.
-
-        Nobody can tell from the mtime of a COPY whether it came from the
-        original or from the copying, and an attacker can set it to
-        anything. What survives that is the SHAPE: fourteen files written
-        within forty seconds, one of them a confirmed shell, says where to
-        look next without claiming anything."""
-        return fstimeline.clusters(case_dir_or_404(slug), include_noise=noise)
 
     @app.get("/api/yara", dependencies=[auth])
     def yara_status():

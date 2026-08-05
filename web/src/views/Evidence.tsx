@@ -383,12 +383,10 @@ function CloseCase({ slug, caseName, onClosed }: {
   )
 }
 
-const JOB_LABEL: Record<string, string> = {
-  index_logs: 'Access-Logs indizieren',
-  webshell: 'Webshell-Scan',
-  cms: 'CMS-Inventar',
-  sqldb: 'SQL-Dump-Analyse',
-}
+// Every kind the analysis can start. A kind without an entry here would fall
+// back to its raw identifier, which is how `errorlog` and `yara` ended up in
+// the job list under their internal names.
+const JOB_KINDS = ['index_logs', 'webshell', 'cms', 'sqldb', 'errorlog', 'yara']
 
 function JobRow({ job, slug }: { job: Job; slug: string }) {
   const tr = useT()
@@ -412,7 +410,9 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="text-[13px] font-semibold">{JOB_LABEL[job.kind] ?? job.kind}</span>
+            <span className="text-[13px] font-semibold">
+              {JOB_KINDS.includes(job.kind) ? tr(`job.${job.kind}`) : job.kind}
+            </span>
             <span className="text-[11px] text-[var(--muted)]">
               #{job.id} · {job.created?.slice(0, 16).replace('T', ' ')}
             </span>

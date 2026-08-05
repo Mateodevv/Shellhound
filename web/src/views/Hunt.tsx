@@ -608,7 +608,7 @@ function ResultCard({ slug, result, onTrace }: {
                 {c.ok_hits > 0 && (
                   <Tag tone="danger"
                     hint={tr('hunt.successful.hint')}>
-                    erfolgreich
+                    {tr('hunt.successful')}
                   </Tag>
                 )}
               </td>

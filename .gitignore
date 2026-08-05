@@ -94,3 +94,8 @@ launch.json
 # --- Werkzeug-Artefakte ------------------------------------------------------
 .claude/
 CLAUDE.md
+
+# Screenshots that still show personal data -- keep them out of the
+# repository until they are redacted (see README section on assets).
+assets/docs/database.png
+assets/docs/ioc-box.png

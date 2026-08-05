@@ -177,7 +177,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
               {gapBefore && (
                 <div className="flex items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-4 py-1 text-[11px] text-[var(--muted)]">
                   <span className="ml-[104px]">
-                    ↕ {formatSpan(prev.at, e.at)} ohne belegte Beobachtung
+                    ↕ {formatSpan(prev.at, e.at)} {tr('chain.gap')}
                   </span>
                 </div>
               )}
