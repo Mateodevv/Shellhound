@@ -57,9 +57,7 @@ export function GeoBanner() {
           <Globe size={15} className="shrink-0 text-[var(--accent)]" />
           <span className="min-w-0">
             <span className="font-semibold">{tr('geo.missing.title')}</span>{' '}
-            IP-Adressen erscheinen ohne Länderflaggen — eine lokale
-            GeoIP-Datenbank lässt sich einmalig laden, danach läuft die
-            Zuordnung vollständig offline.
+            {tr('geo.missing.body')}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -67,7 +65,7 @@ export function GeoBanner() {
             onClick={() => setConfirming(true)}
             className="inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--accent-text)] hover:underline cursor-pointer"
           >
-            <Download size={14} /> Datenbank laden…
+            <Download size={14} /> {tr('geo.download.cta')}
           </button>
           <button
             onClick={() => { localStorage.setItem(HIDE_KEY, '1'); setHidden(true) }}
@@ -79,28 +77,26 @@ export function GeoBanner() {
         </div>
       </Card>
 
-      {/* Erst sagen, was passiert — DANN passiert es. */}
+      {/* Say what will happen FIRST — then let it happen. */}
       <Modal open={confirming} onClose={() => setConfirming(false)}
         title={<span className="flex items-center gap-2">
           <Globe size={16} className="text-[var(--accent)]" />
-          Länder-Datenbank laden?
+          {tr('geo.confirm.title')}
         </span>}>
         <div className="flex max-w-xl flex-col gap-3 text-[13px]">
           <p>
-            SHELLHOUND lädt jetzt <span className="font-semibold">eine Datei</span> von{' '}
-            <span className="mono">download.db-ip.com</span>: die frei
-            lizenzierte <span className="font-semibold">DB-IP Country Lite</span>{' '}
-            (CC BY 4.0, ~8 MB, kein Konto nötig). Sie wird im Workspace
-            gespeichert — danach läuft jede Zuordnung vollständig offline.
+            {tr('geo.confirm.what.a')}{' '}
+            <span className="mono">download.db-ip.com</span>{tr('geo.confirm.what.b')}{' '}
+            <span className="font-semibold">DB-IP Country Lite</span>{' '}
+            {tr('geo.confirm.what.c')}
           </p>
           <p className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12.5px] text-[var(--muted)]">
-            Das ist der <span className="font-medium text-[var(--fg)]">einzige
-            Netz-Kontakt</span> dieses Werkzeugs, und er passiert nur auf diesen
-            Klick. Es gehen <span className="font-medium text-[var(--fg)]">keine
-            Falldaten</span> hinaus — der Request enthält nichts als den
-            Dateinamen. Auf einer Maschine ohne Internet-Freigabe stattdessen:
-            eine <span className="mono">*.mmdb</span> (DB-IP Lite oder
-            GeoLite2-Country) von Hand in den Workspace legen.
+            {tr('geo.confirm.privacy.a')}{' '}
+            <span className="font-medium text-[var(--fg)]">{tr('geo.confirm.privacy.only')}</span>{' '}
+            {tr('geo.confirm.privacy.b')}{' '}
+            <span className="font-medium text-[var(--fg)]">{tr('geo.confirm.privacy.nodata')}</span>{' '}
+            {tr('geo.confirm.privacy.c')}{' '}
+            <span className="mono">*.mmdb</span> {tr('geo.confirm.privacy.d')}
           </p>
           {download.isError && (
             <p className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[12.5px] text-[var(--danger-text)]">
@@ -111,15 +107,15 @@ export function GeoBanner() {
             <Button variant="primary" disabled={download.isPending}
               onClick={() => download.mutate()}>
               <Download size={14} />
-              {download.isPending ? 'lädt…' : 'Jetzt laden'}
+              {download.isPending ? tr('common.loading') : tr('geo.download.now')}
             </Button>
             <Button variant="ghost" onClick={() => setConfirming(false)}>
-              Abbrechen
+              {tr('common.cancel')}
             </Button>
             {download.isSuccess && (
               <span className="text-[12px] text-[var(--ok)]">
                 {download.data.source} ({formatBytes(download.data.size)},
-                Stand {download.data.month})
+                {' '}{tr('geo.asOf')} {download.data.month})
               </span>
             )}
           </div>

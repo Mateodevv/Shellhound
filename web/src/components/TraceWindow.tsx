@@ -130,18 +130,18 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         <Crosshair size={16} className="text-[var(--accent)]" />
         Trace: {ips.length === 1
           ? <span className="inline-flex items-center gap-1.5"><IpFlag ip={ips[0]} />{ips[0]}</span>
-          : `${ips.length} Clients`}
+          : tr('trace.nClients', { n: ips.length })}
         {data && <span className="text-[12px] font-normal text-[var(--muted)]">
-          {formatCount(data.total)} Requests {isFetching && '· lädt…'}
+          {formatCount(data.total)} {tr('trace.requests')} {isFetching && `· ${tr('common.loading')}`}
         </span>}
       </span>}>
 
       {points.length > 1 && (
         <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2">
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Verlauf dieser Auswahl
+            {tr('trace.timeline')}
             <span className="ml-2 font-normal normal-case opacity-70">
-              — unabhängig von Filter und Seite
+              — {tr('trace.timeline.sub')}
             </span>
           </div>
           <TimelineChart data={points} height={160} />
@@ -153,8 +153,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--sev-high)' }} />
           <span className="text-[var(--danger-text)]">
             {markedRows > 0
-              ? `${formatCount(markedRows)} Zeile(n) auf dieser Seite rot markiert`
-              : 'Auf dieser Seite keine markierte Zeile'}
+              ? tr('trace.marked', { n: formatCount(markedRows) })
+              : tr('trace.marked.none')}
           </span>
           <span className="text-[var(--muted)]">
             — {marks?.reason ?? tr('trace.marks.default')}.
@@ -188,7 +188,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
           {SORTS.map((s) => (
             <option key={s.id} value={s.id}>
-              {tr('common.sort')}: {s.key ? tr(s.key) : (s.id === 'status' ? 'Status' : 'URI')}
+              {tr('common.sort')}: {s.key ? tr(s.key) : s.id.toUpperCase()}
             </option>
           ))}
         </select>
@@ -196,13 +196,13 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           <Tooltip hint={tr('trace.filter.hint')}>
             <Button variant="ghost"
               onClick={() => { setSearch(''); setStatus(''); setMethod('') }}>
-              Filter zurücksetzen
+              {tr('trace.filter.reset')}
             </Button>
           </Tooltip>
         )}
-        {/* Der Export nimmt die AKTIVEN Filter mit — was man gefiltert vor
-            sich hat, ist das, was man belegen will. Das ZIP trägt neben der
-            CSV ein Manifest: Abfrage, Zeilenzahl, SHA-256. */}
+        {/* The export carries the ACTIVE filters — what you have filtered in
+            front of you is what you want to prove. Next to the CSV the ZIP
+            carries a manifest: query, row count, SHA-256. */}
         <Tooltip title={tr('trace.export.title')}
           body={tr('trace.export.body')}
           hint={filtering
@@ -214,7 +214,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
               + `&search=${encodeURIComponent(search)}&status=${status}`
               + `&method=${encodeURIComponent(method)}&sort=${sort}`)}
           >
-            <Download size={14} /> Export mit Prüfsumme
+            <Download size={14} /> {tr('trace.export.cta')}
           </a>
         </Tooltip>
       </div>
@@ -222,10 +222,10 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
       {data && data.total > pageSize && (
         <div className="mb-2 flex items-center gap-2 text-[12px] text-[var(--muted)]">
           <Button variant="ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>←</Button>
-          Seite {page + 1} / {Math.ceil(data.total / pageSize)}
+          {tr('viewer.page')} {page + 1} / {Math.ceil(data.total / pageSize)}
           <Button variant="ghost" disabled={(page + 1) * pageSize >= data.total}
             onClick={() => setPage(page + 1)}>→</Button>
-          {filtering && <span className="opacity-70">gefiltert</span>}
+          {filtering && <span className="opacity-70">{tr('trace.filtered')}</span>}
         </div>
       )}
 

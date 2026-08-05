@@ -77,24 +77,23 @@ export function WebrootDiff({ slug, evidence, onView }: {
 
   const flag = useMutation({
     mutationFn: (paths: string[]) => post(`/api/cases/${slug}/files/flag`,
-      { paths, note: 'Abweichung von der Referenzkopie' }),
+      // The note lands in the case archive and therefore stays English.
+      { paths, note: 'deviation from the reference copy' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['diff'] })
       qc.invalidateQueries({ queryKey: ['iocs'] })
     },
   })
 
-  // Ohne Referenz gibt es nichts zu vergleichen — dann wirbt die Karte nur
-  // dafür, eine zu registrieren, statt tote Bedienelemente zu zeigen.
+  // Without a reference there is nothing to compare — the card then only
+  // advertises registering one instead of showing dead controls.
   if (!references.length && !data?.rows.length) {
     return (
       <Card className="flex items-center gap-3 px-4 py-3">
         <GitCompare size={16} className="shrink-0 text-[var(--muted)]" />
         <div className="min-w-0 flex-1 text-[12.5px] text-[var(--muted)]">
-          <span className="font-medium text-[var(--fg)]">Vergleich mit einer Referenzkopie:</span>{' '}
-          registriere unter Evidence &amp; Jobs ein bekannt sauberes Release
-          derselben CMS-Version als <span className="font-medium">Referenzkopie</span> —
-          dann steht hier, welche Dateien zusätzlich, verändert oder gelöscht sind.
+          <span className="font-medium text-[var(--fg)]">{tr('diff.empty.lead')}</span>{' '}
+          {tr('diff.empty.body')}
         </div>
       </Card>
     )
@@ -107,10 +106,10 @@ export function WebrootDiff({ slug, evidence, onView }: {
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2.5">
         <GitCompare size={15} className="shrink-0 text-[var(--muted)]" />
-        <span className="text-[13px] font-semibold">Vergleich mit Referenzkopie</span>
-        <InfoDot title="Webroot-Diff"
+        <span className="text-[13px] font-semibold">{tr('diff.title')}</span>
+        <InfoDot title={tr('diff.title.long')}
           body={tr('diff.title.body')}
-          hint="Ein Treffer ist ein Kandidat, kein Fund: jedes Upload-Verzeichnis ist voller legitimer Extras. Der Vergleich verkleinert den Heuhaufen — die Bewertung bleibt bei dir." />
+          hint={tr('diff.title.hint')} />
         {webroots.length > 1 && (
           <select value={webrootId} onChange={(e) => setWebrootId(Number(e.target.value))}
             className="rounded-lg border border-[var(--line)] bg-[var(--panel)] px-2 py-1 text-[12px] outline-none cursor-pointer">
@@ -128,16 +127,16 @@ export function WebrootDiff({ slug, evidence, onView }: {
           </select>
         )}
         {references.length > 0 && webroots.length > 0 && (
-          <Tooltip hint="Läuft als Job — der Fortschritt erscheint links unten. Ein neuer Lauf ersetzt das alte Ergebnis.">
+          <Tooltip hint={tr('diff.run.hint')}>
             <Button variant="primary" disabled={run.isPending}
               onClick={() => run.mutate()}>
-              <Play size={13} /> Vergleichen
+              <Play size={13} /> {tr('diff.run')}
             </Button>
           </Tooltip>
         )}
         {data?.ran_at && (
           <span className="ml-auto text-[11px] text-[var(--muted)]">
-            zuletzt: {data.ran_at.replace('T', ' ')}
+            {tr('common.last')}: {data.ran_at.replace('T', ' ')}
           </span>
         )}
       </div>
@@ -148,7 +147,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
             counts[s] ? (
               <Tooltip key={s} title={tr(STATUS_KEY[s])} body={tr(`${STATUS_KEY[s]}.hint`)}
                 hint={hidden.has(s) ? tr('filter.hidden.back')
-                                    : 'Klick blendet diese Klasse aus.'}>
+                                    : tr('diff.filter.hide')}>
                 <Chip active={false} dimmed={hidden.has(s)} count={counts[s]}
                   onClick={() => setHidden((prev) => {
                     const next = new Set(prev)
@@ -162,7 +161,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
             ) : null
           ))}
           <input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Pfad filtern…"
+            placeholder={tr('diff.filter.path')}
             className="mono ml-auto w-56 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-2.5 py-1 text-[12px] outline-none focus:border-[var(--accent)]/70" />
         </div>
       )}
@@ -179,16 +178,16 @@ export function WebrootDiff({ slug, evidence, onView }: {
           {r.in_box && <Tag tone="accent">IOC</Tag>}
           <span className="shrink-0 tabular text-[11px] text-[var(--muted)]">
             {r.status === 'missing' ? formatBytes(r.ref_size) : formatBytes(r.size)}
-            {r.status === 'modified' && ` (Referenz ${formatBytes(r.ref_size)})`}
+            {r.status === 'modified' && ` (${tr('diff.reference')} ${formatBytes(r.ref_size)})`}
           </span>
           <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
             {r.absolute && (
               <Button variant="ghost" onClick={() => onView(r.absolute)}>
-                <FileSearch size={13} /> Ansehen
+                <FileSearch size={13} /> {tr('common.view')}
               </Button>
             )}
             {r.absolute && !r.in_box && (
-              <Tooltip hint="Pfad + SHA-256 in die IOC Box, mit der Abweichung als Herkunft.">
+              <Tooltip hint={tr('diff.flag.hint')}>
                 <Button variant="ghost" disabled={flag.isPending}
                   onClick={() => flag.mutate([r.absolute])}>
                   <Box size={13} /> IOC
@@ -202,13 +201,13 @@ export function WebrootDiff({ slug, evidence, onView }: {
 
       {data && total > 0 && (
         <div className="px-4 py-2 text-[11.5px] text-[var(--muted)]">
-          {formatCount(data.total)} Abweichung(en)
-          {data.rows.length < data.total && ` — die ersten ${formatCount(data.rows.length)} angezeigt, Filter verfeinern`}
+          {tr('diff.deviations', { n: formatCount(data.total) })}
+          {data.rows.length < data.total && ` — ${tr('diff.capped', { n: formatCount(data.rows.length) })}`}
         </div>
       )}
       {data && total === 0 && data.ran_at && (
         <div className={clsx('px-4 py-3 text-[12.5px] text-[var(--muted)]')}>
-          Keine Abweichungen — Webroot und Referenz sind Datei für Datei identisch.
+          {tr('diff.identical')}
         </div>
       )}
     </Card>

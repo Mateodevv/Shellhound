@@ -60,6 +60,7 @@ function ClockEditor({ slug, offsets, onClose }: {
   offsets: { logs: number; dump: number }
   onClose: () => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   // In Stunden bedient, in Sekunden gespeichert: Uhren gehen um Zeitzonen
   // auseinander, nicht um Sekunden — und halbe Stunden gibt es (Indien).
@@ -90,17 +91,17 @@ function ClockEditor({ slug, offsets, onClose }: {
   return (
     <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 animate-fade-up">
       <Clock size={13} className="text-[var(--muted)]" />
-      <span className="text-[12px] font-medium">Uhren-Abgleich</span>
-      {feld(logs, setLogs, 'Log')}
-      {feld(dump, setDump, 'DB-Export')}
+      <span className="text-[12px] font-medium">{tr('chain.clock')}</span>
+      {feld(logs, setLogs, tr('chain.clock.logs'))}
+      {feld(dump, setDump, tr('chain.clock.dump'))}
       <span className="text-[11px] text-[var(--muted)]">
-        positiv = Quelle ging nach, ihre Zeiten werden vorgestellt
+        {tr('chain.clock.sign')}
       </span>
       <div className="ml-auto flex gap-1.5">
         <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
-          Übernehmen
+          {tr('common.apply')}
         </Button>
-        <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
+        <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
       </div>
     </div>
   )
@@ -136,25 +137,25 @@ export function CaseChain({ slug, onOpen, onTrace }: {
       count={data.events.length || undefined}
       title={
         <>
-          Chronologie
+          {tr('chain.title')}
           <InfoDot
-            title="Chronologie des Falls"
+            title={tr('chain.title.long')}
             body={tr('chain.title.body')}
-            hint="Sie ordnet GEMESSENE Tatsachen und behauptet keine Ursache: an jeder Zeile steht, ob die Zeit aus dem Access-Log oder aus dem Datenbank-Export stammt. Welche Beobachtung aus welcher folgt, entscheidest du." />
+            hint={tr('chain.title.hint')} />
         </>
       }
       sub={data.events.length
-        ? `${data.events.length} datierte Beobachtung(en) aus ${data.confirmed} bestätigten Artefakten, über ${formatSpan(first, last)}. Geordnet wird, was gemessen wurde — welche Beobachtung aus welcher folgt, entscheidest du.`
+        ? tr('chain.sub', { n: data.events.length, confirmed: data.confirmed, span: formatSpan(first, last) })
         : tr('chain.empty')}
       right={
-        <Tooltip title="Uhren-Abgleich"
+        <Tooltip title={tr('chain.clock')}
           body={tr('chain.clock.body')}
-          hint="Der Versatz ist deine Aussage, nicht eine Vermutung des Werkzeugs. Er wird im Fall gespeichert und in der Kette ausgewiesen.">
+          hint={tr('chain.clock.hint')}>
           <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
             <Clock size={13} />
             {adjusted
-              ? `Uhren ${data.offsets.logs ? `Log ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
-              : 'Uhren'}
+              ? `${tr('chain.clocks')} ${data.offsets.logs ? `${tr('chain.clock.logs')} ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
+              : tr('chain.clocks')}
           </Button>
         </Tooltip>
       }
@@ -247,7 +248,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
       {data.undated.length > 0 && (
         <div className="mt-2 rounded-lg border border-[var(--line)] px-3 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--muted)]">
-            <Database size={12} /> bestätigt, aber ohne Zeitbezug
+            <Database size={12} /> {tr('chain.undated')}
           </div>
           {data.undated.map((u) => (
             <button key={u.artifact} onClick={() => onOpen(u.artifact, u.artifact_kind)}

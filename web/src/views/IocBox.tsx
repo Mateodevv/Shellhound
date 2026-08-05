@@ -132,13 +132,13 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           </Tooltip>
         ))}
         <div className="ml-auto flex items-center gap-2">
-          <SearchInput value={search} onChange={setSearch} placeholder="Wert oder Notiz…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('iocbox.search')} />
           {([
             ['csv', tr('export.csv.hint')],
             ['json', tr('export.json.hint')],
             ['stix', tr('export.stix.hint')],
           ] as const).map(([fmt, hint]) => (
-            <Tooltip key={fmt} title={`Export als ${fmt.toUpperCase()}`} hint={hint}>
+            <Tooltip key={fmt} title={tr('export.as', { fmt: fmt.toUpperCase() })} hint={hint}>
               <a
                 className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-medium uppercase hover:border-[var(--accent)]/60"
                 href={downloadUrl(`/api/cases/${slug}/iocs/export?format=${fmt}`)}
@@ -297,7 +297,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       )}
       {iocs && iocs.length > 0 && (
         <div className="text-[12px] text-[var(--muted)]">
-          {formatCount(filtered.length)} von {formatCount(iocs.length)} Indikatoren
+          {tr('iocbox.count', { shown: formatCount(filtered.length), total: formatCount(iocs.length) })}
         </div>
       )}
     </div>

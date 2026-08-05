@@ -52,7 +52,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         <Card className="flex items-center justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up">
           <div className="text-[13px]">
             <span className="font-semibold">{tr('dashboard.empty.title')}</span>{' '}
-            Registriere Evidence (Webroot, Access-Logs, SQL-Dump) und starte die Analyse.
+            {tr('dashboard.empty.sub')}
           </div>
           <button
             onClick={() => gotoView('evidence')}
@@ -83,7 +83,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
       )}
 
       <Section title={tr('dashboard.artifacts')}
-        sub={`Gezählt wird, worüber entschieden wird: Dateien, Clients, Tabellen — nach ihrem schwersten Fund, ohne False Positives. Aus ${formatCount(data.findings_total)} Findings. Klick auf eine Kachel öffnet die gefilterte Liste.`}>
+        sub={tr('dashboard.artifacts.sub', { n: formatCount(data.findings_total) })}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
           <StatTile label={tr('dashboard.high')} value={formatCount(sev['0'] ?? 0)}
             info={tr('dashboard.high.info')}
@@ -102,7 +102,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
             sub={tr('dashboard.iocs.sub')} onClick={() => gotoView('iocbox')} />
           <StatTile label={tr('dashboard.adminAccounts')} value={formatCount(data.admins)}
             info={tr('dashboard.admins.info')}
-            sub={`von ${formatCount(data.accounts)} Accounts`}
+            sub={tr('dashboard.admins.sub', { n: formatCount(data.accounts) })}
             onClick={() => gotoView('database')} />
         </div>
       </Section>
@@ -111,8 +111,8 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         onOpen={(artifact, kind) => setSelected({
           artifact,
           artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
-          // Die Kette zeigt ausschließlich Bestätigtes; alles Weitere holt
-          // das Fenster selbst über den Kontext-Endpoint nach.
+          // The chain only ever shows confirmed artifacts; everything else
+          // the window fetches itself through the context endpoint.
           worst: 0, triage: 'confirmed', triage_note: '',
         })}
         onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
@@ -120,11 +120,18 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
       {data.logs && (
         <Section
           title={tr('dashboard.logCoverage')}
-          sub={`${formatCount(data.logs.lines)} indizierte Requests von ${formatCount(data.logs.clients)} Clients — ${formatDay(data.logs.first_epoch)} bis ${formatDay(data.logs.last_epoch)}${data.logs.unparsed ? ` · ${formatCount(data.logs.unparsed)} Zeilen nicht parsebar` : ''}`}
+          sub={tr('dashboard.logCoverage.sub', {
+            lines: formatCount(data.logs.lines),
+            clients: formatCount(data.logs.clients),
+            from: formatDay(data.logs.first_epoch),
+            to: formatDay(data.logs.last_epoch),
+          }) + (data.logs.unparsed
+            ? ` · ${tr('dashboard.logCoverage.unparsed', { n: formatCount(data.logs.unparsed) })}`
+            : '')}
           right={
             <button onClick={() => gotoView('actors')}
               className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--accent-text)] hover:underline cursor-pointer">
-              {formatCount(data.logs.alerted_clients)} auffällige Clients <ArrowRight size={14} />
+              {tr('dashboard.alertedClients', { n: formatCount(data.logs.alerted_clients) })} <ArrowRight size={14} />
             </button>
           }
         >

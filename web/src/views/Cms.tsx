@@ -12,7 +12,7 @@
 // darunter tragen ein Badge und öffnen das Artefakt-Fenster — die Frage
 // „welche Erweiterung ist es?" beantwortet die Seite selbst, statt den
 // Pfad-Abgleich dem Kopf des Analysten zu überlassen.
-import { useT } from '../i18n'
+import { plural, useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -86,15 +86,15 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
     queryFn: () => api<{ installs: CmsInstall[] }>(`/api/cases/${slug}/cms`),
   })
   const [search, setSearch] = useState('')
-  // Ausblende-Schalter wie überall: Typen und Versions-Zustand.
+  // Hide switches as everywhere: types and version state.
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const [hiddenVersion, setHiddenVersion] = useState<Set<string>>(new Set())
 
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // Was der Trace rot markieren soll — kommt aus dem Artefakt-Fenster,
-  // das weiß, worum es geht (die Datei bzw. der Alarm des Clients).
+  // What the trace should mark red -- comes from the artifact window,
+  // which knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [versionTarget, setVersionTarget] = useState<VersionTarget | null>(null)
   const t = useTriage(slug)
@@ -109,7 +109,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
 
   const installs = useMemo(() => data?.installs ?? [], [data])
 
-  // Chip-Zähler über ALLE Installationen — eine Filterleiste für die Seite.
+  // Chip counters across ALL installs -- one filter bar for the page.
   const typeCounts = useMemo(() => {
     const out = new Map<string, number>()
     for (const inst of installs) {
@@ -154,7 +154,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="CMS Inventory"
-          body="Welche CMS-Installationen im Webroot stecken und welche Erweiterungen mit welcher Version installiert sind — und welche davon geflaggte Dateien enthalten."
+          body={tr('cms.title.body')}
           hint={tr('cms.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">CMS Inventory</h1>
         </Tooltip>
@@ -162,7 +162,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
           <Tooltip key={base}
             hint={hiddenTypes.has(base)
               ? tr('cms.hidden')
-              : 'Klick blendet diesen Typ aus.'}>
+              : tr('cms.type.hide')}>
             <Chip active={false} dimmed={hiddenTypes.has(base)}
               onClick={() => toggle(setHiddenTypes, base)} count={n}>
               {base}
@@ -173,17 +173,17 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         <Tooltip hint={tr('cms.hideVersioned')}>
           <Chip active={false} dimmed={hiddenVersion.has('known')}
             onClick={() => toggle(setHiddenVersion, 'known')} count={versionCounts.known}>
-            mit Version
+            {tr('cms.withVersion')}
           </Chip>
         </Tooltip>
         <Tooltip hint={tr('field.unknown_version')}>
           <Chip active={false} dimmed={hiddenVersion.has('unknown')}
             onClick={() => toggle(setHiddenVersion, 'unknown')} count={versionCounts.unknown}>
-            <TriangleAlert size={12} /> ohne Version
+            <TriangleAlert size={12} /> {tr('cms.withoutVersion')}
           </Chip>
         </Tooltip>
         <div className="ml-auto">
-          <SearchInput value={search} onChange={setSearch} placeholder="Extension suchen…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('cms.search')} />
         </div>
       </div>
 
@@ -195,8 +195,8 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
       ))}
 
       {data && !installs.length && (
-        <EmptyState icon={<Puzzle size={36} />} title="Noch kein CMS erfasst"
-          sub="Das Inventar entsteht aus dem Webroot. Registriere die Webroot-Kopie als Evidence und starte die Analyse — WordPress- und Joomla-Installationen werden mitsamt ihren Erweiterungen automatisch erkannt." />
+        <EmptyState icon={<Puzzle size={36} />} title={tr('cms.empty.title')}
+          sub={tr('cms.empty.sub')} />
       )}
 
       <VersionWindow
@@ -253,7 +253,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
       byBase.set(base, list)
     }
     for (const list of byBase.values()) {
-      // Geflaggtes zuerst — das ist, was man hier sucht.
+      // Flagged first -- that is what one is looking for here.
       list.sort((a, b) => (b.flagged - a.flagged) || a.name.localeCompare(b.name))
     }
     return [...byBase.entries()].sort(
@@ -264,7 +264,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
 
   return (
     <Card className="overflow-hidden">
-      {/* ---- der Kopf: die wichtigste Zahl der Seite ist die Version ---- */}
+      {/* ---- the head: the most important number on the page is the version ---- */}
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
           <Server size={18} />
@@ -273,12 +273,13 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           <div className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
             {install.cms}
             {install.version === '(unknown)'
-              ? <Tag tone="warn" hint={tr('cms.noCoreVersion')}>Version unbekannt</Tag>
+              ? <Tag tone="warn" hint={tr('cms.noCoreVersion')}>{tr('cms.versionUnknown')}</Tag>
               : <span className="mono text-[var(--accent-text)]">{install.version}</span>}
             {install.version_set && (
               <Tag tone="accent"
-                hint={`Von Hand gesetzt${install.version_parsed !== '(unknown)' ? ` — gemessen war ${install.version_parsed}` : ''}.`}>
-                manuell
+                hint={tr('cms.setByHand') + (install.version_parsed !== '(unknown)'
+                  ? ` — ${tr('cms.measured')} ${install.version_parsed}` : '') + '.'}>
+                {tr('cms.manual')}
               </Tag>
             )}
           </div>
@@ -287,9 +288,9 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
-          {/* Kein `ghost`: auf dem ohnehin panel-2-farbenen Kopf wäre ein
-              Knopf aus gedämpftem Text unsichtbar, bis man ihn zufällig
-              überfährt. Ein Rahmen sagt „hier kann man klicken". */}
+          {/* No `ghost`: on a head that is panel-2 coloured anyway, a button
+              made of muted text would be invisible until hovered by accident.
+              A border says "this can be clicked". */}
           <Tooltip hint={tr('cms.checkVersion.hint')}>
             <Button className="text-[var(--fg)]"
               style={{ background: 'var(--panel)' }}
@@ -301,23 +302,26 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                 version_note: install.version_note,
                 version_set_at: install.version_set_at,
               })}>
-              <PencilLine size={13} /> Version prüfen
+              <PencilLine size={13} /> {tr('cms.checkVersion')}
             </Button>
           </Tooltip>
-          <span>{formatCount(install.items.length)} Erweiterung{install.items.length === 1 ? '' : 'en'}</span>
+          <span>{plural(tr, install.items.length, 'cms.extension.one', 'cms.extension.many',
+                        { n: formatCount(install.items.length) })}</span>
           {unknown > 0 && (
-            <Tag tone="warn" hint={tr('field.unknown_version')}>{unknown} ohne Version</Tag>
+            <Tag tone="warn" hint={tr('field.unknown_version')}>
+              {unknown} {tr('cms.withoutVersion')}
+            </Tag>
           )}
           {flagged > 0 && (
             <Tag tone="danger"
               hint={tr('cms.flaggedExtensions')}>
-              <Bug size={11} /> {flagged} mit Findings
+              <Bug size={11} /> {flagged} {tr('database.withFindings')}
             </Tag>
           )}
         </div>
       </div>
 
-      {/* ---- eine Liste, Gruppen als aufklappbare Bänder ---- */}
+      {/* ---- one list, groups as collapsible bands ---- */}
       {sections.map(([base, list]) => {
         const open = filtering || !collapsed.has(base)
         const groupFlagged = list.filter((i) => i.flagged > 0).length
@@ -372,7 +376,8 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                 </div>
                 {item.flagged > 0 && worstHit && (
                   <Tooltip
-                    title={`${item.flagged} geflaggte${item.flagged === 1 ? 's' : ''} Artefakt${item.flagged === 1 ? '' : 'e'} unter diesem Pfad`}
+                    title={plural(tr, item.flagged, 'cms.flaggedHere.one', 'cms.flaggedHere.many',
+                                  { n: item.flagged })}
                     body={item.artifacts.map((a) => a.artifact).join('\n')}
                     hint={tr('cms.openArtifact')}
                     wide>
@@ -387,26 +392,26 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                         worst: worstHit.worst, triage: worstHit.triage,
                         triage_note: '',
                       })}>
-                      <Bug size={11} /> {item.flagged} Artefakt{item.flagged === 1 ? '' : 'e'}
+                      <Bug size={11} /> {plural(tr, item.flagged, 'cms.artifact.one', 'cms.artifact.many',
+                                                 { n: item.flagged })}
                     </button>
                   </Tooltip>
                 )}
-                {/* Die Versionszelle ist ein KNOPF: prüfen heißt, die Datei
-                    aufzumachen, aus der die Zahl stammt. */}
+                {/* The version cell is a BUTTON: checking means opening the
+                    file the number came from. */}
                 <Tooltip
-                  title={item.version_set ? 'Von Hand gesetzt' : tr('cms.checkVersion')}
+                  title={item.version_set ? tr('cms.setByHand') : tr('cms.checkVersion')}
                   body={item.version_source
-                    ? `gelesen aus: ${item.version_source}`
-                    : 'Keine Quelle — es wurde kein Manifest/Header gefunden.'}
+                    ? tr('cms.readFrom', { src: item.version_source })
+                    : tr('cms.noSource')}
                   hint={item.version_set
-                    ? `Gemessen war: ${item.version_parsed}. Klick zum Ändern oder Zurücksetzen.`
+                    ? tr('cms.measuredWas', { v: item.version_parsed })
                     : tr('cms.versionSource.hint')}
                   wide>
-                  {/* Die Zelle sieht aus wie ein Eingabefeld, nicht wie
-                      Text: Rahmen und Stift stehen IMMER da. Eine Fläche,
-                      die sich erst beim Überfahren zu erkennen gibt, findet
-                      man nur, wenn man ohnehin schon weiß, dass es sie
-                      gibt. */}
+                  {/* The cell looks like an input field, not like text: border
+                      and pencil are ALWAYS there. A surface that only reveals
+                      itself on hover is found only by those who already know
+                      it exists. */}
                   <button
                     onClick={() => onEditVersion({
                       kind: 'item', id: item.id, label: item.name,
@@ -439,22 +444,20 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
 
       {shown === 0 && (
         <div className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
-          Kein Eintrag entspricht Filter/Suche — durchgestrichene Chips holen
-          Ausgeblendetes zurück.
+          {tr('cms.noMatch')}
         </div>
       )}
     </Card>
   )
 }
 
-/** Version prüfen und setzen.
+/** Check and set a version.
  *
- *  Eine Versionsangabe ist eine BEHAUPTUNG des Manifests — und Manifeste
- *  lassen sich fälschen oder fehlen ganz. Deshalb zeigt dieses Fenster
- *  zuerst, WORAUS die Zahl gelesen wurde, und macht die Datei aufmachbar.
- *  Was der Analyst danach von Hand setzt, ersetzt den Messwert NICHT,
- *  sondern legt sich darüber: beides bleibt nebeneinander sichtbar, und die
- *  Korrektur überlebt jede Re-Analyse. */
+ *  A version is a CLAIM made by the manifest -- and manifests can be forged
+ *  or missing entirely. This window therefore first shows WHERE the number
+ *  was read from, and makes that file openable. What the analyst then sets
+ *  by hand does NOT replace the measured value, it overlays it: both stay
+ *  visible side by side, and the correction survives any re-analysis. */
 function VersionWindow({ slug, target, onClose, onView }: {
   slug: string
   target: VersionTarget | null
@@ -486,34 +489,34 @@ function VersionWindow({ slug, target, onClose, onView }: {
     <Modal open onClose={onClose} layer={1}
       title={<span className="flex min-w-0 items-center gap-2">
         <PencilLine size={15} className="shrink-0 text-[var(--accent)]" />
-        <span className="truncate">Version prüfen — {target.label}</span>
+        <span className="truncate">{tr('cms.checkVersion')} — {target.label}</span>
       </span>}>
       <div className="flex flex-col gap-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="rounded-lg bg-[var(--panel-2)] px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              Gemessen
+              {tr('cms.measured')}
             </div>
             <div className="mono mt-0.5 text-[13px]">
               {target.version_parsed === '(unknown)'
-                ? <span className="text-[var(--sev-low)]">nicht gefunden</span>
+                ? <span className="text-[var(--sev-low)]">{tr('cms.notFound')}</span>
                 : target.version_parsed}
             </div>
           </div>
           <div className="rounded-lg bg-[var(--panel-2)] px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              Gilt aktuell
+              {tr('cms.currentlyApplies')}
             </div>
             <div className="mono mt-0.5 flex items-center gap-2 text-[13px]">
               {target.version === '(unknown)' ? '—' : target.version}
-              {target.version_set && <Tag tone="accent">manuell</Tag>}
+              {target.version_set && <Tag tone="accent">{tr('cms.manual')}</Tag>}
             </div>
           </div>
         </div>
 
         <div>
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Quelle der Angabe
+            {tr('cms.source')}
           </div>
           {source ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -522,29 +525,25 @@ function VersionWindow({ slug, target, onClose, onView }: {
                 {source}
               </span>
               <Button onClick={() => onView(source)}>
-                <FileSearch size={14} /> Datei ansehen
+                <FileSearch size={14} /> {tr('cms.viewFile')}
               </Button>
             </div>
           ) : (
             <p className="text-[12.5px] text-[var(--muted)]">
-              Es wurde kein Manifest und kein Header gefunden — deshalb steht
-              hier keine Version. Genau das ist bei einer manipulierten oder
-              unvollständigen Erweiterung der Normalfall: die Version musst du
-              anders belegen (Changelog, Paketquelle, Dateivergleich) und dann
-              hier eintragen.
+              {tr('cms.noSource.body')}
             </p>
           )}
         </div>
 
         <div>
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Version von Hand setzen
+            {tr('cms.setManually')}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              placeholder="z.B. 5.3.1"
+              placeholder={tr('cms.versionExample')}
               className="mono w-40 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
             />
             <input
@@ -557,25 +556,23 @@ function VersionWindow({ slug, target, onClose, onView }: {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Button variant="primary" disabled={!value.trim() || save.isPending}
               onClick={() => save.mutate({ version: value.trim(), note })}>
-              <Check size={14} /> Setzen
+              <Check size={14} /> {tr('cms.set')}
             </Button>
             {target.version_set && (
               <Button disabled={save.isPending}
                 onClick={() => save.mutate({ version: '', note: '' })}>
-                <RotateCcw size={14} /> Auf gemessenen Wert zurück
+                <RotateCcw size={14} /> {tr('cms.resetToMeasured')}
               </Button>
             )}
-            <Button variant="ghost" onClick={onClose}>Abbrechen</Button>
+            <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
             {target.version_set_at && (
               <span className="text-[11px] text-[var(--muted)]">
-                gesetzt: {absoluteTime(target.version_set_at)}
+                {tr('cms.setAt')}: {absoluteTime(target.version_set_at)}
               </span>
             )}
           </div>
           <p className="mt-2 text-[11px] text-[var(--muted)]">
-            Der gemessene Wert bleibt erhalten und daneben sichtbar — eine
-            Korrektur ersetzt die Messung nicht, sie überlagert sie. Sie
-            überlebt auch eine erneute Analyse.
+            {tr('cms.setManually.note')}
           </p>
         </div>
       </div>

@@ -13,7 +13,7 @@
 // Jeder Eintrag zeigt gleich, was der Fall über ihn schon weiß — schon in der
 // IOC Box, Findings darauf —, damit man nicht von Hand markiert, was längst
 // erfasst ist.
-import { useT } from '../i18n'
+import { plural, useT } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -98,25 +98,25 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="Dateien"
-          body="Durch die registrierte Evidence klicken — und markieren, was den Regeln entgangen ist."
+        <Tooltip title={tr('nav.files')}
+          body={tr('files.title.body')}
           hint={tr('files.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">Dateien</h1>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.files')}</h1>
         </Tooltip>
         {!atRoot && (
           <Button variant="ghost" onClick={() => setPath('')}>
-            <Home size={14} /> Evidence-Wurzeln
+            <Home size={14} /> {tr('files.roots')}
           </Button>
         )}
         {data?.parent != null && (
           <Button variant="ghost" onClick={() => setPath(data.parent!)}>
-            .. übergeordnet
+            {tr('evidence.parentDir')}
           </Button>
         )}
         {!atRoot && (
           <div className="ml-auto">
             <SearchInput value={filter} onChange={setFilter}
-              placeholder="in diesem Ordner filtern…" />
+              placeholder={tr('files.filter')} />
           </div>
         )}
       </div>
@@ -131,20 +131,21 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       {checked.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">
-            {checked.size} Datei{checked.size === 1 ? '' : 'en'} markiert
+            {plural(tr, checked.size, 'files.marked.one', 'files.marked.many',
+                    { n: checked.size })}
           </span>
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Notiz (warum? — wandert mit in die IOC Box)"
+            placeholder={tr('files.note.placeholder')}
             className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="primary" disabled={flag.isPending}
             onClick={() => flag.mutate([...checked])}>
-            <Box size={14} /> In die IOC Box (Pfad + SHA-256)
+            <Box size={14} /> {tr('files.toIocBox')}
           </Button>
           <Button variant="ghost" onClick={() => setChecked(new Set())}>
-            Auswahl leeren
+            {tr('common.clearSelection')}
           </Button>
         </div>
       )}
@@ -214,7 +215,9 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
                 checked={checked.size > 0 && checked.size === files.length}
                 onChange={toggleAll} />
               <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
-                {formatCount(dirs.length)} Ordner · {formatCount(files.length)} Dateien
+                {tr('files.count', {
+                  dirs: formatCount(dirs.length), files: formatCount(files.length),
+                })}
               </span>
             </div>
           )}
@@ -267,12 +270,12 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
                 <TriageBadge state={f.triage} label={tr(`triage.${f.triage}`)} />
               )}
               {f.in_box && (
-                <Tag tone="accent" explain="Diese Datei liegt bereits in der IOC Box.">IOC</Tag>
+                <Tag tone="accent" explain={tr('files.inBox')}>IOC</Tag>
               )}
               <span className="w-20 shrink-0 text-right tabular text-[11px] text-[var(--muted)]">
                 {formatBytes(f.size)}
               </span>
-              <Tooltip hint="Den Inhalt ansehen — als Text und als Hex-Dump.">
+              <Tooltip hint={tr('findings.viewFile.hint')}>
                 <button
                   className="shrink-0 cursor-pointer rounded p-1 text-[var(--muted)] opacity-0 transition-opacity hover:text-[var(--accent)] group-hover:opacity-100"
                   onClick={() => setViewing({ path: f.path, line: null })}>
@@ -283,13 +286,12 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           ))}
           {!dirs.length && !files.length && (
             <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
-              {filter ? 'Kein Eintrag passt zum Filter.' : 'Dieser Ordner ist leer.'}
+              {filter ? tr('files.noMatch') : tr('files.emptyDir')}
             </div>
           )}
           {data?.truncated && (
             <div className="border-t border-[var(--line)] px-4 py-2 text-[12px] text-[var(--sev-low)]">
-              Sehr viele Einträge — die Liste wurde gekürzt. Der Filter oben
-              hilft, wenn das Gesuchte fehlt.
+              {tr('files.truncated')}
             </div>
           )}
         </Card>
