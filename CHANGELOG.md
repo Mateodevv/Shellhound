@@ -6,6 +6,48 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Removed — file system timeline
+
+Built and taken back out in the same cycle. In practice the clusters were
+mostly false leads: a webroot is written in bursts constantly — updates, cache
+warms, deployments, backup restores — and a panel that points at all of them
+points at nothing. It cost more attention than it returned, which for a lead
+is the whole test.
+
+The reasoning it was built on still holds and still applies elsewhere: the
+chronology is measured time only and does not read the file system.
+
+### Fixed — German text and raw keys in the English interface
+
+Found by reading screenshots of a real session rather than the source, which
+is why the earlier passes missed them: a scan for umlauts cannot see
+`erfolgreich`, and nothing at all flags a translation key that renders as
+itself.
+
+- Hard-coded German in the English interface: the hidden-artifact count, the
+  gap marker in the chronology (`ohne belegte Beobachtung`), the success tag
+  in the pattern hunt, the loading placeholder, the *All* button of the CSV
+  export.
+- Job names came from a German lookup table, and two kinds (`errorlog`,
+  `yara`) had no entry at all — they appeared in the job list under their
+  internal identifiers.
+- Seven keys were **used but never defined**, so `tr()` fell back to echoing
+  the key: `findings.search` rendered as the literal text `findings.search` in
+  the search box, and the account table was headed `CSV.LOGIN`, `CSV.EMAIL`,
+  `CSV.REGISTERED`, `CSV.LASTLOGIN`. The account table now uses the same
+  values as the CSV export, so the heading on screen and the heading in the
+  file agree.
+- **A test now catches this class** (`tests/test_i18n.py`): every literal
+  `tr('...')` in the frontend must resolve. It only sees literal calls — keys
+  built from a variable stay invisible, which is why the job list carries an
+  explicit list of kinds instead of interpolating whatever arrives.
+
+### Changed — README
+
+Rewritten around installation and usage, with screenshots of a real session.
+The packaged-install path now includes the step that copies `web/dist` into
+`server/static` — without it the wheel installs without an interface.
+
 ### Added — third-party lookups, behind a door that starts shut
 
 The GeoIP download used to be the only thing this tool sent outward. It is
@@ -66,19 +108,6 @@ the file's own last entry.
 None of it proves tampering — a quiet window can be a maintenance night. So
 it produces no findings and no severities and lands in the **gaps** of the
 chronology, next to everything else the case cannot show.
-
-### Added — file system timeline
-
-The chronology refuses the file system on principle, and stays that way. But
-the distrust is about proof, not about value: "these fourteen files were
-written within forty seconds of each other, and one of them is the shell you
-already confirmed" says where to look next.
-
-Shown in the Files view, fenced off with a dashed border, ordered by **time**
-rather than by any suspicion score, with no severity anywhere and nothing
-written to the case. The one interpretation offered is the tie back: a burst
-containing a confirmed artifact is marked, because the other files in it were
-written in the same minute.
 
 ### Added — CMS beyond WordPress and Joomla
 

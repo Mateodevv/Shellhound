@@ -15,12 +15,25 @@ from pathlib import Path
 
 from server import i18n
 
-WEB = Path(__file__).resolve().parent.parent / "web" / "src" / "i18n"
+SRC = Path(__file__).resolve().parent.parent / "web" / "src"
+WEB = SRC / "i18n"
 KEY_RE = re.compile(r"^\s*'([^']+)':", re.M)
+# Only the literal form. `tr(`job.${kind}`)` and friends are computed at
+# runtime and cannot be checked from here -- see the note on the test below.
+USE_RE = re.compile(r"\btr\(\s*'([^']+)'")
 
 
 def _catalogue(name):
     return set(KEY_RE.findall((WEB / name).read_text(encoding="utf-8")))
+
+
+def _used():
+    """Every key the interface asks for by name, and where it asks."""
+    out = {}
+    for path in sorted(SRC.rglob("*.ts")) + sorted(SRC.rglob("*.tsx")):
+        for key in USE_RE.findall(path.read_text(encoding="utf-8")):
+            out.setdefault(key, set()).add(path.name)
+    return out
 
 
 class ServerCatalogueTests(unittest.TestCase):
@@ -80,6 +93,26 @@ class WebCatalogueTests(unittest.TestCase):
         # Guards against a parsing change quietly turning both sides into
         # empty sets, which would make the comparison above pass on nothing.
         self.assertGreater(len(self.en), 300)
+
+    def test_every_key_the_interface_asks_for_exists(self):
+        """The failure this catches is silent in the browser and loud in a
+        screenshot: `tr()` falls back to echoing the key, so a missing entry
+        renders the literal `findings.search` where a placeholder belongs.
+        Nothing throws, nothing logs, and it survives until somebody looks.
+
+        Only literal `tr('...')` calls are checked. A key built from a
+        variable is invisible here, which is the reason the job list keeps an
+        explicit list of kinds instead of interpolating whatever arrives."""
+        used = _used()
+        self.assertGreater(len(used), 400, "the scan found almost nothing")
+        missing = {k: sorted(v) for k, v in used.items() if k not in self.en}
+        self.assertEqual({}, missing, "keys used but never defined")
+
+    # There is deliberately no test for the other direction. Most of the
+    # catalogue is reached through computed keys -- `category.${id}.what`,
+    # `sev.${n}`, lookup tables of key names -- so a literal scan calls some
+    # 300 live entries dead. An allowlist that large would be wrong within a
+    # week and would teach nothing.
 
 
 if __name__ == "__main__":
