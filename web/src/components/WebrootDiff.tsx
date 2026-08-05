@@ -7,6 +7,7 @@
 // Upload-Verzeichnis ist voller legitimer Extras. Der Vergleich verkleinert
 // den Heuhaufen; ansehen, flaggen oder verwerfen bleibt Handarbeit, und
 // genau dafür stehen die Knöpfe an jeder Zeile.
+import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -34,18 +35,12 @@ interface DiffData {
   webroot: { path: string } | null
 }
 
-const STATUS_LABEL: Record<DiffRow['status'], string> = {
-  extra: 'zusätzlich',
-  modified: 'verändert',
-  missing: 'fehlt',
-  too_big: 'ungeprüft',
-}
-
-const STATUS_HINT: Record<DiffRow['status'], string> = {
-  extra: 'Liegt nur im Webroot, nicht in der Referenz. Hochgeladen, generiert oder von der Referenz nicht abgedeckt — hier wohnen abgelegte Shells, aber auch jede legitime Upload-Datei.',
-  modified: 'In beiden Bäumen, aber mit verschiedenem Inhalt (Größe oder SHA-256). Hier wohnt eingeschleuster Code in legitimen Dateien.',
-  missing: 'Liegt nur in der Referenz. Gelöschte Kern-Dateien sind selten der Angriff, aber oft die Spur eines Aufräumversuchs.',
-  too_big: 'Gleiche Größe, aber zu groß zum Hashen (>32 MB) — der Inhalt wurde NICHT verglichen. »Nicht geprüft« ist eine andere Aussage als »gleich«.',
+// Nur Schlüssel auf Modulebene -- übersetzt wird beim Rendern.
+const STATUS_KEY: Record<DiffRow['status'], string> = {
+  extra: 'diff.extra',
+  modified: 'diff.modified',
+  missing: 'diff.missing',
+  too_big: 'diff.unchecked',
 }
 
 const STATUS_TONE: Record<DiffRow['status'], 'danger' | 'warn' | undefined> = {
@@ -57,6 +52,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
   evidence: EvidenceItem[]
   onView: (path: string) => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const webroots = evidence.filter((e) => e.kind === 'webroot')
   const references = evidence.filter((e) => e.kind === 'reference')
@@ -113,7 +109,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
         <GitCompare size={15} className="shrink-0 text-[var(--muted)]" />
         <span className="text-[13px] font-semibold">Vergleich mit Referenzkopie</span>
         <InfoDot title="Webroot-Diff"
-          body="Vergleicht das Webroot Datei für Datei mit einer bekannt sauberen Kopie (Größe, dann SHA-256)."
+          body={tr('diff.title.body')}
           hint="Ein Treffer ist ein Kandidat, kein Fund: jedes Upload-Verzeichnis ist voller legitimer Extras. Der Vergleich verkleinert den Heuhaufen — die Bewertung bleibt bei dir." />
         {webroots.length > 1 && (
           <select value={webrootId} onChange={(e) => setWebrootId(Number(e.target.value))}
@@ -150,8 +146,8 @@ export function WebrootDiff({ slug, evidence, onView }: {
         <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--line)] px-4 py-2">
           {(['modified', 'extra', 'missing', 'too_big'] as const).map((s) => (
             counts[s] ? (
-              <Tooltip key={s} title={STATUS_LABEL[s]} body={STATUS_HINT[s]}
-                hint={hidden.has(s) ? 'Ausgeblendet — Klick holt sie zurück.'
+              <Tooltip key={s} title={tr(STATUS_KEY[s])} body={tr(`${STATUS_KEY[s]}.hint`)}
+                hint={hidden.has(s) ? tr('filter.hidden.back')
                                     : 'Klick blendet diese Klasse aus.'}>
                 <Chip active={false} dimmed={hidden.has(s)} count={counts[s]}
                   onClick={() => setHidden((prev) => {
@@ -160,7 +156,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
                     else next.add(s)
                     return next
                   })}>
-                  {STATUS_LABEL[s]}
+                  {tr(STATUS_KEY[s])}
                 </Chip>
               </Tooltip>
             ) : null
@@ -174,8 +170,8 @@ export function WebrootDiff({ slug, evidence, onView }: {
       {(data?.rows ?? []).map((r) => (
         <div key={r.id}
           className="group flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-1.5 last:border-0 hover:bg-[var(--panel-2)]">
-          <Tag tone={STATUS_TONE[r.status]} explain={STATUS_HINT[r.status]}>
-            {STATUS_LABEL[r.status]}
+          <Tag tone={STATUS_TONE[r.status]} explain={tr(`${STATUS_KEY[r.status]}.hint`)}>
+            {tr(STATUS_KEY[r.status])}
           </Tag>
           <span className="mono min-w-0 flex-1 truncate text-[12px]" title={r.path}>
             {r.path}

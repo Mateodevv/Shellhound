@@ -100,7 +100,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Dateien"
           body="Durch die registrierte Evidence klicken — und markieren, was den Regeln entgangen ist."
-          hint="Aufgenommen wird der Pfad UND der SHA-256: der Pfad sagt, wo etwas auf diesem Server lag, der Hash erkennt dieselbe Datei überall wieder.">
+          hint={tr('files.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">Dateien</h1>
         </Tooltip>
         {!atRoot && (
@@ -193,7 +193,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           {data && !data.roots.length && (
             <div className="md:col-span-2">
               <EmptyState icon={<FolderTree size={36} />} title="Keine Evidence registriert"
-                sub="Diese Ansicht blättert durch das, was als Evidence registriert ist — Webroot-Kopie, Log-Ordner, SQL-Dump. Trage sie unter »Evidence & Jobs« ein." />
+                sub={tr('files.empty.sub')} />
             </div>
           )}
         </div>
@@ -248,7 +248,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
               </span>
               {/* Was der Fall über diese Datei schon weiß. */}
               {f.flagged > 0 && f.worst != null && (
-                <Tooltip hint="Auf diese Datei haben Regeln angesprochen — sie steht in der Arbeitsliste. Klick öffnet das Artefakt.">
+                <Tooltip hint={tr('files.flagged.hint')}>
                   <button
                     className="shrink-0 cursor-pointer"
                     onClick={() => {

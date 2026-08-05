@@ -10,6 +10,7 @@
 // auseinander folgt, entscheidet der Analyst. Deshalb steht an jeder Zeile,
 // WORAUS die Zeit stammt, und deshalb stehen die Lücken so sichtbar wie die
 // Ereignisse: „dazwischen ist nichts belegt" ist eine Aussage des Falls.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -32,18 +33,20 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   konto: UserPlus,
 }
 
-const KIND_LABEL: Record<ChainEvent['kind'], string> = {
-  erstkontakt: 'Erstkontakt',
-  versuch: 'nur Versuche',
-  erfolg: 'erfolgreich',
-  alarm: 'Alarm',
-  'letzter-zugriff': 'letzte Aktivität',
-  konto: 'Konto',
+// Nur Schlüssel: die Ereignisarten kommen englisch benannt vom Server und
+// werden hier beschriftet, nicht umbenannt.
+const KIND_KEY: Record<ChainEvent['kind'], string> = {
+  erstkontakt: 'chain.kind.firstContact',
+  versuch: 'chain.kind.attempts',
+  erfolg: 'chain.kind.success',
+  alarm: 'chain.kind.alert',
+  'letzter-zugriff': 'chain.lastActivity',
+  konto: 'chain.kind.account',
 }
 
-const SOURCE_HINT: Record<ChainEvent['source'], string> = {
-  log: 'Zeit aus dem Access-Log, in der Zeitzone des Logs.',
-  dump: 'Zeit aus dem Datenbank-Export, in der Zeitzone des Datenbankservers.',
+const SOURCE_KEY: Record<ChainEvent['source'], string> = {
+  log: 'chain.source.log',
+  dump: 'chain.source.dump',
 }
 
 /** Der Uhren-Abgleich: ein vom Analysten gesetzter Versatz je Quelle.
@@ -112,6 +115,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   // Sie steht offen, weil sie der erste Absatz des Berichts ist. Zuklappen
   // ist für die Fälle, in denen man die Kennzahlen darüber vergleichen will,
   // ohne 40 Zeilen dazwischen.
+  const tr = useT()
   const [open, setOpen] = useState(true)
   const [clockOpen, setClockOpen] = useState(false)
   const { data } = useQuery({
@@ -135,16 +139,16 @@ export function CaseChain({ slug, onOpen, onTrace }: {
           Chronologie
           <InfoDot
             title="Chronologie des Falls"
-            body="Die bestätigten Artefakte in ihrer zeitlichen Abfolge — der erste Absatz des Berichts."
+            body={tr('chain.title.body')}
             hint="Sie ordnet GEMESSENE Tatsachen und behauptet keine Ursache: an jeder Zeile steht, ob die Zeit aus dem Access-Log oder aus dem Datenbank-Export stammt. Welche Beobachtung aus welcher folgt, entscheidest du." />
         </>
       }
       sub={data.events.length
         ? `${data.events.length} datierte Beobachtung(en) aus ${data.confirmed} bestätigten Artefakten, über ${formatSpan(first, last)}. Geordnet wird, was gemessen wurde — welche Beobachtung aus welcher folgt, entscheidest du.`
-        : 'Sobald Artefakte als True Positive bestätigt sind, steht hier ihre zeitliche Abfolge.'}
+        : tr('chain.empty')}
       right={
         <Tooltip title="Uhren-Abgleich"
-          body="Log-Server und Datenbank-Server können verschiedene Uhren führen — ein Versatz kann die Reihenfolge der Geschichte drehen."
+          body={tr('chain.clock.body')}
           hint="Der Versatz ist deine Aussage, nicht eine Vermutung des Werkzeugs. Er wird im Fall gespeichert und in der Kette ausgewiesen.">
           <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
             <Clock size={13} />
@@ -177,13 +181,13 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                 </div>
               )}
               <div className="flex items-start gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]">
-                <Tooltip hint={SOURCE_HINT[e.source]}>
+                <Tooltip hint={tr(SOURCE_KEY[e.source])}>
                   <span className={clsx('mono w-[96px] shrink-0 pt-0.5 text-[11px] tabular',
                     sameMoment ? 'text-transparent' : 'text-[var(--muted)]')}>
                     {formatLogTime(e.at, 0).slice(0, 16)}
                   </span>
                 </Tooltip>
-                <Tooltip hint={KIND_LABEL[e.kind]}>
+                <Tooltip hint={tr(KIND_KEY[e.kind])}>
                   <Icon size={14} className={clsx('mt-0.5 shrink-0',
                     e.severity === 0 ? 'text-[var(--sev-high)]'
                       : e.severity === 1 ? 'text-[var(--sev-medium)]'

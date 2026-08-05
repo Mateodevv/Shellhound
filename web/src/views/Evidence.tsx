@@ -100,8 +100,8 @@ export function Evidence({ slug, onClosed }: {
           {!evidence.length && (
             <EmptyState
               icon={<FolderOpen size={36} />}
-              title="Noch keine Evidence registriert"
-              sub="Damit SHELLHOUND etwas findet, braucht es die Beweismittel: eine Kopie des Web-Verzeichnisses, die Access-Logs und/oder einen Datenbank-Export. Unten hinzufügen — oder einen Fall-Ordner automatisch durchsuchen lassen."
+              title={tr('evidence.empty.title')}
+              sub={tr('evidence.empty.sub')}
             />
           )}
         </div>
@@ -140,7 +140,7 @@ export function Evidence({ slug, onClosed }: {
 
       <Section
         title="Evidence automatisch erkennen"
-        sub="Kein Kopfzerbrechen mit Pfaden: Gib den Ordner an, in dem die Beweismittel liegen. SHELLHOUND erkennt Webroot, Logs und Datenbank-Export am Inhalt (CMS-Marker, parsende Log-Zeilen, Dump-Header) und schlägt sie mit Begründung vor."
+        sub={tr('evidence.detect.hint')}
       >
         <div className="flex gap-2">
           <input
@@ -179,7 +179,7 @@ export function Evidence({ slug, onClosed }: {
         )}
       </Section>
 
-      <Section title="Jobs" sub="Analyse-Läufe dieses Falls, neueste zuerst.">
+      <Section title="Jobs" sub={tr('evidence.jobs.sub')}>
         <div className="flex flex-col gap-2">
           {(jobs ?? []).map((j) => <JobRow key={j.id} job={j} slug={slug} />)}
           {jobs && !jobs.length && (
@@ -287,6 +287,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
 function CloseCase({ slug, caseName, onClosed }: {
   slug: string; caseName: string; onClosed?: () => void
 }) {
+  const tr = useT()
   const [asking, setAsking] = useState(false)
   const [typed, setTyped] = useState('')
 
@@ -306,7 +307,7 @@ function CloseCase({ slug, caseName, onClosed }: {
 
   return (
     <Section
-      title="Fall abschließen"
+      title={tr('evidence.close')}
       sub="Packt den kompletten Fall in ein ZIP im Archiv-Ordner und entfernt die Arbeitskopie — der Fall ist danach aus der Plattform raus, bis er importiert wird."
     >
       {!asking ? (
@@ -366,7 +367,7 @@ function CloseCase({ slug, caseName, onClosed }: {
             <Button variant="danger"
               disabled={typed.trim() !== caseName.trim() || close.isPending}
               onClick={() => close.mutate()}>
-              <Archive size={14} /> {close.isPending ? 'Archiviere…' : 'Endgültig abschließen'}
+              <Archive size={14} /> {close.isPending ? 'Archiviere…' : tr('evidence.closeFinal')}
             </Button>
             <Button variant="ghost" onClick={() => setAsking(false)}>Abbrechen</Button>
           </div>

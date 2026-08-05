@@ -294,8 +294,8 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     <div className="flex h-[calc(100vh-40px)] flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Tooltip title="Artefakte"
-          body="Die Dinge selbst: diese Datei, dieser Client, diese Tabelle. Geflaggt wurden sie von den Findings — entschieden wird über das Artefakt."
-          hint="Jeder Chip ist ein Ausblende-Schalter: Klick versteckt seine Einträge, der nächste Klick holt sie zurück. False Positives und Info starten ausgeblendet.">
+          body={tr('findings.title.body')}
+          hint={tr('findings.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">Artefakte</h1>
         </Tooltip>
         {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
@@ -379,7 +379,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           <input
             value={bulkNote}
             onChange={(e) => setBulkNote(e.target.value)}
-            placeholder="Notiz für alle markierten (optional)"
+            placeholder={tr('findings.bulkNote')}
             className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="ghost" onClick={() => setChecked(new Set())}>Auswahl leeren</Button>
@@ -423,7 +423,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
           <EmptyState icon={<Bug size={36} />} title="Keine Artefakte"
-            sub={data ? 'Kein Treffer für die aktuellen Filter — oder die Analyse lief noch nicht.' : 'Lade…'} />
+            sub={data ? tr('findings.empty') : 'Lade…'} />
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((vi) => {
@@ -740,6 +740,7 @@ function RuleName({ rule, className }: { rule: string; className?: string }) {
 function ArtifactName({ artifact, kind, roots }: {
   artifact: string; kind: string; roots: EvidenceRoot[]
 }) {
+  const tr = useT()
   if (kind !== 'file') {
     return (
       <span className="mono min-w-0 truncate text-[13px] font-semibold">{artifact}</span>
@@ -752,7 +753,7 @@ function ArtifactName({ artifact, kind, roots }: {
     : null
   return (
     <Tooltip wide className="min-w-0"
-      title={rootName ? `unter: ${rootName}` : 'Vollständiger Pfad'}
+      title={rootName ? `unter: ${rootName}` : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
         {root ? rel : shortPath(artifact, 80)}
