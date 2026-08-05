@@ -220,7 +220,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
           <InfoDot
             title="Die Muster-Bibliothek"
             body={`Gespeichert unter ${lib?.path ?? '—'}.`}
-            hint="Die Datei gehört zum WORKSPACE, nicht zum Fall: einmal angelegt, steht ein Muster in jedem weiteren Fall darin bereit. Der einzelne Fall protokolliert nur, wonach in ihm gesucht wurde — auch erfolglos." />
+            hint={tr('hunt.library.hint')} />
           <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]">
             {lib?.path}
           </span>
@@ -419,7 +419,7 @@ function HuntSummary({ result }: { result: HuntResult }) {
           </span>
         </Tooltip>
         <span className="opacity-40">·</span>
-        <Tooltip hint="Zeiten aus dem Log, in dessen eigener Zeitzone — nicht die Uhr dieses Rechners. Minuten sprechen für einen einzelnen Zugriff, Monate eher für Hintergrundrauschen.">
+        <Tooltip hint={tr('hunt.time.hint')}>
           <span>
             <span className="mono tabular text-[var(--fg)]">
               {formatLogTime(result.first_epoch, result.tz)}
@@ -432,7 +432,7 @@ function HuntSummary({ result }: { result: HuntResult }) {
           </span>
         </Tooltip>
         <span className="opacity-40">·</span>
-        <Tooltip hint="Wie viele verschiedene URLs das Muster überhaupt getroffen hat. Eine hohe Zahl heißt meist: das Muster greift zu weit.">
+        <Tooltip hint={tr('hunt.urls.hint')}>
           <span>
             <span className="mono tabular text-[var(--fg)]">
               {formatCount(result.uri_total)}

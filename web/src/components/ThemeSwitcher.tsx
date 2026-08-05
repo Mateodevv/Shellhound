@@ -1,5 +1,6 @@
 // ThemeSwitcher.tsx — kleiner Popover zum Umschalten des UI-Themes.
 // `up` öffnet das Menü nach oben (für die Sidebar-Unterkante).
+import { useT } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, Palette } from 'lucide-react'
@@ -18,6 +19,7 @@ function Swatch({ colors }: { colors: [string, string, string] }) {
 }
 
 export function ThemeSwitcher({ up }: { up?: boolean }) {
+  const tr = useT()
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(currentTheme)
   const ref = useRef<HTMLDivElement>(null)
@@ -46,7 +48,7 @@ export function ThemeSwitcher({ up }: { up?: boolean }) {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        title="Theme wählen"
+        title={tr('theme.choose')}
         className={clsx(
           'flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium',
           'text-[var(--muted)] transition-colors duration-150 cursor-pointer',

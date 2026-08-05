@@ -319,7 +319,7 @@ function CloseCase({ slug, caseName, onClosed }: {
           <div className="flex items-start gap-2">
             <TriangleAlert size={16} className="mt-0.5 shrink-0 text-[var(--sev-high)]" />
             <div className="text-[13px]">
-              <div className="font-semibold">Arbeitskopie wird gelöscht</div>
+              <div className="font-semibold">{tr('evidence.workingCopyDeleted')}</div>
               <div className="mt-0.5 text-[var(--muted)]">
                 Alles wandert ins Archiv-ZIP: Findings mit Triage-Stand, IOC Box,
                 CMS- und Datenbank-Ergebnisse, Evidence-Pfade und die Job-Historie.

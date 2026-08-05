@@ -223,8 +223,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {/* ---- Datei-Kontext ---- */}
             {file && (
               <div className="grid grid-cols-2 gap-2">
-                <MetaCell label="Größe">{file.exists ? formatBytes(file.size) : 'Datei fehlt!'}</MetaCell>
-                <MetaCell label="Geändert"
+                <MetaCell label={tr('artifact.size')}>{file.exists ? formatBytes(file.size) : tr('artifact.fileMissing')}</MetaCell>
+                <MetaCell label={tr('artifact.modified')}
                   explain={tr('artifact.mtime.hint')}>
                   <Tooltip title={absoluteTime(file.mtime)}>
                     <span>{relativeTime(file.mtime)}</span>
@@ -243,7 +243,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </MetaCell>
                 <MetaCell label="Upload-Ordner" explain={tr('field.upload_dir')}>
                   {file.in_upload_dir
-                    ? <span className="text-[var(--sev-medium)]">ja — PHP gehört hier nicht hin</span>
+                    ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
                     : 'nein'}
                 </MetaCell>
                 {file.sha256 && (
@@ -434,7 +434,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {ctx?.dump && (
               <div className="grid grid-cols-2 gap-2">
                 <MetaCell label="Statements">{formatCount(ctx.dump.statements)}</MetaCell>
-                <MetaCell label="Größe">{formatBytes(ctx.dump.size)}</MetaCell>
+                <MetaCell label={tr('artifact.size')}>{formatBytes(ctx.dump.size)}</MetaCell>
                 <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
                 <MetaCell label="Erstellt">{ctx.dump.meta?.created || '—'}</MetaCell>
               </div>

@@ -1,5 +1,6 @@
 // Start.tsx — die Landing-View: offenen Fall wählen, neuen anlegen, oder
 // einen abgeschlossenen Fall aus dem Archiv zurückholen.
+import { useT } from '../i18n'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -15,6 +16,7 @@ import { ThemeSwitcher } from '../components/ThemeSwitcher'
 interface State { workspace: string; cases: CaseInfo[] }
 
 export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['state'],
@@ -104,7 +106,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
             icon={<FolderSearch size={40} />}
             title="Kein offener Fall"
             sub={archiveList.length
-              ? 'Lege einen neuen Fall an — oder hole einen abgeschlossenen aus dem Archiv zurück.'
+              ? tr('start.empty')
               : 'Lege den ersten Fall an — danach registrierst du Evidence (Webroot, Access-Logs, SQL-Dump) und startest die Analyse.'}
           />
         )}

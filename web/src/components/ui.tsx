@@ -196,6 +196,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
 export function CopyButton({ value, label = 'Kopieren', className }: {
   value: string; label?: string; className?: string
 }) {
+  const tr = useT()
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
@@ -208,7 +209,7 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
   }
   return (
     <Tooltip hint={state === 'fail'
-      ? 'Die Zwischenablage ist hier nicht verfügbar — den Wert bitte von Hand markieren.'
+      ? tr('copy.unavailable')
       : `${label} — legt den Wert in die Zwischenablage.`}>
       <button onClick={copy} aria-label={label}
         className={clsx(
@@ -328,6 +329,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   children: ReactNode
   layer?: number
 }) {
+  const tr = useT()
   useOverlayEscape(open, onClose)
   if (!open) return null
   const inset = Math.min(layer, 3)
@@ -348,7 +350,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
           <div className="min-w-0 text-[15px] font-semibold">{title}</div>
           <button
             onClick={onClose}
-            title="Schließen (Esc)"
+            title={tr('common.closeEsc')}
             className="shrink-0 rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
           >
             <X size={16} />
@@ -377,6 +379,7 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
   actions?: ReactNode
   timeout?: number
 }) {
+  const tr = useT()
   useEffect(() => {
     if (!open || !timeout || actions) return
     const t = setTimeout(onClose, timeout)
@@ -398,7 +401,7 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
               </div>
             )}
           </div>
-          <button onClick={onClose} title="Schließen"
+          <button onClick={onClose} title={tr('common.close')}
             className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer">
             <X size={14} />
           </button>
