@@ -208,6 +208,29 @@ export interface Actor {
 
 /** Operator configuration. The real API keys never reach the browser --
  *  `hint` is the last four characters, enough to tell two keys apart. */
+/** Bursts of files written at about the same time. A LEAD, never a proof:
+ *  the mtime of a copy says nothing about where it came from, and an
+ *  attacker can set it to anything. Never enters the chronology. */
+export interface FsClusters {
+  clusters: {
+    from: number
+    to: number
+    count: number
+    bytes: number
+    /** Files in this burst the case already CONFIRMED -- the one piece of
+     *  interpretation offered: the others were written in the same minute. */
+    confirmed: number
+    flagged: number
+    files: { path: string; confirmed: boolean; flagged: boolean }[]
+    truncated: boolean
+  }[]
+  checked: boolean
+  reason: string
+  files: number
+  truncated: boolean
+  burst_seconds?: number
+}
+
 export interface SettingsInfo {
   services: Record<string, {
     configured: boolean
