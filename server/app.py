@@ -29,6 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server import db, geoip, iocs as ioclib, patterns as patternlib, workspace
+from server.i18n import lang_of
+from server.i18n import t as _t
 from server.config import Config
 from server.engines import (cmsinventory, detect, logindex, sqldump,
                             webrootdiff, webshell)
@@ -68,6 +70,26 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(401, "invalid or missing token")
 
     auth = Depends(require_token)
+
+    # --- language -----------------------------------------------------------
+
+    def request_lang(request: Request) -> str:
+        """The language the prose assembled HERE is written in.
+
+        The browser sends it as a header on every API call; a download link
+        cannot set headers and sends `?lang=` instead. Anything the server
+        STORES stays English regardless -- see server/i18n.py."""
+        return lang_of(request.headers.get("x-lang")
+                       or request.query_params.get("lang"))
+
+    lang_dep = Depends(request_lang)
+
+    def _pattern_error(exc, lang):
+        """A validation message in the language of the request.
+
+        The exception carries its own English text; the key only turns it
+        into another language when the catalogue knows one."""
+        return _t(lang, exc.key) if exc.key else str(exc)
 
     def case_dir_or_404(slug: str) -> Path:
         case_dir = workspace.resolve_case(config.workspace, slug)
@@ -155,7 +177,7 @@ def create_app(config: Config) -> FastAPI:
         return row
 
     @app.get("/api/cases/{slug}", dependencies=[auth])
-    def case_detail(slug: str):
+    def case_detail(slug: str, lang: str = lang_dep):
         case_dir = case_dir_or_404(slug)
         info = workspace.case_info(case_dir)
         conn = db.connect(case_dir)
@@ -170,8 +192,8 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
         log_targets = [e["path"] for e in evidence if e["kind"] == "access_logs"]
         info["evidence_items"] = evidence
-        info["log_index"] = logindex.status(case_dir,
-                                            log_targets if log_targets else None)
+        info["log_index"] = logindex.status(
+            case_dir, log_targets if log_targets else None, lang)
         return info
 
     @app.get("/api/cases/{slug}/summary", dependencies=[auth])
@@ -181,7 +203,7 @@ def create_app(config: Config) -> FastAPI:
         return workspace.case_summary(case_dir)
 
     @app.post("/api/cases/{slug}/archive", dependencies=[auth])
-    def archive(slug: str):
+    def archive(slug: str, lang: str = lang_dep):
         """Close the case: everything into one zip, working copy removed.
         Running jobs are cancelled first -- an engine still writing into a
         database that is being packed would archive a half-written case."""
@@ -200,10 +222,7 @@ def create_app(config: Config) -> FastAPI:
                 # An engine that is still running holds an open handle on
                 # case.db -- on Windows the delete of the working copy would
                 # fail with WinError 32. Refuse cleanly instead.
-                raise HTTPException(
-                    409, "Es laufen noch Jobs, die nicht rechtzeitig beendet "
-                         "werden konnten. Bitte kurz warten und den Fall "
-                         "erneut schließen.")
+                raise HTTPException(409, _t(lang, "err.jobsRunning"))
         zip_path, summary = workspace.archive_case(config.workspace, case_dir)
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"archive": str(zip_path), "file": zip_path.name,
@@ -295,7 +314,7 @@ def create_app(config: Config) -> FastAPI:
         ips: list[str]
 
     @app.post("/api/geo", dependencies=[auth])
-    def geo(body: GeoBody):
+    def geo(body: GeoBody, lang: str = lang_dep):
         """Länder zu IPs, gebündelt -- OFFLINE aus der Workspace-MMDB.
 
         Fallunabhängig: die Zuordnung einer Adresse hängt nicht am Fall.
@@ -304,10 +323,10 @@ def create_app(config: Config) -> FastAPI:
         Quell-IP ist privat« oft die wichtigere Aussage als jedes Land."""
         out = {}
         for ip in list(dict.fromkeys(body.ips))[:500]:
-            info = geoip.lookup(config.workspace, ip)
+            info = geoip.lookup(config.workspace, ip, lang)
             if info is not None:
                 out[ip] = info
-        return {**geoip.status(config.workspace), "results": out}
+        return {**geoip.status(config.workspace, lang), "results": out}
 
     @app.post("/api/geo/download", dependencies=[auth])
     def geo_download():
@@ -317,15 +336,15 @@ def create_app(config: Config) -> FastAPI:
         ein einzelner Datei-Download von download.db-ip.com."""
         result = geoip.download(config.workspace)
         if not result.get("ok"):
-            raise HTTPException(502, result.get("error", "Download fehlgeschlagen"))
+            raise HTTPException(502, result.get("error", "download failed"))
         return result
 
     class DetectBody(BaseModel):
         folder: str
 
     @app.post("/api/detect", dependencies=[auth])
-    def detect_evidence(body: DetectBody):
-        return detect.scan(body.folder)
+    def detect_evidence(body: DetectBody, lang: str = lang_dep):
+        return detect.scan(body.folder, lang)
 
     # Wie viele Einträge ein Verzeichnis höchstens liefert. Ein Upload-Ordner
     # mit 40.000 Dateien soll den Dialog nicht zum Stehen bringen; dass
@@ -591,10 +610,10 @@ def create_app(config: Config) -> FastAPI:
         return {"logs": int(raw.get("logs", 0) or 0),
                 "dump": int(raw.get("dump", 0) or 0)}
 
-    def _case_chain(case_dir):
-        """Die Chronologie als Daten -- geteilt von der Route und den
-        Exporten: was der Analyst im Dashboard liest, muss dasselbe sein
-        wie das, was der Fall hinausgibt."""
+    def _case_chain(case_dir, lang="en"):
+        """The chronology as data -- shared by the route and the exports:
+        what the analyst reads in the dashboard has to be the same thing the
+        case hands out."""
         conn = db.connect(case_dir)
         try:
             confirmed = db.rows(
@@ -628,8 +647,8 @@ def create_app(config: Config) -> FastAPI:
 
         events, undated, gaps = [], [], []
 
-        # Alle Log-Zeiten durch EINEN Trichter, alle Dump-Zeiten durch den
-        # anderen -- so kann keine einzelne Stelle den Versatz vergessen.
+        # Every log time through ONE funnel, every dump time through the
+        # other -- that way no single spot can forget the offset.
         def _log_at(epoch, tz=0):
             at = _local(epoch, tz)
             return None if at is None else at + off_logs
@@ -650,7 +669,7 @@ def create_app(config: Config) -> FastAPI:
                            "artifact": artifact, "artifact_kind": artifact_kind,
                            "ip": ip, "severity": severity})
 
-        # --- bestätigte Dateien: wann lag sie da, wann wurde sie benutzt ----
+        # --- confirmed files: when was it there, when was it used ----------
         for artifact, rel in files.items():
             row = by_artifact[artifact]
             name = os.path.basename(rel)
@@ -667,34 +686,32 @@ def create_app(config: Config) -> FastAPI:
             ok_total = sum(h["ok_hits"] for h in hits)
             if oks:
                 first_ok = min(oks)
-                # Eine erfolglose Anfrage VOR dem ersten Erfolg grenzt ein,
-                # wann die Datei entstanden sein muss -- das ist die
-                # belastbarste Aussage, die ein Log dazu hergibt, und sie
-                # kommt ohne die mtime der Kopie aus.
-                detail = "die Datei lag spätestens zu diesem Zeitpunkt dort"
+                # An unsuccessful request BEFORE the first success bounds
+                # when the file must have appeared -- the most defensible
+                # statement a log yields about it, and it manages without
+                # the mtime of the copy.
+                detail = _t(lang, "chain.file.wasThere")
                 if first_any < first_ok:
                     who = next((h["ip"] for h in hits
                                 if h["first_epoch"] == first_any), "")
-                    von = f" von {who}" if who else ""
-                    detail += (f". Eine Anfrage darauf{von} lief um "
-                               f"{_iso(_log_at(first_any, tz))} noch ins Leere "
-                               f"— die Datei entstand also dazwischen")
+                    by = _t(lang, "chain.file.by", ip=who) if who else ""
+                    detail += _t(lang, "chain.file.probeBefore", by=by,
+                                 at=_iso(_log_at(first_any, tz)))
                 add(_log_at(first_ok, tz), "erfolg",
-                    f"Erster erfolgreicher Abruf von {name}", detail, "log",
+                    _t(lang, "chain.file.firstOk", name=name), detail, "log",
                     artifact, "file", severity=row["worst"])
             else:
                 add(_log_at(first_any, tz), "versuch",
-                    f"Erste Anfrage auf {name}",
-                    f"{total}× angefragt, nie mit 2xx beantwortet — ein "
-                    f"erfolgreicher Zugriff ist im Log nicht belegt", "log",
+                    _t(lang, "chain.file.firstTry", name=name),
+                    _t(lang, "chain.file.firstTry.detail", n=total), "log",
                     artifact, "file", severity=row["worst"])
             if last_any and last_any != (min(oks) if oks else first_any):
                 add(_log_at(last_any, tz), "letzter-zugriff",
-                    f"Letzter Abruf von {name}",
-                    f"insgesamt {total} Anfrage(n), davon {ok_total}× 2xx",
+                    _t(lang, "chain.file.last", name=name),
+                    _t(lang, "chain.file.last.detail", n=total, ok=ok_total),
                     "log", artifact, "file", severity=row["worst"])
 
-        # --- bestätigte Clients: Erstkontakt und die auslösenden Aufrufe ----
+        # --- confirmed clients: first contact and the triggering calls -----
         for ip in clients:
             row = by_artifact[ip]
             actor = facts["clients"].get(ip)
@@ -702,93 +719,81 @@ def create_app(config: Config) -> FastAPI:
                 continue
             tz = actor["tz"] or 0
             add(_log_at(actor["first_epoch"], tz), "erstkontakt",
-                f"Erste Anfrage von {ip}",
-                f"{actor['requests']} Anfrage(n) insgesamt", "log",
-                ip, "client", ip, row["worst"])
+                _t(lang, "chain.client.first", ip=ip),
+                _t(lang, "chain.client.first.detail", n=actor["requests"]),
+                "log", ip, "client", ip, row["worst"])
             for a in actor["alerts"]:
                 if a["severity"] >= db.SEV_INFO or not a["epoch"]:
                     continue
+                # The alert text itself comes from the index and is English:
+                # it is stored and travels into findings and the archive.
                 add(_log_at(a["epoch"], tz), "alarm", a["detail"],
-                    f"ausgelöst durch: {a['example']}", "log",
+                    _t(lang, "chain.alert.detail", example=a["example"]), "log",
                     ip, "client", ip, a["severity"])
             add(_log_at(actor["last_epoch"], tz), "letzter-zugriff",
-                f"Letzte Anfrage von {ip}", "", "log", ip, "client", ip,
-                row["worst"])
+                _t(lang, "chain.client.last", ip=ip), "", "log", ip, "client",
+                ip, row["worst"])
 
-        # --- Konten, die IM FALLZEITRAUM entstanden sind --------------------
-        # Ein Konto von 2019 gehört nicht in die Chronologie eines Vorfalls
-        # von 2026. Der Zeitraum des Logs ist das ehrlichste Fenster, das der
-        # Fall dafür hat.
+        # --- accounts created WITHIN THE PERIOD OF THE CASE -----------------
+        # An account from 2019 does not belong in the chronology of an
+        # incident from 2026. The period of the log is the most honest window
+        # the case has for that.
         for acc in accounts:
             at = _dump_at(acc["registered"])
             if at is None or span_first is None or not (span_first <= at <= span_last):
                 continue
-            detail = f"in {acc['tbl'] or 'der Benutzertabelle'} angelegt"
+            detail = _t(lang, "chain.account.detail",
+                        table=acc["tbl"] or _t(lang, "chain.account.userTable"))
             last = _dump_at(acc["last_login"])
             if last and span_first <= last <= span_last:
-                detail += f"; letzte Anmeldung laut Export {_iso(last)}"
-            title = f"Konto {acc['login']} angelegt"
+                detail += _t(lang, "chain.account.lastLogin", at=_iso(last))
+            title = _t(lang, "chain.account.created", login=acc["login"])
             if acc["admin"]:
-                title += " (Administrator)"
+                title += _t(lang, "chain.account.admin")
             add(at, "konto", title, detail, "dump",
                 severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
 
-        # JEDES BESTÄTIGTE ARTEFAKT MUSS AUFTAUCHEN -- in der Kette oder hier.
-        # Eine Chronologie, aus der eine Entscheidung des Analysten
-        # stillschweigend verschwindet, ist die gefährlichere Hälfte einer
-        # Lüge: sie sieht vollständig aus.
-        why_undated = {
-            "table": "der Datenbank-Export trägt keinen Zeitstempel dafür — "
-                     "wann der Code eingeschleust wurde, sagt der Fall nicht",
-            "dump": "ein Dump als Ganzes hat keinen Zeitpunkt im Vorfall",
-            "file": "im Log ist kein Abruf dieser Datei belegt — wann sie "
-                    "dort abgelegt wurde, sagt der Fall nicht",
-            "client": "dieser Client steht in keinem indizierten Log",
-        }
+        # EVERY CONFIRMED ARTIFACT MUST SHOW UP -- in the chain or here. A
+        # chronology from which a decision of the analyst quietly disappears
+        # is the more dangerous half of a lie: it looks complete.
         for row in confirmed:
             if row["artifact"] in dated:
                 continue
             kind = row["artifact_kind"]
+            key = ("chain.undated." + kind
+                   if kind in ("table", "dump", "file", "client")
+                   else "chain.undated.other")
             undated.append({
                 "artifact": row["artifact"], "artifact_kind": kind,
-                "why": why_undated.get(kind, "ohne gemessenen Zeitpunkt")})
+                "why": _t(lang, key)})
 
         events.sort(key=lambda e: e["at"])
         truncated = len(events) > _CHAIN_EVENT_CAP
         if truncated:
             events = events[:_CHAIN_EVENT_CAP]
 
-        # --- was der Fall NICHT belegt -------------------------------------
+        # --- what the case does NOT prove ----------------------------------
         if not confirmed:
-            gaps.append("Noch ist kein Artefakt als True Positive bestätigt. "
-                        "Bis dahin steht hier nur, was der Datenbank-Export "
-                        "von sich aus datiert — die Chronologie füllt sich "
-                        "mit der Triage.")
+            gaps.append(_t(lang, "chain.gap.noConfirmed"))
         elif not events:
-            gaps.append("Zu den bestätigten Artefakten trägt der Fall keine "
-                        "gemessene Zeit: weder das Log noch der Datenbank-"
-                        "Export sagt, wann sie entstanden sind.")
+            gaps.append(_t(lang, "chain.gap.noTimes"))
         if events and span_first is not None and events[0]["at"] - span_first < 60:
-            gaps.append(
-                f"Das erste Ereignis liegt am Anfang der Log-Abdeckung "
-                f"({_iso(span_first)}). Was davor geschah, ist nicht belegt — "
-                f"der Vorfall kann älter sein als die vorliegenden Logs.")
+            gaps.append(_t(lang, "chain.gap.atLogStart", at=_iso(span_first)))
         if files and not any(e["kind"] == "erfolg" for e in events):
-            gaps.append("Auf keine der bestätigten Dateien ist im Log ein "
-                        "erfolgreicher Zugriff belegt — nur Versuche.")
+            gaps.append(_t(lang, "chain.gap.onlyAttempts"))
         if truncated:
-            gaps.append(f"Mehr als {_CHAIN_EVENT_CAP} Ereignisse; die "
-                        f"Chronologie zeigt die frühesten.")
-        # Ein gesetzter Versatz ist Teil der Aussage und steht deshalb bei
-        # den Einschränkungen -- wer die Kette liest, muss wissen, dass an
-        # den Uhren gedreht wurde und von wem.
-        for quelle, off in (("Log", off_logs), ("Datenbank-Export", off_dump)):
+            gaps.append(_t(lang, "chain.gap.truncated", n=_CHAIN_EVENT_CAP))
+        # A set offset is part of the statement and therefore stands with the
+        # limitations -- whoever reads the chain has to know that the clocks
+        # were turned, and by whom.
+        for source, off in (("logs", off_logs), ("dump", off_dump)):
             if off:
-                std = f"{abs(off) / 3600:g}"
-                gaps.append(
-                    f"Uhren-Abgleich: die Zeiten aus dem {quelle} sind um "
-                    f"{std} Stunde(n) {'vor' if off > 0 else 'zurück'}gestellt "
-                    f"— vom Analysten gesetzt.")
+                gaps.append(_t(
+                    lang, "chain.gap.clockOffset",
+                    source=_t(lang, "chain.clock.source." + source),
+                    hours=f"{abs(off) / 3600:g}",
+                    direction=_t(lang, "chain.clock.forward" if off > 0
+                                 else "chain.clock.back")))
 
         return {
             "span": {"first": span_first, "last": span_last},
@@ -798,8 +803,8 @@ def create_app(config: Config) -> FastAPI:
         }
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
-    def chain(slug: str):
-        return _case_chain(case_dir_or_404(slug))
+    def chain(slug: str, lang: str = lang_dep):
+        return _case_chain(case_dir_or_404(slug), lang)
 
     class ClockBody(BaseModel):
         # Sekunden, je Quelle. 0 = Uhren gelten, wie sie dastehen.
@@ -1490,11 +1495,11 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
-    def _within_evidence(case_dir, path):
+    def _within_evidence(case_dir, path, lang="en"):
         try:
             target = Path(path).resolve(strict=True)
         except (OSError, RuntimeError):
-            raise HTTPException(404, "Datei nicht gefunden")
+            raise HTTPException(404, _t(lang, "err.fileNotFound"))
         for root in _evidence_roots(case_dir):
             try:
                 root_resolved = Path(root).resolve(strict=True)
@@ -1507,20 +1512,19 @@ def create_app(config: Config) -> FastAPI:
                 return target
             except ValueError:
                 continue
-        raise HTTPException(
-            403, "Diese Datei liegt außerhalb der registrierten Evidence "
-                 "dieses Falls und wird nicht gelesen.")
+        raise HTTPException(403, _t(lang, "err.outsideEvidence"))
 
     _RAW_WINDOW = 256 * 1024          # bytes decoded per raw page
     _HEX_WINDOW = 16 * 1024           # bytes per hex page (1024 rows of 16)
 
     @app.get("/api/cases/{slug}/file", dependencies=[auth])
-    def file_content(slug: str, path: str, mode: str = "raw", offset: int = 0):
+    def file_content(slug: str, path: str, mode: str = "raw", offset: int = 0,
+                     lang: str = lang_dep):
         """One page of an evidence file, as raw text or as a hex dump."""
         case_dir = case_dir_or_404(slug)
-        target = _within_evidence(case_dir, path)
+        target = _within_evidence(case_dir, path, lang)
         if not target.is_file():
-            raise HTTPException(400, "Kein reguläres File")
+            raise HTTPException(400, _t(lang, "err.notRegularFile"))
         try:
             size = target.stat().st_size
             window = _HEX_WINDOW if mode == "hex" else _RAW_WINDOW
@@ -1529,7 +1533,7 @@ def create_app(config: Config) -> FastAPI:
                 fh.seek(offset)
                 chunk = fh.read(window)
         except OSError as e:
-            raise HTTPException(400, f"Datei nicht lesbar: {e}")
+            raise HTTPException(400, f"file not readable: {e}")
 
         out = {"path": str(target), "size": size, "offset": offset,
                "length": len(chunk), "eof": offset + len(chunk) >= size,
@@ -1574,7 +1578,7 @@ def create_app(config: Config) -> FastAPI:
         text: str = ""          # mehrere auf einmal (Zeilen oder JSON)
 
     @app.post("/api/patterns", dependencies=[auth])
-    def patterns_add(body: NewPattern):
+    def patterns_add(body: NewPattern, lang: str = lang_dep):
         try:
             if body.text.strip():
                 return patternlib.import_text(config.workspace, body.text)
@@ -1582,7 +1586,7 @@ def create_app(config: Config) -> FastAPI:
                     "entry": patternlib.add(config.workspace, body.pattern,
                                             body.label, body.note)}
         except patternlib.PatternError as e:
-            raise HTTPException(400, str(e)) from e
+            raise HTTPException(400, _pattern_error(e, lang)) from e
 
     class PatchPattern(BaseModel):
         pattern: str | None = None
@@ -1590,12 +1594,13 @@ def create_app(config: Config) -> FastAPI:
         note: str | None = None
 
     @app.patch("/api/patterns/{pattern_id}", dependencies=[auth])
-    def patterns_patch(pattern_id: str, body: PatchPattern):
+    def patterns_patch(pattern_id: str, body: PatchPattern,
+                       lang: str = lang_dep):
         try:
             return patternlib.update(config.workspace, pattern_id,
                                      body.pattern, body.label, body.note)
         except patternlib.PatternError as e:
-            raise HTTPException(400, str(e)) from e
+            raise HTTPException(400, _pattern_error(e, lang)) from e
 
     @app.delete("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_delete(pattern_id: str):
@@ -1640,7 +1645,7 @@ def create_app(config: Config) -> FastAPI:
                 for client in match["clients"]:
                     ok = client["ok_hits"] > 0
                     rule = (f"Aufruf eines hinterlegten Musters ({name}) "
-                            f"— {'2xx beantwortet' if ok else 'nur Versuche'}")
+                            f"— {'2xx beantwortet' if ok else 'attempts only'}")
                     example = match["uris"][0]["uri"] if match["uris"] else ""
                     db.upsert_finding(
                         conn, "logs", db.SEV_HIGH if ok else db.SEV_LOW, rule,
@@ -1687,7 +1692,7 @@ def create_app(config: Config) -> FastAPI:
     # --- durch die Evidence klicken ----------------------------------------
 
     @app.get("/api/cases/{slug}/browse", dependencies=[auth])
-    def browse(slug: str, path: str = ""):
+    def browse(slug: str, path: str = "", lang: str = lang_dep):
         """Durch die registrierte Evidence blättern.
 
         Ohne `path` sind die Wurzeln selbst die Liste -- man beginnt bei dem,
@@ -1722,9 +1727,9 @@ def create_app(config: Config) -> FastAPI:
         if not path.strip():
             return {"path": "", "parent": None, "roots": roots, "dirs": [],
                     "files": [], "truncated": False}
-        target = _within_evidence(case_dir, path)
+        target = _within_evidence(case_dir, path, lang)
         if not target.is_dir():
-            raise HTTPException(400, "Kein Verzeichnis")
+            raise HTTPException(400, "not a directory")
         dirs, files, truncated = _list_dir(target)
 
         def relative(p):
@@ -1745,10 +1750,10 @@ def create_app(config: Config) -> FastAPI:
             entry["triage"] = hit["triage"] if hit else None
             return entry
 
-        # Innerhalb einer Wurzel darf man hoch -- aber nur bis zu ihr.
+        # Within a root you may go up -- but only as far as the root.
         parent = str(target.parent)
         try:
-            _within_evidence(case_dir, parent)
+            _within_evidence(case_dir, parent, lang)
         except HTTPException:
             parent = None
         return {"path": str(target), "parent": parent, "roots": roots,
@@ -1760,7 +1765,7 @@ def create_app(config: Config) -> FastAPI:
         note: str = ""
 
     @app.post("/api/cases/{slug}/files/flag", dependencies=[auth])
-    def flag_files(slug: str, body: FlagBody):
+    def flag_files(slug: str, body: FlagBody, lang: str = lang_dep):
         """Dateien von Hand als Indikator aufnehmen -- Pfad UND SHA-256.
 
         Der Hash ist der Punkt: ein Pfad beschreibt, wo etwas auf DIESEM
@@ -1768,14 +1773,14 @@ def create_app(config: Config) -> FastAPI:
         Herkunft sagt ausdrücklich, dass ein Mensch das entschieden hat und
         keine Regel."""
         case_dir = case_dir_or_404(slug)
-        # ERST prüfen, DANN schreiben: _within_evidence öffnet die Fall-
-        # Datenbank selbst, und das mitten in einer offenen Schreib-
-        # Transaktion tut es nicht -- die zweite Verbindung läuft in
-        # "database is locked". Nebenbei ist es die richtige Reihenfolge:
-        # ein abgewiesener Pfad soll gar nichts geschrieben haben.
+        # CHECK FIRST, WRITE SECOND: _within_evidence opens the case
+        # database itself, and doing that in the middle of an open write
+        # transaction does not work -- the second connection runs into
+        # "database is locked". Besides, it is the right order anyway: a
+        # rejected path should have written nothing at all.
         targets = []
         for raw in body.paths:
-            target = _within_evidence(case_dir, raw)
+            target = _within_evidence(case_dir, raw, lang)
             if target.is_file():
                 targets.append(str(target))
 
@@ -1788,7 +1793,8 @@ def create_app(config: Config) -> FastAPI:
                     conn, value, "path",
                     [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
                     note=body.note,
-                    origin="vom Analysten im Datei-Browser markiert")
+                    # Stored, therefore in the project language.
+                    origin="marked by the analyst in the file browser")
                 added.append({"value": value, "type": "path"})
                 digest = _sha256_of(path)
                 if digest:
@@ -1811,7 +1817,7 @@ def create_app(config: Config) -> FastAPI:
         reference_id: int
 
     @app.post("/api/cases/{slug}/diff/run", dependencies=[auth])
-    def diff_run(slug: str, body: DiffBody):
+    def diff_run(slug: str, body: DiffBody, lang: str = lang_dep):
         """Webroot gegen Referenzkopie, als Job -- zwei CMS-Bäume sind
         zehntausende Dateien, das gehört nicht in einen Request."""
         case_dir = case_dir_or_404(slug)
@@ -1825,10 +1831,10 @@ def create_app(config: Config) -> FastAPI:
         if webroot is None or reference is None:
             raise HTTPException(404, "evidence not found")
         if body.webroot_id == body.reference_id:
-            raise HTTPException(400, "ein Baum verglichen mit sich selbst sagt nichts")
+            raise HTTPException(400, _t(lang, "err.sameTree"))
         for e in (webroot, reference):
             if not os.path.isdir(e["path"]):
-                raise HTTPException(400, f"kein Verzeichnis: {e['path']}")
+                raise HTTPException(400, f"not a directory: {e['path']}")
 
         wid, wpath = webroot["id"], webroot["path"]
         rid, rpath = reference["id"], reference["path"]
@@ -2022,11 +2028,11 @@ def create_app(config: Config) -> FastAPI:
             "",
             f"Zeilen: {len(result['rows'])} von {result['total']}"
             + (" — ABGESCHNITTEN am Export-Limit" if truncated else ""),
-            "Zeiten in der Zeitzone der jeweiligen Logzeile.",
+            "Times in the time zone of the respective log line.",
             "",
             f"SHA-256 (trace.csv): {digest}",
             "",
-            "Prüfung:  certutil -hashfile trace.csv SHA256",
+            "Verify:  certutil -hashfile trace.csv SHA256",
             "     bzw. sha256sum trace.csv",
         ]) + "\n"
 
@@ -2062,7 +2068,7 @@ def create_app(config: Config) -> FastAPI:
             for ip in body.ips:
                 a = by_ip.get(ip)
                 tags = [ioclib.TAG_ACTOR]
-                origin = "actor: aus der Actors-Liste eingesammelt"
+                origin = "actor: collected from the actors list"
                 if a:
                     if a["scanner_uas"] != "[]":
                         tags.append(ioclib.TAG_SCANNER)
@@ -2180,7 +2186,7 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
 
     @app.get("/api/cases/{slug}/iocs/export", dependencies=[auth])
-    def export_iocs(slug: str, format: str = "csv"):
+    def export_iocs(slug: str, format: str = "csv", lang: str = lang_dep):
         case_dir = case_dir_or_404(slug)
         info = workspace.case_info(case_dir)
         conn = db.connect(case_dir)
@@ -2192,7 +2198,7 @@ def create_app(config: Config) -> FastAPI:
         stem = f"iocs_{info['slug']}"
         if format == "json":
             return Response(ioclib.to_json(rows, info["name"], links,
-                                           chain=_case_chain(case_dir)),
+                                           chain=_case_chain(case_dir, lang)),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}.json"})
@@ -2365,45 +2371,42 @@ def create_app(config: Config) -> FastAPI:
                 continue
         return None
 
-    def _account_signals(acc, reference):
-        """Was an diesem Konto AUFFÄLLT -- als benannte Beobachtungen, nicht
-        als Punktzahl. Ein Dump kann nicht sagen, dass ein Admin bösartig
-        ist; er kann sagen, dass einer gestern angelegt wurde und sich nie
-        angemeldet hat. Die Bewertung bleibt beim Analysten, die Reihenfolge
-        macht sie nur auffindbar."""
+    def _account_signals(acc, reference, lang="en"):
+        """What STANDS OUT about this account -- as named observations, not
+        as a score. A dump cannot say that an admin is malicious; it can say
+        that one was created yesterday and has never signed in. The
+        assessment stays with the analyst, the ordering only makes it
+        findable."""
         out = []
         registered = _parse_stamp(acc["registered"])
         if acc["admin"]:
-            out.append({"id": "admin", "label": "Admin",
-                        "why": "Konto mit vollen Rechten."})
+            out.append({"id": "admin", "label": _t(lang, "signal.admin"),
+                        "why": _t(lang, "account.admin")})
         if registered and reference and 0 <= (reference - registered).days <= _YOUNG_DAYS:
             days = (reference - registered).days
             out.append({"id": "young",
-                        "label": ("am Tag des Exports angelegt" if days == 0
-                                  else f"vor {days} Tag{'' if days == 1 else 'en'} angelegt"),
-                        "why": "Kurz vor dem Export registriert — bei einem "
-                               "Vorfall die erste Frage: wer war das?"})
+                        "label": (_t(lang, "account.young.sameDay") if days == 0
+                                  else _t(lang, "signal.young.days", n=days)),
+                        "why": _t(lang, "account.young.why")})
         if "weak" in (acc["hash_type"] or ""):
-            out.append({"id": "weak_hash", "label": "schwacher Hash",
-                        "why": "MD5 ohne Salt — solche Passwörter sind schnell "
-                               "zu knacken."})
+            out.append({"id": "weak_hash", "label": _t(lang, "signal.weakHash"),
+                        "why": _t(lang, "account.weakHash.why")})
         if acc["admin"] and not acc["last_login"] and acc["cms"] == "Joomla":
-            out.append({"id": "never", "label": "nie angemeldet",
-                        "why": "Ein Administrator, der sich nie angemeldet hat, "
-                               "wurde für etwas anderes angelegt."})
+            out.append({"id": "never", "label": _t(lang, "signal.never"),
+                        "why": _t(lang, "account.neverLoggedIn.why")})
         if acc["sessions"]:
-            out.append({"id": "session", "label": "offene Sitzung",
-                        "why": "Beim Export war dieses Konto angemeldet."})
+            out.append({"id": "session", "label": _t(lang, "signal.session"),
+                        "why": _t(lang, "account.session.why")})
         if acc["blocked"]:
-            out.append({"id": "blocked", "label": "gesperrt",
-                        "why": "Vom CMS deaktiviert."})
+            out.append({"id": "blocked", "label": _t(lang, "signal.blocked"),
+                        "why": _t(lang, "account.blocked.why")})
         return out
 
-    # Reihenfolge der Auffälligkeit -- nur fürs Sortieren.
+    # Order of conspicuousness -- for sorting only.
     _SIGNAL_WEIGHT = {"admin": 4, "young": 3, "never": 2, "session": 2,
                       "weak_hash": 1, "blocked": 0}
 
-    def _database_data(case_dir):
+    def _database_data(case_dir, lang="en"):
         conn = db.connect(case_dir)
         try:
             all_dumps = db.rows(conn, "SELECT * FROM db_dumps ORDER BY path")
@@ -2414,8 +2417,8 @@ def create_app(config: Config) -> FastAPI:
                              "JOIN db_dumps d ON d.id = t.dump_id "
                              "ORDER BY t.rows DESC, t.name")
             accounts = db.rows(conn, "SELECT * FROM db_accounts")
-            # Welche Konten schon in der Box liegen -- damit der Knopf nicht
-            # anbietet, was längst erledigt ist.
+            # Which accounts are already in the box -- so the button does
+            # not offer what has long been done.
             in_box = {r["value"] for r in db.rows(
                 conn, "SELECT value FROM iocs WHERE type IN ('user','email')")}
             findings = db.rows(conn,
@@ -2445,7 +2448,7 @@ def create_app(config: Config) -> FastAPI:
             reference = max(stamps) if stamps else None
 
         for a in accounts:
-            a["signals"] = _account_signals(a, reference)
+            a["signals"] = _account_signals(a, reference, lang)
             a["rank"] = sum(_SIGNAL_WEIGHT.get(s["id"], 0) for s in a["signals"])
             a["in_box"] = (a["login"] or "").strip() in in_box
         accounts.sort(key=lambda a: (-a["rank"], a["cms"], a["login"].lower()))
@@ -2473,36 +2476,40 @@ def create_app(config: Config) -> FastAPI:
                 "reference": reference.isoformat(sep=" ") if reference else ""}
 
     @app.get("/api/cases/{slug}/database", dependencies=[auth])
-    def database_view(slug: str):
-        """Was der Dump hergibt — mit dem Fall verknüpft: Tabellen wissen,
-        ob auf ihnen Findings sitzen, Konten tragen ihre auffälligen
-        Merkmale und stehen danach sortiert."""
-        return _database_data(case_dir_or_404(slug))
+    def database_view(slug: str, lang: str = lang_dep):
+        """What the dump yields -- tied to the case: tables know whether
+        findings sit on them, accounts carry their conspicuous traits and are
+        sorted by them."""
+        return _database_data(case_dir_or_404(slug), lang)
 
     @app.get("/api/cases/{slug}/database/accounts.csv", dependencies=[auth])
-    def accounts_csv(slug: str, only: str = ""):
+    def accounts_csv(slug: str, only: str = "", lang: str = lang_dep):
         """Die Konten als Tabelle — für die Passwort-Reset-Liste, die nach
         jedem Vorfall ansteht. `only=admins` schneidet auf die zu, die
         volle Rechte haben. Passwort-Hashes stehen NICHT drin: dieses
         Werkzeug dokumentiert einen Vorfall, es bereitet keinen Angriff
         vor."""
         case_dir = case_dir_or_404(slug)
-        data = _database_data(case_dir)
+        data = _database_data(case_dir, lang)
         rows = [a for a in data["accounts"]
                 if only != "admins" or a["admin"]]
         buf = io.StringIO()
         w = csv.writer(buf, lineterminator="\n")
-        w.writerow(["Login", "E-Mail", "Rolle", "CMS", "Tabelle", "Registriert",
-                    "Letzter Login", "Hash-Verfahren", "Gesperrt", "Auffällig"])
+        w.writerow([_t(lang, "csv.login"), _t(lang, "csv.email"),
+                    _t(lang, "csv.role"), "CMS", _t(lang, "csv.table"),
+                    _t(lang, "csv.registered"), _t(lang, "csv.lastLogin"),
+                    _t(lang, "csv.hashScheme"), _t(lang, "csv.blocked"),
+                    _t(lang, "account.conspicuous")])
         for a in rows:
             value = a["login"] or ""
             if value[:1] in ("=", "+", "-", "@"):
                 value = "'" + value
             w.writerow([
                 value, a["email"],
-                "Administrator" if a["admin"] else "User",
+                _t(lang, "csv.administrator") if a["admin"] else _t(lang, "csv.user"),
                 a["cms"], a["tbl"], a["registered"], a["last_login"] or "",
-                a["hash_type"], "ja" if a["blocked"] else "nein",
+                a["hash_type"],
+                _t(lang, "csv.yes") if a["blocked"] else _t(lang, "csv.no"),
                 ", ".join(s["label"] for s in a["signals"]),
             ])
         stem = "admins" if only == "admins" else "accounts"
@@ -2542,17 +2549,20 @@ def create_app(config: Config) -> FastAPI:
             if not login:
                 raise HTTPException(400, "account has no login name")
             tags = [ioclib.TAG_ANALYST, ioclib.TAG_ACCOUNT]
-            where = f"{acc['cms'] or 'CMS'}-Konto aus {acc['tbl'] or 'dem Export'}"
+            # The origin travels into the archive and therefore stays in
+            # the project language.
+            where = (f"{acc['cms'] or 'CMS'} account from "
+                     f"{acc['tbl'] or 'the export'}")
             if acc["admin"]:
-                where += " (Administrator)"
+                where += " (administrator)"
             login_id = db.add_ioc(conn, login, "user", tags, note=body.note,
-                                  origin=f"vom Analysten markiert — {where}")
+                                  origin=f"marked by the analyst — {where}")
             added = [{"value": login, "type": "user"}]
             email = (acc["email"] or "").strip()
             if email:
                 mail_id = db.add_ioc(
                     conn, email, "email", [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
-                    origin=f"E-Mail des Kontos {login}")
+                    origin=f"e-mail of account {login}")
                 db.link_iocs(conn, mail_id, login_id, ioclib.LINK_ACCOUNT_OF)
                 added.append({"value": email, "type": "email"})
             conn.commit()

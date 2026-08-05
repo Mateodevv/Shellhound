@@ -47,11 +47,16 @@ LINK_REQUESTED = "requested"
 LINK_HOST_IN = "host-in"
 LINK_ACCOUNT_OF = "account-of"
 
+# (forward, back) -- how the edge reads from each of its two ends.
+#
+# These travel into CSV, JSON and STIX exports and are therefore not
+# translated: an export is a snapshot for a recipient who cannot ask back,
+# and it has to read the same in every case file of a team.
 LINK_LABELS = {
-    LINK_HASH_OF: ("ist der SHA-256 von", "hat den SHA-256"),
-    LINK_REQUESTED: ("hat abgerufen", "wurde abgerufen von"),
-    LINK_HOST_IN: ("steht im Code von", "verweist auf"),
-    LINK_ACCOUNT_OF: ("ist die E-Mail von", "hat die E-Mail"),
+    LINK_HASH_OF: ("is the SHA-256 of", "has the SHA-256"),
+    LINK_REQUESTED: ("requested", "was requested by"),
+    LINK_HOST_IN: ("appears in the code of", "points to"),
+    LINK_ACCOUNT_OF: ("is the e-mail of", "has the e-mail"),
 }
 LINK_KINDS = tuple(LINK_LABELS)
 
@@ -157,10 +162,10 @@ def to_json(iocs, case_name="", links=(), chain=None):
             "gaps": chain["gaps"],
             "undated": chain["undated"],
             "clock_offsets": chain.get("offsets", {}),
-            "note": "Zeiten sind naive Ortszeiten der jeweiligen Quelle "
-                    "(Log-Server bzw. Datenbank-Server), als Unix-Sekunden "
-                    "kodiert; clock_offsets nennt vom Analysten gesetzte "
-                    "Korrekturen.",
+            "note": "Times are naive local times of the respective source "
+                    "(log server resp. database server), encoded as Unix "
+                    "seconds; clock_offsets names corrections set by the "
+                    "analyst.",
         }
     return json.dumps(out, indent=2, ensure_ascii=False)
 
