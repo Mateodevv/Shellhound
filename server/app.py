@@ -28,7 +28,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import db, geoip, iocs as ioclib, patterns as patternlib, workspace
+from server import db, enrich, geoip, iocs as ioclib, patterns as patternlib
+from server import settings as settingslib, workspace
 from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
 from server.chain import case_chain
 from server.i18n import lang_of
@@ -341,6 +342,75 @@ def create_app(config: Config) -> FastAPI:
         if not result.get("ok"):
             raise HTTPException(502, result.get("error", "download failed"))
         return result
+
+    # --- settings and enrichment --------------------------------------------
+    #
+    # The GeoIP download used to be the ONLY thing this tool sent outward.
+    # Enrichment adds a second door, and it is built like the first one: shut
+    # by default, opened by the analyst, and never wider than one indicator
+    # per click. What comes back is a foreign OPINION -- it is stored apart
+    # from the findings and never moves a severity or a triage state.
+
+    @app.get("/api/settings", dependencies=[auth])
+    def settings_get():
+        """The operator configuration. API KEYS NEVER COME BACK IN FULL --
+        only whether one is set and its last four characters."""
+        return settingslib.public(config.workspace)
+
+    class KeyBody(BaseModel):
+        service: str
+        key: str = ""          # empty clears it: that is how a service is
+                               # switched off, not a separate verb
+
+    @app.post("/api/settings/key", dependencies=[auth])
+    def settings_key(body: KeyBody):
+        try:
+            return settingslib.set_key(config.workspace, body.service, body.key)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    class AckBody(BaseModel):
+        accepted: bool
+
+    @app.post("/api/settings/enrichment-ack", dependencies=[auth])
+    def settings_ack(body: AckBody):
+        """The analyst has read what a lookup sends out. Until this is set,
+        `enrich` refuses -- the same gate as the GeoIP confirmation."""
+        return settingslib.set_ack(config.workspace, body.accepted)
+
+    class EnrichBody(BaseModel):
+        service: str           # virustotal | abuseipdb
+        value: str             # THE one indicator; nothing else is sent
+        refresh: bool = False
+
+    @app.post("/api/cases/{slug}/enrich", dependencies=[auth])
+    def enrich_one(slug: str, body: EnrichBody):
+        """Ask one service about one indicator. Explicit, one at a time --
+        there is no sweep and no background refresh."""
+        case_dir = case_dir_or_404(slug)
+        try:
+            return enrich.lookup(config.workspace, case_dir, body.service,
+                                 body.value, body.refresh)
+        except enrich.EnrichError as e:
+            raise HTTPException(502, str(e)) from e
+
+    @app.get("/api/cases/{slug}/enrichment", dependencies=[auth])
+    def enrichment_list(slug: str):
+        """Everything already looked up in this case -- so a list can show
+        its badges without one request per row."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            rows = db.rows(conn, "SELECT service, value, kind, fetched, payload "
+                                 "FROM enrichment ORDER BY fetched DESC")
+        finally:
+            conn.close()
+        for r in rows:
+            try:
+                r["result"] = json.loads(r.pop("payload") or "{}")
+            except ValueError:
+                r["result"] = {}
+        return {"entries": rows}
 
     class DetectBody(BaseModel):
         folder: str

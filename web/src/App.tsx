@@ -5,7 +5,7 @@ import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, ArrowLeft, Box, Bug, Database, FolderCog, FolderTree,
-  LayoutDashboard, Puzzle, Radar, Search, Users,
+  LayoutDashboard, Puzzle, Radar, Search, SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
@@ -29,11 +29,12 @@ import { Files } from './views/Files'
 import { IocBox } from './views/IocBox'
 import { Cms } from './views/Cms'
 import { DatabaseView } from './views/Database'
+import { Settings } from './views/Settings'
 import { queryClient } from './queryClient'
 
 export type ViewId =
   | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
-  | 'database' | 'evidence'
+  | 'database' | 'evidence' | 'settings'
 
 const NAV: { id: ViewId; icon: typeof Bug }[] = [
   { id: 'dashboard', icon: LayoutDashboard },
@@ -45,6 +46,7 @@ const NAV: { id: ViewId; icon: typeof Bug }[] = [
   { id: 'cms', icon: Puzzle },
   { id: 'files', icon: FolderTree },
   { id: 'evidence', icon: FolderCog },
+  { id: 'settings', icon: SlidersHorizontal },
 ]
 
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
@@ -182,6 +184,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           {view === 'cms' && <Cms {...props} />}
           {view === 'database' && <DatabaseView {...props} />}
           {view === 'evidence' && <Evidence {...props} onClosed={onBack} />}
+          {view === 'settings' && <Settings />}
         </div>
       </main>
 
