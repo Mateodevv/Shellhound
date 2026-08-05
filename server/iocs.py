@@ -38,10 +38,10 @@ TAGS = (TAG_ANALYST, TAG_FINDING, TAG_CONFIRMED, TAG_HUNT, TAG_ACTOR,
         TAG_DERIVED, TAG_WEBSHELL, TAG_INJECTED, TAG_MODIFIED, TAG_ACCOUNT,
         TAG_SCANNER, TAG_BRUTE, TAG_SUCCESS, TAG_THREATLIST)
 
-# Wie zwei Indikatoren zusammenhängen (siehe ioc_links in db.py). Jede Art
-# steht mit BEIDEN Leserichtungen da: eine Kante ist an ihren zwei Enden
-# dieselbe Tatsache, aber nicht derselbe Satz -- am Hash liest sie sich
-# "ist der SHA-256 von /wp-content/…", am Pfad "hat den SHA-256 6b2f…".
+# How two indicators belong together (see ioc_links in db.py). Every kind
+# stands here with BOTH reading directions: an edge is the same fact at its
+# two ends, but not the same sentence -- at the hash it reads "is the SHA-256
+# of /wp-content/…", at the path "has the SHA-256 6b2f…".
 LINK_HASH_OF = "hash-of"
 LINK_REQUESTED = "requested"
 LINK_HOST_IN = "host-in"
@@ -107,10 +107,11 @@ def classify(value):
 # --- exports ----------------------------------------------------------------
 
 def _by_ioc(links):
-    """Kanten nach Indikator-id, beide Enden, mit der passenden Leserichtung.
+    """Edges by indicator id, both ends, each in the fitting reading
+    direction.
 
-    Ein Export ist eine Momentaufnahme: der Empfänger kann nicht nachfragen,
-    an welchem Ende die Beziehung steht."""
+    An export is a snapshot: the recipient cannot ask back at which end the
+    relationship sits."""
     out = {}
     for link in links or ():
         forward, back = LINK_LABELS.get(link["kind"], (link["kind"],) * 2)
@@ -152,9 +153,10 @@ def to_json(iocs, case_name="", links=(), chain=None):
                               in by_ioc.get(i["id"], ())]}
                  for i in iocs],
     }
-    # Die Chronologie reist mit: die Reihenfolge der Ereignisse ist die
-    # Aussage, die den Fall ausmacht, und sie stand bisher nur im Dashboard.
-    # `gaps` gehört dazu -- was der Fall NICHT belegt, ist Teil des Berichts.
+    # The chronology travels along: the order of the events is the statement
+    # that makes up the case, and until now it existed only in the dashboard.
+    # `gaps` belongs to it -- what the case does NOT prove is part of the
+    # report.
     if chain is not None:
         out["chain"] = {
             "span": chain["span"],
@@ -189,8 +191,8 @@ def _stix_pattern(value, ioc_type):
     if ioc_type == "email":
         return f"[email-addr:value = '{esc}']"
     if ioc_type == "user":
-        # Ein untergeschobenes Konto ist genau das, was man teilt: unter
-        # demselben Namen meldet es sich im nächsten System wieder an.
+        # A planted account is exactly what one shares: under the same name
+        # it signs in again in the next system.
         return f"[user-account:account_login = '{esc}']"
     if ioc_type == "hash":
         kind = _STIX_HASH_KIND.get(len(str(value)), "SHA-256")
@@ -205,9 +207,9 @@ def _stix_pattern(value, ioc_type):
 def to_stix(iocs, case_name="", links=()):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     objects = []
-    # id des Indikators im Fall -> id im Bundle. Nur wer hier steht, wurde
-    # auch ausgegeben: für manche Typen gibt es kein STIX-Pattern, und eine
-    # Kante auf ein nicht vorhandenes Objekt macht das Bundle ungültig.
+    # id of the indicator in the case -> id in the bundle. Only what stands
+    # here was actually emitted: for some types there is no STIX pattern, and
+    # an edge onto a non-existent object makes the bundle invalid.
     stix_ids = {}
     for i in iocs:
         pattern = _stix_pattern(i["value"], i["type"])
@@ -228,14 +230,14 @@ def to_stix(iocs, case_name="", links=()):
             "pattern_type": "stix",
             "valid_from": now,
         })
-    # Ohne diese Objekte empfängt ein SIEM eine Handvoll unverbundener
-    # Indikatoren -- und der Zusammenhang, der den Fall ausmacht, bleibt in
-    # unserer Datenbank zurück.
+    # Without these objects a SIEM receives a handful of unconnected
+    # indicators -- and the connection that makes up the case stays behind in
+    # our database.
     #
-    # relationship_type bleibt beim generischen "related-to": zwischen zwei
-    # Indicators ist das der Wert, den fremde Systeme sicher verstehen. Die
-    # genaue Art steht daneben in der Beschreibung, wo sie niemanden beim
-    # Import stört.
+    # relationship_type stays with the generic "related-to": between two
+    # Indicators that is the value foreign systems reliably understand. The
+    # exact kind stands next to it in the description, where it disturbs
+    # nobody on import.
     for link in links or ():
         src, dst = stix_ids.get(link["src_id"]), stix_ids.get(link["dst_id"])
         if not src or not dst:

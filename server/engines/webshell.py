@@ -216,7 +216,7 @@ def scan(case_dir, targets, ctx=None):
         # Hash the flagged set now -- it is small, and "path + hash" is what a
         # hand-off list needs. Stored as IOC-ready facts on the finding rows.
         if ctx is not None:
-            ctx.progress(0.96, f"Hashe {len(flagged)} auffällige Datei(en)…")
+            ctx.progress(0.96, f"Hashing {len(flagged)} conspicuous file(s)…")
         hashes = {}
         for path in flagged:
             digest = sha256_of(path)
