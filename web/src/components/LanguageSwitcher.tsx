@@ -1,32 +1,76 @@
 // LanguageSwitcher.tsx — switch the interface language at runtime.
 //
-// Sits next to the theme switcher, because both are the same kind of
-// setting: presentation, not case data. The choice is remembered per
-// browser and travels to the server, which assembles parts of the case
-// narrative itself.
-import { Languages } from 'lucide-react'
+// Built exactly like ThemeSwitcher: both are presentation settings, they
+// sit next to each other, and a different control shape for the same kind
+// of choice would read as a different kind of thing.
+import { useEffect, useRef, useState } from 'react'
+import clsx from 'clsx'
+import { Check, Languages } from 'lucide-react'
 import { LANGUAGES, useI18n } from '../i18n'
-import { Tooltip } from './Tooltip'
 
 export function LanguageSwitcher({ up }: { up?: boolean }) {
   const { lang, setLang, t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const active = LANGUAGES.find((l) => l.id === lang)
+
   return (
-    <Tooltip title={t('app.language')} hint={t('app.language.hint')}>
-      <div className="relative w-full">
-        <Languages size={13}
-          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-        <select
-          value={lang}
-          onChange={(e) => setLang(e.target.value as typeof lang)}
-          aria-label={t('app.language')}
-          className="w-full cursor-pointer appearance-none rounded-lg border border-[var(--line)] bg-[var(--panel-2)] py-1.5 pl-8 pr-2 text-[12px] outline-none hover:border-[var(--accent)]/60"
-          style={up ? { direction: 'ltr' } : undefined}
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={t('app.language')}
+        className={clsx(
+          'flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium',
+          'text-[var(--muted)] transition-colors duration-150 cursor-pointer',
+          'hover:bg-[var(--panel-2)] hover:text-[var(--fg)]',
+          open && 'bg-[var(--panel-2)] text-[var(--fg)]')}
+      >
+        <Languages size={15} />
+        {active?.label ?? t('app.language')}
+      </button>
+
+      {open && (
+        <div
+          className={clsx(
+            'absolute left-0 z-50 w-52 rounded-xl border border-[var(--line)]',
+            'bg-[var(--panel)] p-1.5 shadow-2xl animate-fade-up',
+            up ? 'bottom-full mb-2' : 'top-full mt-2')}
         >
           {LANGUAGES.map((l) => (
-            <option key={l.id} value={l.id}>{l.label}</option>
+            <button
+              key={l.id}
+              onClick={() => { setLang(l.id); setOpen(false) }}
+              className={clsx(
+                'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2',
+                'transition-colors duration-150 cursor-pointer',
+                lang === l.id
+                  ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                  : 'text-[var(--fg)] hover:bg-[var(--panel-2)]')}
+            >
+              <span className="flex h-5 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--line)] text-[10px] font-semibold uppercase tracking-wider">
+                {l.id}
+              </span>
+              <span className="flex-1 text-left text-[13px] font-medium">{l.label}</span>
+              {lang === l.id && <Check size={14} className="text-[var(--accent)]" />}
+            </button>
           ))}
-        </select>
-      </div>
-    </Tooltip>
+        </div>
+      )}
+    </div>
   )
 }
