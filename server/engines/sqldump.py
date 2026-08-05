@@ -94,6 +94,161 @@ _WP_SUFFIXES = ("options", "posts", "postmeta", "usermeta", "users", "comments")
 _JOOMLA_SUFFIXES = ("extensions", "content", "user_usergroup_map", "usergroups",
                     "session", "assets", "menu")
 
+# The CMS this toolkit knows in DETAIL are WordPress and Joomla -- their
+# account tables are read by column position, because their schemas are
+# fixed and documented. Everything below is the other half of the answer:
+# recognising that a dump belongs to some OTHER CMS, and finding its accounts
+# anyway.
+#
+# Naming the CMS is worth doing on its own: "Drupal export, 1 user table, 3
+# admins" is a usable sentence, and it stops the Database view from calling a
+# TYPO3 dump "unknown" as if nothing could be read from it.
+_CMS_MARKERS = {
+    "Drupal": ("users_field_data", "node_field_data", "watchdog",
+               "config", "key_value"),
+    "TYPO3": ("be_users", "fe_users", "sys_log", "tt_content", "sys_template"),
+    "Magento": ("admin_user", "catalog_product_entity", "sales_order",
+                "core_config_data"),
+    "PrestaShop": ("employee", "ps_employee", "customer", "configuration"),
+    "Contao": ("tl_user", "tl_member", "tl_page", "tl_content"),
+}
+
+# Tables that hold accounts in the CMS above. Checked by suffix, so a
+# `t3_be_users` or `drupal8_users_field_data` is found too.
+_USER_TABLE_NAMES = (
+    "users", "user", "be_users", "fe_users", "users_field_data",
+    "admin_user", "employee", "tl_user", "tl_member", "customer",
+    "customer_entity", "accounts", "members",
+)
+
+# A table nobody named that still holds accounts. Recognised by its COLUMNS,
+# which is the only signal left when the schema is unknown -- and a better
+# one than the name: a table called `wp_users` with no e-mail column is not
+# an account table, and one called `kunden` with login/email/password is.
+_LOGIN_COLS = ("login", "username", "user_name", "user_login", "name",
+               "handle", "nick", "account")
+_EMAIL_COLS = ("email", "mail", "e_mail", "user_email", "emailaddress")
+_PASS_COLS = ("password", "passwd", "pass", "user_pass", "pwd", "hash",
+              "password_hash")
+
+
+def _looks_like_user_table(columns):
+    """True when the COLUMNS say accounts, whatever the table is called.
+
+    All three are required. Two would match half the tables in a shop
+    database -- an `orders` table has a name and an e-mail on it too, and
+    filling the account list with customers of a webshop would bury the one
+    planted administrator."""
+    low = {str(c).strip().strip("`").lower() for c in columns or ()}
+    if not low:
+        return False
+
+    def has(candidates):
+        return any(c == cand or c.endswith("_" + cand)
+                   for c in low for cand in candidates)
+
+    return has(_LOGIN_COLS) and has(_EMAIL_COLS) and has(_PASS_COLS)
+
+
+def _is_user_table(table, columns):
+    suffix = _suffix(table)
+    low = str(table).lower().strip("`")
+    if suffix in _USER_TABLE_NAMES or any(
+            low.endswith(name) for name in _USER_TABLE_NAMES):
+        return True
+    return _looks_like_user_table(columns)
+
+
+def _column_index(columns, candidates):
+    """Where a column of this kind sits, or None. Exact match first, then a
+    suffix match -- `user_email` counts as an e-mail column, `email_verified`
+    does not."""
+    low = [str(c).strip().strip("`").lower() for c in columns or ()]
+    for i, name in enumerate(low):
+        if name in candidates:
+            return i
+    for i, name in enumerate(low):
+        if any(name.endswith("_" + cand) for cand in candidates):
+            return i
+    return None
+
+
+_REG_COLS = ("registered", "created", "created_at", "crdate", "user_registered",
+             "registerdate", "date_add", "regdate", "dateadd")
+_LAST_COLS = ("last_login", "lastvisitdate", "lastlogin", "last_access",
+              "lastvisit", "last_seen", "date_upd", "access")
+_BLOCK_COLS = ("block", "blocked", "disable", "disabled", "banned", "deleted",
+               "active", "status", "user_status")
+_ID_COLS = ("id", "uid", "user_id", "userid", "id_employee", "entity_id")
+
+
+def _extract_users_by_columns(rows, columns):
+    """Accounts from a table whose SCHEMA is unknown, read by column name.
+
+    This is what makes an unknown CMS usable rather than merely named. What
+    cannot be located stays empty -- a guessed timestamp would be worse than
+    none, the same rule the WordPress and Joomla readers follow."""
+    idx = {
+        "id": _column_index(columns, _ID_COLS),
+        "login": _column_index(columns, _LOGIN_COLS),
+        "email": _column_index(columns, _EMAIL_COLS),
+        "pass": _column_index(columns, _PASS_COLS),
+        "reg": _column_index(columns, _REG_COLS),
+        "last": _column_index(columns, _LAST_COLS),
+        "block": _column_index(columns, _BLOCK_COLS),
+    }
+
+    def at(row, key):
+        i = idx[key]
+        return row[i] if i is not None and i < len(row) else None
+
+    users = []
+    for row in rows:
+        if len(row) < 2:
+            continue
+        uid = at(row, "id")
+        login = at(row, "login")
+        email = at(row, "email")
+        if not login and not email:
+            continue
+        blocked = 0
+        raw_block = at(row, "block")
+        if raw_block is not None:
+            try:
+                flag = int(str(raw_block).strip() or 0)
+                # `active`/`status` mean the OPPOSITE of `blocked`. Reading
+                # them the same way would report every live account as
+                # locked -- and an account list that lies about who can log
+                # in is worse than one without the column.
+                name = [str(c).lower() for c in (columns or [])]
+                col = name[idx["block"]] if idx["block"] is not None else ""
+                blocked = (0 if flag else 1) if col.endswith(
+                    ("active", "status")) else (1 if flag else 0)
+            except ValueError:
+                blocked = 0
+        users.append((
+            str(uid).strip() if uid is not None else "?",
+            str(login or email or "?"),
+            str(email or "-"),
+            _stamp_or_blank(at(row, "reg")) or "-",
+            _hash_type(at(row, "pass")),
+            _stamp_or_blank(at(row, "last")),
+            blocked,
+        ))
+    return users
+
+
+def _stamp_or_blank(value):
+    """A timestamp, or nothing.
+
+    Column NAMES are a guess when the schema is unknown -- a `access` column
+    is a date in Drupal and could be a permission flag somewhere else. So the
+    VALUE decides: what does not read as a date is dropped rather than shown
+    as one. An account list that presents `1` as a login date is worse than
+    one with the column empty."""
+    text = _clean_stamp(value)
+    return text if _is_datetime(text) else ""
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
 
@@ -403,11 +558,25 @@ def _joomla_super_ids(rows):
 
 def _detect_cms(tables):
     suffixes = {_suffix(t) for t in tables}
+    lowered = {str(t).lower().strip("`") for t in tables}
     cms = set()
     if suffixes & set(_WP_SUFFIXES) and ("usermeta" in suffixes or "options" in suffixes):
         cms.add("WordPress")
-    if suffixes & set(_JOOMLA_SUFFIXES):
+    # TWO markers for Joomla as well, not one. A single one was enough until
+    # a TYPO3 dump arrived: `tt_content` ends in `content`, so every TYPO3
+    # export was also announced as Joomla. One shared table name is a
+    # coincidence -- `content`, `session` and `menu` are words half the
+    # schemas in the world use.
+    if len(suffixes & set(_JOOMLA_SUFFIXES)) >= 2:
         cms.add("Joomla")
+    # The others are NAMED, not parsed in detail: two of their marker tables
+    # have to be there. One is a coincidence -- plenty of schemas have a
+    # `config` or a `customer` table.
+    for name, markers in _CMS_MARKERS.items():
+        hits = sum(1 for m in markers
+                   if m in suffixes or any(t.endswith(m) for t in lowered))
+        if hits >= 2:
+            cms.add(name)
     return cms
 
 
@@ -575,8 +744,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                             findings.append((sev, rule, table, base + ridx + 1,
                                              _excerpt(col, *hit.span())))
                             break        # one finding per column is enough
-            if suf == "users":
-                user_tables.append((table, rows))
+            if _is_user_table(table, entry["columns"]):
+                user_tables.append((table, rows, list(entry["columns"])))
             elif suf == "usermeta":
                 wp_admin_ids |= _wp_admin_ids(rows)
                 for uid, sig in _wp_user_meta_signals(rows).items():
@@ -591,12 +760,23 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     cms_single = ("WordPress" if "WordPress" in cms
                   else "Joomla" if "Joomla" in cms else None)
     accounts = []
-    for table, rows in user_tables:
-        tbl_cms = cms_single or ("WordPress" if _suffix(table) == "users"
-                                 and any(_looks_wordpress(r) for r in rows)
-                                 else "Joomla")
-        for uid, login, email, reg, htype, last, blocked in _extract_users(
-                table, rows, tbl_cms):
+    for table, rows, columns in user_tables:
+        # WordPress and Joomla are read by column POSITION, because their
+        # schemas are fixed. Anything else -- a known-but-not-parsed CMS or
+        # none at all -- is read by column NAME, which is the only signal
+        # left when the schema is unknown.
+        if cms_single in ("WordPress", "Joomla"):
+            tbl_cms = cms_single
+        elif _suffix(table) == "users" and any(_looks_wordpress(r) for r in rows):
+            tbl_cms = "WordPress"
+        else:
+            tbl_cms = ""
+        if tbl_cms:
+            extracted = _extract_users(table, rows, tbl_cms)
+        else:
+            extracted = _extract_users_by_columns(rows, columns)
+            tbl_cms = ", ".join(sorted(cms)) or "unknown"
+        for uid, login, email, reg, htype, last, blocked in extracted:
             admin = (uid in wp_admin_ids) or (uid in joomla_super_ids)
             # Do NOT call this `meta`: in this function that is the header
             # data of the dump, which appears further down in the return

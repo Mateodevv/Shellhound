@@ -35,8 +35,39 @@ CMS_MARKERS = {
         ("wp-load.php", "file", 2),
         ("wp-content/plugins", "dir", 2),
     ],
+    # NAMED, not inventoried. These do not get a CMS inventory -- their
+    # extension layouts are each a project of their own -- but recognising
+    # the webroot is most of the value: it tells the analyst the folder IS
+    # the web directory, which is the question this scan answers.
+    "drupal": [
+        ("core/lib/Drupal.php", "file", 4),
+        ("sites/default", "dir", 3),
+        ("modules", "dir", 2),
+        ("themes", "dir", 1),
+        ("index.php", "file", 1),
+    ],
+    "typo3": [
+        ("typo3", "dir", 4),
+        ("typo3conf", "dir", 4),
+        ("typo3temp", "dir", 3),
+        ("fileadmin", "dir", 2),
+    ],
+    "magento": [
+        ("app/etc/env.php", "file", 4),
+        ("pub/static", "dir", 3),
+        ("vendor/magento", "dir", 4),
+        ("bin/magento", "file", 2),
+    ],
+    "prestashop": [
+        ("config/settings.inc.php", "file", 4),
+        ("classes/Shop.php", "file", 3),
+        ("modules", "dir", 1),
+        ("themes", "dir", 1),
+    ],
 }
-CMS_LABEL = {"joomla": "Joomla", "wordpress": "WordPress"}
+CMS_LABEL = {"joomla": "Joomla", "wordpress": "WordPress",
+             "drupal": "Drupal", "typo3": "TYPO3", "magento": "Magento",
+             "prestashop": "PrestaShop"}
 CMS_MIN_SCORE = 6
 
 DUMP_SUFFIXES = (".sql", ".sql.gz", ".sql.bz2", ".dump", ".sql.xz")

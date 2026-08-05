@@ -38,6 +38,8 @@ The interface opens at `http://127.0.0.1:8710`.
 - Your own YARA rules from the workspace, alongside the shipped ones
   (optional: `pip install shellhound[yara]`)
 - CMS inventory with version detection and the source of every version
+  (WordPress and Joomla in detail; Drupal, TYPO3, Magento, PrestaShop and
+  Contao are recognised and their accounts read generically)
 - Comparison of the webroot against a known-clean reference copy
 
 **Assessment**

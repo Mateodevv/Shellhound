@@ -14,6 +14,16 @@ before the export, weak hash, never signed in, open session, blocked) are
 likewise not findings but a sorting aid: a dump cannot say that an account is
 malicious — only what stands out about it.
 
+**CMS coverage.** WordPress and Joomla are parsed in detail: inventory,
+extension versions, and accounts read by column position from their fixed
+schemas. Drupal, TYPO3, Magento, PrestaShop and Contao are RECOGNISED — the
+dump is named and its accounts are read by column NAME, which is the only
+signal left when the schema is unknown. Any other CMS falls into the same
+generic path: a table counts as an account table when its columns carry an
+identity, an e-mail and a password. All three are required — a name and an
+e-mail alone would turn every orders table into an account list and bury the
+one planted administrator.
+
 The **CMS inventory** produces no findings — it describes what is installed.
 Every version carries with it the file it was read from (manifest,
 `style.css`, plugin header, `version.php`) and can be corrected by hand in
