@@ -39,15 +39,33 @@ A few consequences follow that you need to know:
 
 ## Network contact
 
-SHELLHOUND speaks outward at **exactly one place**, and only on an explicit
-click: the download of the GeoIP country database from `download.db-ip.com`.
-A confirmation window says so beforehand; if it is declined, nothing is
-fetched. **No case data** goes out — the request contains nothing but the
-file name.
+SHELLHOUND speaks outward at **two places**, both shut by default and both
+opened by an explicit click.
+
+**The GeoIP country database** from `download.db-ip.com`. A confirmation
+window says so beforehand; if it is declined, nothing is fetched. **No case
+data** goes out — the request contains nothing but the file name. On a
+machine without network access you place the `*.mmdb` into the workspace by
+hand instead.
+
+**Third-party lookups** for a single indicator: a SHA-256 to VirusTotal, an
+IP address to AbuseIPDB. These are off until you enable them under
+*Settings*, and they need an API key you supply — no key, no lookup. Then:
+
+| Point | What holds |
+|---|---|
+| **One value per click** | The request carries the indicator and nothing else: not the case name, not the path the hash belongs to, not the other indicators, not a user agent that identifies the case. |
+| **Which service gets what is enforced** | An IP is refused before it can reach VirusTotal, a hash before it can reach AbuseIPDB — in code, not in documentation. |
+| **Only hashes and addresses** | A path would name the server, a login would name a person. Neither is offered for lookup. |
+| **No sweep, no background refresh** | Every request is one deliberate click. Nothing is enriched on load or on a schedule. |
+| **It still costs something** | Sending a hash tells VirusTotal that somebody holds that file; sending an IP tells AbuseIPDB that somebody is investigating it. **On a mandate under an NDA that can itself be the leak.** That sentence is on the settings page, not only here. |
+| **API keys are cleartext** | They live in `settings.json` in the workspace, owner-readable where the platform supports it. There is no key store to hide them in, and an encrypted-looking wrapper would only pretend. They are never in a case archive, and the interface only ever sees the last four characters. |
+
+What comes back is stored as a **third-party opinion**: apart from the
+findings, never a severity, never a triage decision.
 
 Everything else — analysis, traces, country attribution, exports — runs
-entirely offline. On a machine without network access you place the `*.mmdb`
-into the workspace by hand.
+entirely offline.
 
 ## Handling live web shells
 
