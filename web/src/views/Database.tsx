@@ -144,8 +144,8 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
   return (
     <div className="flex flex-col gap-6">
       <Tooltip title="Database"
-        body="Was der Datenbank-Export des CMS verrät: Konten, eingeschleuster Code, das Tabellen-Inventar."
-        hint="Kein Live-Zugriff — analysiert wird der exportierte Dump. Ein untergeschobener Admin oder PHP in einer Datenspalte übersteht jedes Bereinigen der Dateien.">
+        body={tr('database.title.body')}
+        hint={tr('database.title.hint')}>
         <h1 className="text-lg font-bold">Database</h1>
       </Tooltip>
 
@@ -155,17 +155,17 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
       {!!data?.schema_files.length && <SchemaCard files={data.schema_files} />}
 
       {/* ---- die Konten, nach Auffälligkeit ---- */}
-      <Section title="Konten"
-        sub="Ein Dump kann nicht sagen, dass ein Admin bösartig ist — nur, was an ihm auffällt. Die Beobachtungen bestimmen die Reihenfolge, die Bewertung bleibt bei dir."
+      <Section title={tr('database.accounts')}
+        sub={tr('database.accounts.sub')}
         right={
           <div className="flex items-center gap-2">
-            <Tooltip hint="Konten als CSV — die Grundlage für die Passwort-Reset-Liste. Ohne Hashes: dieses Werkzeug dokumentiert, es bereitet keinen Angriff vor.">
+            <Tooltip hint={tr('database.csv.hint')}>
               <a className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] font-medium hover:border-[var(--accent)]/60"
                 href={downloadUrl(`/api/cases/${slug}/database/accounts.csv`)}>
                 <Download size={13} /> Alle
               </a>
             </Tooltip>
-            <Tooltip hint="Nur Konten mit vollen Rechten — die Liste, mit der ein Reset anfängt.">
+            <Tooltip hint={tr('database.csvAdmins.hint')}>
               <a className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] font-medium hover:border-[var(--accent)]/60"
                 href={downloadUrl(`/api/cases/${slug}/database/accounts.csv?only=admins`)}>
                 <Crown size={13} /> Nur Admins
@@ -180,7 +180,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           {signalCounts.map(([id, s]) => (
             <Tooltip key={id} title={s.label} body={s.why}
               hint={hiddenSignals.has(id)
-                ? 'Ausgeblendet — Klick holt diese Konten zurück.'
+                ? tr('database.signal.hidden')
                 : 'Klick blendet Konten mit dieser Beobachtung aus.'}>
               <Chip active={false} dimmed={hiddenSignals.has(id)} count={s.n}
                 onClick={() => setHiddenSignals((prev) => {
@@ -247,7 +247,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   <td className="px-2 py-2 text-[12px] text-[var(--muted)]">{a.registered}</td>
                   <td className="px-2 py-2 text-[12px] text-[var(--muted)]">
                     {a.last_login || (
-                      <Tooltip hint="Der Export enthält dazu nichts — WordPress führt den letzten Login im Kern nicht. Das heißt NICHT »nie angemeldet«.">
+                      <Tooltip hint={tr('database.noLastLogin')}>
                         <span className="opacity-60">nicht im Dump</span>
                       </Tooltip>
                     )}
@@ -270,7 +270,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                       </Tooltip>
                     ) : (
                       <Tooltip title="Konto als Indikator aufnehmen"
-                        body="Nimmt den Login in die IOC Box — und die E-Mail als eigenen, damit verknüpften Eintrag."
+                        body={tr('database.flagAccount.body')}
                         hint="Der Login ist der Indikator, nicht die Zeile: unter diesem Namen meldet sich jemand wieder an, und danach sucht man in anderen Systemen.">
                         <Button variant="ghost" disabled={flagAccount.isPending}
                           className="opacity-0 transition-opacity group-hover:opacity-100"
@@ -287,8 +287,8 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           {!visibleAccounts.length && (
             <div className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
               {accounts.length
-                ? 'Alle Konten sind ausgeblendet — durchgestrichene Chips holen sie zurück.'
-                : 'Keine Konten im Dump gefunden.'}
+                ? tr('database.allHidden')
+                : tr('database.noAccounts')}
             </div>
           )}
         </Card>
@@ -300,8 +300,8 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           Befund, und er liest sich erst richtig, wenn man weiß, wessen
           Konto ihn geschrieben haben könnte. */}
       {data && data.findings.length > 0 && (
-        <Section title="Eingeschleuster Code in Datenfeldern"
-          sub="Ein CMS speichert Code in Dateien, nie in der Datenbank. Klick auf eine Zeile öffnet die Tabelle als Artefakt — entscheiden wie in Findings.">
+        <Section title={tr('database.injected')}
+          sub={tr('database.injected.sub')}>
           <Card className="overflow-hidden">
             {data.findings.map((f) => (
               <button key={f.fingerprint}
@@ -332,7 +332,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
       )}
 
       {/* ---- das Tabellen-Inventar, mit Fall-Bezug ---- */}
-      <Section title="Tabellen im Dump"
+      <Section title={tr('database.tables')}
         sub={'Auch leere Tabellen stehen hier — »existiert und ist leer« ist eine andere Aussage als »nicht im Dump«, und nur eine davon kann bedeuten, dass jemand geleert hat.'
           + (data?.schema_tables
             ? ` ${formatCount(data.schema_tables)} Tabellen aus mitgelieferten Schema-Dateien sind nicht aufgeführt — sie sagen nur, was eine Erweiterung anlegen WÜRDE.`
@@ -391,7 +391,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   <td className={clsx('px-2 py-1.5 text-right tabular text-[12px]',
                     !t2.rows && 'text-[var(--sev-low)]')}>
                     {t2.rows ? formatCount(t2.rows) : (
-                      <Tooltip hint="Die Tabelle existiert im Dump, enthält aber keine Zeile. Bei Tabellen, die normalerweise gefüllt sind, ist das eine Frage wert.">
+                      <Tooltip hint={tr('database.emptyTable')}>
                         <span>leer</span>
                       </Tooltip>
                     )}
@@ -441,6 +441,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
  *  nächsten Installation wieder an und überlebt jedes Aufräumen im
  *  Dateisystem. Trägt eine von ihnen Findings, steht das hier vorne. */
 function SchemaCard({ files }: { files: DbDump[] }) {
+  const tr = useT()
   const [open, setOpen] = useState(false)
   const flagged = files.filter((f) => (f.flagged ?? 0) > 0)
   return (
@@ -461,7 +462,7 @@ function SchemaCard({ files }: { files: DbDump[] }) {
           </div>
         </div>
         {flagged.length > 0 && (
-          <Tag tone="danger" hint="Eine mitgelieferte SQL-Datei mit eingeschleustem Code ist ein Persistenz-Trick: sie läuft bei der nächsten Installation oder beim Update wieder an.">
+          <Tag tone="danger" hint={tr('database.schemaFlagged')}>
             {formatCount(flagged.length)} mit Findings
           </Tag>
         )}
@@ -497,6 +498,7 @@ function SchemaCard({ files }: { files: DbDump[] }) {
  *  Vorfall zeigt einen anderen Zustand als einer von danach, und davon
  *  hängt ab, ob ein fehlender Admin etwas bedeutet. */
 function DumpCard({ dump }: { dump: DbDump }) {
+  const tr = useT()
   const meta = dump.meta ?? {}
   // Jede Angabe erklärt sich selbst — sie stammen aus dem KOPF des Dumps,
   // den das Export-Werkzeug geschrieben hat, und was fehlt, ist genauso eine
@@ -504,16 +506,16 @@ function DumpCard({ dump }: { dump: DbDump }) {
   const facts: [string, string, string, string][] = [
     ['Datenbank', meta.database || '—',
      'Der Name des Schemas, aus dem exportiert wurde.',
-     'Bei mehreren Instanzen auf einem Server entscheidet er, ob dieser Dump überhaupt zu dem Webroot gehört, den du untersuchst.'],
+     tr('database.fact.database.hint')],
     ['Erstellt', meta.created || 'nicht im Kopf des Dumps vermerkt',
      'Der Zeitstempel, den das Export-Werkzeug geschrieben hat.',
-     'Die wichtigste Angabe der Karte: ein Dump von VOR dem Vorfall zeigt einen anderen Zustand als einer von danach — davon hängt ab, ob ein fehlendes Konto etwas bedeutet. Ohne ihn ist unklar, welchen Stand dieser Dump zeigt.'],
+     tr('database.fact.created.hint')],
     ['Server', meta.server || '—',
      'Die MySQL-/MariaDB-Version, die den Export erzeugt hat.',
-     'Eine alte Version erklärt manchmal, warum ein Angriff funktioniert hat — und sie sagt, wohin der Dump sich zurückspielen lässt.'],
+     tr('database.fact.server.hint')],
     ['Werkzeug', [meta.tool, meta.tool_version].filter(Boolean).join(' ') || '—',
      'Womit exportiert wurde (mysqldump, phpMyAdmin, ein Plugin).',
-     'Das Werkzeug bestimmt, WAS im Dump steht: manche Backup-Plugins lassen Sitzungen oder Log-Tabellen weg. Fehlt hier etwas, fehlt es womöglich auch in den Daten.'],
+     tr('database.fact.tool.hint')],
   ]
   return (
     <Card className="overflow-hidden">
