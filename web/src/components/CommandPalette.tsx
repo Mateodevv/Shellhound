@@ -4,12 +4,13 @@
 // Antwort liegt immer in genau einer davon. Die Palette ist ein
 // SPRUNGBRETT, keine Ergebnisliste: jede Gruppe ist hart gedeckelt, ein
 // Treffer öffnet das Artefakt-Fenster direkt oder springt in die Ansicht.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Box, CornerDownLeft, Search, User, Users } from 'lucide-react'
 import { api } from '../api'
-import { TRIAGE_LABEL, formatCount } from '../format'
+import { formatCount } from '../format'
 import { KIND_ICON } from '../artifactKinds'
 import { SeverityBadge, TriageBadge } from './ui'
 import type { ArtifactStub } from './ArtifactWindow'
@@ -37,6 +38,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
   gotoView: (v: ViewId) => void
   onOpenArtifact: (stub: ArtifactStub) => void
 }) {
+  const tr = useT()
   const [q, setQ] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -71,7 +73,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
             <Icon size={14} className="shrink-0 text-[var(--muted)]" />
             <span className="mono min-w-0 flex-1 truncate">{a.artifact}</span>
             <SeverityBadge severity={a.worst} />
-            <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+            <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
           </>
         ),
         run: () => onOpenArtifact({
@@ -137,7 +139,7 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
       })
     }
     return out
-  }, [data, gotoView, onOpenArtifact])
+  }, [data, gotoView, onOpenArtifact, tr])
 
   useEffect(() => { setCursor(0) }, [items.length, q])
 

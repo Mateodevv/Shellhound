@@ -9,6 +9,7 @@
 // ein Muster in jedem weiteren Fall bereit. Der Fall protokolliert nur, wonach
 // in ihm gesucht wurde — auch erfolglos, denn „wir haben darauf geprüft, es
 // war nichts" steht sonst nirgends.
+import { useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -27,7 +28,6 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { FIELD_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -486,6 +486,7 @@ function ResultCard({ slug, result, onTrace }: {
   result: HuntResult
   onTrace: (ips: string[]) => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const [showUris, setShowUris] = useState(false)
   // Voreinstellung wie vom Server geliefert: Erfolge zuerst. Das ist die
@@ -581,7 +582,7 @@ function ResultCard({ slug, result, onTrace }: {
               Letzter Treffer
             </SortHead>
             <SortHead className="px-2 py-2 text-right" col="dauer" sort={sort} onSort={setSort}>
-              Dauer <InfoDot body={FIELD_EXPLAIN.duration} hint={FIELD_EXPLAIN.duration_why} />
+              Dauer <InfoDot body={tr('field.duration')} hint={tr('field.duration_why')} />
             </SortHead>
             <th className="w-28 px-4 py-2" />
           </tr>

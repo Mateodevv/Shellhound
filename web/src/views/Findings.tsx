@@ -18,6 +18,7 @@
 // muss: Symbol und Farbe für Art und Schweregrad, die Regeln als Chips, ein
 // Balken für die Verteilung der Findings, der Zustand als Pille. Eine Liste
 // aus lauter gleich aussehenden Zeilen zwingt zum Lesen jeder einzelnen.
+import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -30,7 +31,7 @@ import {
   api, type ArtifactRow, type Finding, type FindingsResponse,
 } from '../api'
 import {
-  SEVERITY_LABEL, SEVERITY_VAR, SOURCE_LABEL, TRIAGE_LABEL, formatCount,
+  SEVERITY_LABEL, SEVERITY_VAR, formatCount,
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
@@ -99,6 +100,7 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
 }
 
 export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   // JEDER Filter-Chip ist ein Ausblende-Schalter: Klick versteckt seine
   // Klasse, der nächste Klick bringt sie zurück, mehrere stapeln sich.
   // Standardmäßig ausgeblendet: False Positives (gehören nicht zum Fall)
@@ -156,7 +158,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
     for (const row of data?.artifacts ?? []) {
       const items = byArtifact.get(row.artifact) ?? []
       const lead = items[0]
-      const cat = categorize(lead?.source ?? row.source, lead?.rule ?? '')
+      const cat = categorize(tr, lead?.source ?? row.source, lead?.rule ?? '')
       const artifact: Artifact = { ...row, items, cat }
       let c = byCat.get(cat.id)
       if (!c) {
@@ -171,7 +173,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       if (row.triage === 'dismissed') c.dismissed += 1
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
-  }, [data])
+  }, [data, tr])
 
   // Ein aktiver Filter bedeutet: der Analyst sucht etwas Bestimmtes. Dann
   // stehen die Kategorien offen, sonst wäre die Trefferliste hinter Klicks
@@ -314,17 +316,19 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         {(['new', 'confirmed', 'dismissed'] as const).map((state) => (
           <Tooltip key={state}
             hint={hiddenTriage.has(state)
-              ? `${TRIAGE_LABEL[state]} ist ausgeblendet — Klick holt sie zurück.`
-              : `Klick blendet »${TRIAGE_LABEL[state]}« aus.`}>
+              ? `${tr(`triage.${state}`)} ist ausgeblendet — Klick holt sie zurück.`
+              : `Klick blendet »${tr(`triage.${state}`)}« aus.`}>
             <Chip active={false} dimmed={hiddenTriage.has(state)}
               onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
               count={counts?.triage[state] ?? 0}>
-              {TRIAGE_LABEL[state]}
+              {tr(`triage.${state}`)}
             </Chip>
           </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {Object.entries(SOURCE_LABEL).map(([key, label]) => (
+        {['webshell', 'sqldb', 'logs'].map((key) => {
+          const label = tr(`source.${key}`)
+          return (
           <Tooltip key={key}
             hint={hiddenSource.has(key)
               ? `${label} ist ausgeblendet — Klick holt die Artefakte zurück.`
@@ -335,7 +339,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               {label}
             </Chip>
           </Tooltip>
-        ))}
+        )})}
         <div className="ml-auto">
           <SearchInput value={search} onChange={setSearch} placeholder="Regel, Pfad, Evidence…" />
         </div>
@@ -481,7 +485,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                       <div className="truncate text-[11.5px] text-[var(--muted)]">
                         <span className="font-medium text-[var(--fg)]">
                           {formatCount(c.artifacts.length)}{' '}
-                          {artifactNoun(c.kind, c.artifacts.length)}
+                          {artifactNoun(tr, c.kind, c.artifacts.length)}
                         </span>
                         {' aus '}
                         {formatCount(c.findings)} Finding{c.findings === 1 ? '' : 's'}
@@ -568,7 +572,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
-                        <TriageBadge state={a.triage} label={TRIAGE_LABEL[a.triage]} />
+                        <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                       </div>
                       <RuleChips items={a.items} />
                     </div>
@@ -661,13 +665,14 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
  *  der Liste, WORUM es geht, ohne aufzuklappen oder zu öffnen. Mehr als drei
  *  wären eine zweite Liste in der Liste; der Rest steht als Zahl daneben. */
 function RuleChips({ items }: { items: Finding[] }) {
+  const tr = useT()
   if (!items.length) return null
   const shown = items.slice(0, 3)
   const rest = items.length - shown.length
   return (
     <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
       {shown.map((f) => {
-        const e = explainRule(f.rule)
+        const e = explainRule(tr, f.rule)
         return (
           <Tooltip key={f.fingerprint} title={f.rule} body={e?.what} hint={e?.why} wide>
             <span className="max-w-[15rem] truncate rounded bg-[var(--panel-2)] px-1.5 py-px text-[10.5px] text-[var(--muted)]"
@@ -718,7 +723,8 @@ function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
 
 /** Der Regelname mit seiner Klartext-Erklärung im Tooltip. */
 function RuleName({ rule, className }: { rule: string; className?: string }) {
-  const e = explainRule(rule)
+  const tr = useT()
+  const e = explainRule(tr, rule)
   return (
     <Tooltip title={rule} body={e?.what} hint={e?.why} wide
       className={clsx('truncate text-[12.5px] font-medium', className)}>

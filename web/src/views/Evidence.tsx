@@ -1,4 +1,5 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -13,10 +14,8 @@ import {
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
 import { Button, Card, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
-import { EVIDENCE_EXPLAIN, EVIDENCE_LABEL, FIELD_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import type { ViewId } from '../App'
-
-const KIND_LABEL = EVIDENCE_LABEL
 
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
@@ -30,6 +29,7 @@ export function Evidence({ slug, onClosed }: {
   gotoView: (v: ViewId) => void
   onClosed?: () => void
 }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
@@ -108,10 +108,10 @@ export function Evidence({ slug, onClosed }: {
 
         <div className="mt-3 flex flex-wrap gap-2">
           {(['webroot', 'access_logs', 'sql_dump', 'reference'] as const).map((kind) => (
-            <Tooltip key={kind} title={EVIDENCE_EXPLAIN[kind]?.what}
-              hint={EVIDENCE_EXPLAIN[kind]?.why} wide>
+            <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
+              hint={explain(tr, `evidence.${kind}`)?.why} wide>
               <Button onClick={() => setBrowsing(kind)}>
-                <FolderOpen size={14} /> {KIND_LABEL[kind]} hinzufügen
+                <FolderOpen size={14} /> {tr(`evidence.${kind}`)} hinzufügen
               </Button>
             </Tooltip>
           ))}
@@ -124,7 +124,7 @@ export function Evidence({ slug, onClosed }: {
                 ? <CheckCircle2 size={15} className="text-[var(--ok)]" />
                 : <TriangleAlert size={15} className="text-[var(--sev-low)]" />}
               <span className="font-medium">Log-Index</span>
-              <InfoDot body={FIELD_EXPLAIN.log_index} wide />
+              <InfoDot body={tr('field.log_index')} wide />
               {index.fresh ? (
                 <span className="text-[var(--muted)]">
                   aktuell — {formatCount(index.lines)} Log-Zeilen, {formatCount(index.clients)} Clients,{' '}
@@ -159,7 +159,7 @@ export function Evidence({ slug, onClosed }: {
             {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) =>
               detected.candidates[kind]?.slice(0, 4).map((c) => (
                 <Card key={kind + c.path} className="flex items-center gap-3 px-4 py-2.5">
-                  <Tag tone="accent">{KIND_LABEL[kind]}</Tag>
+                  <Tag tone="accent">{tr(`evidence.${kind}`)}</Tag>
                   <div className="min-w-0 flex-1">
                     <div className="mono truncate text-[12px]">{c.path}</div>
                     <div className="truncate text-[11px] text-[var(--muted)]">{c.why}</div>
@@ -212,6 +212,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
   onRename: (label: string) => void
   onRemove: () => void
 }) {
+  const tr = useT()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const Icon = KIND_ICON[item.kind] ?? HardDrive
@@ -219,7 +220,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
 
   return (
     <Card className="flex items-center gap-3 px-4 py-3">
-      <Tooltip title={EVIDENCE_EXPLAIN[item.kind]?.what} hint={EVIDENCE_EXPLAIN[item.kind]?.why} wide>
+      <Tooltip title={explain(tr, `evidence.${item.kind}`)?.what} hint={explain(tr, `evidence.${item.kind}`)?.why} wide>
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
           <Icon size={16} className="text-[var(--muted)]" />
         </div>
@@ -245,7 +246,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
               title="Umbenennen">
               <Pencil size={12} />
             </button>
-            <Tag explain={EVIDENCE_EXPLAIN[item.kind]?.what}>{KIND_LABEL[item.kind]}</Tag>
+            <Tag explain={explain(tr, `evidence.${item.kind}`)?.what}>{tr(`evidence.${item.kind}`)}</Tag>
             {!item.exists && <Tag tone="danger">Pfad nicht gefunden</Tag>}
           </div>
         )}
@@ -446,6 +447,7 @@ function PathBrowser({ kind, onClose, onPick }: {
   onClose: () => void
   onPick: (path: string) => void
 }) {
+  const tr = useT()
   const [path, setPath] = useState('')
   // Eine angeklickte Datei gewinnt gegen das Verzeichnis, in dem sie liegt —
   // sonst müsste man für einen SQL-Dump den Pfad doch wieder tippen.
@@ -460,7 +462,7 @@ function PathBrowser({ kind, onClose, onPick }: {
       <div className="absolute inset-0 bg-black/50 animate-fade-in" onClick={onClose} />
       <Card className="relative z-10 flex max-h-[80vh] w-[min(640px,92vw)] flex-col animate-fade-up">
         <div className="border-b border-[var(--line)] px-4 py-3">
-          <div className="text-[14px] font-semibold">{KIND_LABEL[kind]} auswählen</div>
+          <div className="text-[14px] font-semibold">{tr(`evidence.${kind}`)} auswählen</div>
           <div className="mono mt-1 truncate text-[12px] text-[var(--muted)]">
             {data?.path || 'Laufwerke'}
           </div>

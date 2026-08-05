@@ -2,10 +2,11 @@
 // Meldung über Mitentschiedenes mit Rückgängig, Vorschlagsfenster für die
 // mittlere Stufe. Der Hook dazu lebt in useTriage.ts; wer ihn benutzt,
 // rendert einmal <TriageFollowUp>.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { Bug, Check, Crosshair, Undo2, X } from 'lucide-react'
 import { type TriageLink } from '../api'
-import { TRIAGE_LABEL, formatCount, relativeToRoot, type EvidenceRoot } from '../format'
+import { formatCount, relativeToRoot, type EvidenceRoot } from '../format'
 import { Button, Modal, Toast, TriageBadge } from './ui'
 import { KIND_ICON } from '../artifactKinds'
 import type { TriageController } from './useTriage'
@@ -97,6 +98,7 @@ function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
   onClose: () => void
   onDecide: (artifacts: string[], state: string) => void
 }) {
+  const tr = useT()
   const [picked, setPicked] = useState<Set<string>>(new Set())
   useEffect(() => { setPicked(new Set(links?.map((l) => l.artifact) ?? [])) }, [links])
   if (!links) return null
@@ -135,7 +137,7 @@ function SuggestionWindow({ links, roots, layer, onClose, onDecide }: {
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[var(--muted)]">{l.why}</span>
                 <TriageBadge state={l.previous.state}
-                  label={TRIAGE_LABEL[l.previous.state]} />
+                  label={tr(`triage.${l.previous.state}`)} />
               </label>
             )
           })}

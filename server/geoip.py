@@ -33,9 +33,8 @@ _reader_path = ""
 _cache = {}
 _CACHE_CAP = 50000
 
-# Dokumentations-Bereiche (RFC 5737 / 3849) -- der Beispiel-Fall besteht
-# daraus, und »absichtlich unzuordenbar« ist eine bessere Antwort als ein
-# stiller Fehlschlag in der Datenbank.
+# Documentation ranges (RFC 5737 / 3849). "Deliberately unassignable" is a
+# better answer than a silent miss in the database.
 _DOC_NETS = [ipaddress.ip_network(n) for n in
              ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
               "2001:db8::/32")]

@@ -1,10 +1,11 @@
 // ui.tsx — the small building blocks: cards, badges, chips, drawer, progress.
+import { useT } from '../i18n'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
 import { copyText } from '../copy'
-import { SEVERITY_EXPLAIN, TAG_EXPLAIN, TRIAGE_EXPLAIN } from '../explain'
+import { explain } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
 export function Card({ children, className, style, id }: {
@@ -54,6 +55,7 @@ export function StatTile({ label, value, tone, sub, onClick, info }: {
 }
 
 export function SeverityBadge({ severity, plain }: { severity: number; plain?: boolean }) {
+  const tr = useT()
   const badge = (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold"
@@ -67,7 +69,7 @@ export function SeverityBadge({ severity, plain }: { severity: number; plain?: b
     </span>
   )
   if (plain) return badge
-  const e = SEVERITY_EXPLAIN[severity]
+  const e = explain(tr, `severity.${severity}`)
   return <Tooltip title={e?.what} hint={e?.why}>{badge}</Tooltip>
 }
 
@@ -79,7 +81,8 @@ const TRIAGE_STYLE: Record<string, string> = {
 }
 
 export function TriageBadge({ state, label }: { state: string; label: string }) {
-  const e = TRIAGE_EXPLAIN[state]
+  const tr = useT()
+  const e = explain(tr, `triage.${state}`)
   return (
     <Tooltip title={e?.what} hint={e?.why}>
       <span className={clsx('inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium',
@@ -115,7 +118,8 @@ export function Tag({ children, tone, explain, hint }: {
 export function IocTag({ tag, tone }: {
   tag: string; tone?: 'accent' | 'danger' | 'warn'
 }) {
-  const e = TAG_EXPLAIN[tag]
+  const tr = useT()
+  const e = explain(tr, `tag.${tag}`)
   return <Tag tone={tone} explain={e?.what} hint={e?.why}>{tag}</Tag>
 }
 

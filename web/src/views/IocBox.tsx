@@ -1,4 +1,5 @@
 // IocBox.tsx — die Fall-Indikatoren: sammeln, taggen, annotieren, exportieren.
+import { useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -12,7 +13,6 @@ import {
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
-import { IOC_TYPE_EXPLAIN } from '../explain'
 import type { ViewId } from '../App'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
@@ -29,6 +29,7 @@ const TAG_TONE: Record<string, 'danger' | 'warn' | 'accent' | undefined> = {
 }
 
 export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data: iocs } = useQuery({
     queryKey: ['iocs', slug],
@@ -111,14 +112,14 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="mr-1 flex items-center gap-1.5 text-lg font-bold">
           IOC Box
-          <InfoDot title="IOC Box — die Indikatoren dieses Falls"
-            body="Alles, woran man den Vorfall wiedererkennt: Angreifer-IPs, Datei-Hashes, Shell-Pfade, eingeschleuste Domains."
-            hint="Bestätigte Findings landen automatisch hier, samt ihrer Verknüpfungen (Hash ↔ Pfad, wer ihn abrief). Am Ende exportierst du die Liste für den Bericht oder ein SIEM." />
+          <InfoDot title={tr('iocbox.title.what')}
+            body={tr('iocbox.title.body')}
+            hint={tr('iocbox.title.hint')} />
         </h1>
         {Object.entries(typeCounts).map(([t, n]) => (
-          <Tooltip key={t} body={IOC_TYPE_EXPLAIN[t]}
-            hint={hiddenTypes.has(t) ? 'Ausgeblendet — Klick holt sie zurück.'
-                                     : 'Klick blendet diesen Typ aus.'}>
+          <Tooltip key={t} body={tr(`iocType.${t}`)}
+            hint={hiddenTypes.has(t) ? tr('filter.hidden.back')
+                                     : tr('iocbox.type.hide')}>
             <Chip active={false} dimmed={hiddenTypes.has(t)}
               onClick={() => setHiddenTypes((prev) => {
                 const next = new Set(prev)
@@ -133,9 +134,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         <div className="ml-auto flex items-center gap-2">
           <SearchInput value={search} onChange={setSearch} placeholder="Wert oder Notiz…" />
           {([
-            ['csv', 'Tabelle für Excel und den Bericht.'],
-            ['json', 'Maschinenlesbar — für eigene Skripte.'],
-            ['stix', 'STIX 2.1 — das Austauschformat für SIEM- und Threat-Intel-Systeme.'],
+            ['csv', tr('export.csv.hint')],
+            ['json', tr('export.json.hint')],
+            ['stix', tr('export.stix.hint')],
           ] as const).map(([fmt, hint]) => (
             <Tooltip key={fmt} title={`Export als ${fmt.toUpperCase()}`} hint={hint}>
               <a
@@ -153,15 +154,15 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted)]">
             Tags:
-            <InfoDot title="Die Tags eines Indikators"
-              body="Woher er stammt (analyst, finding, hunt, actor, derived), was für einer er ist (webshell, injected-code, account) und was der Fall an ihm beobachtet hat (scanner, brute-force, successful)."
-              hint="Klick auf einen Tag blendet die Einträge aus, deren Tags ALLE ausgeblendet sind — ein Eintrag mit einem noch sichtbaren Tag bleibt stehen." />
+            <InfoDot title={tr('iocbox.tags.what')}
+              body={tr('iocbox.tags.body')}
+              hint={tr('iocbox.tags.hint')} />
           </span>
           {Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
             <Tooltip key={t}
               hint={hiddenTags.has(t)
-                ? 'Ausgeblendet — Klick holt Einträge mit diesem Tag zurück.'
-                : 'Klick blendet Einträge aus, deren Tags alle ausgeblendet sind.'}>
+                ? tr('iocbox.tag.hidden')
+                : tr('iocbox.tag.hide')}>
               <Chip active={false} dimmed={hiddenTags.has(t)}
                 onClick={() => setHiddenTags((prev) => {
                   const next = new Set(prev)
@@ -182,13 +183,13 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && newValue.trim()) add.mutate() }}
-          placeholder="IOC hinzufügen — IP, Hash, Domain, Pfad… (Typ wird erkannt)"
+          placeholder={tr('iocbox.add.placeholder')}
           className="mono min-w-64 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
         />
         <input
           value={newNote}
           onChange={(e) => setNewNote(e.target.value)}
-          placeholder="Notiz (optional)"
+          placeholder={tr('iocbox.note.placeholder')}
           className="w-56 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
         />
         <Button variant="primary" disabled={!newValue.trim() || add.isPending}
@@ -224,12 +225,12 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               {/* Der Wert wandert von hier in ein Ticket, eine Firewall-Regel
                   oder eine Suchmaske. Abtippen wäre bei einem SHA-256 eine
                   Fehlerquelle, und Markieren scheitert am truncate. */}
-              <CopyButton value={ioc.value} label="Indikator kopieren"
+              <CopyButton value={ioc.value} label={tr('iocbox.copy')}
                 className="shrink-0" />
               {links.length > 0 && (
-                <Tooltip title="Verknüpfte Indikatoren"
+                <Tooltip title={tr('iocbox.links.title')}
                   body={links.map((l) => `${l.label} ${l.value}`).join(' · ')}
-                  hint="Entstehen beim Einsammeln — Klick zeigt sie unter dem Eintrag.">
+                  hint={tr('iocbox.links.hint')}>
                   <button
                     onClick={() => toggleOpen(ioc.id)}
                     className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors ${
@@ -247,7 +248,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               <input
                 defaultValue={ioc.note}
                 key={`${ioc.id}-${ioc.note}`}
-                placeholder={ioc.origin || 'Notiz…'}
+                placeholder={ioc.origin || tr('iocbox.note.short')}
                 onBlur={(e) => {
                   if (e.target.value !== ioc.note)
                     saveNote.mutate({ id: ioc.id, note: e.target.value })
@@ -255,7 +256,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 className="w-64 shrink-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-[12px] text-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/60 focus:bg-[var(--panel-2)] focus:text-[var(--fg)]"
                 title={ioc.origin}
               />
-              <Button variant="ghost" title="Entfernen"
+              <Button variant="ghost" title={tr('common.remove')}
                 className="opacity-0 transition-opacity group-hover:opacity-100"
                 onClick={() => remove.mutate(ioc.id)}>
                 <Trash2 size={13} />
@@ -291,8 +292,8 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       </div>
 
       {iocs && !iocs.length && (
-        <EmptyState icon={<Box size={36} />} title="Die IOC Box ist leer"
-          sub="Bestätigte Findings landen automatisch hier (Pfad + Hash + anfragende Clients). Actors lassen sich aus der Actors-View einsammeln, alles Weitere oben manuell." />
+        <EmptyState icon={<Box size={36} />} title={tr('iocbox.empty.title')}
+          sub={tr('iocbox.empty.sub')} />
       )}
       {iocs && iocs.length > 0 && (
         <div className="text-[12px] text-[var(--muted)]">
