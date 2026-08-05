@@ -29,17 +29,7 @@ python -m server.main
 
 Die Oberfläche öffnet sich auf `http://127.0.0.1:8710`.
 
-## Beispiel-Fall
 
-```bash
-python tools/sample_case.py
-python -m server.main --workspace ~/ShellhoundSample
-```
-
-Erzeugt einen erfundenen Fall (WordPress und Joomla, zwei Wochen Logs, ein
-Datenbank-Export) und lässt die regulären Engines darüber laufen. Alle
-angezeigten Funde stammen aus der Erkennung, nicht aus vorbereiteten Daten.
-Derselbe Fall dient in der CI als End-to-End-Test.
 
 ## Funktionsumfang
 
