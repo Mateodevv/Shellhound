@@ -6,6 +6,40 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — a mark of its own
+
+The favicon was a generic shield outline: at 16px, where a favicon actually
+lives, it collapsed into a blob. The replacement is a trace that runs flat,
+steps up once and stays up, with the knee marked in severity red.
+
+The shape is the argument. What this tool exists to find is almost never a
+spike — it is a level change that does not come back down: a shell dropped, an
+admin row planted, a backdoor that keeps answering. A step is the shape of
+persistence where a spike is the shape of a transient. And the two colours are
+the separation the whole product rests on: everything measured is accent blue,
+exactly one point is red, and it is a node rather than a wash.
+
+Chosen from five independent directions and kept only after rasterising the
+candidates at 16×16 and looking at them — an SVG that describes one shape and
+draws another survives every review that does not render it. Three of the five
+died there: one read as a capital I, one as a media player, and one as a
+dollar sign.
+
+The README now opens with a banner built from the same mark and a wordmark
+drawn as paths, over the tool's own output as texture — a request timeline
+with one window marked, tied by a dotted line to the finding it belongs to.
+Both assets are self-contained: no external references, no `<text>`, so
+GitHub renders them without the author's fonts.
+
+`assets/brand/banner.svg`, `web/public/favicon.svg`.
+
+### Fixed — the interface declared the wrong language
+
+`web/index.html` carried `lang="de"` while English is the default the
+interface starts in, so screen readers and translation tools were told the
+wrong language for the first paint. The i18n provider already corrected the
+attribute on mount; only the static value was wrong.
+
 ### Removed — file system timeline
 
 Built and taken back out in the same cycle. In practice the clusters were

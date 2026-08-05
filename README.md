@@ -1,4 +1,6 @@
-# SHELLHOUND
+<p align="center">
+  <img src="assets/brand/banner.svg" alt="SHELLHOUND" width="900">
+</p>
 
 **Local DFIR workbench for compromised web servers.**
 

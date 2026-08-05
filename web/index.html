@@ -1,16 +1,18 @@
 <!doctype html>
-<html lang="de">
+<!-- lang="en" is the default the interface actually starts in; the i18n
+     provider overwrites this attribute on mount and on every switch. -->
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SHELLHOUND</title>
     <script>
-      // Theme vor dem ersten Paint setzen, damit nichts aufblitzt.
-      // Die Liste steht doppelt (hier und in src/theme.ts), weil dieses
-      // Skript vor jedem Modul läuft. Ein unbekannter gespeicherter Wert --
-      // etwa ein Theme, das es nicht mehr gibt -- fällt auf den Standard
-      // zurück, sonst stünde <html> auf einem Theme ohne CSS-Block.
+      // Set the theme before first paint so nothing flashes.
+      // The list appears twice (here and in src/theme.ts) because this
+      // script runs before any module. An unknown stored value -- a theme
+      // that no longer exists, say -- falls back to the default; otherwise
+      // <html> would sit on a theme with no CSS block behind it.
       try {
         var THEMES = ['synthwave', 'shellhound']
         var t = localStorage.getItem('shellhound.theme')
