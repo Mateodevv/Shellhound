@@ -1,4 +1,5 @@
 // App.tsx — shell: case selection + the left rail with the five views.
+import { useT } from './i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -10,6 +11,7 @@ import { api, type CaseDetail, type Job } from './api'
 import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
+import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { CommandPalette } from './components/CommandPalette'
 import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from './components/TraceWindow'
@@ -36,19 +38,20 @@ export type ViewId =
   | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
   | 'database' | 'evidence'
 
-const NAV: { id: ViewId; label: string; icon: typeof Bug }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'findings', label: 'Findings', icon: Bug },
-  { id: 'actors', label: 'Actors', icon: Users },
-  { id: 'hunt', label: 'Muster-Jagd', icon: Radar },
-  { id: 'iocbox', label: 'IOC Box', icon: Box },
-  { id: 'database', label: 'Database', icon: Database },
-  { id: 'cms', label: 'CMS Inventory', icon: Puzzle },
-  { id: 'files', label: 'Dateien', icon: FolderTree },
-  { id: 'evidence', label: 'Evidence & Jobs', icon: FolderCog },
+const NAV: { id: ViewId; icon: typeof Bug }[] = [
+  { id: 'dashboard', icon: LayoutDashboard },
+  { id: 'findings', icon: Bug },
+  { id: 'actors', icon: Users },
+  { id: 'hunt', icon: Radar },
+  { id: 'iocbox', icon: Box },
+  { id: 'database', icon: Database },
+  { id: 'cms', icon: Puzzle },
+  { id: 'files', icon: FolderTree },
+  { id: 'evidence', icon: FolderCog },
 ]
 
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
+  const tr = useT()
   const [view, setView] = useState<ViewId>('dashboard')
   const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
@@ -114,7 +117,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold">{caseInfo?.name ?? slug}</div>
             <div className="truncate text-[11px] text-[var(--muted)]">
-              {caseInfo?.reference || 'Case wechseln'}
+              {caseInfo?.reference || tr('nav.switchCase')}
             </div>
           </div>
         </button>
@@ -125,12 +128,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
           >
             <Search size={14} />
-            Suchen…
+            {tr('nav.search')}
             <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
-              Strg K
+              {tr('nav.shortcut')}
             </span>
           </button>
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {NAV.map(({ id, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setView(id)}
@@ -142,20 +145,21 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
                   : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
             >
               <Icon size={15} />
-              {label}
+              {tr(`nav.${id}`)}
             </button>
           ))}
         </div>
 
         <div className="mt-auto p-3">
           <div className="mb-1">
+            <LanguageSwitcher up />
             <ThemeSwitcher up />
           </div>
           {running.length > 0 && (
             <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3 animate-fade-up">
               <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-text)]">
                 <Activity size={12} className="animate-pulse-soft" />
-                {running.length} Job{running.length > 1 ? 's' : ''} läuft…
+                {tr('nav.jobsRunning', { n: running.length })}
               </div>
               {running.slice(0, 3).map((j) => (
                 <div key={j.id} className="mb-2 last:mb-0">

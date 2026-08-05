@@ -10,6 +10,7 @@
 //
 // GETEILT zwischen Findings und Actors: dasselbe Artefakt sieht überall
 // gleich aus, und eine Entscheidung ist überall dieselbe Entscheidung.
+import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -21,14 +22,14 @@ import {
   api, type ArtifactContext, type Finding, type TriageResult, type TriageState,
 } from '../api'
 import {
-  SEVERITY_VAR, TRIAGE_LABEL, absoluteTime, formatBytes, formatCount,
+  SEVERITY_VAR, absoluteTime, formatBytes, formatCount,
   formatDay, relativeTime, relativeToRoot, type EvidenceRoot,
 } from '../format'
 import { Button, CopyButton, Modal, SeverityBadge, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
 import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
-import { FIELD_EXPLAIN, explainRule } from '../explain'
+import { explainRule } from '../explain'
 
 // Mit Artikel, für die Frage im Detail-Fenster: „Ist dieses Datei" liest
 // sich wie eine Maschine, und der Satz ist die wichtigste Zeile darin.
@@ -92,6 +93,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
    *  Trace vor tausend Zeilen und sucht die, um die es geht. */
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
+  const tr = useT()
   const [note, setNote] = useState('')
   useEffect(() => { setNote(artifact?.triage_note ?? '') }, [artifact])
 
@@ -131,7 +133,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
         <span className="mono truncate">{kind === 'file' && root ? rel : artifact.artifact}</span>
-        <TriageBadge state={state} label={TRIAGE_LABEL[state]} />
+        <TriageBadge state={state} label={tr(`triage.${state}`)} />
       </span>}>
       <div className="flex flex-col gap-4">
         {collected.length > 0 && (
@@ -228,7 +230,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     <span>{relativeTime(file.mtime)}</span>
                   </Tooltip>
                 </MetaCell>
-                <MetaCell label="CMS-Guard" explain={FIELD_EXPLAIN.cms_guard}>
+                <MetaCell label="CMS-Guard" explain={tr('field.cms_guard')}>
                   {file.cms_guard == null ? '—' : file.cms_guard ? (
                     <span className="flex items-center gap-1 text-[var(--ok)]">
                       <ShieldCheck size={12} /> vorhanden
@@ -239,14 +241,14 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     </span>
                   )}
                 </MetaCell>
-                <MetaCell label="Upload-Ordner" explain={FIELD_EXPLAIN.upload_dir}>
+                <MetaCell label="Upload-Ordner" explain={tr('field.upload_dir')}>
                   {file.in_upload_dir
                     ? <span className="text-[var(--sev-medium)]">ja — PHP gehört hier nicht hin</span>
                     : 'nein'}
                 </MetaCell>
                 {file.sha256 && (
                   <div className="col-span-2">
-                    <MetaCell label="SHA-256" explain={FIELD_EXPLAIN.sha256}>
+                    <MetaCell label="SHA-256" explain={tr('field.sha256')}>
                       <span className="mono flex items-center gap-2 break-all text-[11px]">
                         <span className="min-w-0 flex-1">{file.sha256}</span>
                         <CopyButton value={file.sha256} label="Hash kopieren"
@@ -262,7 +264,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             <Block title={`Warum dieses Artefakt geflaggt wurde (${formatCount(findings.length)})`}>
               <div className="flex flex-col gap-1.5">
                 {findings.map((f) => {
-                  const e = explainRule(f.rule)
+                  const e = explainRule(tr, f.rule)
                   return (
                     <div key={f.fingerprint}
                       className="rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2"

@@ -10,6 +10,7 @@
 // sich nie angemeldet hat. Deshalb stehen an jedem Konto BENANNTE
 // Beobachtungen und keine Punktzahl; sie bestimmen nur die Reihenfolge,
 // damit die eine auffällige Zeile nicht in 400 gewöhnlichen untergeht.
+import { useT } from '../i18n'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -22,7 +23,7 @@ import {
   type DbTable, type Finding,
 } from '../api'
 import {
-  SEVERITY_VAR, TRIAGE_LABEL, baseName, formatBytes, formatCount,
+  SEVERITY_VAR, baseName, formatBytes, formatCount,
   type EvidenceRoot,
 } from '../format'
 import {
@@ -30,7 +31,6 @@ import {
   TriageBadge,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { FIELD_EXPLAIN } from '../explain'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
@@ -53,6 +53,7 @@ interface DatabaseData {
 }
 
 export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+  const tr = useT()
   const qc = useQueryClient()
   const { data } = useQuery({
     queryKey: ['database', slug],
@@ -220,7 +221,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   <td className="mono px-4 py-2 font-medium">
                     <span className="flex items-center gap-1.5">
                       {a.admin === 1 && (
-                        <Tooltip hint={FIELD_EXPLAIN.admin_account}>
+                        <Tooltip hint={tr('field.admin_account')}>
                           <Crown size={13} className="text-[var(--sev-high)]" />
                         </Tooltip>
                       )}
@@ -253,7 +254,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   </td>
                   <td className="px-2 py-2">
                     {a.hash_type.includes('weak')
-                      ? <Tag tone="warn" hint={FIELD_EXPLAIN.weak_hash}>{a.hash_type}</Tag>
+                      ? <Tag tone="warn" hint={tr('field.weak_hash')}>{a.hash_type}</Tag>
                       : <span className="text-[12px] text-[var(--muted)]">{a.hash_type}</span>}
                   </td>
                   <td className="mono px-2 py-2 text-[11px] text-[var(--muted)]">
@@ -323,7 +324,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                   title={f.evidence}>
                   {f.line ? `Zeile ${f.line} — ` : ''}{f.evidence}
                 </span>
-                <TriageBadge state={f.triage} label={TRIAGE_LABEL[f.triage]} />
+                <TriageBadge state={f.triage} label={tr(`triage.${f.triage}`)} />
               </button>
             ))}
           </Card>
