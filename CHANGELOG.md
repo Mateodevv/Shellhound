@@ -4,7 +4,7 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [Semantic Versioning](https://semver.org/lang/de/).
 
-## [Unreleased]
+## [0.1.1] — 2026-08-05
 
 ### Behoben — „database is locked" während einer laufenden Analyse
 
