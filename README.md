@@ -29,8 +29,6 @@ python -m server.main
 
 Die Oberfläche öffnet sich auf `http://127.0.0.1:8710`.
 
-
-
 ## Funktionsumfang
 
 **Analyse**
@@ -196,9 +194,9 @@ Fehlerberichte und Pull Requests sind willkommen. Schwachstellen bitte
 nicht als öffentliches Issue melden, siehe [SECURITY.md](SECURITY.md).
 
 Beiträge dürfen keine Daten aus realen Vorfällen enthalten. Für
-Reproduktionen eignet sich `tools/sample_case.py` als Vorlage. Neue
-Detektionsregeln gehören mit Auslöser, Aussage und Grenzen nach
-[`docs/rules.md`](docs/rules.md).
+Reproduktionen beschreibe stattdessen die Form der Daten oder baue ein
+Minimalbeispiel. Neue Detektionsregeln gehören mit Auslöser, Aussage und
+Grenzen nach [`docs/rules.md`](docs/rules.md).
 
 ## Lizenz
 
