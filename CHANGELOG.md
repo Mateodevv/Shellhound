@@ -4,6 +4,40 @@ Alle nennenswerten Änderungen an SHELLHOUND. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [Semantic Versioning](https://semver.org/lang/de/).
 
+## [0.1.1] — 2026-08-05
+
+### Behoben — „database is locked" während einer laufenden Analyse
+
+Jede geöffnete Datenbankverbindung schrieb, bevor der Aufrufer irgendetwas
+wollte: `connect()` legte bedingungslos das Schema an und zog zwei
+Datenkorrekturen nach (Scanner-Findings auf INFO herabstufen, IOC-Pfade
+relativieren). Damit begann **jede Anfrage** mit einer Schreib-Transaktion
+— auch eine rein lesende wie die Job-Liste, die die Oberfläche im
+Sekundentakt abfragt, solange eine Analyse läuft.
+
+Trifft diese Transaktion auf die Schreibsperre der arbeitenden Engine,
+scheitert sie mit `sqlite3.OperationalError: database is locked` — als
+Traceback im Server-Fenster und als fehlgeschlagene Anfrage in der
+Oberfläche. Verschärfend: die Transaktion blieb offen, bis der Aufrufer
+committete oder die Verbindung schloss; jede Leseanfrage hielt also
+ihrerseits eine Schreibsperre.
+
+- Das Fall-Schema trägt jetzt eine **Fassungsnummer** (`schema_version` in
+  `meta`). Geschrieben wird nur, wenn sie abweicht: **einmal je Fall statt
+  einmal je Anfrage**. Der Normalfall ist reines Lesen und kollidiert mit
+  nichts.
+- `PRAGMA busy_timeout` wird ausdrücklich gesetzt, damit eine belegte
+  Sperre abgewartet statt sofort aufgegeben wird.
+- Der Journal-Modus wird nur umgestellt, wenn er noch nicht auf WAL steht —
+  der Wechsel verlangt kurz exklusiven Zugriff, das Auslesen nicht.
+- Scheitert die Aktualisierung an einer Sperre, gilt sie als **Wartung**
+  und wird vertagt: die laufende Anfrage wird davon nicht mitgerissen. Bei
+  einer noch leeren Datei muss sie dagegen gelingen, dort wird der Fehler
+  durchgereicht.
+
+Bestehende Fälle brauchen nichts: sie stehen auf Fassung 0, werden beim
+nächsten Öffnen einmal nachgezogen und danach gestempelt.
+
 ## [0.1.0] — 2026-08-05
 
 **Erste öffentliche Veröffentlichung.**
