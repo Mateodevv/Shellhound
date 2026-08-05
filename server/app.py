@@ -35,7 +35,7 @@ from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
 from server.config import Config
-from server.engines import (cmsinventory, detect, logindex, sqldump,
+from server.engines import (cmsinventory, detect, logindex, sqldump, yarascan,
                             webrootdiff, webshell)
 from server.events import hub
 from server.jobs import manager
@@ -412,6 +412,15 @@ def create_app(config: Config) -> FastAPI:
                 r["result"] = {}
         return {"entries": rows}
 
+    @app.get("/api/yara", dependencies=[auth])
+    def yara_status():
+        """Whether the analyst's own rules can run, and out of what.
+
+        Distinguishes the two silences that look alike: no YARA installed
+        versus no rules placed. "No YARA findings" must never be ambiguous
+        between "the rules found nothing" and "there were no rules"."""
+        return yarascan.status(config.workspace)
+
     class DetectBody(BaseModel):
         folder: str
 
@@ -541,6 +550,16 @@ def create_app(config: Config) -> FastAPI:
                             "job": manager.submit(case_dir, "webshell", run_shell)})
             started.append({"kind": "cms",
                             "job": manager.submit(case_dir, "cms", run_cms)})
+
+            # The analyst's OWN rules, if there are any. Queued as its own
+            # job so a slow rule set never holds up the shipped scan.
+            if yarascan.status(config.workspace).get("rules"):
+                def run_yara(ctx, paths=paths, case_dir=case_dir):
+                    return yarascan.scan(case_dir, paths,
+                                         workspace=config.workspace, ctx=ctx)
+
+                started.append({"kind": "yara",
+                                "job": manager.submit(case_dir, "yara", run_yara)})
 
         dumps = by_kind.get("sql_dump", [])
         if dumps:

@@ -35,6 +35,12 @@ dependencies = [
   "maxminddb>=2.5",
 ]
 
+[project.optional-dependencies]
+# YARA is the analyst's OWN rules, and not everyone brings some. Without the
+# package everything else works unchanged and the interface says which of the
+# two silences it is -- no rules, or no YARA.
+yara = ["yara-python>=4.3"]
+
 [project.urls]
 Homepage = "https://github.com/Mateodevv/shellhound"
 Changelog = "https://github.com/Mateodevv/shellhound/blob/main/CHANGELOG.md"
