@@ -142,18 +142,18 @@ export function Evidence({ slug, onClosed }: {
       </Section>
 
       <Section
-        title="Evidence automatisch erkennen"
+        title={tr('evidence.detect')}
         sub={tr('evidence.detect.hint')}
       >
         <div className="flex gap-2">
           <input
             value={detectFolder}
             onChange={(e) => setDetectFolder(e.target.value)}
-            placeholder="z.B. D:\Evidence\musterfirma"
+            placeholder={tr('evidence.detect.placeholder')}
             className="mono flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button onClick={() => detect.mutate()} disabled={!detectFolder.trim() || detect.isPending}>
-            <FolderSearch size={14} /> Durchsuchen
+            <FolderSearch size={14} /> {tr('evidence.scan')}
           </Button>
         </div>
         {detected && (
@@ -370,7 +370,7 @@ function CloseCase({ slug, caseName, onClosed }: {
               onClick={() => close.mutate()}>
               <Archive size={14} /> {close.isPending ? 'Archiviere…' : tr('evidence.closeFinal')}
             </Button>
-            <Button variant="ghost" onClick={() => setAsking(false)}>Abbrechen</Button>
+            <Button variant="ghost" onClick={() => setAsking(false)}>{tr('common.cancel')}</Button>
           </div>
           {close.isError && (
             <div className="text-[12px] text-[var(--danger-text)]">
@@ -391,6 +391,7 @@ const JOB_LABEL: Record<string, string> = {
 }
 
 function JobRow({ job, slug }: { job: Job; slug: string }) {
+  const tr = useT()
   const cancel = useMutation({
     mutationFn: () => post(`/api/cases/${slug}/jobs/${job.id}/cancel`),
   })
@@ -437,7 +438,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
           )}
         </div>
         {(job.state === 'running' || job.state === 'queued') && (
-          <Button variant="ghost" onClick={() => cancel.mutate()}>Abbrechen</Button>
+          <Button variant="ghost" onClick={() => cancel.mutate()}>{tr('common.cancel')}</Button>
         )}
       </div>
     </Card>

@@ -206,13 +206,13 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           <table className="w-full border-collapse text-[13px]">
             <thead>
               <tr className="border-b border-[var(--line)] text-left text-[11px] uppercase tracking-wider text-[var(--muted)]">
-                <th className="px-4 py-2">Login</th>
-                <th className="px-2 py-2">E-Mail</th>
+                <th className="px-4 py-2">{tr('csv.login')}</th>
+                <th className="px-2 py-2">{tr('csv.email')}</th>
                 <th className="px-2 py-2">{tr('database.signalsColumn')}</th>
-                <th className="px-2 py-2">Registriert</th>
-                <th className="px-2 py-2">Letzter Login</th>
+                <th className="px-2 py-2">{tr('csv.registered')}</th>
+                <th className="px-2 py-2">{tr('csv.lastLogin')}</th>
                 <th className="px-2 py-2">Hash</th>
-                <th className="px-2 py-2">Herkunft</th>
+                <th className="px-2 py-2">{tr('table.origin')}</th>
                 <th className="w-24 px-3 py-2" />
               </tr>
             </thead>
@@ -394,7 +394,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
                     !t2.rows && 'text-[var(--sev-low)]')}>
                     {t2.rows ? formatCount(t2.rows) : (
                       <Tooltip hint={tr('database.emptyTable')}>
-                        <span>leer</span>
+                        <span>{tr('database.empty')}</span>
                       </Tooltip>
                     )}
                   </td>
@@ -407,7 +407,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
           </table>
           {!tables.length && (
             <div className="px-4 py-6 text-center text-[13px] text-[var(--muted)]">
-              Keine Tabelle entspricht Filter/Suche.
+              {tr('database.noTableMatch')}
             </div>
           )}
         </Card>

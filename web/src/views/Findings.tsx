@@ -298,7 +298,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
         <Tooltip title="Artefakte"
           body={tr('findings.title.body')}
           hint={tr('findings.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">Artefakte</h1>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.findings')}</h1>
         </Tooltip>
         {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
            ['2', 'Low', 'var(--sev-low)'], ['3', 'Info', 'var(--muted)']] as const
@@ -343,7 +343,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           </Tooltip>
         )})}
         <div className="ml-auto">
-          <SearchInput value={search} onChange={setSearch} placeholder="Regel, Pfad, Evidence…" />
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
       </div>
 
@@ -359,7 +359,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               setHiddenTriage(new Set())
               setHiddenSource(new Set())
             }}>
-            alles einblenden
+            {tr('findings.showAll')}
           </button>
         </div>
       )}
@@ -370,7 +370,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
             {checked.size} Artefakt{checked.size > 1 ? 'e' : ''} markiert
           </span>
           <Button variant="primary" onClick={() => bulkTriage('confirmed')}>
-            <Check size={14} /> True Positive &amp; sammeln
+            <Check size={14} /> {tr('artifact.truePositiveCollect')}
           </Button>
           <Button onClick={() => bulkTriage('reviewed')}>
             <Eye size={14} /> Gesichtet
@@ -405,12 +405,12 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
               if (filtering) setCollapsedCats(allOpen ? new Set(allIds) : new Set())
               else setExpandedCats(allOpen ? new Set() : new Set(allIds))
             }}>
-            alle auf-/zuklappen
+            {tr('findings.toggleAll')}
           </button>
           <span className="opacity-60">·</span>
           <span>
-            Tastatur: <kbd className="rounded bg-[var(--panel-2)] px-1">j</kbd>/<kbd className="rounded bg-[var(--panel-2)] px-1">k</kbd> navigieren,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> markieren,{' '}
+            {tr('findings.keys')}: <kbd className="rounded bg-[var(--panel-2)] px-1">j</kbd>/<kbd className="rounded bg-[var(--panel-2)] px-1">k</kbd> {tr('findings.keys.navigate')},{' '}
+            <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> {tr('findings.keys.check')},{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">c</kbd> True Positive,{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">d</kbd> False Positive,{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">Enter</kbd> Details
@@ -425,7 +425,7 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
       <div ref={parentRef}
         className="min-h-0 overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
         {items.length === 0 && (
-          <EmptyState icon={<Bug size={36} />} title="Keine Artefakte"
+          <EmptyState icon={<Bug size={36} />} title={tr('findings.empty.title')}
             sub={data ? tr('findings.empty') : 'Lade…'} />
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>

@@ -61,7 +61,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         <div>
           <h1 className="text-xl font-bold tracking-tight">SHELLHOUND</h1>
           <p className="text-[13px] text-[var(--muted)]">
-            Webserver-Forensik — Findings · Actors · IOC Box · CMS · Database
+            {tr('start.tagline')}
           </p>
         </div>
         <div className="ml-auto">
@@ -76,7 +76,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
       )}
 
       <div className="flex flex-col gap-2">
-        {isLoading && <div className="text-[var(--muted)]">Lade Cases…</div>}
+        {isLoading && <div className="text-[var(--muted)]">{tr('common.loading')}</div>}
         {data?.cases.map((c, i) => (
           <Card
             key={c.slug}
@@ -119,21 +119,21 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) create.mutate() }}
-                placeholder="Case-Name, z.B. Musterfirma GmbH — Joomla"
+                placeholder={tr('start.name.placeholder')}
                 className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 outline-none focus:border-[var(--accent)]/70"
               />
               <input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="Referenz / Ticket (optional)"
+                placeholder={tr('start.reference.placeholder')}
                 className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
               />
               <div className="flex gap-2">
                 <Button variant="primary" disabled={!name.trim() || create.isPending}
                   onClick={() => create.mutate()}>
-                  Case anlegen
+                  {tr('start.create')}
                 </Button>
-                <Button variant="ghost" onClick={() => setCreating(false)}>Abbrechen</Button>
+                <Button variant="ghost" onClick={() => setCreating(false)}>{tr('common.cancel')}</Button>
               </div>
               {create.isError && (
                 <div className="text-xs text-[var(--danger-text)]">{String(create.error)}</div>
@@ -143,10 +143,10 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         ) : (
           <>
             <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus size={15} /> Neuer Case
+              <Plus size={15} /> {tr('start.newCase')}
             </Button>
             <Button onClick={() => setShowImport(!showImport)}>
-              <ArchiveRestore size={15} /> Fall importieren
+              <ArchiveRestore size={15} /> {tr('start.importCase')}
             </Button>
           </>
         )}

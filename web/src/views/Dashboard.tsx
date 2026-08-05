@@ -58,7 +58,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
             onClick={() => gotoView('evidence')}
             className="inline-flex shrink-0 items-center gap-1 text-[13px] font-semibold text-[var(--accent-text)] hover:underline cursor-pointer"
           >
-            Zu Evidence <ArrowRight size={14} />
+            {tr('dashboard.toEvidence')} <ArrowRight size={14} />
           </button>
         </Card>
       )}

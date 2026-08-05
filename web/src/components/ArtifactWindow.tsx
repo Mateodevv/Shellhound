@@ -230,10 +230,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     <span>{relativeTime(file.mtime)}</span>
                   </Tooltip>
                 </MetaCell>
-                <MetaCell label="CMS-Guard" explain={tr('field.cms_guard')}>
+                <MetaCell label={tr('artifact.cmsGuard')} explain={tr('field.cms_guard')}>
                   {file.cms_guard == null ? '—' : file.cms_guard ? (
                     <span className="flex items-center gap-1 text-[var(--ok)]">
-                      <ShieldCheck size={12} /> vorhanden
+                      <ShieldCheck size={12} /> {tr('artifact.guard.present')}
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-[var(--sev-high)]">
@@ -241,7 +241,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     </span>
                   )}
                 </MetaCell>
-                <MetaCell label="Upload-Ordner" explain={tr('field.upload_dir')}>
+                <MetaCell label={tr('artifact.uploadDir')} explain={tr('field.upload_dir')}>
                   {file.in_upload_dir
                     ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
                     : 'nein'}
@@ -251,7 +251,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     <MetaCell label="SHA-256" explain={tr('field.sha256')}>
                       <span className="mono flex items-center gap-2 break-all text-[11px]">
                         <span className="min-w-0 flex-1">{file.sha256}</span>
-                        <CopyButton value={file.sha256} label="Hash kopieren"
+                        <CopyButton value={file.sha256} label={tr('copy.hash')}
                           className="shrink-0" />
                       </span>
                     </MetaCell>
@@ -331,14 +331,14 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {kind === 'client' && actor && (
               <div className="flex flex-col gap-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <MetaCell label="Requests">{formatCount(actor.actor.requests)}</MetaCell>
+                  <MetaCell label={tr('table.requests')}>{formatCount(actor.actor.requests)}</MetaCell>
                   <MetaCell label={tr('field.period')}>
                     {formatDay(actor.actor.first_epoch, actor.actor.tz)} → {formatDay(actor.actor.last_epoch, actor.actor.tz)}
                   </MetaCell>
-                  <MetaCell label="Fehler 4xx/5xx">
+                  <MetaCell label={tr('artifact.errors')}>
                     {formatCount(actor.actor.err4 + actor.actor.err5)}
                   </MetaCell>
-                  <MetaCell label="Login-POSTs">
+                  <MetaCell label={tr('artifact.loginPosts')}>
                     {formatCount(actor.actor.login_posts)}
                     {actor.actor.login_redirects > 0 &&
                       <span className="text-[var(--sev-high)]"> · {actor.actor.login_redirects} Redirects!</span>}
@@ -425,7 +425,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 <MetaCell label="CMS">{ctx.table.cms || '—'}</MetaCell>
                 {ctx.table.col_list && (
                   <div className="col-span-2">
-                    <MetaCell label="Spalten im Dump">
+                    <MetaCell label={tr('artifact.columnsInDump')}>
                       <span className="mono break-all text-[11px]">{ctx.table.col_list}</span>
                     </MetaCell>
                   </div>
@@ -437,7 +437,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 <MetaCell label="Statements">{formatCount(ctx.dump.statements)}</MetaCell>
                 <MetaCell label={tr('artifact.size')}>{formatBytes(ctx.dump.size)}</MetaCell>
                 <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
-                <MetaCell label="Erstellt">{ctx.dump.meta?.created || '—'}</MetaCell>
+                <MetaCell label={tr('database.fact.created')}>{ctx.dump.meta?.created || '—'}</MetaCell>
               </div>
             )}
           </div>
