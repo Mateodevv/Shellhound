@@ -9,14 +9,14 @@ description = "Web-native DFIR workbench for webserver compromises (WordPress/Jo
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-# 3.10 ist die Untergrenze, nicht Geschmackssache: der Code benutzt
-# durchgehend `X | None` als Typangabe (PEP 604), und das ist ab 3.10 zur
-# Laufzeit gültig.
+# 3.10 is the floor, not a matter of taste: the code uses `X | None` as a
+# type annotation throughout (PEP 604), and that is valid at runtime from
+# 3.10 on.
 requires-python = ">=3.10"
 authors = [{ name = "SHELLHOUND contributors" }]
 keywords = ["dfir", "forensics", "incident-response", "webshell", "wordpress", "joomla"]
-# Kein License-Classifier: seit PEP 639 zählt der `license`-Ausdruck oben,
-# und setuptools weist die alte Doppelung inzwischen zurück.
+# No license classifier: since PEP 639 the `license` expression above is
+# what counts, and setuptools now rejects the old duplication.
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Web Environment",
@@ -29,8 +29,9 @@ classifiers = [
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
-  # Länderzuordnung aus einer LOKALEN Datenbank. Ohne das Paket läuft
-  # alles, nur ohne Flaggen — deshalb steht es hier und nicht in [optional].
+  # Country attribution from a LOCAL database. Without the package
+  # everything still works, only without flags -- hence here and not in
+  # [optional].
   "maxminddb>=2.5",
 ]
 
@@ -48,12 +49,13 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["server*"]
 
-# Die gebaute Oberfläche gehört ins Paket, damit eine Installation ohne
-# Node-Toolchain auskommt. Sie muss dafür VOR dem Bauen nach server/static
-# kopiert werden:
+# The built interface belongs in the package so that an installation gets by
+# without a Node toolchain. For that it has to be copied to server/static
+# BEFORE building:
 #     cd web && npm ci && npm run build && cd ..
 #     cp -r web/dist server/static      # PowerShell: Copy-Item -Recurse
 #     pip install .
-# Im Repo selbst ist das nicht nötig — dort findet der Server web/dist.
+# Inside the repository this is unnecessary -- there the server finds
+# web/dist.
 [tool.setuptools.package-data]
 "server" = ["static/**/*"]
