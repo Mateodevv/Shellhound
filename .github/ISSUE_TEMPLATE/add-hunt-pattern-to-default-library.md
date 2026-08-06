@@ -1,28 +1,11 @@
 ---
 name: Add Hunt Pattern to default Library
 about: Describe this issue template's purpose here.
-title: ''
-labels: ''
+title: "[Hunt Pattern]"
+labels: enhancement
 assignees: Mateodevv
 
 ---
-
----
-name: 🎯 New Hunt Pattern
-about: Submit a new hunt pattern for detection, analysis, or monitoring
-title: "[PATTERN] - <Insert Pattern Name Here>"
-labels: 'hunt-pattern, enhancement'
-assignees: ''
----
-
-<!-- 
-Thank you for submitting a new Hunt Pattern! 
-Please fill out the sections below to provide the necessary context. 
--->
-
-### 📛 Name of the Hunt Pattern
-<!-- Replace the text below with the exact name of the pattern -->
-**[Insert Pattern Name]**
 
 ---
 
