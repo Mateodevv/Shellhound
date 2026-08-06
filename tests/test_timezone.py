@@ -16,6 +16,7 @@ The two failures guarded against:
     guess wearing the clothes of a measurement.
 """
 import unittest
+from pathlib import Path
 
 from server.chain import iso, local, offset_label
 
@@ -84,6 +85,81 @@ class RenderTests(unittest.TestCase):
     def test_nothing_renders_as_a_dash(self):
         self.assertEqual("—", iso(None, 7200))
         self.assertEqual("—", iso(0, 7200))
+
+
+class ChainZoneTests(unittest.TestCase):
+    """What the chronology CALLS the zone its events are in.
+
+    This is where it went wrong once already: the label was read from a key
+    the overview never returned, so it said "UTC" for every case while the
+    events were shifted by their own offsets. Silent, and wrong by whatever
+    the offset was.
+
+    And the harder half: there is often no single offset. One Austrian
+    server crossing a daylight-saving change writes +0100 and +0200 in the
+    same case. Naming one of them would be wrong by an hour for the rest, so
+    none is named and the mixture is stated instead."""
+
+    def _case(self, *lines):
+        import tempfile
+        from server import db
+        from server.engines import logindex
+        case = Path(tempfile.mkdtemp(prefix="shellhound-tzchain-"))
+        db.connect(case).close()
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-tzlog-"))
+        (logs / "a.log").write_text("".join(lines), encoding="utf-8")
+        logindex.build(case, [str(logs)])
+        return case
+
+    @staticmethod
+    def _line(when, offset, path="/a"):
+        return (f'203.0.113.7 - - [{when} {offset}] "GET {path} HTTP/1.1" '
+                f'200 5 "-" "x"\n')
+
+    def test_one_offset_is_named(self):
+        from server.chain import case_chain
+        case = self._case(self._line("10/Jun/2026:22:58:11", "+0200"))
+        chain = case_chain(case, "en", "log")
+        self.assertEqual("UTC+02:00", chain["zone"])
+        self.assertFalse(chain["tz_mixed"])
+
+    def test_a_log_already_in_utc_says_utc(self):
+        from server.chain import case_chain
+        case = self._case(self._line("10/Jun/2026:22:58:11", "+0000"))
+        self.assertEqual("UTC", case_chain(case, "en", "log")["zone"])
+
+    def test_a_negative_offset_is_named(self):
+        from server.chain import case_chain
+        case = self._case(self._line("10/Jun/2026:22:58:11", "-0500"))
+        self.assertEqual("UTC-05:00", case_chain(case, "en", "log")["zone"])
+
+    def test_two_offsets_name_none_and_say_so(self):
+        """The daylight-saving case, which is not exotic: every European
+        server produces it twice a year."""
+        from server.chain import case_chain
+        case = self._case(self._line("10/Jun/2026:22:58:11", "+0200"),
+                          self._line("10/Jan/2026:22:58:11", "+0100", "/b"))
+        chain = case_chain(case, "en", "log")
+        self.assertTrue(chain["tz_mixed"])
+        self.assertEqual("", chain["zone"])
+        self.assertEqual(["UTC+01:00", "UTC+02:00"], chain["tz_offsets"])
+
+    def test_utc_mode_is_never_mixed(self):
+        """That is what it is for: one comparable timeline whatever the
+        sources did."""
+        from server.chain import case_chain
+        case = self._case(self._line("10/Jun/2026:22:58:11", "+0200"),
+                          self._line("10/Jan/2026:22:58:11", "+0100", "/b"))
+        chain = case_chain(case, "en", "utc")
+        self.assertFalse(chain["tz_mixed"])
+        self.assertEqual("UTC", chain["zone"])
+
+    def test_the_index_reports_the_offsets_it_saw(self):
+        from server.engines import logindex
+        case = self._case(self._line("10/Jun/2026:22:58:11", "+0200"),
+                          self._line("10/Jan/2026:22:58:11", "+0100", "/b"))
+        self.assertEqual([3600, 7200],
+                         logindex.overview(case)["tz_offsets"])
 
 
 def _seconds(stamp):

@@ -9,6 +9,7 @@ import { formatCount, formatDay, type EvidenceRoot } from '../format'
 import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
 import { CaseChain } from '../components/CaseChain'
+import { LogCoverage } from '../components/LogCoverage'
 import { GeoBanner } from '../components/GeoBanner'
 import { EnrichmentBanners } from '../components/SetupBanners'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
@@ -108,6 +109,12 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
             onClick={() => gotoView('database')} />
         </div>
       </Section>
+
+      {/* Above the chronology, not below: it says how much of the period
+          the events below could have come from at all. Reading the order
+          without knowing six hours are missing is reading a sentence with a
+          word cut out and not noticing. */}
+      <LogCoverage slug={slug} />
 
       <CaseChain slug={slug}
         onOpen={(artifact, kind) => setSelected({

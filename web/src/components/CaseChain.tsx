@@ -154,9 +154,16 @@ export function CaseChain({ slug, onOpen, onTrace }: {
               chronology whose times do not state their zone is one nobody
               can quote. */}
           {data.events.length > 0 && (
-            <span className="text-[11.5px] text-[var(--muted)]">
-              {tr('time.zone', { zone: data.zone })}
-            </span>
+            data.tz_mixed
+              ? <Tooltip hint={tr('time.mixed.hint')}>
+                  <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--sev-low)]">
+                    <AlertTriangle size={12} />
+                    {tr('time.mixed', { zones: data.tz_offsets.join(', ') })}
+                  </span>
+                </Tooltip>
+              : <span className="text-[11.5px] text-[var(--muted)]">
+                  {tr('time.zone', { zone: data.zone })}
+                </span>
           )}
           <Tooltip title={tr('chain.clock')}
             body={tr('chain.clock.body')}

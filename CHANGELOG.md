@@ -6,6 +6,40 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — the chronology named the wrong time zone, always
+
+The zone label shipped one release ago read an `overview()` key that
+**never existed**, so `span_tz` was always 0 and the chronology said "Times
+in UTC" for every case — while the events were shifted by their own offsets.
+Wrong by whatever the offset was, in the one place that exists to state it.
+
+The index now records **every** UTC offset it saw, and the chronology names
+it only when there is exactly one.
+
+**There often is not one.** A single server that ran through a daylight-saving
+change writes `+0100` and `+0200` in the same case — every European server
+does that twice a year — and several servers write anything. Naming one of
+them would be wrong by an hour for the rest, so none is named: the chronology
+says *mixed offsets*, lists them, and points at UTC as the reading that can be
+compared. Which is what the UTC mode is for.
+
+### Changed — log coverage moved above the chronology
+
+It had an endpoint and no interface: the only way it reached the analyst was
+as sentences folded into the chronology's gaps. It is now its own block
+directly **above** the chronology, because it says how much of the period the
+events below could have come from at all — reading the order of events without
+knowing that fourteen hours of log are missing is reading a sentence with a
+word cut out and not noticing.
+
+The notes are no longer duplicated into the chain's `gaps`. `gaps` keeps what
+only the chronology knows: no confirmed artifact yet, no measured time, the
+first event sitting on the edge of the log period.
+
+Still no findings and no severities. A quiet window and a removed window look
+identical from here — a maintenance night, a rotation and a firewall change
+all produce the same hole — so it points at the question and never answers it.
+
 ### Changed — a switched-off rule now empties the work list too
 
 Muting a rule used to stop it running and nothing else: the artifacts it had

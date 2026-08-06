@@ -137,7 +137,13 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
 
     off_logs, off_dump = offsets["logs"], offsets["dump"]
     overview = logindex.overview(case_dir) or {}
-    span_tz = int(overview.get("tz") or 0)
+    # EVERY offset the logs carry, not one. A single server that ran through
+    # a DST change writes two -- an Austrian log crosses +0100/+0200 twice a
+    # year -- and several servers in one case can write anything. Labelling
+    # the whole chronology with one of them would be wrong by an hour for the
+    # rest, and wrong in the way nobody checks.
+    tz_offsets = [int(o) for o in (overview.get("tz_offsets") or [])]
+    span_tz = tz_offsets[0] if len(tz_offsets) == 1 else 0
     span_first = local(overview.get("first_epoch"),
                        0 if tz_mode == "utc" else span_tz)
     if span_first is not None:
@@ -296,7 +302,11 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
     # above: something the case cannot show. A window somebody removed and a
     # quiet night look identical from here, so this points at the question
     # rather than answering it.
-    gaps.extend(coverage.report(case_dir, lang, tz_mode)["notes"])
+    # NOT the coverage notes. They stand in their own block directly above
+    # the chronology now -- what the logs cannot show belongs before the
+    # sequence built out of them, and once is enough. `gaps` keeps what only
+    # the chain knows: no confirmed artifact yet, no measured time, the
+    # first event sitting on the edge of the log period.
     # A set offset is part of the statement and therefore stands with the
     # limitations -- whoever reads the chain has to know that the clocks were
     # turned, and by whom.
@@ -319,5 +329,13 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         # place that says what they mean, and a chronology whose times do
         # not say that is a chronology nobody can quote.
         "tz_mode": tz_mode,
-        "zone": "UTC" if tz_mode == "utc" else offset_label(span_tz),
+        # What the times above are in. In log time a case is only
+        # unambiguous when the logs carry ONE offset; with several, the
+        # honest answer is to name them and say that UTC is the reading
+        # that can be compared.
+        "zone": ("UTC" if tz_mode == "utc"
+                 else offset_label(span_tz) if len(tz_offsets) <= 1
+                 else ""),
+        "tz_offsets": [offset_label(o) for o in tz_offsets],
+        "tz_mixed": tz_mode != "utc" and len(tz_offsets) > 1,
     }

@@ -149,19 +149,39 @@ class FileAnomalyTests(unittest.TestCase):
 
 
 class ChainIntegrationTests(unittest.TestCase):
+    """Coverage stands ABOVE the chronology, not inside it.
 
-    def test_the_notes_reach_the_chronology_gaps(self):
+    It used to be folded into the chain's `gaps`, which put the same
+    sentences on screen twice once the block above existed. The two answer
+    different questions and each says its own thing once: coverage says how
+    much of the period the logs could describe at all, `gaps` says what the
+    chain itself cannot show."""
+
+    def _case(self):
         case = Path(tempfile.mkdtemp(prefix="shellhound-covchain-"))
         logs = Path(tempfile.mkdtemp(prefix="shellhound-covchainlogs-"))
         db.connect(case).close()
         rows = ['5 "-" "curl"\n'] + [line(BASE + i * 5) for i in range(60)]
         (logs / "cut.log").write_text("".join(rows), encoding="utf-8")
         logindex.build(case, [str(logs)])
+        return case
 
+    def test_the_note_is_reported_by_coverage(self):
+        notes = coverage.report(self._case())["notes"]
+        self.assertTrue(any("cut.log" in n for n in notes),
+                        "coverage did not report the truncated file")
+
+    def test_it_is_not_repeated_in_the_chronology_gaps(self):
         from server.chain import case_chain
-        gaps = case_chain(case)["gaps"]
-        self.assertTrue(any("cut.log" in g for g in gaps),
-                        "a coverage note did not reach the chronology")
+        gaps = case_chain(self._case())["gaps"]
+        self.assertFalse(any("cut.log" in g for g in gaps),
+                         "the coverage note is on screen twice")
+
+    def test_the_chain_keeps_the_gaps_only_it_knows(self):
+        """Removing the coverage notes must not have emptied `gaps`: the
+        statements the chronology makes about itself still belong there."""
+        from server.chain import case_chain
+        self.assertTrue(case_chain(self._case())["gaps"])
 
 
 if __name__ == "__main__":
