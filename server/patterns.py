@@ -119,6 +119,10 @@ def load(workspace):
             "pattern": str(row["pattern"]).strip(),
             "label": str(row.get("label") or "").strip(),
             "note": str(row.get("note") or "").strip(),
+            # The long form. `note` is a tag beside the name and has to stay
+            # short; this is where "what a hit here actually proves" goes,
+            # which is the sentence the analyst needs six months later.
+            "about": str(row.get("about") or "").strip(),
             "added": str(row.get("added") or ""),
             "source": "own",
         })
@@ -190,7 +194,7 @@ def _validate(pattern):
     return pattern
 
 
-def add(workspace, pattern, label="", note=""):
+def add(workspace, pattern, label="", note="", about=""):
     pattern = _validate(pattern)
     patterns = load(workspace)
     # Checked against BOTH halves, including switched-off bundled entries: a
@@ -203,13 +207,15 @@ def add(workspace, pattern, label="", note=""):
                                "err.patternKnown")
     entry = {"id": uuid.uuid4().hex[:12], "pattern": pattern,
              "label": str(label or "").strip(), "note": str(note or "").strip(),
+             "about": str(about or "").strip(),
              "added": datetime.now().isoformat(timespec="seconds")}
     patterns.append(entry)
     save(workspace, patterns)
     return {**entry, "source": "own", "enabled": True}
 
 
-def update(workspace, pattern_id, pattern=None, label=None, note=None):
+def update(workspace, pattern_id, pattern=None, label=None, note=None,
+           about=None):
     if any(p["id"] == pattern_id for p in bundled()):
         # Editing it would keep the id and the CVE while changing what they
         # point at, so the same identifier would mean two things on two
@@ -227,6 +233,8 @@ def update(workspace, pattern_id, pattern=None, label=None, note=None):
             entry["label"] = str(label).strip()
         if note is not None:
             entry["note"] = str(note).strip()
+        if about is not None:
+            entry["about"] = str(about).strip()
         save(workspace, patterns)
         return entry
     raise PatternError("Unknown pattern.", "err.patternUnknown")
@@ -250,8 +258,8 @@ def remove(workspace, pattern_id):
 
 def import_text(workspace, text):
     """Read in a list: either JSON (as the export writes it) or one line per
-    pattern, optionally `pattern | label`. Known patterns are skipped, not
-    duplicated."""
+    pattern, optionally `pattern | label | note`. Known patterns are skipped,
+    not duplicated. Only the JSON form carries a description."""
     text = str(text or "").strip()
     if not text:
         return {"added": 0, "skipped": 0, "invalid": 0}
@@ -265,10 +273,10 @@ def import_text(workspace, text):
             data = data.get("patterns", [])
         for row in data if isinstance(data, list) else []:
             if isinstance(row, str):
-                rows.append((row, "", ""))
+                rows.append((row, "", "", ""))
             elif isinstance(row, dict):
                 rows.append((row.get("pattern", ""), row.get("label", ""),
-                             row.get("note", "")))
+                             row.get("note", ""), row.get("about", "")))
     else:
         for line in text.splitlines():
             line = line.strip()
@@ -276,14 +284,17 @@ def import_text(workspace, text):
             # explain where its patterns come from.
             if not line or line.startswith("#"):
                 continue
+            # The line form stops at three fields. A description is prose and
+            # would run into the separator; whoever wants one exports JSON,
+            # which is what the export writes anyway.
             parts = [p.strip() for p in line.split("|", 2)]
             rows.append((parts[0], parts[1] if len(parts) > 1 else "",
-                         parts[2] if len(parts) > 2 else ""))
+                         parts[2] if len(parts) > 2 else "", ""))
 
     added = skipped = invalid = 0
-    for pattern, label, note in rows:
+    for pattern, label, note, about in rows:
         try:
-            add(workspace, pattern, label, note)
+            add(workspace, pattern, label, note, about)
             added += 1
         except PatternError as e:
             if e.key == "err.patternKnown":

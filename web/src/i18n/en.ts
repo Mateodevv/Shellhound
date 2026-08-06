@@ -910,4 +910,6 @@ export const en: Record<string, string> = {
   'hunt.bundled.hint': 'Ships with SHELLHOUND and is identical on every installation of this version, which is what makes it citable in a report. Read-only: switch it off if you do not want it.',
   'hunt.disable.hint': 'Switch off for this workspace. It stays in the list and can be switched back on — a shipped pattern cannot be deleted, it would return on the next start.',
   'hunt.enable.hint': 'Switch back on. It runs with the next hunt.',
+  'hunt.field.about': 'Description',
+  'hunt.field.about.placeholder': 'What a hit here proves — and what it does not. The sentence you will want in six months.',
 }
