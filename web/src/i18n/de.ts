@@ -976,4 +976,13 @@ export const de: Record<string, string> = {
   'time.zone': 'Zeiten in {zone}',
   'findings.muted': '{n} Artefakt(e) werden nicht gezeigt: jede Regel, die sie benannt hat, ist abgeschaltet. Gelöscht wurde nichts — schalte eine Regel wieder ein, und sie sind samt Triage zurück.',
   'findings.muted.cta': 'Regeln',
+  'time.mixed': 'Gemischte Offsets: {zones}',
+  'time.mixed.hint': 'Diese Logs tragen mehr als einen UTC-Offset — ein Server, der durch eine Sommerzeitumstellung lief, schreibt zwei, mehrere Server schreiben beliebig viele. In Log-Zeit gibt es dann keine einzelne Zone für die Chronologie, also wird auch keine genannt. Schalte auf UTC, um die Ereignisse auf eine vergleichbare Achse zu legen.',
+  'coverage.title': 'Lücken in der Abdeckung',
+  'coverage.body': 'Wo die Logs schweigen, und wo eine Datei aussieht, als wäre etwas herausgenommen worden. Daraus ist die Chronologie darunter gebaut — eine Lücke hier ist eine Strecke, die sie nicht beschreiben kann.',
+  'coverage.hint': 'Nichts davon beweist Manipulation. Eine stille Strecke kann eine Wartungsnacht sein, eine Rotation oder eine Firewall-Änderung, und von hier aus sehen alle gleich aus. Deshalb trägt das keine Severity und erzeugt keine Funde: es zeigt auf die Frage, die Antwort ist deine.',
+  'coverage.window': 'keine Anfrage über {span}',
+  'coverage.file.truncated': 'die erste Zeile ist kein ganzer Eintrag — der Anfang fehlt',
+  'coverage.file.stale': 'die Datei ist älter als ihr eigener letzter Eintrag',
+  'coverage.disclaimer': '{n} Beobachtung(en). Keine davon beweist für sich etwas — sie sagen, wo zu fragen ist.',
 }

@@ -23,6 +23,7 @@ The index is derived data: it can always be rebuilt from the evidence, a
 stale one refuses to answer (sources fingerprint), and it is excluded from
 the case archive.
 """
+import json as _json
 import os
 import re
 import sqlite3
@@ -421,7 +422,6 @@ def build(case_dir, targets, ctx=None, workspace=None):
         # --- actors + first-seen day ------------------------------------
         if ctx is not None:
             ctx.progress(0.88, "Computing actor statistics…")
-        import json as _json
         ip_by_id = {i: ip for ip, i in ips.items()}
         actor_rows = []
         for ip_id, a in actors.items():
@@ -505,6 +505,14 @@ def build(case_dir, targets, ctx=None, workspace=None):
             ("lines", str(stats["lines"])),
             ("clients", str(stats["clients"])),
             ("unparsed", str(stats["unparsed"])),
+            # Which UTC offsets appear in these logs. Usually one, but a
+            # server that ran through a DST change writes two -- an Austrian
+            # log crosses +0100/+0200 twice a year -- and several servers in
+            # one case can write anything. Collected once here, because the
+            # alternative is a DISTINCT over every request row later.
+            ("tz_offsets", _json.dumps(sorted(
+                r[0] for r in conn.execute(
+                    "SELECT DISTINCT tz FROM requests WHERE tz IS NOT NULL")))),
         ])
         conn.commit()
     finally:
@@ -1317,10 +1325,17 @@ def overview(case_dir):
             "SELECT min(first_epoch), max(last_epoch) FROM actors").fetchone()
         alerted = conn.execute(
             "SELECT count(DISTINCT ip_id) FROM alerts").fetchone()[0]
+        try:
+            offsets = sorted(set(_json.loads(meta.get("tz_offsets") or "[]")))
+        except ValueError:
+            offsets = []
         return {"lines": int(meta.get("lines", 0) or 0),
                 "clients": int(meta.get("clients", 0) or 0),
                 "unparsed": int(meta.get("unparsed", 0) or 0),
                 "alerted_clients": alerted,
+                # Every UTC offset the logs carry. A case is only unambiguous
+                # in log time when there is exactly one.
+                "tz_offsets": offsets,
                 "first_epoch": first, "last_epoch": last}
     finally:
         conn.close()

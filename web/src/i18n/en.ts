@@ -978,4 +978,13 @@ export const en: Record<string, string> = {
   'time.zone': 'Times in {zone}',
   'findings.muted': '{n} artifact(s) are not shown: every rule that named them is switched off. Nothing was deleted — switch a rule back on and they return, with their triage.',
   'findings.muted.cta': 'Rules',
+  'time.mixed': 'Mixed offsets: {zones}',
+  'time.mixed.hint': 'These logs carry more than one UTC offset — a server that ran through a daylight-saving change writes two, and several servers write anything. In log time there is no single zone for the chronology, so none is named. Switch to UTC to put the events on one comparable timeline.',
+  'coverage.title': 'Gaps in the coverage',
+  'coverage.body': 'Where the logs are silent, and where a file looks like something was taken out of it. This is what the chronology below was built from — a gap here is a stretch it cannot describe.',
+  'coverage.hint': 'None of this proves tampering. A quiet window can be a maintenance night, a rotation or a firewall change, and they all look identical from here. That is why it carries no severity and produces no findings: it points at the question, and the answer is yours.',
+  'coverage.window': 'no request for {span}',
+  'coverage.file.truncated': 'the first line is not a whole record — the beginning is missing',
+  'coverage.file.stale': 'the file is older than its own last entry',
+  'coverage.disclaimer': '{n} observation(s). None of them proves anything on its own — they say where to ask.',
 }

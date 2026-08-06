@@ -650,7 +650,14 @@ export interface CaseChain {
    *  ALREADY SHIFTED and carry no offset of their own, so this is the only
    *  thing that says what they mean. */
   tz_mode: 'log' | 'utc'
+  /** The zone the events are in. EMPTY when the logs carry several offsets
+   *  and the reading is log time -- there is no single answer then, and
+   *  naming one of them would be wrong by an hour for the rest. */
   zone: string
+  /** Every offset the logs carry. More than one means a DST change or
+   *  several servers. */
+  tz_offsets: string[]
+  tz_mixed: boolean
 }
 
 /** The record of the case: what was searched for -- unsuccessfully
