@@ -19,12 +19,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server import db, rules, ruleswitch, settings as settingslib
+from server import (bundled_rules, db, rules, ruleswitch,
+                    settings as settingslib)
 from server.engines import errorlog, logindex, sqldump, webshell
 
-ENGINE_DIR = Path(__file__).resolve().parent.parent / "server" / "engines"
-# The literal ids the engines pass to `findings.append` / build by hand.
+ROOT = Path(__file__).resolve().parent.parent
+ENGINE_DIR = ROOT / "server" / "engines"
+BUNDLED_DIR = ROOT / "server" / "rules_bundled"
+# The literal ids the engines pass to `findings.append` / build by hand, and
+# the ones the bundled YARA rules declare in their metadata. Both places
+# count: an id lives wherever its rule lives.
 ID_IN_SOURCE = re.compile(r'"((?:webshell|sqldb|errorlog)\.[a-z_]+)"')
+
+
+def ids_in_the_code():
+    found = set()
+    for name in ("webshell.py", "sqldump.py", "errorlog.py"):
+        found |= set(ID_IN_SOURCE.findall(
+            (ENGINE_DIR / name).read_text(encoding="utf-8")))
+    for path in BUNDLED_DIR.glob("*.yar"):
+        found |= set(ID_IN_SOURCE.findall(path.read_text(encoding="utf-8")))
+    return found
 
 
 class CatalogueTests(unittest.TestCase):
@@ -51,32 +66,37 @@ class CatalogueTests(unittest.TestCase):
 
     def test_the_table_driven_rules_all_arrived(self):
         ids = {r["id"] for r in self.rows}
-        for table in (webshell.CONTENT_RULES, webshell.HTACCESS_RULES,
-                      sqldump.RULES):
-            for entry in table:
-                self.assertIn(entry[0], ids)
+        for entry in sqldump.RULES:
+            self.assertIn(entry[0], ids)
         for kind in logindex._ALERT_FINDING:
             self.assertIn(f"logs.{kind}", ids)
+
+    def test_the_bundled_yara_rules_all_arrived(self):
+        ids = {r["id"] for r in self.rows}
+        for entry in bundled_rules.catalogue():
+            self.assertIn(entry["id"], ids)
+
+    def test_every_rule_says_what_form_it_is_in(self):
+        """The analyst decides whether they want a rule by reading it. A
+        YARA rule shows its source, a table rule its pattern, and the rest
+        say plainly that there is no single expression to show rather than
+        inventing a readable-looking one."""
+        for row in self.rows:
+            self.assertIn(row["format"], ("yara", "regex", "builtin"))
+            if row["format"] in ("yara", "regex"):
+                self.assertTrue(row["source"].strip(), row["id"])
 
     def test_no_id_in_an_engine_is_missing_from_the_catalogue(self):
         """The drift check. Any id an engine names must be listed, or it is a
         rule nobody can switch off."""
-        found = set()
-        for name in ("webshell.py", "sqldump.py", "errorlog.py"):
-            found |= set(ID_IN_SOURCE.findall(
-                (ENGINE_DIR / name).read_text(encoding="utf-8")))
-        missing = found - {r["id"] for r in self.rows}
+        missing = ids_in_the_code() - {r["id"] for r in self.rows}
         self.assertEqual(set(), missing, "engines emit ids nobody catalogued")
 
     def test_no_catalogued_id_is_absent_from_the_engines(self):
         """The other direction: a catalogue entry for a rule that no longer
         exists is a switch that does nothing."""
-        found = set()
-        for name in ("webshell.py", "sqldump.py", "errorlog.py"):
-            found |= set(ID_IN_SOURCE.findall(
-                (ENGINE_DIR / name).read_text(encoding="utf-8")))
         stale = {r["id"] for r in self.rows
-                 if not r["id"].startswith("logs.")} - found
+                 if not r["id"].startswith("logs.")} - ids_in_the_code()
         self.assertEqual(set(), stale, "catalogued rules the engines dropped")
 
 
@@ -113,10 +133,10 @@ class SwitchTests(unittest.TestCase):
         self.assertEqual({"vendor.yar"}, settingslib.yara_disabled(self.ws))
 
     def test_filter_rules_drops_the_switched_off_ones(self):
-        ruleswitch.set_enabled(self.ws, self.rid, False)
-        kept = ruleswitch.filter_rules(self.ws, webshell.CONTENT_RULES)
-        self.assertNotIn(self.rid, [r[0] for r in kept])
-        self.assertEqual(len(webshell.CONTENT_RULES) - 1, len(kept))
+        ruleswitch.set_enabled(self.ws, "sqldb.php_tag", False)
+        kept = ruleswitch.filter_rules(self.ws, sqldump.RULES)
+        self.assertNotIn("sqldb.php_tag", [r[0] for r in kept])
+        self.assertEqual(len(sqldump.RULES) - 1, len(kept))
 
 
 class EffectTests(unittest.TestCase):

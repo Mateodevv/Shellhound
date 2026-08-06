@@ -1,121 +1,40 @@
 name: Feature request
-description: Propose a capability, described as the question you are trying to answer about an incident
+description: Something the tool should be able to establish about an incident and cannot.
 title: "[Feature] "
-labels:
-  - enhancement
-assignees:
-  - Mateodevv
+labels: ["enhancement"]
+assignees: ["Mateodevv"]
 body:
   - type: markdown
     attributes:
       value: |
-        Describe the analyst problem, not the solution. A request that says what
-        you are trying to establish about an incident, and how you get there
-        today, can be built in a way that fits the rest of the tool. A request
-        that only names a control usually cannot.
+        Framed as a workflow problem it is actionable; framed as a solution it
+        usually is not. What are you trying to find out, and what do you do
+        instead today?
 
-        Two things before you write:
-
-        - **No data from a real case.** No log lines, paths, hashes, IP
-          addresses, account names or table contents out of an incident.
-          Describe the shape of the data, or invent an example: `example.test`,
-          `203.0.113.7`, `2001:db8::1`, `<sha256>`.
-        - **Security problems are not feature requests.** Report them privately,
-          see [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md).
-
-        If an open issue already asks for this, add to it instead of opening a
-        second one.
+        Two positions that shape what fits: the tool separates observation
+        from verdict and never claims more than the evidence shows, and it
+        sends nothing outward except three opt-in lookups.
 
   - type: textarea
     id: question
     attributes:
-      label: What you are trying to establish
-      description: >-
-        The question about the incident that this would answer. Not the feature
-        yet, the question.
-      placeholder: |
-        Whether the attacker already had access before the first request to a
-        web shell, and through which account.
+      label: What are you trying to establish
+      placeholder: Whether the same client that hit the exploit path later came back through a different one.
     validations:
       required: true
 
   - type: textarea
     id: today
     attributes:
-      label: What you do today instead
-      description: >-
-        How you reach that answer now: another view, an export into a
-        spreadsheet, a second tool, by hand, or not at all. Where the current
-        route breaks down is more useful than that it is tedious.
-      placeholder: |
-        Export the trace, sort it in a spreadsheet, compare the times against
-        the account list by hand. Works for one account, not for thirty.
+      label: What you do instead today
+      placeholder: Export two traces and diff the address lists by hand.
     validations:
       required: true
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area
-      description: Where this would live. Pick the closest one.
-      options:
-        - Findings and triage
-        - Chronology and trace
-        - Pattern hunt
-        - Actors and access log index
-        - Database export
-        - CMS inventory
-        - Files, webroot diff, YARA
-        - IOC box and export formats
-        - Evidence detection and analysis run
-        - Detection rules (a new or changed rule)
-        - Third-party lookups (VirusTotal, AbuseIPDB, GeoIP)
-        - Interface, keyboard, language
-        - Not sure, or several
-    validations:
-      required: true
-
-  - type: markdown
-    attributes:
-      value: |
-        Three positions the project holds. A request that needs one of them
-        broken is not refused out of hand, but it needs an argument:
-
-        - **Observation stays separate from verdict.** The tool reports what the
-          evidence shows and stops there. It does not name a culprit, does not
-          chain conclusions further than one step, and does not score a case.
-        - **A case stores English.** Stored origins, notes and evidence lines are
-          English whatever the interface language is set to, because an archive
-          whose wording depends on a click is worthless as evidence.
-        - **Nothing leaves the machine** except the three opt-in lookups: the
-          GeoIP database download, one SHA-256 to VirusTotal, one IP to
-          AbuseIPDB. Anything that wants to fetch, sync or submit has to work
-          offline as well.
-
-  - type: textarea
-    id: proposal
-    attributes:
-      label: Shape you have in mind
-      description: >-
-        Optional. A concrete form, if you have one. It is read as one
-        possibility, not as the specification. For a new detection rule, give
-        the trigger, what it would state, and what it would explicitly not
-        state.
-      placeholder: |
-        A column in the account list showing the first successful login after
-        the earliest confirmed artifact, empty where the logs do not cover it.
-
-  - type: input
-    id: version
-    attributes:
-      label: Version
-      description: Version or commit you are working with, so an answer can tell you whether this already exists.
-      placeholder: 0.1.1
 
   - type: checkboxes
-    id: acknowledgement
+    id: ack
     attributes:
-      label: Before submitting
+      label: Before you submit
       options:
-        - label: This issue contains no data from a real incident.
+        - label: No data from a real case in this issue.
           required: true

@@ -6,6 +6,53 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — the content rules are YARA now
+
+Every rule that asks what is *inside* a file is a YARA rule, shipped in
+`server/rules_bundled/` and readable in the interface. Thirteen of them: the
+eleven web shell content rules and the two `.htaccess` ones.
+
+**They can be read in the tool.** Settings → Detection shows a rule's source
+next to its switch, because what a rule matches on is the only thing that says
+whether you want it. That is the point of the rules being YARA at all — the
+definition is the documentation.
+
+**What stayed in Python, and why it is not laziness.** YARA is handed bytes
+and never learns where they came from. "This PHP file sits in an upload
+directory and carries no CMS guard" is not expressible in it; neither is a
+value in a database cell, nor a count over a million log lines. So location,
+file name, the database rules and the log aggregates stay where they can
+actually be evaluated.
+
+**`yara-python` is a required dependency now.** It was optional while YARA
+only ran rules the analyst brought themselves. With detection standing on it,
+a missing package would mean thirteen rules quietly not running — and a
+scanner that silently finds less is worse than one that refuses to start. The
+"is YARA even installed" branches are gone with it.
+
+**The translation is checked, not asserted.** `tests/test_yara_translation.py`
+keeps frozen copies of the regexes the rules replaced and compares the two on
+every sample — plus the same sample with a newline injected after each
+bracket, quote and space. That mutation is the whole point: a Python regex ran
+line by line and a YARA rule runs over the file, so `[^;]` and every single
+`\s` would otherwise have started matching across lines. Every one of them is
+now written `[^\S\n]`. Letting them match across lines would arguably be
+better detection; it is deliberately not done here, because a translation that
+also changes what the rules find cannot be reviewed as one.
+
+Finding names are unchanged, deliberately: they are part of the triage
+fingerprint, so a decision somebody made about a file last week still applies
+to it today.
+
+### Changed — issue forms cut to what gets acted on
+
+Four forms of 46 blocks became five of 28, and the fifth is new: **propose a
+YARA rule**, now that the shipped rules are YARA and a contributed one joins
+them. The pattern form matches the four fields a pattern actually has.
+
+Every form still carries the required acknowledgement that the report holds no
+data from a real case. That is the one thing that was not shortened.
+
 ### Changed — a hunt pattern is four fields, and paths can be combined
 
 An entry is now **one or more paths, a name, the advisory, and what a hit

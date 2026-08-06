@@ -10,8 +10,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle2, Download, ExternalLink, FileCode2, Globe, KeyRound,
-  PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight, Trash2,
+  CheckCircle2, ChevronDown, Code2, Download, ExternalLink, FileCode2,
+  Globe, KeyRound, PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight,
+  Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -151,6 +152,10 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
 function DetectionRules() {
   const tr = useT()
   const qc = useQueryClient()
+  // Which rules are opened up. Nothing is expanded by default: the point of
+  // the list is to be scannable, and the source is what you ask for when a
+  // name is not enough to judge by.
+  const [shown, setShown] = useState<Set<string>>(new Set())
   const { data } = useQuery({
     queryKey: ['rules'],
     queryFn: () => api<{ rules: DetectionRule[]; disabled: number }>('/api/rules'),
@@ -183,28 +188,67 @@ function DetectionRules() {
               <span className="text-[11px] text-[var(--muted)]">{rs.length}</span>
             </div>
             <Card className="overflow-hidden">
-              {rs.map((r) => (
-                <div key={r.id}
-                  className={clsx('flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0',
-                    !r.enabled && 'opacity-45')}>
-                  <SeverityBadge severity={r.severity} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px]">{r.name}</div>
-                    <div className="mono truncate text-[11px] text-[var(--muted)]">
-                      {r.id}
+              {rs.map((r) => {
+                const open = shown.has(r.id)
+                const readable = r.format !== 'builtin'
+                return (
+                  <div key={r.id}
+                    className={clsx('border-b border-[var(--line-soft)] last:border-0',
+                      !r.enabled && 'opacity-45')}>
+                    <div className="flex items-center gap-3 px-4 py-2">
+                      <SeverityBadge severity={r.severity} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px]">{r.name}</div>
+                        <div className="mono truncate text-[11px] text-[var(--muted)]">
+                          {r.id}
+                        </div>
+                      </div>
+                      {/* Reading the rule is how the analyst decides whether
+                          they want it. A YARA rule shows its own source --
+                          that is the point of the rules being YARA at all:
+                          the definition IS the documentation. */}
+                      {readable && (
+                        <Tooltip hint={tr('settings.rules.show.hint')}>
+                          <button
+                            className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
+                            onClick={() => setShown((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(r.id)) next.delete(r.id)
+                              else next.add(r.id)
+                              return next
+                            })}>
+                            {open ? <ChevronDown size={15} /> : <Code2 size={15} />}
+                          </button>
+                        </Tooltip>
+                      )}
+                      <Tooltip hint={r.enabled ? tr('settings.rules.off.hint')
+                                               : tr('settings.rules.on.hint')}>
+                        <button
+                          className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
+                          onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}>
+                          {r.enabled ? <ToggleRight size={17} className="text-[var(--accent)]" />
+                                     : <ToggleLeft size={17} />}
+                        </button>
+                      </Tooltip>
                     </div>
+                    {open && (
+                      <div className="border-t border-[var(--line-soft)] bg-[var(--code-bg)] px-4 py-3">
+                        {r.what && (
+                          <p className="mb-2 text-[12.5px] text-[var(--muted)]">
+                            {r.what}
+                          </p>
+                        )}
+                        <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                          {tr(`settings.rules.format.${r.format}`)}
+                        </div>
+                        <pre className="mono overflow-x-auto text-[11.5px] leading-relaxed text-[var(--fg)]">
+                          {r.source}
+                        </pre>
+                      </div>
+                    )}
                   </div>
-                  <Tooltip hint={r.enabled ? tr('settings.rules.off.hint')
-                                           : tr('settings.rules.on.hint')}>
-                    <button
-                      className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
-                      onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}>
-                      {r.enabled ? <ToggleRight size={17} className="text-[var(--accent)]" />
-                                 : <ToggleLeft size={17} />}
-                    </button>
-                  </Tooltip>
-                </div>
-              ))}
+                )
+              })}
             </Card>
           </div>
         ))}

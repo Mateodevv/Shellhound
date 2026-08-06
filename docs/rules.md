@@ -29,6 +29,28 @@ Every version carries with it the file it was read from (manifest,
 `style.css`, plugin header, `version.php`) and can be corrected by hand in
 the inventory; the measured value stays visible next to it.
 
+## Where a rule lives
+
+| Kind of rule | Written as | Where |
+|---|---|---|
+| What is **inside** a file | YARA | [`server/rules_bundled/`](../server/rules_bundled), shipped with the version |
+| Your own rules over files | YARA | `<workspace>/yara/`, yours alone |
+| Values in a database export | Python regex | `server/engines/sqldump.py` |
+| A file's **location** or **name** | Python | `server/engines/webshell.py` |
+| Aggregates over the log index | Python | `server/engines/logindex.py` |
+
+The split is not arbitrary. YARA is handed bytes and never learns where they
+came from, so "this PHP file sits in an upload directory" is not expressible
+in it — and a database cell or a count over a million log lines is not a file
+at all. Everything that *is* a question about file content is a YARA rule, and
+can be read in the interface: **Settings → Detection** shows the source of
+every rule beside its switch, because what a rule matches on is the only thing
+that says whether you want it.
+
+`yara-python` is therefore a **required** dependency, not an optional one. It
+was optional while YARA only ran rules you brought yourself; now a missing
+package would mean thirteen detections quietly not running.
+
 ## Every rule can be switched off
 
 Under *Settings → Detection*, per workspace, by the stable id each rule

@@ -2,7 +2,12 @@
 # (main.py + core/ + modules/) stays stdlib-only and does not need these.
 fastapi>=0.115
 uvicorn[standard]>=0.30
-# Länderzuordnung für IPs — liest eine LOKALE MMDB aus dem Workspace
-# (DB-IP Lite per Knopf in der Oberfläche oder GeoLite2 von Hand).
-# Ohne das Paket läuft alles, nur ohne Flaggen.
+# Country attribution for IPs -- reads a LOCAL MMDB from the workspace
+# (DB-IP Lite via a button in the interface, or GeoLite2 by hand). Without
+# the package everything runs, only without flags.
 maxminddb>=2.5
+# REQUIRED, not optional. The web shell content rules ARE YARA rules
+# (server/rules_bundled/); without this package the scan would silently find
+# thirteen fewer things, which is worse than failing to start. It was
+# optional while YARA only ran the analyst's own rules.
+yara-python>=4.3

@@ -7,11 +7,12 @@ reports what it finds. A hand-maintained catalogue would be a second list to
 keep in sync, and the way that fails is silent: the rule gets renamed, the
 catalogue does not, and the off-switch quietly stops matching anything.
 
-The two exceptions are the rules that are not table-driven -- the structural
-web shell rules, which depend on a file's location or name rather than on a
-pattern, and the two error-log rules. Those are named here explicitly, and
-`tests/test_rules.py` checks that the set matches the ids the engines
-actually emit.
+The content rules are YARA and are read out of `server/rules_bundled/`; the
+database and log rules are still tables in their engines. The two exceptions
+are the rules that come from neither -- the structural web shell rules, which
+depend on a file's location or name rather than on a pattern, and the two
+error-log rules. Those are named here explicitly, and `tests/test_rules.py`
+checks that the set matches the ids the engines actually emit.
 
 The analyst's own YARA files are NOT in here. They are managed as files, with
 their own switch, because a file is what a vendor feed hands over -- see
@@ -19,8 +20,8 @@ their own switch, because a file is what a vendor feed hands over -- see
 """
 from __future__ import annotations
 
-from server import db, ruleswitch
-from server.engines import logindex, sqldump, webshell
+from server import bundled_rules as bundled, db, ruleswitch
+from server.engines import logindex, sqldump
 
 # Rules that do not come from a regex table. Their ids appear in the engine
 # beside the `findings.append` that emits them; the test keeps the two sides
@@ -51,6 +52,13 @@ def _from_table(table):
     return [(rid, sev, name) for rid, sev, name, _rx in table]
 
 
+def _patterns_from(table):
+    """The regex a table rule matches with, so the interface can show what a
+    rule actually does. The bundled rules answer this with their YARA
+    source; these answer it with the pattern."""
+    return {rid: rx.pattern for rid, _sev, _name, rx in table}
+
+
 def catalogue():
     """Every built-in rule: id, engine, severity, name.
 
@@ -59,15 +67,33 @@ def catalogue():
     should find it in the same place in both."""
     rows = []
     rows += _STRUCTURAL
-    rows += _from_table(webshell.CONTENT_RULES)
-    rows += _from_table(webshell.HTACCESS_RULES)
+    rows += [(e["id"], e["severity"], e["name"]) for e in bundled.catalogue()]
     rows += _from_table(sqldump.RULES)
     rows += [(f"logs.{kind}", sev, name)
              for kind, (sev, name) in logindex._ALERT_FINDING.items()]
     rows += _ERRORLOG
-    out = [{"id": rid, "engine": rid.split(".", 1)[0],
-            "severity": int(sev), "name": name}
-           for rid, sev, name in rows]
+    # What a rule is, in the form the analyst can judge it by. A bundled
+    # YARA rule carries its own source -- that is the point of the rules
+    # being YARA at all: the definition IS the documentation. A rule still
+    # written in Python says so instead of pretending otherwise.
+    bundled_by_id = bundled.by_id()
+    regexes = _patterns_from(sqldump.RULES)
+    out = []
+    for rid, sev, name in rows:
+        entry = bundled_by_id.get(rid)
+        if entry:
+            fmt, source = "yara", entry["source"]
+        elif rid in regexes:
+            fmt, source = "regex", regexes[rid]
+        else:
+            # Location, file name, an unreadable file, an aggregate over the
+            # log index. There is no one expression to show, and inventing a
+            # readable-looking one would be a lie about what runs.
+            fmt, source = "builtin", ""
+        out.append({"id": rid, "engine": rid.split(".", 1)[0],
+                    "severity": int(sev), "name": name,
+                    "format": fmt, "source": source,
+                    "what": (entry or {}).get("what", "")})
     order = {name: i for i, name in enumerate(ENGINES)}
     out.sort(key=lambda r: (order.get(r["engine"], 99), r["severity"], r["id"]))
     return out

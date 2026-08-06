@@ -33,13 +33,13 @@ dependencies = [
   # everything still works, only without flags -- hence here and not in
   # [optional].
   "maxminddb>=2.5",
+  # REQUIRED since the web shell content rules became YARA rules
+  # (server/rules_bundled/). It was optional while YARA only ran rules the
+  # analyst brought themselves; now a missing package would mean thirteen
+  # detections quietly not running, and a scanner that silently finds less
+  # is worse than one that refuses to start.
+  "yara-python>=4.3",
 ]
-
-[project.optional-dependencies]
-# YARA is the analyst's OWN rules, and not everyone brings some. Without the
-# package everything else works unchanged and the interface says which of the
-# two silences it is -- no rules, or no YARA.
-yara = ["yara-python>=4.3"]
 
 [project.urls]
 Homepage = "https://github.com/Mateodevv/shellhound"
@@ -68,4 +68,4 @@ include = ["server*"]
 # than in the workspace: they are the same on every installation of a given
 # version, which is what makes "SHELLHOUND 0.2.0 ships this pattern" a
 # statement the reader of a report can verify.
-"server" = ["static/**/*", "patterns_bundled.json"]
+"server" = ["static/**/*", "patterns_bundled.json", "rules_bundled/*.yar"]
