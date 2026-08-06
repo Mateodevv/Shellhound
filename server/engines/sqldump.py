@@ -666,7 +666,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 if rid in off:
                     continue
                 db.upsert_finding(conn, "sqldb", sev, rule, "table", table,
-                                  line=row_no, evidence=evidence)
+                                  line=row_no, evidence=evidence, rule_id=rid)
                 stats["findings"] += 1
             if result["kind"] == "schema":
                 stats["schema_files"] += 1

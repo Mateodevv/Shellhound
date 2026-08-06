@@ -23,8 +23,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code, Crosshair,
-  Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch, KeyRound, Radar, X,
+  BellOff, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
+  Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
+  KeyRound, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -35,7 +36,7 @@ import {
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
-  Button, Chip, EmptyState, SearchInput, SeverityBadge, TriageBadge,
+  Button, Card, Chip, EmptyState, SearchInput, SeverityBadge, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
@@ -99,7 +100,10 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
   return next
 }
 
-export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+export function Findings({ slug, gotoView }: {
+  slug: string
+  gotoView: (v: ViewId) => void
+}) {
   const tr = useT()
   // EVERY filter chip is a hide switch: a click hides its class, the next
   // click brings it back, several of them stack. Hidden by default: false
@@ -346,6 +350,27 @@ export function Findings({ slug }: { slug: string; gotoView: (v: ViewId) => void
           <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
       </div>
+
+      {/* A rule that was switched off takes artifacts with it. That has to
+          be said: the analyst who muted a rule three cases ago will not
+          remember, and a work list that is quietly short reads like a clean
+          system. */}
+      {data && data.muted_hidden > 0 && (
+        <Card className="flex items-center gap-2.5 border-[var(--sev-low)]/40 bg-[var(--panel-2)] px-4 py-2.5 text-[12.5px]">
+          <BellOff size={14} className="shrink-0 text-[var(--sev-low)]" />
+          <span className="min-w-0 flex-1">
+            {tr('findings.muted', {
+              n: formatCount(data.muted_hidden),
+              rules: formatCount(data.muted_rules),
+            })}
+          </span>
+          <button
+            className="shrink-0 cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
+            onClick={() => gotoView('settings')}>
+            {tr('findings.muted.cta')}
+          </button>
+        </Card>
+      )}
 
       {!search && data && counts != null && counts.total > data.total && (
         <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">

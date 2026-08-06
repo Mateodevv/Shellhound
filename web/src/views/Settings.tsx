@@ -59,7 +59,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
   const services = Object.entries(data.services)
 
   return (
-    <div className="flex max-w-3xl flex-col gap-5">
+    <div className="flex max-w-6xl flex-col gap-5">
       <div>
         <h1 className="text-lg font-bold">{tr('settings.title')}</h1>
         <p className="mt-1 text-[12.5px] text-[var(--muted)]">
@@ -78,7 +78,10 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
       ]} active={tab} onChange={setTab} />
 
       {tab === 'intel' && <>
-      <GeoSection />
+      {/* The gate first and full width -- it is the decision the rest of
+          this tab serves, and it is prose that has to be read. What follows
+          are short rows, and short rows next to each other waste less of a
+          wide screen than short rows under each other. */}
 
       {/* The gate. It sits ABOVE the keys on purpose: a key without this is
           inert, and reading what a lookup sends is the actual decision. */}
@@ -117,21 +120,24 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
         </Card>
       </Section>
 
-      <Section title={tr('settings.keys')} sub={tr('settings.keys.sub')}>
-        <div className="flex flex-col gap-2">
-          {services.map(([name, svc]) => (
-            <ServiceRow key={name} name={name} svc={svc}
-              disabled={!data.enrichment_ack}
-              onSave={(key) => setKey.mutate({ service: name, key })}
-              pending={setKey.isPending} />
-          ))}
-        </div>
-        {setKey.isError && (
-          <div className="mt-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[12.5px] text-[var(--danger-text)]">
-            {String((setKey.error as Error)?.message ?? setKey.error)}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <GeoSection />
+        <Section title={tr('settings.keys')} sub={tr('settings.keys.sub')}>
+          <div className="flex flex-col gap-2">
+            {services.map(([name, svc]) => (
+              <ServiceRow key={name} name={name} svc={svc}
+                disabled={!data.enrichment_ack}
+                onSave={(key) => setKey.mutate({ service: name, key })}
+                pending={setKey.isPending} />
+            ))}
           </div>
-        )}
-      </Section>
+          {setKey.isError && (
+            <div className="mt-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[12.5px] text-[var(--danger-text)]">
+              {String((setKey.error as Error)?.message ?? setKey.error)}
+            </div>
+          )}
+        </Section>
+      </div>
       </>}
 
       {tab === 'detection' && <>
@@ -178,9 +184,13 @@ function DetectionRules() {
             {tr('settings.rules.off', { n: data.disabled })}
           </span>
         : undefined}>
-      <div className="flex flex-col gap-3">
+      {/* Column flow rather than a grid. The groups are independent --
+          nobody reads the webroot rules to understand the log ones -- and
+          they are wildly different lengths (18 against 2), so a grid leaves
+          one column half empty. Columns fill. */}
+      <div className="columns-1 gap-3 xl:columns-2">
         {groups.map(([engine, rs]) => (
-          <div key={engine}>
+          <div key={engine} className="mb-3 break-inside-avoid">
             <div className="mb-1 flex items-center gap-2 px-1">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
                 {tr(`settings.rules.engine.${engine}`)}
@@ -535,20 +545,22 @@ function ServiceRow({ name, svc, disabled, onSave, pending }: {
   const [value, setValue] = useState('')
 
   return (
-    <Card className="flex flex-wrap items-center gap-3 px-4 py-3">
+    <Card className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
       <span className="mono flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)] text-[11px] font-bold text-[var(--muted)]">
         {SERVICE_ICON[name] ?? '?'}
       </span>
-      <div className="min-w-40 flex-1">
+      <div className="min-w-52 flex-1 basis-52">
         <div className="flex items-center gap-2 text-[13.5px] font-semibold">
           {tr(`settings.service.${name}`)}
           {svc.configured
             ? <Tag tone="accent" hint={tr('settings.key.stored')}>{svc.hint}</Tag>
             : <Tag hint={tr('settings.key.none.hint')}>{tr('settings.key.none')}</Tag>}
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-[var(--muted)]">
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-[var(--muted)]">
           <Tooltip hint={tr('settings.sends.hint')}>
-            <span>{tr('settings.sends', { what: tr(`settings.kind.${svc.sends}`) })}</span>
+            <span className="whitespace-nowrap">
+              {tr('settings.sends', { what: tr(`settings.kind.${svc.sends}`) })}
+            </span>
           </Tooltip>
           <a href={svc.url} target="_blank" rel="noreferrer noopener"
             className="inline-flex items-center gap-1 hover:text-[var(--fg)]">
@@ -566,7 +578,7 @@ function ServiceRow({ name, svc, disabled, onSave, pending }: {
           if (e.key === 'Enter' && value.trim()) { onSave(value.trim()); setValue('') }
         }}
         placeholder={disabled ? tr('settings.key.locked') : tr('settings.key.placeholder')}
-        className="mono w-56 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70 disabled:opacity-50"
+        className="mono w-full min-w-44 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70 disabled:opacity-50 sm:w-56 sm:flex-none"
       />
       <Button variant="primary" disabled={disabled || pending || !value.trim()}
         onClick={() => { onSave(value.trim()); setValue('') }}>

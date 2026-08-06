@@ -90,9 +90,14 @@ carries (`webshell.upload_php`, `logs.sqli`, ...). The id lives beside the
 rule in the engine, so it survives a change of wording.
 
 **A switch is not a retraction.** A rule that is switched off stops running;
-findings it already wrote stay where they are, with their triage. An artifact
-somebody confirmed does not stop being confirmed because the rule that
-pointed at it was later muted.
+findings it already wrote stay where they are, with their triage.
+
+**But the work list shrinks.** An artifact whose findings ALL came from muted
+rules leaves the list — that is what the switch is for. Only while it is still
+UNDECIDED: a confirmed or reviewed artifact stays, because the decision is
+yours and outranks the rule that prompted it. Nothing is deleted either way,
+and the list states how many artifacts went, because a work list that quietly
+shrinks reads like a clean system.
 
 The setting belongs to the **workspace**, not the case: "this rule is noise on
 the systems I work on" is knowledge about the analyst's practice, not about

@@ -169,6 +169,12 @@ export interface FindingsResponse {
   findings: Finding[]
   /** All findings in the case, unfiltered -- as a size only. */
   findings_total: number
+  /** Artifacts a switched-off rule took out of this list. Stated rather
+   *  than silent: a list that shrinks without saying so is a list nobody
+   *  can trust. */
+  muted_hidden: number
+  /** How many rules are switched off in this workspace. */
+  muted_rules: number
   counts: {
     severity: Record<string, number>
     triage: Record<string, number>

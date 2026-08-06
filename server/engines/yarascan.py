@@ -341,6 +341,10 @@ def scan(case_dir, targets, workspace=None, ctx=None):
                 stats["skipped"] += 1
                 continue
             for match in list(matches)[:_MATCH_CAP]:
+                # The analyst's own rules have no catalogue id -- they are
+                # managed as FILES and switched off as files. The id column
+                # stays empty, which the work list reads as "not mutable
+                # from the rule switch", and that is exactly right.
                 db.upsert_finding(conn, "yara", _severity_of(match),
                                   f"YARA: {match.rule}", "file", abs_path,
                                   evidence=_evidence(match))

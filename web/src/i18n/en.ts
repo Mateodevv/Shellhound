@@ -976,4 +976,6 @@ export const en: Record<string, string> = {
   'time.mode.utc.hint': 'The same instant in UTC. The only way to lay two sources with different offsets on one timeline and be sure.',
   'time.noNames': 'Offsets, not zone names: a log line carries +02:00, and that is CEST as much as it is EET or SAST. A name would be a guess dressed as a measurement.',
   'time.zone': 'Times in {zone}',
+  'findings.muted': '{n} artifact(s) are not shown: every rule that named them is switched off. Nothing was deleted — switch a rule back on and they return, with their triage.',
+  'findings.muted.cta': 'Rules',
 }
