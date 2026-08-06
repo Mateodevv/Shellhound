@@ -7,31 +7,33 @@
     "and its CVE would make the same identifier mean different things on two",
     "machines.",
     "",
+    "AN ENTRY IS: one or more paths, a name, the advisory it belongs to, and",
+    "what a hit proves. `match` says how several paths combine -- OVER CLIENTS,",
+    "not over one request: 'any' is a client that hit at least one of them,",
+    "'all' only clients that hit every one.",
+    "",
     "WHAT A HIT PROVES: that a request was made. Nothing here says the request",
     "succeeded, and nothing here is a finding on its own -- the status code",
-    "decides, and that is what the hunt reports back. A wave of 404s against",
-    "these paths is a scanner; one 200 is the sentence you write the report",
-    "around.",
+    "decides, and that is what the hunt reports back.",
     "",
     "THE SET IS DELIBERATELY SHORT. A pattern that ships is one every",
     "installation runs, so a false positive here does not cost one analyst a",
-    "look -- it costs all of them a filled work list. Entries are added when",
-    "somebody has actually hunted with them, through the hunt pattern issue",
-    "form, not because a path appears on a scanner list.",
+    "look -- it costs all of them a filled work list.",
     "",
     "ids are stable strings, never regenerated: the per-workspace off-switch",
-    "refers to them across versions.",
-    "",
-    "'*' is a wildcard. These are path matches, not regular expressions."
+    "refers to them across versions. '*' is a wildcard, not a regex."
   ],
   "version": 1,
   "patterns": [
     {
-      "id": "joomla-jce-imgmanager",
-      "pattern": "/index.php?option=com_jce&task=plugin*",
-      "label": "Joomla JCE image manager upload",
-      "note": "JCE editor",
-      "about": "The JCE editor's file manager has carried more than one upload flaw. Long-lived and still scanned. Verify the exact advisory against the JCE version in the CMS inventory before naming one in a report."
+      "id": "joomla-jce-rce",
+      "patterns": [
+        "/index.php?option=com_jce&task=profiles.import"
+      ],
+      "match": "any",
+      "name": "Joomla JCE editor RCE",
+      "cve": "CVE-2026-48907",
+      "description": "CVE-2026-48907 is a critical Remote Code Execution (RCE) vulnerability affecting the Joomla Content Editor (JCE) extension. Due to improper access control, unauthenticated attackers can upload and execute malicious PHP files, potentially leading to full compromise of the affected web server."
     }
   ]
 }

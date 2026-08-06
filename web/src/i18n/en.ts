@@ -750,7 +750,6 @@ export const en: Record<string, string> = {
   'hunt.field.pattern': 'URL pattern',
   'hunt.field.pattern.placeholder': 'option=com_jce&task=plugin   ·   * is a wildcard',
   'hunt.field.name': 'Name',
-  'hunt.field.note': 'Note',
   'hunt.store': 'Store',
   'hunt.import.a': 'One line per pattern, optionally',
   'hunt.import.b': 'Lines starting with',
@@ -910,8 +909,7 @@ export const en: Record<string, string> = {
   'hunt.bundled.hint': 'Ships with SHELLHOUND and is identical on every installation of this version, which is what makes it citable in a report. Read-only: switch it off if you do not want it.',
   'hunt.disable.hint': 'Switch off for this workspace. It stays in the list and can be switched back on — a shipped pattern cannot be deleted, it would return on the next start.',
   'hunt.enable.hint': 'Switch back on. It runs with the next hunt.',
-  'hunt.field.about': 'Description',
-  'hunt.field.about.placeholder': 'What a hit here proves — and what it does not. The sentence you will want in six months.',
+  'hunt.field.description.placeholder': 'What a hit here proves — and what it does not. The sentence you will want in six months.',
   // The analyst's own YARA rules, managed from Settings. Workspace, not
   // case -- a rule set grows across cases, like the pattern library.
   'settings.yara': 'YARA rules',
@@ -955,4 +953,14 @@ export const en: Record<string, string> = {
   'settings.rules.engine.sqldb': 'Database export',
   'settings.rules.engine.logs': 'Access logs',
   'settings.rules.engine.errorlog': 'Error logs',
+  'hunt.field.cve': 'CVE',
+  'hunt.field.description': 'Description',
+  'hunt.path.add': 'Add a path',
+  'hunt.path.remove': 'Remove this path',
+  // Combining paths is a claim about a CLIENT, not about one request: a URI
+  // cannot be two paths at once.
+  'hunt.match.any': 'any of them',
+  'hunt.match.any.hint': 'A client counts as a hit when it requested at least one of these paths.',
+  'hunt.match.all': 'all of them',
+  'hunt.match.all.hint': 'Only clients that requested every one of these paths. "This address fetched the exploit path AND the file it dropped" is a different claim from "it fetched one of them" — and the one that survives being questioned.',
 }

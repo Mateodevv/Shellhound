@@ -1048,6 +1048,84 @@ def match_pattern(case_dir, pattern, limit=200):
         conn.close()
 
 
+def match_patterns(case_dir, patterns, mode="any", limit=200):
+    """Several paths, combined OVER CLIENTS.
+
+    A URI cannot be two paths at once, so combining them per REQUEST would
+    be nonsense. Per client it is the sentence an analyst actually wants:
+    "this address fetched the exploit path AND the thing it dropped" is a
+    different claim from "it fetched one of them", and only the first one
+    survives a defence lawyer.
+
+      any -- a client that hit at least one of the paths (union)
+      all -- only clients that hit every one of them (intersection)
+
+    The per-path results are kept whole and merged here rather than pushed
+    into one SQL statement: `all` needs to know WHICH client appeared in
+    which path's result, and a single query that answers that is a query
+    nobody can read six months later.
+    """
+    paths = [p for p in (patterns or []) if str(p).strip()]
+    if not paths:
+        return match_pattern(case_dir, "", limit)
+    if len(paths) == 1:
+        out = match_pattern(case_dir, paths[0], limit)
+        out["patterns"] = paths
+        out["match"] = mode
+        return out
+
+    parts = [match_pattern(case_dir, p, limit) for p in paths]
+    per_path = [{c["ip"] for c in part["clients"]} for part in parts]
+    if mode == "all":
+        keep = set.intersection(*per_path) if per_path else set()
+    else:
+        keep = set.union(*per_path) if per_path else set()
+
+    merged = {}
+    for part in parts:
+        for client in part["clients"]:
+            if client["ip"] not in keep:
+                continue
+            acc = merged.setdefault(client["ip"], {
+                "ip": client["ip"], "hits": 0, "ok_hits": 0,
+                "first_epoch": None, "last_epoch": None, "tz": client["tz"]})
+            acc["hits"] += client["hits"]
+            acc["ok_hits"] += client["ok_hits"]
+            for key, pick in (("first_epoch", min), ("last_epoch", max)):
+                value = client[key]
+                if value is None:
+                    continue
+                acc[key] = value if acc[key] is None else pick(acc[key], value)
+    clients = sorted(merged.values(), key=lambda c: -c["hits"])
+
+    # The URIs shown are those of the clients that survived the combination.
+    # Under `all` the ones only a dropped client requested would otherwise
+    # suggest the rule matched things it did not report.
+    uris, seen = [], set()
+    for part in parts:
+        for uri in part["uris"]:
+            if uri["uri"] not in seen:
+                seen.add(uri["uri"])
+                uris.append(uri)
+    firsts = [c["first_epoch"] for c in clients if c["first_epoch"]]
+    lasts = [c["last_epoch"] for c in clients if c["last_epoch"]]
+    tzs = [c["tz"] for c in clients if c["tz"] is not None]
+    return {
+        "pattern": (" AND " if mode == "all" else " OR ").join(paths),
+        "patterns": paths, "match": mode,
+        "uris": uris[:_PATTERN_URI_SHOWN], "clients": clients,
+        "hits": sum(c["hits"] for c in clients),
+        "ok_hits": sum(c["ok_hits"] for c in clients),
+        "clients_total": len(clients),
+        "ok_clients": sum(1 for c in clients if c["ok_hits"] > 0),
+        "uri_total": sum(p["uri_total"] for p in parts),
+        "first_epoch": min(firsts) if firsts else None,
+        "last_epoch": max(lasts) if lasts else None,
+        "tz": max(tzs) if tzs else 0,
+        "truncated": any(p["truncated"] for p in parts),
+    }
+
+
 def _chunks(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]

@@ -45,6 +45,18 @@ BUNDLED_FILE = Path(__file__).resolve().parent / "patterns_bundled.json"
 # every line of the log and report it as a find.
 MIN_PATTERN_LENGTH = 3
 
+# How several paths in one entry are combined -- OVER CLIENTS, not over a
+# single request. A URI cannot be two paths at once, so ANDing them per
+# request would be nonsense; ANDing them per client is the sentence an
+# analyst actually wants: "this address fetched the exploit path AND the
+# thing it dropped".
+MATCH_ANY = "any"          # a client that hit at least one of them
+MATCH_ALL = "all"          # only clients that hit every one of them
+MATCH_MODES = (MATCH_ANY, MATCH_ALL)
+
+# More than a handful in one entry stops being a rule and becomes a query.
+MAX_PATHS = 8
+
 
 class PatternError(ValueError):
     """An input the analyst has to correct.
@@ -88,18 +100,12 @@ def bundled():
         return []
     out = []
     for row in data.get("patterns", []) if isinstance(data, dict) else []:
-        if not isinstance(row, dict) or not str(row.get("pattern", "")).strip():
+        if not isinstance(row, dict):
             continue
-        out.append({
-            "id": str(row.get("id") or ""),
-            "pattern": str(row["pattern"]).strip(),
-            "label": str(row.get("label") or "").strip(),
-            "note": str(row.get("note") or "").strip(),
-            "about": str(row.get("about") or "").strip(),
-            "added": "",
-            "source": "bundled",
-        })
-    return [p for p in out if p["id"]]
+        entry = _normalise(row)
+        if entry and entry["id"]:
+            out.append({**entry, "added": "", "source": "bundled"})
+    return out
 
 
 def disabled_ids(workspace):
@@ -108,24 +114,42 @@ def disabled_ids(workspace):
     return {str(i) for i in raw} if isinstance(raw, list) else set()
 
 
+# A pattern entry has FOUR fields and one condition. The fields are what a
+# report needs: the paths, what it is called, which advisory it belongs to,
+# and what a hit proves. Earlier versions called them label/note/about;
+# `_normalise` still reads those, because a workspace file outlives a rename.
+def _normalise(row):
+    """One stored entry in the current shape, whatever shape it was in."""
+    raw = row.get("patterns")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raw = [row.get("pattern", "")]
+    paths = [str(p).strip() for p in raw if str(p or "").strip()]
+    if not paths:
+        return None
+    mode = str(row.get("match") or MATCH_ANY).lower()
+    return {
+        "id": str(row.get("id") or uuid.uuid4().hex[:12]),
+        "patterns": paths,
+        "match": mode if mode in MATCH_MODES else MATCH_ANY,
+        "name": str(row.get("name") or row.get("label") or "").strip(),
+        "cve": str(row.get("cve") or row.get("note") or "").strip(),
+        "description": str(row.get("description") or row.get("about")
+                           or "").strip(),
+        "added": str(row.get("added") or ""),
+    }
+
+
 def load(workspace):
     """The analyst's OWN patterns. Not the bundled ones -- see `library`."""
     out = []
     for row in _read(workspace).get("patterns", []) or []:
-        if not isinstance(row, dict) or not str(row.get("pattern", "")).strip():
+        if not isinstance(row, dict):
             continue
-        out.append({
-            "id": str(row.get("id") or uuid.uuid4().hex[:12]),
-            "pattern": str(row["pattern"]).strip(),
-            "label": str(row.get("label") or "").strip(),
-            "note": str(row.get("note") or "").strip(),
-            # The long form. `note` is a tag beside the name and has to stay
-            # short; this is where "what a hit here actually proves" goes,
-            # which is the sentence the analyst needs six months later.
-            "about": str(row.get("about") or "").strip(),
-            "added": str(row.get("added") or ""),
-            "source": "own",
-        })
+        entry = _normalise(row)
+        if entry:
+            out.append({**entry, "source": "own"})
     return out
 
 
@@ -184,7 +208,7 @@ def set_enabled(workspace, pattern_id, enabled):
     return {"id": pattern_id, "enabled": bool(enabled)}
 
 
-def _validate(pattern):
+def _validate_one(pattern):
     pattern = str(pattern or "").strip()
     if len(pattern.replace("*", "")) < MIN_PATTERN_LENGTH:
         raise PatternError(
@@ -194,28 +218,63 @@ def _validate(pattern):
     return pattern
 
 
-def add(workspace, pattern, label="", note="", about=""):
-    pattern = _validate(pattern)
-    patterns = load(workspace)
+def _validate(paths):
+    """One or more paths, each substantial, no duplicates inside the entry."""
+    if isinstance(paths, str):
+        paths = [paths]
+    out = []
+    for raw in paths or []:
+        value = _validate_one(raw)
+        if value.lower() not in {p.lower() for p in out}:
+            out.append(value)
+    if not out:
+        raise PatternError("A pattern needs at least one path.",
+                           "err.patternEmpty")
+    if len(out) > MAX_PATHS:
+        raise PatternError(
+            f"At most {MAX_PATHS} paths in one pattern — beyond that it stops "
+            f"being a rule and becomes a query.", "err.patternTooMany")
+    return out
+
+
+def _mode(value):
+    value = str(value or MATCH_ANY).lower()
+    if value not in MATCH_MODES:
+        raise PatternError("Unknown combination.", "err.patternMatchMode")
+    return value
+
+
+def _signature(entry):
+    """What makes two entries the same rule: the same paths combined the same
+    way. Order does not matter -- "/a AND /b" is "/b AND /a"."""
+    return (entry["match"], tuple(sorted(p.lower() for p in entry["patterns"])))
+
+
+def add(workspace, patterns_in, name="", cve="", description="",
+        match=MATCH_ANY):
+    paths = _validate(patterns_in)
+    mode = _mode(match)
+    entry = {"id": uuid.uuid4().hex[:12], "patterns": paths, "match": mode,
+             "name": str(name or "").strip(), "cve": str(cve or "").strip(),
+             "description": str(description or "").strip(),
+             "added": datetime.now().isoformat(timespec="seconds")}
     # Checked against BOTH halves, including switched-off bundled entries: a
     # copy of something the tool already ships would run twice and be
     # reported twice, and switching the bundled one back on later would then
     # silently duplicate every hit.
+    sig = _signature(entry)
     for existing in library(workspace, include_disabled=True):
-        if existing["pattern"].lower() == pattern.lower():
+        if _signature(existing) == sig:
             raise PatternError("This pattern is already in the library.",
                                "err.patternKnown")
-    entry = {"id": uuid.uuid4().hex[:12], "pattern": pattern,
-             "label": str(label or "").strip(), "note": str(note or "").strip(),
-             "about": str(about or "").strip(),
-             "added": datetime.now().isoformat(timespec="seconds")}
-    patterns.append(entry)
-    save(workspace, patterns)
+    stored = load(workspace)
+    stored.append(entry)
+    save(workspace, stored)
     return {**entry, "source": "own", "enabled": True}
 
 
-def update(workspace, pattern_id, pattern=None, label=None, note=None,
-           about=None):
+def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
+           description=None, match=None):
     if any(p["id"] == pattern_id for p in bundled()):
         # Editing it would keep the id and the CVE while changing what they
         # point at, so the same identifier would mean two things on two
@@ -227,16 +286,18 @@ def update(workspace, pattern_id, pattern=None, label=None, note=None,
     for entry in patterns:
         if entry["id"] != pattern_id:
             continue
-        if pattern is not None:
-            entry["pattern"] = _validate(pattern)
-        if label is not None:
-            entry["label"] = str(label).strip()
-        if note is not None:
-            entry["note"] = str(note).strip()
-        if about is not None:
-            entry["about"] = str(about).strip()
+        if patterns_in is not None:
+            entry["patterns"] = _validate(patterns_in)
+        if match is not None:
+            entry["match"] = _mode(match)
+        if name is not None:
+            entry["name"] = str(name).strip()
+        if cve is not None:
+            entry["cve"] = str(cve).strip()
+        if description is not None:
+            entry["description"] = str(description).strip()
         save(workspace, patterns)
-        return entry
+        return {**entry, "source": "own", "enabled": True}
     raise PatternError("Unknown pattern.", "err.patternUnknown")
 
 
@@ -273,10 +334,14 @@ def import_text(workspace, text):
             data = data.get("patterns", [])
         for row in data if isinstance(data, list) else []:
             if isinstance(row, str):
-                rows.append((row, "", "", ""))
+                rows.append(([row], "", "", "", MATCH_ANY))
             elif isinstance(row, dict):
-                rows.append((row.get("pattern", ""), row.get("label", ""),
-                             row.get("note", ""), row.get("about", "")))
+                paths = row.get("patterns") or row.get("pattern") or ""
+                rows.append((paths,
+                             row.get("name") or row.get("label") or "",
+                             row.get("cve") or row.get("note") or "",
+                             row.get("description") or row.get("about") or "",
+                             row.get("match") or MATCH_ANY))
     else:
         for line in text.splitlines():
             line = line.strip()
@@ -288,13 +353,13 @@ def import_text(workspace, text):
             # would run into the separator; whoever wants one exports JSON,
             # which is what the export writes anyway.
             parts = [p.strip() for p in line.split("|", 2)]
-            rows.append((parts[0], parts[1] if len(parts) > 1 else "",
-                         parts[2] if len(parts) > 2 else "", ""))
+            rows.append(([parts[0]], parts[1] if len(parts) > 1 else "",
+                         parts[2] if len(parts) > 2 else "", "", MATCH_ANY))
 
     added = skipped = invalid = 0
-    for pattern, label, note, about in rows:
+    for paths, name, cve, description, mode in rows:
         try:
-            add(workspace, pattern, label, note, about)
+            add(workspace, paths, name, cve, description, mode)
             added += 1
         except PatternError as e:
             if e.key == "err.patternKnown":

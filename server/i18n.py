@@ -344,6 +344,23 @@ CATALOGUE: dict[str, dict[str, str]] = {
     },
     "err.patternUnknown": {"en": "Unknown pattern.", "de": "Unbekanntes Muster."},
     "err.patternJson": {"en": "not valid JSON", "de": "Kein gültiges JSON"},
+    "err.patternEmpty": {
+        "en": "A pattern needs at least one path.",
+        "de": "Ein Muster braucht mindestens einen Pfad.",
+    },
+    "err.patternTooMany": {
+        "en": "At most 8 paths in one pattern — beyond that it stops being a "
+              "rule and becomes a query.",
+        "de": "Höchstens 8 Pfade in einem Muster — darüber hinaus ist es "
+              "keine Regel mehr, sondern eine Abfrage.",
+    },
+    "err.patternMatchMode": {
+        "en": "Unknown combination. Either 'any' (a client that hit at least "
+              "one path) or 'all' (only clients that hit every one).",
+        "de": "Unbekannte Verknüpfung. Entweder „any\" (ein Client, der "
+              "mindestens einen Pfad traf) oder „all\" (nur Clients, die "
+              "jeden trafen).",
+    },
     "err.ruleUnknown": {"en": "Unknown rule.", "de": "Unbekannte Regel."},
     "err.yaraName": {
         "en": "A rule file name may hold letters, digits, dot, dash and "

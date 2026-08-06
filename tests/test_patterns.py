@@ -30,7 +30,7 @@ class BundledSetTests(unittest.TestCase):
         """The per-workspace off-switch stores ids. A generated id would
         forget every decision on the next start."""
         for row in self.rows:
-            self.assertTrue(row["id"], f"{row['pattern']} has no id")
+            self.assertTrue(row["id"], f"{row['patterns']} has no id")
             self.assertNotRegex(row["id"], r"^[0-9a-f]{12}$",
                                 "looks like a generated id")
 
@@ -40,19 +40,19 @@ class BundledSetTests(unittest.TestCase):
 
     def test_patterns_are_unique(self):
         """Two entries matching the same path would report every hit twice."""
-        seen = [r["pattern"].lower() for r in self.rows]
+        seen = [tuple(sorted(q.lower() for q in r["patterns"])) for r in self.rows]
         self.assertEqual(len(seen), len(set(seen)))
 
     def test_every_entry_survives_its_own_validation(self):
         """A shipped pattern that `add` would reject is a pattern nobody can
         re-create after switching it off."""
         for row in self.rows:
-            patterns._validate(row["pattern"])
+            patterns._validate(row["patterns"])
 
     def test_every_entry_says_what_a_hit_means(self):
         for row in self.rows:
-            self.assertTrue(row["label"], f"{row['id']} has no label")
-            self.assertTrue(row["about"], f"{row['id']} explains nothing")
+            self.assertTrue(row["name"], f"{row['id']} has no label")
+            self.assertTrue(row["description"], f"{row['id']} explains nothing")
 
     def test_they_are_marked_as_bundled(self):
         for row in self.rows:
@@ -74,7 +74,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual([], patterns.load(self.ws))
 
     def test_own_patterns_come_after_the_bundled_ones(self):
-        patterns.add(self.ws, "/my/own/path.php", "mine")
+        patterns.add(self.ws, ["/my/own/path.php"], "mine")
         lib = patterns.library(self.ws)
         self.assertEqual("own", lib[-1]["source"])
         self.assertEqual("bundled", lib[0]["source"])
@@ -105,13 +105,13 @@ class LibraryTests(unittest.TestCase):
 
     def test_a_bundled_pattern_cannot_be_edited(self):
         with self.assertRaises(patterns.PatternError) as caught:
-            patterns.update(self.ws, self.first, pattern="/something/else")
+            patterns.update(self.ws, self.first, patterns_in=["/something/else"])
         self.assertEqual("err.patternBundled", caught.exception.key)
 
     def test_the_shipped_file_is_never_written_to(self):
         before = patterns.BUNDLED_FILE.read_bytes()
         patterns.set_enabled(self.ws, self.first, False)
-        patterns.add(self.ws, "/another/path.php")
+        patterns.add(self.ws, ["/another/path.php"])
         patterns.remove(self.ws, self.first)
         self.assertEqual(before, patterns.BUNDLED_FILE.read_bytes())
 
@@ -119,9 +119,9 @@ class LibraryTests(unittest.TestCase):
         """The off-switch stores ids, so a bundled set that grows must not
         disturb what was already switched off."""
         patterns.set_enabled(self.ws, self.first, False)
-        patterns.add(self.ws, "/mine.php", "mine")
+        patterns.add(self.ws, ["/mine.php"], "mine")
         self.assertEqual({self.first}, patterns.disabled_ids(self.ws))
-        self.assertEqual(["mine"], [p["label"] for p in patterns.load(self.ws)])
+        self.assertEqual(["mine"], [p["name"] for p in patterns.load(self.ws)])
 
 
 class DuplicateTests(unittest.TestCase):
@@ -132,7 +132,7 @@ class DuplicateTests(unittest.TestCase):
 
     def test_a_copy_of_a_bundled_pattern_is_refused(self):
         with self.assertRaises(patterns.PatternError) as caught:
-            patterns.add(self.ws, self.entry["pattern"], "my copy")
+            patterns.add(self.ws, self.entry["patterns"], "my copy")
         self.assertEqual("err.patternKnown", caught.exception.key)
 
     def test_it_is_refused_even_while_switched_off(self):
@@ -140,7 +140,7 @@ class DuplicateTests(unittest.TestCase):
         duplicate every hit it produces."""
         patterns.set_enabled(self.ws, self.entry["id"], False)
         with self.assertRaises(patterns.PatternError):
-            patterns.add(self.ws, self.entry["pattern"], "my copy")
+            patterns.add(self.ws, self.entry["patterns"], "my copy")
 
 
 class ExchangeTests(unittest.TestCase):
@@ -151,19 +151,19 @@ class ExchangeTests(unittest.TestCase):
     def test_the_export_carries_own_patterns_only(self):
         """The bundled ones travel with the tool; exporting them would land
         on the other side as duplicates and report a pile of skips."""
-        patterns.add(self.ws, "/mine/one.php", "one")
+        patterns.add(self.ws, ["/mine/one.php"], "one")
         out = json.loads(patterns.export_text(self.ws))
-        self.assertEqual(["one"], [p["label"] for p in out["patterns"]])
+        self.assertEqual(["one"], [p["name"] for p in out["patterns"]])
 
     def test_an_exported_file_imports_cleanly_elsewhere(self):
-        patterns.add(self.ws, "/mine/one.php", "one")
-        patterns.add(self.ws, "/mine/two.php", "two")
+        patterns.add(self.ws, ["/mine/one.php"], "one")
+        patterns.add(self.ws, ["/mine/two.php"], "two")
         other = Path(tempfile.mkdtemp(prefix="shellhound-exc2-"))
         got = patterns.import_text(other, patterns.export_text(self.ws))
         self.assertEqual({"added": 2, "skipped": 0, "invalid": 0}, got)
 
     def test_an_import_that_repeats_a_bundled_pattern_skips_it(self):
-        text = patterns.bundled()[0]["pattern"] + " | copy"
+        text = patterns.bundled()[0]["patterns"][0] + " | copy"
         self.assertEqual({"added": 0, "skipped": 1, "invalid": 0},
                          patterns.import_text(self.ws, text))
 
@@ -179,52 +179,52 @@ class DescriptionTests(unittest.TestCase):
                      "landed.")
 
     def test_a_pattern_can_be_created_with_one(self):
-        entry = patterns.add(self.ws, "/exploit/path.php", "Name", "CVE-2026-1",
+        entry = patterns.add(self.ws, ["/exploit/path.php"], "Name", "CVE-2026-1",
                              self.text)
-        self.assertEqual(self.text, entry["about"])
-        self.assertEqual(self.text, patterns.load(self.ws)[0]["about"])
+        self.assertEqual(self.text, entry["description"])
+        self.assertEqual(self.text, patterns.load(self.ws)[0]["description"])
 
     def test_it_can_be_added_afterwards(self):
-        entry = patterns.add(self.ws, "/exploit/path.php")
-        self.assertEqual("", entry["about"])
-        patterns.update(self.ws, entry["id"], about=self.text)
-        self.assertEqual(self.text, patterns.load(self.ws)[0]["about"])
+        entry = patterns.add(self.ws, ["/exploit/path.php"])
+        self.assertEqual("", entry["description"])
+        patterns.update(self.ws, entry["id"], description=self.text)
+        self.assertEqual(self.text, patterns.load(self.ws)[0]["description"])
 
     def test_editing_the_name_leaves_it_alone(self):
         """`update` takes None for "do not touch"; an omitted description
         must not blank the one that is there."""
-        entry = patterns.add(self.ws, "/exploit/path.php", about=self.text)
-        patterns.update(self.ws, entry["id"], label="Renamed")
+        entry = patterns.add(self.ws, ["/exploit/path.php"], description=self.text)
+        patterns.update(self.ws, entry["id"], name="Renamed")
         got = patterns.load(self.ws)[0]
-        self.assertEqual("Renamed", got["label"])
-        self.assertEqual(self.text, got["about"])
+        self.assertEqual("Renamed", got["name"])
+        self.assertEqual(self.text, got["description"])
 
     def test_it_can_be_cleared(self):
-        entry = patterns.add(self.ws, "/exploit/path.php", about=self.text)
-        patterns.update(self.ws, entry["id"], about="")
-        self.assertEqual("", patterns.load(self.ws)[0]["about"])
+        entry = patterns.add(self.ws, ["/exploit/path.php"], description=self.text)
+        patterns.update(self.ws, entry["id"], description="")
+        self.assertEqual("", patterns.load(self.ws)[0]["description"])
 
     def test_it_survives_export_and_import(self):
         """The export is the exchange format. A description that does not
         travel is a description the receiving analyst has to guess."""
-        patterns.add(self.ws, "/exploit/path.php", "Name", "CVE-2026-1",
+        patterns.add(self.ws, ["/exploit/path.php"], "Name", "CVE-2026-1",
                      self.text)
         other = Path(tempfile.mkdtemp(prefix="shellhound-about2-"))
         patterns.import_text(other, patterns.export_text(self.ws))
-        self.assertEqual(self.text, patterns.load(other)[0]["about"])
+        self.assertEqual(self.text, patterns.load(other)[0]["description"])
 
     def test_a_pattern_without_one_is_still_fine(self):
-        entry = patterns.add(self.ws, "/exploit/path.php")
-        self.assertIn("about", entry)
-        self.assertEqual("", entry["about"])
+        entry = patterns.add(self.ws, ["/exploit/path.php"])
+        self.assertIn("description", entry)
+        self.assertEqual("", entry["description"])
 
     def test_the_line_import_form_leaves_it_empty(self):
         """Three fields separated by `|`. Prose would run into the separator,
         so the line form does not carry a description at all."""
         patterns.import_text(self.ws, "/a/path.php | Name | CVE-2026-1")
         got = patterns.load(self.ws)[0]
-        self.assertEqual("CVE-2026-1", got["note"])
-        self.assertEqual("", got["about"])
+        self.assertEqual("CVE-2026-1", got["cve"])
+        self.assertEqual("", got["description"])
 
 
 class WorkspaceFileTests(unittest.TestCase):
@@ -237,7 +237,7 @@ class WorkspaceFileTests(unittest.TestCase):
         patterns.library_path(self.ws).write_text(
             json.dumps({"patterns": [{"id": "x1", "pattern": "/old.php",
                                       "label": "old"}]}), encoding="utf-8")
-        self.assertEqual(["old"], [p["label"] for p in patterns.load(self.ws)])
+        self.assertEqual(["old"], [p["name"] for p in patterns.load(self.ws)])
         self.assertEqual(set(), patterns.disabled_ids(self.ws))
 
     def test_a_bare_list_still_loads(self):
@@ -245,7 +245,7 @@ class WorkspaceFileTests(unittest.TestCase):
         patterns.library_path(self.ws).write_text(
             json.dumps([{"id": "x1", "pattern": "/old.php", "label": "old"}]),
             encoding="utf-8")
-        self.assertEqual(["old"], [p["label"] for p in patterns.load(self.ws)])
+        self.assertEqual(["old"], [p["name"] for p in patterns.load(self.ws)])
 
     def test_a_broken_file_costs_the_own_patterns_and_nothing_else(self):
         """It must never be the reason the interface no longer opens -- and
@@ -263,13 +263,111 @@ class WorkspaceFileTests(unittest.TestCase):
         TWO patterns, not one: a freshly built entry carries neither field, so
         it is only the SECOND save -- which round-trips the first through
         `load`, where the fields are attached -- that can leak them."""
-        patterns.add(self.ws, "/mine.php", "mine")
-        patterns.add(self.ws, "/mine-too.php", "also mine")
+        patterns.add(self.ws, ["/mine.php"], "mine")
+        patterns.add(self.ws, ["/mine-too.php"], "also mine")
         raw = json.loads(
             patterns.library_path(self.ws).read_text(encoding="utf-8"))
         for row in raw["patterns"]:
             self.assertNotIn("source", row)
             self.assertNotIn("enabled", row)
+
+
+class ShapeTests(unittest.TestCase):
+    """A pattern entry is FOUR fields and one condition: the paths, the name,
+    the advisory, and what a hit proves."""
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp(prefix="shellhound-shape-"))
+
+    def test_the_four_fields_round_trip(self):
+        patterns.add(self.ws, ["/a/path.php"], "Name", "CVE-2026-1", "Why")
+        got = patterns.load(self.ws)[0]
+        self.assertEqual(["/a/path.php"], got["patterns"])
+        self.assertEqual("Name", got["name"])
+        self.assertEqual("CVE-2026-1", got["cve"])
+        self.assertEqual("Why", got["description"])
+
+    def test_a_file_written_before_the_rename_still_loads(self):
+        """label/note/about were the old names, and a workspace file outlives
+        a rename."""
+        patterns.library_path(self.ws).write_text(json.dumps({"patterns": [{
+            "id": "x1", "pattern": "/old.php", "label": "Old",
+            "note": "CVE-2019-1", "about": "text"}]}), encoding="utf-8")
+        got = patterns.load(self.ws)[0]
+        self.assertEqual(["/old.php"], got["patterns"])
+        self.assertEqual("Old", got["name"])
+        self.assertEqual("CVE-2019-1", got["cve"])
+        self.assertEqual("text", got["description"])
+        self.assertEqual(patterns.MATCH_ANY, got["match"])
+
+    def test_the_bundled_set_uses_the_same_shape(self):
+        for row in patterns.bundled():
+            for key in ("patterns", "match", "name", "cve", "description"):
+                self.assertIn(key, row, row["id"])
+            self.assertIsInstance(row["patterns"], list)
+
+
+class CombinationTests(unittest.TestCase):
+    """Several paths in one entry, combined OVER CLIENTS."""
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp(prefix="shellhound-comb-"))
+
+    def test_several_paths_are_stored(self):
+        entry = patterns.add(self.ws, ["/exploit*", "/shell.php"],
+                             match=patterns.MATCH_ALL)
+        self.assertEqual(["/exploit*", "/shell.php"], entry["patterns"])
+        self.assertEqual("all", entry["match"])
+
+    def test_the_default_is_any(self):
+        self.assertEqual("any", patterns.add(self.ws, ["/a.php"])["match"])
+
+    def test_an_unknown_combination_is_refused(self):
+        with self.assertRaises(patterns.PatternError) as caught:
+            patterns.add(self.ws, ["/a.php"], match="maybe")
+        self.assertEqual("err.patternMatchMode", caught.exception.key)
+
+    def test_duplicate_paths_inside_one_entry_collapse(self):
+        entry = patterns.add(self.ws, ["/a.php", "/A.PHP", "/b.php"])
+        self.assertEqual(["/a.php", "/b.php"], entry["patterns"])
+
+    def test_order_does_not_make_a_second_rule(self):
+        """"/a AND /b" and "/b AND /a" are the same rule, and storing both
+        would report every hit twice."""
+        patterns.add(self.ws, ["/a.php", "/b.php"], match="all")
+        with self.assertRaises(patterns.PatternError) as caught:
+            patterns.add(self.ws, ["/b.php", "/a.php"], match="all")
+        self.assertEqual("err.patternKnown", caught.exception.key)
+
+    def test_the_same_paths_with_a_different_combination_are_a_different_rule(self):
+        """"either of these" and "both of these" are different claims."""
+        patterns.add(self.ws, ["/a.php", "/b.php"], match="any")
+        patterns.add(self.ws, ["/a.php", "/b.php"], match="all")
+        self.assertEqual(2, len(patterns.load(self.ws)))
+
+    def test_an_entry_needs_at_least_one_path(self):
+        with self.assertRaises(patterns.PatternError) as caught:
+            patterns.add(self.ws, [])
+        self.assertEqual("err.patternEmpty", caught.exception.key)
+
+    def test_there_is_a_ceiling(self):
+        """Beyond a handful it stops being a rule and becomes a query."""
+        with self.assertRaises(patterns.PatternError) as caught:
+            patterns.add(self.ws, [f"/p{i}.php" for i in range(20)])
+        self.assertEqual("err.patternTooMany", caught.exception.key)
+
+    def test_every_path_has_to_be_substantial(self):
+        with self.assertRaises(patterns.PatternError) as caught:
+            patterns.add(self.ws, ["/good/path.php", "*"])
+        self.assertEqual("err.patternTooShort", caught.exception.key)
+
+    def test_the_combination_survives_export_and_import(self):
+        patterns.add(self.ws, ["/a.php", "/b.php"], "N", "C", "D", "all")
+        other = Path(tempfile.mkdtemp(prefix="shellhound-comb2-"))
+        patterns.import_text(other, patterns.export_text(self.ws))
+        got = patterns.load(other)[0]
+        self.assertEqual(["/a.php", "/b.php"], got["patterns"])
+        self.assertEqual("all", got["match"])
 
 
 if __name__ == "__main__":

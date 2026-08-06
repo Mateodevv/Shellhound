@@ -1464,10 +1464,14 @@ def create_app(config: Config) -> FastAPI:
                 "disabled": sum(1 for p in rows if not p["enabled"])}
 
     class NewPattern(BaseModel):
+        # One or more paths. `pattern` is the older single-path form and is
+        # still accepted so an import written by an earlier version lands.
+        patterns: list[str] = []
         pattern: str = ""
-        label: str = ""
-        note: str = ""          # a tag beside the name, kept short
-        about: str = ""         # what a hit here proves -- the long form
+        match: str = "any"      # how several paths combine, OVER CLIENTS
+        name: str = ""
+        cve: str = ""
+        description: str = ""
         text: str = ""          # several at once (lines or JSON)
 
     @app.post("/api/patterns", dependencies=[auth])
@@ -1476,25 +1480,27 @@ def create_app(config: Config) -> FastAPI:
             if body.text.strip():
                 return patternlib.import_text(config.workspace, body.text)
             return {"added": 1, "skipped": 0, "invalid": 0,
-                    "entry": patternlib.add(config.workspace, body.pattern,
-                                            body.label, body.note,
-                                            body.about)}
+                    "entry": patternlib.add(
+                        config.workspace,
+                        body.patterns or [body.pattern],
+                        body.name, body.cve, body.description, body.match)}
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 
     class PatchPattern(BaseModel):
-        pattern: str | None = None
-        label: str | None = None
-        note: str | None = None
-        about: str | None = None
+        patterns: list[str] | None = None
+        match: str | None = None
+        name: str | None = None
+        cve: str | None = None
+        description: str | None = None
 
     @app.patch("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_patch(pattern_id: str, body: PatchPattern,
                        lang: str = lang_dep):
         try:
             return patternlib.update(config.workspace, pattern_id,
-                                     body.pattern, body.label, body.note,
-                                     body.about)
+                                     body.patterns, body.name, body.cve,
+                                     body.description, body.match)
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 
@@ -1552,8 +1558,9 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             for entry in wanted:
-                match = logindex.match_pattern(case_dir, entry["pattern"])
-                name = entry["label"] or entry["pattern"]
+                match = logindex.match_patterns(case_dir, entry["patterns"],
+                                                entry["match"])
+                name = entry["name"] or match["pattern"]
                 for client in match["clients"]:
                     ok = client["ok_hits"] > 0
                     rule = (f"Request matching a stored pattern ({name}) "
@@ -1570,7 +1577,7 @@ def create_app(config: Config) -> FastAPI:
                         "client", client["ip"],
                         evidence=(f"{client['hits']}× requested, of those "
                                   f"{client['ok_hits']}× 2xx · pattern: "
-                                  f"{entry['pattern']} ({origin}) · "
+                                  f"{match['pattern']} ({origin}) · "
                                   f"e.g. {example}")[:400])
                     new_findings += 1
                 conn.execute(
@@ -1583,12 +1590,12 @@ def create_app(config: Config) -> FastAPI:
                     " ok_clients=excluded.ok_clients, uris=excluded.uris,"
                     " first_epoch=excluded.first_epoch,"
                     " last_epoch=excluded.last_epoch, tz=excluded.tz",
-                    (entry["pattern"], entry["label"], db.now(), match["hits"],
+                    (match["pattern"], entry["name"], db.now(), match["hits"],
                      match["ok_hits"], match["clients_total"],
                      match["ok_clients"], match["uri_total"],
                      match["first_epoch"], match["last_epoch"], match["tz"]))
                 results.append({**match, "id": entry["id"],
-                                "label": entry["label"], "note": entry["note"]})
+                                "name": entry["name"], "cve": entry["cve"]})
             conn.commit()
         finally:
             conn.close()
