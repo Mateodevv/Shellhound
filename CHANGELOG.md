@@ -6,6 +6,36 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — settings in tabs, and one place for everything that reaches outward
+
+The settings page was one long scroll in which the outward-facing gate had
+become just another row. It is now two tabs, and they are not the same kind of
+decision:
+
+- **Threat intelligence** — the GeoIP database and the two lookup services.
+  Everything that leaves this machine, in one place. The country database
+  moved here from the dashboard banner; the banner stays as the reminder, but
+  the setting now has a home.
+- **Detection** — what the machine looks for. The YARA rules today.
+
+The GeoIP download flow is now shared between the banner and the settings
+page rather than existing twice. It is the only place the tool speaks outward
+without an API key behind it, and a second copy of the confirmation is a
+second place for it to quietly go missing.
+
+### Added — reminders for the three things that are not set up
+
+One banner each for the missing GeoIP database, the missing VirusTotal key and
+the missing AbuseIPDB key, each linking to the tab that fixes it.
+
+**They take no for an answer permanently.** A banner that reappears in every
+case teaches the analyst to dismiss banners without reading them, and the next
+one that matters gets the same treatment.
+
+**The two key reminders stay hidden until lookups have been allowed.** Nagging
+somebody towards sending a hash to a third party before they have read what
+that costs would invert the gate the whole page is built around.
+
 ### Added — YARA rules are written and managed in the interface
 
 Until now a rule set had to be assembled in a text editor and dropped into

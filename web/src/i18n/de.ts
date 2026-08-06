@@ -926,4 +926,22 @@ export const de: Record<string, string> = {
   'settings.yara.unchecked': 'Ohne yara-python lässt sich die Datei nicht übersetzen, sie wird also ungeprüft gespeichert. Sie ist wirkungslos, bis das Paket installiert ist.',
   'settings.yara.missing': 'yara-python ist nicht installiert',
   'settings.yara.missing.body': 'Regeln lassen sich schreiben und ablegen, aber nichts führt sie aus. Optional wie die GeoIP-Datenbank: alles Übrige läuft unverändert.',
+  // Tabs der Einstellungen. Zwei Gruppen, und es sind nicht dieselben
+  // Entscheidungen: die eine betrifft, was die Maschine verlässt, die andere,
+  // wonach sie sucht.
+  'settings.tab.intel': 'Threat Intelligence',
+  'settings.tab.detection': 'Erkennung',
+  'settings.geo': 'Länderdatenbank',
+  'settings.geo.sub': 'Zuordnung für IP-Adressen. Einmal geholt, danach läuft jede Abfrage offline — die Adressen eines Falls gehen nirgendwohin.',
+  'settings.geo.db': 'GeoIP-Datenbank',
+  'settings.geo.present': 'vorhanden',
+  'settings.geo.absent': 'nicht vorhanden',
+  'settings.geo.absent.body': 'Adressen erscheinen ohne Land. Alles Übrige läuft unverändert.',
+  'settings.geo.refresh': 'Erneut holen',
+  // Erinnerungen im Dashboard.
+  'setup.toSettings': 'Einstellungen',
+  'setup.dismiss.hint': 'Ausblenden. Bleibt auf dieser Maschine ausgeblendet — eine Erinnerung, die in jedem Fall wiederkommt, liest niemand.',
+  'setup.key.virustotal': 'Kein VirusTotal-Schlüssel.',
+  'setup.key.abuseipdb': 'Kein AbuseIPDB-Schlüssel.',
+  'setup.key.body': 'Abfragen sind erlaubt, aber es ist kein Schlüssel gesetzt, also fehlt der Knopf. Eine Abfrage sendet {sends} und sonst nichts.',
 }

@@ -6,6 +6,7 @@
 // cache lives at module level -- the same IP is the same answer in Actors,
 // Trace and the IOC box.
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { post } from './api'
 
 export interface GeoInfo {
@@ -85,4 +86,22 @@ export function useGeo(ip?: string | null): GeoInfo | null | undefined {
     return () => { alive = false; listeners.delete(onClear) }
   }, [key])
   return key ? info : null
+}
+
+
+export interface GeoStatus {
+  available: boolean
+  source: string
+  why: string
+}
+
+/** Whether a country database is present at all. Its own query rather than a
+ *  read of the module cache above: the settings page and the dashboard
+ *  reminder both need it to refresh the moment one is downloaded. */
+export function useGeoStatus() {
+  return useQuery({
+    queryKey: ['geo-status'],
+    queryFn: () => post<GeoStatus>('/api/geo', { ips: [] }),
+    staleTime: 60_000,
+  })
 }

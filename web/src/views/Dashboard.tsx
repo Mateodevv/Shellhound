@@ -10,6 +10,7 @@ import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
 import { CaseChain } from '../components/CaseChain'
 import { GeoBanner } from '../components/GeoBanner'
+import { EnrichmentBanners } from '../components/SetupBanners'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
 import { FileViewer } from '../components/FileViewer'
@@ -65,7 +66,8 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
 
       {/* Like the evidence banner: visible while something is missing,
           gone once it is done. */}
-      <GeoBanner />
+      <GeoBanner onOpenSettings={() => gotoView('settings')} />
+      <EnrichmentBanners onOpenSettings={() => gotoView('settings')} />
 
       {data.jobs_running.length > 0 && (
         <Card className="px-4 py-3 animate-fade-up">

@@ -10,25 +10,30 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle2, ExternalLink, FileCode2, KeyRound, PencilLine, Plus,
-  ShieldAlert, ToggleLeft, ToggleRight, Trash2,
+  CheckCircle2, Download, ExternalLink, FileCode2, Globe, KeyRound,
+  PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight, Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
   api, del, post, put, type SettingsInfo, type YaraRuleFile,
 } from '../api'
 import { useT } from '../i18n'
-import { Button, Card, Section, Tag } from '../components/ui'
+import { Button, Card, Section, Tabs, Tag } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
+import { GeoDownloadModal } from '../components/GeoBanner'
+import { useGeoStatus } from '../geo'
 
 const SERVICE_ICON: Record<string, string> = {
   virustotal: 'VT',
   abuseipdb: 'AB',
 }
 
-export function Settings() {
+type Tab = 'intel' | 'detection'
+
+export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
   const tr = useT()
   const qc = useQueryClient()
+  const [tab, setTab] = useState<Tab>(initialTab)
   const { data } = useQuery({
     queryKey: ['settings'],
     queryFn: () => api<SettingsInfo>('/api/settings'),
@@ -50,7 +55,7 @@ export function Settings() {
   const services = Object.entries(data.services)
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6">
+    <div className="flex max-w-3xl flex-col gap-5">
       <div>
         <h1 className="text-lg font-bold">{tr('settings.title')}</h1>
         <p className="mt-1 text-[12.5px] text-[var(--muted)]">
@@ -58,6 +63,18 @@ export function Settings() {
           <span className="mono break-all">{data.path}</span>
         </p>
       </div>
+
+      {/* Two groups, and they are not the same kind of decision. One is about
+          what leaves this machine; the other is about what the machine looks
+          for. Mixing them into one scroll made the outward-facing gate just
+          another row. */}
+      <Tabs tabs={[
+        { id: 'intel' as const, label: tr('settings.tab.intel') },
+        { id: 'detection' as const, label: tr('settings.tab.detection') },
+      ]} active={tab} onChange={setTab} />
+
+      {tab === 'intel' && <>
+      <GeoSection />
 
       {/* The gate. It sits ABOVE the keys on purpose: a key without this is
           inert, and reading what a lookup sends is the actual decision. */}
@@ -111,9 +128,49 @@ export function Settings() {
           </div>
         )}
       </Section>
+      </>}
 
-      <YaraRules />
+      {tab === 'detection' && <YaraRules />}
     </div>
+  )
+}
+
+/** The country database. It sits in this tab because it is the same kind of
+ *  decision as the two lookup services -- something leaves this machine --
+ *  and the same kind of restraint applies: nothing is fetched until it is
+ *  asked for, and after that the lookup runs entirely offline. */
+function GeoSection() {
+  const tr = useT()
+  const [confirming, setConfirming] = useState(false)
+  const { data } = useGeoStatus()
+
+  return (
+    <Section title={tr('settings.geo')} sub={tr('settings.geo.sub')}>
+      <Card className="flex items-center gap-3 px-4 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
+          <Globe size={15} className="text-[var(--muted)]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold">
+              {tr('settings.geo.db')}
+            </span>
+            {data?.available
+              ? <Tag tone="accent">{tr('settings.geo.present')}</Tag>
+              : <Tag>{tr('settings.geo.absent')}</Tag>}
+          </div>
+          <div className="mt-0.5 text-[12px] text-[var(--muted)]">
+            {data?.available ? data.source : tr('settings.geo.absent.body')}
+          </div>
+        </div>
+        <Button variant={data?.available ? 'default' : 'primary'}
+          onClick={() => setConfirming(true)}>
+          <Download size={14} />
+          {data?.available ? tr('settings.geo.refresh') : tr('geo.download.cta')}
+        </Button>
+      </Card>
+      <GeoDownloadModal open={confirming} onClose={() => setConfirming(false)} />
+    </Section>
   )
 }
 

@@ -444,3 +444,31 @@ export function Section({ title, sub, children, right }: {
     </section>
   )
 }
+
+/** A tab strip. The state lives in the caller, so a tab can be opened from
+ *  elsewhere -- a reminder banner links straight to the tab that fixes it,
+ *  and a banner that dumps you at the top of a long page is a banner that
+ *  gets ignored the second time. */
+export function Tabs<T extends string>({ tabs, active, onChange }: {
+  tabs: { id: T; label: string; badge?: ReactNode }[]
+  active: T
+  onChange: (id: T) => void
+}) {
+  return (
+    <div role="tablist"
+      className="flex gap-1 border-b border-[var(--line)]">
+      {tabs.map(({ id, label, badge }) => (
+        <button key={id} role="tab" aria-selected={active === id}
+          onClick={() => onChange(id)}
+          className={clsx(
+            'relative -mb-px cursor-pointer border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+            active === id
+              ? 'border-[var(--accent)] text-[var(--fg)]'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]')}>
+          {label}
+          {badge}
+        </button>
+      ))}
+    </div>
+  )
+}
