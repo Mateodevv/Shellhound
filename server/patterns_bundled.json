@@ -1,0 +1,150 @@
+{
+  "_comment": [
+    "Hunt patterns shipped with SHELLHOUND. Read-only: this file lives in the",
+    "package, not in the workspace, so an upgrade brings new entries and the",
+    "analyst's own library is never touched. An entry can be switched off per",
+    "workspace; it cannot be edited, because editing it while it keeps its id",
+    "and its CVE would make the same identifier mean different things on two",
+    "machines.",
+    "",
+    "WHAT A HIT PROVES: that a request was made. Nothing here says the request",
+    "succeeded, and nothing here is a finding on its own -- the status code",
+    "decides, and that is what the hunt reports back. A wave of 404s against",
+    "these paths is a scanner; one 200 is the sentence you write the report",
+    "around.",
+    "",
+    "ids are stable strings, never regenerated: the per-workspace off-switch",
+    "refers to them across versions.",
+    "",
+    "'*' is a wildcard. These are path matches, not regular expressions."
+  ],
+  "version": 1,
+  "patterns": [
+    {
+      "id": "phpunit-eval-stdin",
+      "pattern": "/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php",
+      "label": "PHPUnit eval-stdin RCE",
+      "note": "CVE-2017-9841",
+      "about": "A development dependency reachable from the web executes the request body as PHP. Mass-scanned continuously, so a hit alone means little; a 200 means the file was there and ran."
+    },
+    {
+      "id": "drupalgeddon2-register",
+      "pattern": "/user/register?element_parents=account/mail/%23value*",
+      "label": "Drupalgeddon2",
+      "note": "CVE-2018-7600",
+      "about": "Drupal form API render array injection, unauthenticated RCE. Also seen against /user/password and /node."
+    },
+    {
+      "id": "drupalgeddon2-password",
+      "pattern": "/user/password?name%5B%23post_render%5D*",
+      "label": "Drupalgeddon2 via password form",
+      "note": "CVE-2018-7600",
+      "about": "The same flaw through the password reset form. Kept separate so a hit names which entry point was used."
+    },
+    {
+      "id": "wp-file-manager-connector",
+      "pattern": "/wp-content/plugins/wp-file-manager/lib/php/connector.minimal.php",
+      "label": "WP File Manager RCE",
+      "note": "CVE-2020-25213",
+      "about": "An unauthenticated elFinder endpoint that uploads arbitrary files. A 200 here is usually followed by a request to whatever was dropped -- look for a new file in the webroot around the same time."
+    },
+    {
+      "id": "joomla-com-fields-sqli",
+      "pattern": "/index.php?option=com_fields&view=fields&layout=modal*",
+      "label": "Joomla com_fields SQL injection",
+      "note": "CVE-2017-8917",
+      "about": "Unauthenticated SQL injection through the list ordering parameter. Typically used to read session tokens rather than to write files."
+    },
+    {
+      "id": "joomla-jce-imgmanager",
+      "pattern": "/index.php?option=com_jce&task=plugin*",
+      "label": "Joomla JCE image manager upload",
+      "note": "JCE editor",
+      "about": "The JCE editor's file manager has carried more than one upload flaw. Long-lived and still scanned. Verify the exact advisory against the JCE version in the CMS inventory before naming one in a report."
+    },
+    {
+      "id": "magento-shoplift",
+      "pattern": "/index.php/admin/Cms_Wysiwyg/directive/index/*",
+      "label": "Magento Shoplift SQL injection",
+      "note": "CVE-2015-1397",
+      "about": "Unauthenticated SQL injection used to create an administrator account. Pair a hit here with the account list: an admin created around this time is the corroboration."
+    },
+    {
+      "id": "jquery-file-upload",
+      "pattern": "/*/jquery-file-upload/server/php/index.php",
+      "label": "jQuery File Upload",
+      "note": "CVE-2018-9206",
+      "about": "The bundled upload handler accepted anything on servers that did not enforce the shipped .htaccess. Ships inside many plugins and themes, so the path prefix varies."
+    },
+    {
+      "id": "thinkphp-invokefunction",
+      "pattern": "/index.php?s=/*/\\think\\app/invokefunction*",
+      "label": "ThinkPHP invokefunction RCE",
+      "note": "no CVE assigned",
+      "about": "Not a CMS flaw, but one of the most-scanned paths on the internet. Its value here is as noise calibration: a client hitting this and nothing else is an untargeted scanner."
+    },
+    {
+      "id": "timthumb",
+      "pattern": "/*/timthumb.php*",
+      "label": "TimThumb remote file fetch",
+      "note": "CVE-2011-4106",
+      "about": "A thumbnail script that fetched and cached remote files. Long dead, still scanned, and still present in abandoned themes."
+    },
+    {
+      "id": "xmlrpc",
+      "pattern": "/xmlrpc.php",
+      "label": "WordPress XML-RPC",
+      "note": "not a vulnerability",
+      "about": "A legitimate endpoint. It is here because system.multicall turns one request into hundreds of login attempts, so brute force against it does not look like brute force in the log. Volume is the signal, not the path."
+    },
+    {
+      "id": "wp-rest-users",
+      "pattern": "/wp-json/wp/v2/users*",
+      "label": "WordPress user enumeration (REST)",
+      "note": "by design",
+      "about": "Returns login names to anyone who asks. Not a compromise, but it usually precedes one -- and it dates the reconnaissance."
+    },
+    {
+      "id": "wp-author-enum",
+      "pattern": "/?author=*",
+      "label": "WordPress user enumeration (author archive)",
+      "note": "by design",
+      "about": "The older enumeration route: numeric author ids redirect to the login name. Expect false positives on sites that legitimately link author archives."
+    },
+    {
+      "id": "dotenv",
+      "pattern": "/*.env",
+      "label": "Environment file",
+      "note": "credential exposure",
+      "about": "Framework .env files hold database and API credentials in cleartext. A 200 here means the credentials should be treated as known to the attacker, whatever else the case shows."
+    },
+    {
+      "id": "git-metadata",
+      "pattern": "/.git/*",
+      "label": "Exposed .git directory",
+      "note": "source exposure",
+      "about": "A deployed repository lets an attacker reconstruct the source, including anything committed by mistake. /.git/config and /.git/HEAD are the usual probes."
+    },
+    {
+      "id": "wp-config-backup",
+      "pattern": "/wp-config.php*",
+      "label": "wp-config backup copies",
+      "note": "credential exposure",
+      "about": "Matches wp-config.php.bak, .old, .save, .swp and the tilde form -- copies that a web server hands out as plain text because they no longer end in .php. The bare wp-config.php will also match and is normally never requested directly."
+    },
+    {
+      "id": "joomla-config-backup",
+      "pattern": "/configuration.php*",
+      "label": "Joomla configuration backup copies",
+      "note": "credential exposure",
+      "about": "The Joomla equivalent. Same reasoning: the flaw is the copy, not the original."
+    },
+    {
+      "id": "dropped-db-client",
+      "pattern": "/*adminer*",
+      "label": "Adminer dropped in the webroot",
+      "note": "post-compromise",
+      "about": "A single-file database client. Nobody installs it by accident during an incident, and it is a common second stage after a shell -- it gives the database without needing one."
+    }
+  ]
+}

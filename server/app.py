@@ -1378,8 +1378,13 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/patterns", dependencies=[auth])
     def patterns_list():
-        return {"patterns": patternlib.load(config.workspace),
-                "path": str(patternlib.library_path(config.workspace))}
+        """Both halves, switched-off entries included so the interface can
+        offer them back. Each row says which half it came from."""
+        rows = patternlib.library(config.workspace, include_disabled=True)
+        return {"patterns": rows,
+                "path": str(patternlib.library_path(config.workspace)),
+                "bundled": sum(1 for p in rows if p["source"] == "bundled"),
+                "disabled": sum(1 for p in rows if not p["enabled"])}
 
     class NewPattern(BaseModel):
         pattern: str = ""
@@ -1414,7 +1419,21 @@ def create_app(config: Config) -> FastAPI:
 
     @app.delete("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_delete(pattern_id: str):
-        return {"removed": patternlib.remove(config.workspace, pattern_id)}
+        """Deletes an own pattern, switches off a bundled one -- a bundled
+        pattern lives in the package and would come back on the next start."""
+        return patternlib.remove(config.workspace, pattern_id)
+
+    class TogglePattern(BaseModel):
+        enabled: bool = True
+
+    @app.post("/api/patterns/{pattern_id}/enabled", dependencies=[auth])
+    def patterns_toggle(pattern_id: str, body: TogglePattern,
+                        lang: str = lang_dep):
+        try:
+            return patternlib.set_enabled(config.workspace, pattern_id,
+                                          body.enabled)
+        except patternlib.PatternError as e:
+            raise HTTPException(400, _pattern_error(e, lang)) from e
 
     @app.get("/api/patterns/export", dependencies=[auth])
     def patterns_export():
@@ -1440,9 +1459,11 @@ def create_app(config: Config) -> FastAPI:
         that the path belongs to an exploit -- whether the server played
         along is something only the status code says."""
         case_dir = case_dir_or_404(slug)
-        library = patternlib.load(config.workspace)
-        wanted = ([p for p in library if p["id"] in set(body.ids)]
-                  if body.ids else library)
+        # Enabled patterns only, both halves. A switched-off bundled pattern
+        # is not run even when its id is asked for by name.
+        available = patternlib.library(config.workspace)
+        wanted = ([p for p in available if p["id"] in set(body.ids)]
+                  if body.ids else available)
         if not wanted:
             return {"results": [], "findings": 0, "ran": 0}
 
@@ -1457,12 +1478,19 @@ def create_app(config: Config) -> FastAPI:
                     rule = (f"Request matching a stored pattern ({name}) "
                             f"— {'answered 2xx' if ok else 'attempts only'}")
                     example = match["uris"][0]["uri"] if match["uris"] else ""
+                    # Where the pattern came from travels into the case: a
+                    # pattern this version ships is checkable by whoever
+                    # reads the report, one the analyst wrote is not.
+                    origin = ("shipped with SHELLHOUND"
+                              if entry.get("source") == "bundled"
+                              else "analyst's own pattern")
                     db.upsert_finding(
                         conn, "logs", db.SEV_HIGH if ok else db.SEV_LOW, rule,
                         "client", client["ip"],
                         evidence=(f"{client['hits']}× requested, of those "
                                   f"{client['ok_hits']}× 2xx · pattern: "
-                                  f"{entry['pattern']} · e.g. {example}")[:400])
+                                  f"{entry['pattern']} ({origin}) · "
+                                  f"e.g. {example}")[:400])
                     new_findings += 1
                 conn.execute(
                     "INSERT INTO hunt_runs (pattern, label, ran_at, hits,"

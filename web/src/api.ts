@@ -520,6 +520,15 @@ export interface HuntPattern {
   label: string
   note: string
   added: string
+  /** Which half of the library this came from. `bundled` ships inside the
+   *  package and is identical on every installation of a version -- which is
+   *  what makes it citable; `own` was written here. */
+  source: 'bundled' | 'own'
+  /** Switched off for this workspace. Only ever false for a bundled entry:
+   *  an own pattern is deleted rather than disabled. */
+  enabled: boolean
+  /** What a hit actually establishes. Bundled entries only. */
+  about?: string
 }
 
 export interface HuntClient {

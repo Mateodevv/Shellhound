@@ -1,0 +1,44 @@
+# Controls the issue chooser. Not an issue form: this file takes only
+# `blank_issues_enabled` and `contact_links`.
+#
+# Blank issues are off deliberately. Every form carries a required
+# acknowledgement that the report holds no data from a real case, and a blank
+# issue is a route around all four of them. In a tracker whose reports are
+# built out of somebody's incident, that route is the whole risk.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Vulnerability in SHELLHOUND itself
+    url: https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md
+    about: >-
+      Never a public issue. The server has no authentication beyond a loopback
+      token and the material under analysis is live attack code. SECURITY.md
+      carries the threat model and the reporting route.
+
+  - name: Detection rules reference
+    url: https://github.com/Mateodevv/shellhound/blob/main/docs/rules.md
+    about: >-
+      What each rule triggers on, what it states and what it does not state.
+      Probe rules need a 2xx before they become a finding, and INFO severity
+      is hidden by default. Worth reading before reporting a rule as wrong.
+
+# --- Two more links, once the repository settings support them -------------
+# Both would 404 today, and a dead entry in the issue chooser is worse than a
+# missing one. Uncomment each after enabling the feature it points at.
+#
+# Settings > Security > Private vulnerability reporting:
+#
+#   - name: Report a vulnerability privately
+#     url: https://github.com/Mateodevv/shellhound/security/advisories/new
+#     about: >-
+#       Visible to the maintainer only. Attach nothing from a real case --
+#       describe the shape of the input or build a minimal example.
+#
+# Settings > General > Features > Discussions. Worth enabling: with blank
+# issues off, a question that fits no form currently has nowhere to go.
+#
+#   - name: Questions and usage help
+#     url: https://github.com/Mateodevv/shellhound/discussions
+#     about: >-
+#       Installation, workspace layout, how to read a finding. Same rule as
+#       everywhere: no data from a real case.

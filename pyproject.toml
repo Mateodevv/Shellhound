@@ -64,4 +64,8 @@ include = ["server*"]
 # Inside the repository this is unnecessary -- there the server finds
 # web/dist.
 [tool.setuptools.package-data]
-"server" = ["static/**/*"]
+# The hunt patterns SHIPPED with the tool. They belong in the package rather
+# than in the workspace: they are the same on every installation of a given
+# version, which is what makes "SHELLHOUND 0.2.0 ships this pattern" a
+# statement the reader of a report can verify.
+"server" = ["static/**/*", "patterns_bundled.json"]
