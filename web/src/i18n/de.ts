@@ -965,4 +965,5 @@ export const de: Record<string, string> = {
   'settings.rules.format.yara': 'YARA-Regel — mit dieser Version ausgeliefert, nicht änderbar',
   'settings.rules.format.regex': 'Muster',
   'settings.rules.format.builtin': 'Eingebaut',
+  'job.sigma': 'Deine SIGMA-Regeln',
 }

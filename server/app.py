@@ -37,8 +37,8 @@ from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
 from server.config import Config
-from server.engines import (cmsinventory, detect, errorlog, logindex, sqldump,
-                            yarascan,
+from server.engines import (cmsinventory, detect, errorlog, logindex,
+                            sigmascan, sqldump, yarascan,
                             webrootdiff, webshell)
 from server.events import hub
 from server.jobs import manager
@@ -629,6 +629,16 @@ def create_app(config: Config) -> FastAPI:
 
             started.append({"kind": "errorlog",
                             "job": manager.submit(case_dir, "errorlog", run_errors)})
+
+            # The analyst's own SIGMA rules over the finished index. Its own
+            # job because it is the log-side counterpart to the YARA one:
+            # somebody else's rules, running after the thing they read has
+            # been built. Nothing here if the sigma/ folder is empty.
+            def run_sigma(ctx, case_dir=case_dir):
+                return sigmascan.scan(case_dir, config.workspace, ctx)
+
+            started.append({"kind": "sigma",
+                            "job": manager.submit(case_dir, "sigma", run_sigma)})
 
         webroots = by_kind.get("webroot", [])
         if webroots:

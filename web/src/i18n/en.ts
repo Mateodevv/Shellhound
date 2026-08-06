@@ -967,4 +967,5 @@ export const en: Record<string, string> = {
   'settings.rules.format.yara': 'YARA rule — shipped with this version, read-only',
   'settings.rules.format.regex': 'Pattern',
   'settings.rules.format.builtin': 'Built in',
+  'job.sigma': 'Your SIGMA rules',
 }

@@ -35,6 +35,7 @@ the inventory; the measured value stays visible next to it.
 |---|---|---|
 | What is **inside** a file | YARA | [`server/rules_bundled/`](../server/rules_bundled), shipped with the version |
 | Your own rules over files | YARA | `<workspace>/yara/`, yours alone |
+| Your own rules over the logs | SIGMA | `<workspace>/sigma/`, yours alone |
 | Values in a database export | Python regex | `server/engines/sqldump.py` |
 | A file's **location** or **name** | Python | `server/engines/webshell.py` |
 | Aggregates over the log index | Python | `server/engines/logindex.py` |
@@ -50,6 +51,37 @@ that says whether you want it.
 `yara-python` is therefore a **required** dependency, not an optional one. It
 was optional while YARA only ran rules you brought yourself; now a missing
 package would mean thirteen detections quietly not running.
+
+### SIGMA, for the logs
+
+YARA answers "is this pattern in this file". A log line is not a file and the
+questions are about a FIELD -- this status, that method, a user agent
+containing something. SIGMA is the format that already exists for that, so
+`<workspace>/sigma/*.yml` runs against the log index and writes findings on
+the client, like every other log rule.
+
+**A rule this backend cannot answer is refused at load, with the reason, and
+listed under skipped.** It is never loaded and left to match nothing: a
+detection rule that silently never fires is the worst object in a forensic
+tool, because it looks like evidence of absence.
+
+| Supported | Not supported |
+|---|---|
+| `contains`, `startswith`, `endswith`, equality | `\|re` |
+| `and`, `or`, `not`, parentheses | `\| count() by ...` and `timeframe` |
+| `all of them`, `1 of them`, `all of sel*` | fields the index does not carry |
+| `c-uri`, `c-useragent`, `cs-method`, `sc-status`, `c-ip` | |
+
+**Outcome-gating stays the engine's job**, because a SIGMA rule cannot state
+it: the backend always reports how many matches were answered 2xx, and a rule
+that hit only refusals lands at LOW rather than the level it asked for.
+
+**None of the six built-in log rules were converted.** Only the scanner
+user-agent rule translates without loss; the injection, traversal and
+upload-path rules are real regular expressions over a path, and rewriting them
+as substring lists would silently change what they match. The other two are a
+flood and a sequence, which need SIGMA's aggregation part. They stay in the
+engine until the backend can run them unchanged.
 
 ## Every rule can be switched off
 

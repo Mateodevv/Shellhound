@@ -6,6 +6,39 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — SIGMA rules over the access logs
+
+The log-side counterpart to YARA: `<workspace>/sigma/*.yml` is compiled
+against the log index and writes findings on the client, like every other log
+rule. YARA answers "is this pattern in this file"; a log line is not a file,
+and the questions are about a field — this status, that method, a user agent
+containing something. SIGMA is the format that already exists for that, so the
+log side adds no dialect either.
+
+**A rule this backend cannot answer is refused at load, with the reason.** It
+is never loaded and left to match nothing. A detection rule that silently
+never fires is the worst object in a forensic tool: it looks like evidence of
+absence. Refused rules are listed under skipped, by name, with why.
+
+Supported: `contains` / `startswith` / `endswith` / equality, `and` / `or` /
+`not`, parentheses, `all of them`, `1 of them`, `all of sel*`, over
+`c-uri`, `c-useragent`, `cs-method`, `sc-status` and `c-ip`. Not supported and
+refused: `|re`, aggregations, `timeframe`, and any other field.
+
+**Outcome-gating stays the caller's job**, because a SIGMA rule cannot state
+it: the backend always reports how many matches were answered 2xx, and a rule
+that hit only refusals lands at LOW rather than the level it asked for.
+
+**Nothing was converted.** Of the six built-in log rules only the scanner
+user-agent one translates without loss; the injection, traversal and
+upload-path rules are real regular expressions over a path, and rewriting them
+as substring lists would have silently changed what they match. The remaining
+two are a flood and a sequence, which need SIGMA's aggregation part. This adds
+a way to write more rules, not a rewrite of the ones that work.
+
+`PyYAML` becomes a declared dependency. It was arriving as a transitive extra
+of `uvicorn[standard]`, which is not something a parser should rest on.
+
 ### Changed — the content rules are YARA now
 
 Every rule that asks what is *inside* a file is a YARA rule, shipped in
