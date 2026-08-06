@@ -968,4 +968,12 @@ export const en: Record<string, string> = {
   'settings.rules.format.regex': 'Pattern',
   'settings.rules.format.builtin': 'Built in',
   'job.sigma': 'Your SIGMA rules',
+  // Time. Two readings of the same measured instant; neither is more true.
+  'time.switch': 'How timestamps are shown',
+  'time.mode.log': 'Log time',
+  'time.mode.log.hint': "As the server wrote it, in the offset that stands in the log line. What somebody reading that server's log at the time would have seen.",
+  'time.mode.utc': 'UTC',
+  'time.mode.utc.hint': 'The same instant in UTC. The only way to lay two sources with different offsets on one timeline and be sure.',
+  'time.noNames': 'Offsets, not zone names: a log line carries +02:00, and that is CEST as much as it is EET or SAST. A name would be a guess dressed as a measurement.',
+  'time.zone': 'Times in {zone}',
 }

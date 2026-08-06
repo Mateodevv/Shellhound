@@ -16,16 +16,89 @@ export function formatCount(n?: number | null): string {
   return n.toLocaleString(activeLang() === 'de' ? 'de-AT' : 'en-GB')
 }
 
-/** Epoch (UTC) + tz offset of the log line -> the log's own local time. */
-export function formatLogTime(epoch?: number | null, tz = 0): string {
+// ---- time ------------------------------------------------------------------
+//
+// WHAT IS STORED NEVER CHANGES: an epoch in UTC, plus the offset that stood
+// in the log line. Those are the measured facts. Everything below is only
+// how they are RENDERED, and the analyst chooses between two readings:
+//
+//   log  the time as the server wrote it, in its own offset. What somebody
+//        reading that server's log at the time would have seen.
+//   utc  the same instant in UTC. The only way to lay two sources with
+//        different offsets on one timeline and be sure.
+//
+// There is deliberately no third mode for "this workstation's time zone".
+// That is a fact about the forensic VM and about nothing in the case; a
+// timestamp rendered in it looks like evidence and is an artefact of where
+// the analysis happened to run.
+//
+// AND NO ZONE NAMES ARE INVENTED. A log line carries an OFFSET, not a zone:
+// `+0200` is CEST, and equally EET, SAST and half a dozen others. Printing
+// "CEST" next to a timestamp would be a guess wearing the clothes of a
+// measurement. The offset is what is known, so the offset is what is shown.
+
+export type TimeMode = 'log' | 'utc'
+
+export const TIME_KEY = 'shellhound.timeMode'
+
+/** The remembered choice, read before the first render. A non-component
+ *  export lives here rather than in the switcher, or Fast Refresh stops
+ *  working for that file. */
+export function storedTimeMode(): TimeMode {
+  try {
+    const stored = localStorage.getItem(TIME_KEY)
+    if (stored === 'log' || stored === 'utc') return stored
+  } catch { /* storage blocked */ }
+  return 'log'
+}
+
+let currentMode: TimeMode = 'log'
+
+/** The active mode outside React -- exports and the API layer need it and
+ *  cannot use a hook, the same arrangement as the language. */
+export function activeTimeMode(): TimeMode {
+  return currentMode
+}
+export function setActiveTimeMode(mode: TimeMode) {
+  currentMode = mode
+}
+
+/** `+02:00`, `-05:30`, or `UTC` for zero -- which is the one offset whose
+ *  name is not a guess. */
+export function formatOffset(tz = 0): string {
+  if (!tz) return 'UTC'
+  const sign = tz < 0 ? '-' : '+'
+  const total = Math.abs(Math.round(tz / 60))
+  const hh = String(Math.floor(total / 60)).padStart(2, '0')
+  const mm = String(total % 60).padStart(2, '0')
+  return `UTC${sign}${hh}:${mm}`
+}
+
+/** What zone the rendered stamp is in, given the mode and the line's own
+ *  offset. In UTC mode the line's offset is irrelevant, which is the point. */
+export function zoneLabel(tz = 0, mode: TimeMode = currentMode): string {
+  return mode === 'utc' ? 'UTC' : formatOffset(tz)
+}
+
+/** Epoch (UTC) + the log line's offset, rendered in the active mode.
+ *
+ *  `withZone` appends the zone. Dense tables leave it off and state the zone
+ *  once for the column; a timestamp standing on its own in running text
+ *  carries it, because that is the one that ends up pasted into a report. */
+export function formatLogTime(epoch?: number | null, tz = 0,
+                              opts: { withZone?: boolean; mode?: TimeMode } = {}): string {
   if (!epoch) return '—'
-  const d = new Date((epoch + tz) * 1000)
-  return d.toISOString().replace('T', ' ').slice(0, 19)
+  const mode = opts.mode ?? currentMode
+  const shift = mode === 'utc' ? 0 : tz
+  const stamp = new Date((epoch + shift) * 1000)
+    .toISOString().replace('T', ' ').slice(0, 19)
+  return opts.withZone ? `${stamp} ${zoneLabel(tz, mode)}` : stamp
 }
 
 export function formatDay(epoch?: number | null, tz = 0): string {
   if (!epoch) return '—'
-  return new Date((epoch + tz) * 1000).toISOString().slice(0, 10)
+  const shift = currentMode === 'utc' ? 0 : tz
+  return new Date((epoch + shift) * 1000).toISOString().slice(0, 10)
 }
 
 /** The length of a time span in words. Activity across four minutes is

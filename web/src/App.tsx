@@ -12,6 +12,7 @@ import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { LanguageSwitcher } from './components/LanguageSwitcher'
+import { TimeSwitcher } from './components/TimeSwitcher'
 import { Mark } from './components/Mark'
 import { CommandPalette } from './components/CommandPalette'
 import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
@@ -161,6 +162,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
         <div className="p-3 pt-1">
           <div className="mb-1">
+            <TimeSwitcher up />
             <LanguageSwitcher up />
             <ThemeSwitcher up />
           </div>

@@ -90,6 +90,19 @@ def create_app(config: Config) -> FastAPI:
 
     lang_dep = Depends(request_lang)
 
+    def request_tz(request: Request) -> str:
+        """Which reading of the timestamps the prose assembled HERE uses.
+
+        Travels exactly like the language, and for the same reason: parts of
+        the chronology are sentences with times rendered into them, and a
+        sentence cannot be re-rendered in the browser. What is STORED is
+        untouched -- an epoch in UTC plus the offset from the log line."""
+        raw = (request.headers.get("x-tz")
+               or request.query_params.get("tz") or "log").lower()
+        return "utc" if raw == "utc" else "log"
+
+    tz_dep = Depends(request_tz)
+
     def _pattern_error(exc, lang):
         """A validation message in the language of the request.
 
@@ -416,12 +429,12 @@ def create_app(config: Config) -> FastAPI:
         return {"entries": rows}
 
     @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
-    def log_coverage(slug: str, lang: str = lang_dep):
+    def log_coverage(slug: str, lang: str = lang_dep, tz: str = tz_dep):
         """Where the logs are SILENT, and whether the shape of the hole looks
         deliberate. No findings and no severities: a removed window and a
         quiet night look identical from here, so this points at the question
         rather than answering it."""
-        return coverage.report(case_dir_or_404(slug), lang)
+        return coverage.report(case_dir_or_404(slug), lang, tz)
 
     @app.get("/api/yara", dependencies=[auth])
     def yara_status():
@@ -747,8 +760,8 @@ def create_app(config: Config) -> FastAPI:
     # server writes, shared by this route and the JSON export.
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
-    def chain(slug: str, lang: str = lang_dep):
-        return case_chain(case_dir_or_404(slug), lang)
+    def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep):
+        return case_chain(case_dir_or_404(slug), lang, tz)
 
     class ClockBody(BaseModel):
         # Seconds, per source. 0 = the clocks hold as they stand.
@@ -2130,7 +2143,8 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
 
     @app.get("/api/cases/{slug}/iocs/export", dependencies=[auth])
-    def export_iocs(slug: str, format: str = "csv", lang: str = lang_dep):
+    def export_iocs(slug: str, format: str = "csv", lang: str = lang_dep,
+                    tz: str = tz_dep):
         case_dir = case_dir_or_404(slug)
         info = workspace.case_info(case_dir)
         conn = db.connect(case_dir)
@@ -2142,7 +2156,7 @@ def create_app(config: Config) -> FastAPI:
         stem = f"iocs_{info['slug']}"
         if format == "json":
             return Response(ioclib.to_json(rows, info["name"], links,
-                                           chain=case_chain(case_dir, lang)),
+                                           chain=case_chain(case_dir, lang, tz)),
                             media_type="application/json",
                             headers={"Content-Disposition":
                                      f"attachment; filename={stem}.json"})

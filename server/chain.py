@@ -49,12 +49,38 @@ def local(epoch, tz=0):
     return None if not epoch else int(epoch) + int(tz or 0)
 
 
-def iso(value):
-    """Naive local time as a readable timestamp, for running text."""
+def offset_label(tz=0):
+    """`UTC+02:00`, or plain `UTC` for zero -- the one offset whose name is
+    not a guess.
+
+    NO ZONE NAMES. A log line carries an OFFSET, and `+0200` is CEST and
+    equally EET and SAST. Printing a name would be a guess wearing the
+    clothes of a measurement."""
+    tz = int(tz or 0)
+    if not tz:
+        return "UTC"
+    sign = "-" if tz < 0 else "+"
+    total = abs(tz) // 60
+    return f"UTC{sign}{total // 60:02d}:{total % 60:02d}"
+
+
+def iso(value, tz=0, mode="log"):
+    """A readable timestamp for running text, WITH the zone it is in.
+
+    A bare `2026-06-10 22:58:11` in a report is not a time, it is a time and
+    a question.
+
+    `value` is ALREADY LOCAL -- it came through `local()` or `log_at()`, both
+    of which add the offset. So `log` mode renders it as it stands and only
+    names the zone, and `utc` mode takes the offset back off. Shifting twice
+    here would move every timestamp in the prose by an hour or two, which is
+    exactly the class of error nobody notices in a report."""
     if not value:
         return "—"
-    return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime(
+    shift = -int(tz or 0) if mode == "utc" else 0
+    stamp = datetime.fromtimestamp(int(value) + shift, tz=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S")
+    return f"{stamp} {'UTC' if mode == 'utc' else offset_label(tz)}"
 
 
 def stamp_to_local(text):
@@ -87,7 +113,7 @@ def clock_offsets(conn):
             "dump": int(raw.get("dump", 0) or 0)}
 
 
-def case_chain(case_dir, lang="en"):
+def case_chain(case_dir, lang="en", tz_mode="log"):
     """The chronology as data -- shared by the route and the exports: what
     the analyst reads in the dashboard has to be the same thing the case
     hands out."""
@@ -111,10 +137,13 @@ def case_chain(case_dir, lang="en"):
 
     off_logs, off_dump = offsets["logs"], offsets["dump"]
     overview = logindex.overview(case_dir) or {}
-    span_first = local(overview.get("first_epoch"))
+    span_tz = int(overview.get("tz") or 0)
+    span_first = local(overview.get("first_epoch"),
+                       0 if tz_mode == "utc" else span_tz)
     if span_first is not None:
         span_first += off_logs
-    span_last = local(overview.get("last_epoch"))
+    span_last = local(overview.get("last_epoch"),
+                      0 if tz_mode == "utc" else span_tz)
     if span_last is not None:
         span_last += off_logs
     facts = logindex.chain_facts(
@@ -127,7 +156,10 @@ def case_chain(case_dir, lang="en"):
     # Every log time through ONE funnel, every dump time through the other --
     # that way no single spot can forget the offset.
     def log_at(epoch, tz=0):
-        at = local(epoch, tz)
+        # The MODE decides here, not in the browser: the chronology hands out
+        # times already shifted, so a reader that shifted again would be
+        # applying the offset twice. In `utc` mode nothing is added.
+        at = local(epoch, 0 if tz_mode == "utc" else tz)
         return None if at is None else at + off_logs
 
     def dump_at(text):
@@ -173,7 +205,7 @@ def case_chain(case_dir, lang="en"):
                             if h["first_epoch"] == first_any), "")
                 by = t(lang, "chain.file.by", ip=who) if who else ""
                 detail += t(lang, "chain.file.probeBefore", by=by,
-                            at=iso(log_at(first_any, tz)))
+                            at=iso(log_at(first_any, tz), tz, tz_mode))
             add(log_at(first_ok, tz), "erfolg",
                 t(lang, "chain.file.firstOk", name=name), detail, "log",
                 artifact, "file", severity=row["worst"])
@@ -223,7 +255,7 @@ def case_chain(case_dir, lang="en"):
                    table=acc["tbl"] or t(lang, "chain.account.userTable"))
         last = dump_at(acc["last_login"])
         if last and span_first <= last <= span_last:
-            detail += t(lang, "chain.account.lastLogin", at=iso(last))
+            detail += t(lang, "chain.account.lastLogin", at=iso(last, 0, tz_mode))
         title = t(lang, "chain.account.created", login=acc["login"])
         if acc["admin"]:
             title += t(lang, "chain.account.admin")
@@ -255,7 +287,7 @@ def case_chain(case_dir, lang="en"):
     elif not events:
         gaps.append(t(lang, "chain.gap.noTimes"))
     if events and span_first is not None and events[0]["at"] - span_first < 60:
-        gaps.append(t(lang, "chain.gap.atLogStart", at=iso(span_first)))
+        gaps.append(t(lang, "chain.gap.atLogStart", at=iso(span_first, span_tz, tz_mode)))
     if files and not any(e["kind"] == "erfolg" for e in events):
         gaps.append(t(lang, "chain.gap.onlyAttempts"))
     if truncated:
@@ -264,7 +296,7 @@ def case_chain(case_dir, lang="en"):
     # above: something the case cannot show. A window somebody removed and a
     # quiet night look identical from here, so this points at the question
     # rather than answering it.
-    gaps.extend(coverage.report(case_dir, lang)["notes"])
+    gaps.extend(coverage.report(case_dir, lang, tz_mode)["notes"])
     # A set offset is part of the statement and therefore stands with the
     # limitations -- whoever reads the chain has to know that the clocks were
     # turned, and by whom.
@@ -282,4 +314,10 @@ def case_chain(case_dir, lang="en"):
         "events": events, "gaps": gaps, "undated": undated,
         "confirmed": len(confirmed), "truncated": truncated,
         "offsets": offsets,
+        # What zone the times above are in. The events carry no offset of
+        # their own -- they arrive already shifted -- so this is the only
+        # place that says what they mean, and a chronology whose times do
+        # not say that is a chronology nobody can quote.
+        "tz_mode": tz_mode,
+        "zone": "UTC" if tz_mode == "utc" else offset_label(span_tz),
     }

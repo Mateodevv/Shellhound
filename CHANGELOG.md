@@ -6,6 +6,60 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Removed — the backwards-timestamp check
+
+The log coverage report used to flag timestamps that step backwards inside one
+file and read it as "lines were edited, reordered or spliced". It is gone, and
+not because it was noisy: **it was wrong in principle.**
+
+Apache and Nginx write a log line when a request **completes**, and the
+timestamp in it is when the request **started**. A request that took three
+seconds is therefore written after a faster one that began later, and carries
+a lower stamp. On any server with concurrent traffic that happens constantly.
+The check was measuring normal operation and calling it tampering — the one
+thing a module that produces no findings and no severities must never do,
+because a note that says "somebody edited your logs" gets believed.
+
+The truncated-head and stale-mtime checks stay. Both are properties a file
+cannot acquire by being busy.
+
+### Added — every timestamp says which zone it is in, and the reading can be switched
+
+A bare `2026-06-10 22:58:11` in a report is not a time, it is a time and a
+question. Two readings of the same measured instant are now available, next to
+the language and theme switches because it is the same kind of choice:
+
+| | |
+|---|---|
+| **Log time** | As the server wrote it, in the offset from the log line |
+| **UTC** | The same instant in UTC — the only way to lay two sources with different offsets on one timeline |
+
+The switcher always displays the active mode, so nothing on screen is more
+than one glance from a stated zone, and the chronology names its zone in its
+header. The choice travels to the server in `X-TZ`, exactly as the language
+does, because part of the chronology is prose with times already rendered into
+it and a sentence cannot be re-rendered in the browser.
+
+**What is stored does not change**: an epoch in UTC plus the offset from the
+log line. Both readings are derived from those two numbers and neither is more
+true than the other.
+
+**No zone names are invented.** A log line carries an offset, not a zone:
+`+0200` is CEST, and equally EET and SAST. Printing "CEST" next to a timestamp
+would be a guess wearing the clothes of a measurement, so the offset is shown
+— `UTC+02:00`, or plain `UTC` for zero, which is the one offset whose name is
+not a guess.
+
+**There is deliberately no third mode for the workstation's own zone.** That
+is a fact about the forensic VM and about nothing in the case; a timestamp
+rendered in it looks like evidence and is an artefact of where the analysis
+happened to run.
+
+`tests/test_timezone.py` guards the failure that reads perfectly when wrong:
+the chronology hands out times **already shifted**, so UTC mode has to take
+the offset back off rather than add it again. Verified by reintroducing the
+sign error and watching the test fail.
+
 ### Added — SIGMA rules over the access logs
 
 The log-side counterpart to YARA: `<workspace>/sigma/*.yml` is compiled

@@ -966,4 +966,12 @@ export const de: Record<string, string> = {
   'settings.rules.format.regex': 'Muster',
   'settings.rules.format.builtin': 'Eingebaut',
   'job.sigma': 'Deine SIGMA-Regeln',
+  // Zeit. Zwei Lesarten desselben gemessenen Augenblicks; keine ist wahrer.
+  'time.switch': 'Wie Zeitstempel angezeigt werden',
+  'time.mode.log': 'Log-Zeit',
+  'time.mode.log.hint': 'So wie der Server sie geschrieben hat, im Offset aus der Logzeile. Das, was jemand damals im Log dieses Servers gesehen hätte.',
+  'time.mode.utc': 'UTC',
+  'time.mode.utc.hint': 'Derselbe Augenblick in UTC. Der einzige Weg, zwei Quellen mit verschiedenen Offsets sicher auf eine Zeitachse zu legen.',
+  'time.noNames': 'Offsets, keine Zonennamen: eine Logzeile trägt +02:00, und das ist genauso CEST wie EET oder SAST. Ein Name wäre eine Vermutung im Gewand einer Messung.',
+  'time.zone': 'Zeiten in {zone}',
 }
