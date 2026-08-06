@@ -568,6 +568,13 @@ def _write_alert_findings(case_dir, workspace=None):
 
 # --- querying ---------------------------------------------------------------
 
+def open_readonly(case_dir):
+    """Public name for the read-only handle. `sigmascan` needs it too, and
+    reaching into another module's underscore is how a private helper turns
+    into an accidental interface."""
+    return _open_ro(case_dir)
+
+
 def _open_ro(case_dir):
     path = db.log_db_path(case_dir)
     if not path.is_file():

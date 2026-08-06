@@ -43,21 +43,35 @@ python -m server.main
 The browser opens at `http://127.0.0.1:8710` with a token in the URL. The
 workspace directory is created on first start.
 
+### Your own rules
+
+The shipped rules are opinionated, which is useful right up to the moment
+somebody arrives with a rule set of their own. Both formats that already exist
+for that are supported, and neither gets a dialect added to it.
+
+| | Format | Where | Runs over |
+|---|---|---|---|
+| Files | YARA | `<workspace>/yara/*.yar` | The webroot copy |
+| Logs | SIGMA | `<workspace>/sigma/*.yml` | The access log index |
+
+They belong to the workspace, not to a case: a rule set grows across cases.
+YARA files are written under *Settings* — write, edit, switch off, delete — or
+dropped into the folder, so a set from a CERT or a vendor feed arrives
+unchanged. Saving compiles first: a rule that does not compile costs that file
+and not the scan, and hearing it at save time beats hearing it mid-case. A file
+is switched off rather than edited, because it may be somebody else's text.
+
+**A SIGMA rule this tool cannot answer is refused at load, by name, with the
+reason** — never loaded and left to match nothing. What is supported and what
+is not is in [`docs/rules.md`](docs/rules.md).
+
 ### Optional components
 
-| Feature | Requirement | Location | Without it |
-|---|---|---|---|
-| YARA scan | `pip install "yara-python>=4.3"` | `.yar` files in `<workspace>/yara/`, written in *Settings* or dropped in by hand | Everything else works unchanged. The interface states which of the three silences it is: no rules, all switched off, or no YARA |
-| Country flags for IP addresses | A GeoIP database (`.mmdb`) | `SHELLHOUND_GEOIP`, or a `.mmdb` file in the workspace | Everything works, only without flags |
+| Feature | Requirement | Without it |
+|---|---|---|
+| Country flags for IP addresses | A GeoIP database (`.mmdb`), fetched in *Settings* or pointed at with `SHELLHOUND_GEOIP` | Everything works, only without flags |
 
-YARA rules belong to the workspace, not to a case: a rule set grows across
-cases. They are managed under *Settings* — write, edit, switch off, delete —
-and stay plain `.yar` files, so a set from a CERT or a vendor feed can be
-dropped into the folder instead. Saving compiles first: a rule that does not
-compile costs that file and not the scan, and hearing it at save time beats
-hearing it mid-case. A file is switched off rather than edited, because it may
-be somebody else's text. Country attribution reads a local database and never queries a lookup
-service.
+Country attribution reads a local database and never queries a lookup service.
 
 <details>
 <summary><b>Installation as a package</b> (provides a <code>shellhound</code> command)</summary>

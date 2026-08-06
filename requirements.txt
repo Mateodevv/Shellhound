@@ -11,3 +11,7 @@ maxminddb>=2.5
 # thirteen fewer things, which is worse than failing to start. It was
 # optional while YARA only ran the analyst's own rules.
 yara-python>=4.3
+# SIGMA rules are YAML. Required since the log side reads them
+# (server/sigma.py); it used to arrive only as a transitive extra of
+# uvicorn[standard], which is not something to depend on.
+PyYAML>=6.0

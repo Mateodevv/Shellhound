@@ -39,6 +39,10 @@ dependencies = [
   # detections quietly not running, and a scanner that silently finds less
   # is worse than one that refuses to start.
   "yara-python>=4.3",
+  # SIGMA rules are YAML. It used to arrive only as a transitive extra of
+  # uvicorn[standard]; a format the log side parses should not depend on
+  # that.
+  "PyYAML>=6.0",
 ]
 
 [project.urls]

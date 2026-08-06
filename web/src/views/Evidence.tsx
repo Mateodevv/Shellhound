@@ -386,7 +386,8 @@ function CloseCase({ slug, caseName, onClosed }: {
 // Every kind the analysis can start. A kind without an entry here would fall
 // back to its raw identifier, which is how `errorlog` and `yara` ended up in
 // the job list under their internal names.
-const JOB_KINDS = ['index_logs', 'webshell', 'cms', 'sqldb', 'errorlog', 'yara']
+const JOB_KINDS = ['index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
+                   'yara', 'sigma']
 
 function JobRow({ job, slug }: { job: Job; slug: string }) {
   const tr = useT()
