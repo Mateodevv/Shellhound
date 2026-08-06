@@ -929,4 +929,21 @@ export const en: Record<string, string> = {
   'settings.yara.unchecked': 'Without yara-python the file cannot be compiled, so it is stored unchecked. It is inert until the package is installed.',
   'settings.yara.missing': 'yara-python is not installed',
   'settings.yara.missing.body': 'Rules can be written and stored, but nothing runs them. Optional like the GeoIP database: everything else works unchanged.',
+  // Settings tabs. Two groups, and they are not the same kind of decision:
+  // one is about what leaves this machine, the other about what it looks for.
+  'settings.tab.intel': 'Threat intelligence',
+  'settings.tab.detection': 'Detection',
+  'settings.geo': 'Country database',
+  'settings.geo.sub': 'Attribution for IP addresses. Fetched once, after which every lookup runs offline — the addresses in a case are never sent anywhere.',
+  'settings.geo.db': 'GeoIP database',
+  'settings.geo.present': 'present',
+  'settings.geo.absent': 'not present',
+  'settings.geo.absent.body': 'Addresses appear without a country. Everything else works unchanged.',
+  'settings.geo.refresh': 'Fetch again',
+  // Reminders on the dashboard.
+  'setup.toSettings': 'Settings',
+  'setup.dismiss.hint': 'Dismiss. It stays dismissed on this workstation — a reminder that returns in every case is one nobody reads.',
+  'setup.key.virustotal': 'No VirusTotal key.',
+  'setup.key.abuseipdb': 'No AbuseIPDB key.',
+  'setup.key.body': 'Lookups are allowed but no key is set, so the button stays absent. A lookup sends {sends} and nothing else.',
 }
