@@ -961,4 +961,8 @@ export const de: Record<string, string> = {
   'hunt.match.any.hint': 'Ein Client zählt als Treffer, wenn er mindestens einen dieser Pfade angefragt hat.',
   'hunt.match.all': 'alle davon',
   'hunt.match.all.hint': 'Nur Clients, die jeden dieser Pfade angefragt haben. „Diese Adresse hat den Exploit-Pfad UND die abgelegte Datei geholt" ist eine andere Aussage als „sie hat einen davon geholt" — und die, die einer Nachfrage standhält.',
+  'settings.rules.show.hint': 'Die Regel selbst zeigen. Woran sie greift, ist das Einzige, was sagt, ob du sie willst.',
+  'settings.rules.format.yara': 'YARA-Regel — mit dieser Version ausgeliefert, nicht änderbar',
+  'settings.rules.format.regex': 'Muster',
+  'settings.rules.format.builtin': 'Eingebaut',
 }

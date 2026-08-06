@@ -13,10 +13,12 @@ the same decision as the pattern library, for the same reason: knowledge
 about what to look for grows across cases, while a case only records what it
 found.
 
-OPTIONAL, LIKE THE GEOIP DATABASE. Without `yara-python` installed nothing
-here runs and everything else works unchanged; the status says which of the
-two it is, so "no YARA findings" is never ambiguous between "the rules found
-nothing" and "there was no YARA".
+YARA IS NO LONGER OPTIONAL. It used to be, while it only ran rules the
+analyst brought themselves. The web shell content rules are YARA now
+(`server/rules_bundled/`), so a missing package would mean thirteen
+detections quietly not running -- and a scanner that silently finds less is
+worse than one that refuses to start. The "is YARA even installed" branches
+that used to be here are gone with it.
 
 A BROKEN RULE FILE MUST NOT COST THE SCAN. One file that does not compile is
 reported by name and skipped; the rest still run. An analyst who pastes a
@@ -28,10 +30,7 @@ import re
 from server import db, settings as settingslib
 from server.engines.fsutil import get_files_recursive
 
-try:                                  # optional, exactly like maxminddb
-    import yara
-except ImportError:                   # pragma: no cover - depends on the host
-    yara = None
+import yara
 
 RULES_DIR = "yara"
 RULE_SUFFIXES = (".yar", ".yara")
@@ -121,15 +120,8 @@ def _safe_path(workspace, name):
 
 
 def validate(text):
-    """Compile a rule file on its own. Returns the rule names it declares.
-
-    Without yara-python installed nothing can be compiled, and the text is
-    accepted unchecked -- it is inert until the package is there, and
-    refusing to save would make the editor useless on exactly the machines
-    where somebody is preparing rules for later."""
+    """Compile a rule file on its own. Returns the rule names it declares."""
     names = rule_names_in(text)
-    if yara is None:
-        return names, False
     try:
         yara.compile(source=text or "")
     except Exception as e:                  # yara.SyntaxError and friends
@@ -155,11 +147,10 @@ def list_rules(workspace):
             out.append(entry)
             continue
         entry["rules"] = rule_names_in(text)
-        if yara is not None:
-            try:
-                yara.compile(source=text)
-            except Exception as e:
-                entry["error"] = str(e)[:200]
+        try:
+            yara.compile(source=text)
+        except Exception as e:
+            entry["error"] = str(e)[:200]
         out.append(entry)
     return out
 
@@ -213,16 +204,12 @@ def set_rule_enabled(workspace, name, enabled):
 
 
 def status(workspace):
-    """What the interface needs to know: is this possible, and out of what.
+    """What the interface needs to know: what runs, and out of what.
 
-    Distinguishes the two silences that look alike -- no YARA installed
-    versus no rules placed."""
+    Two silences still look alike and must not be confused: no rules placed
+    at all, versus rules that are all switched off."""
     all_names = rule_file_names(workspace)
     off = settingslib.yara_disabled(workspace)
-    if yara is None:
-        return {"available": False, "reason": "package",
-                "dir": rules_dir(workspace), "files": all_names, "rules": 0,
-                "broken": [], "disabled": sorted(off & set(all_names))}
     compiled, broken, count = _compile(workspace)
     enabled = [n for n in all_names if n not in off]
     return {"available": True,
@@ -240,8 +227,6 @@ def status(workspace):
 def _compile(workspace):
     """(compiled, broken, rule_count). Compiles each file ON ITS OWN so that
     one syntax error costs one file instead of the whole set."""
-    if yara is None:
-        return None, [], 0
     sources, broken = {}, []
     for path in rule_files(workspace):
         name = os.path.basename(path)
@@ -302,8 +287,8 @@ def scan(case_dir, targets, workspace=None, ctx=None):
     second work list.
     """
     stats = {"scanned": 0, "findings": 0, "flagged_files": 0, "rules": 0,
-             "skipped": 0, "broken_rules": 0, "available": yara is not None}
-    if yara is None or workspace is None:
+             "skipped": 0, "broken_rules": 0, "available": True}
+    if workspace is None:
         return stats
 
     compiled, broken, rule_count = _compile(workspace)

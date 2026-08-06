@@ -219,6 +219,16 @@ export interface DetectionRule {
   severity: number
   name: string
   enabled: boolean
+  /** How the rule is written, which decides what can be shown of it.
+   *  `yara` carries its own source, `regex` the pattern it matches with,
+   *  `builtin` is a rule about a file's location or an aggregate over the
+   *  log index -- there is no single expression to show, and inventing a
+   *  readable-looking one would misdescribe what runs. */
+  format: 'yara' | 'regex' | 'builtin'
+  /** The definition itself, for `yara` and `regex`. */
+  source: string
+  /** One sentence on what a hit means. Bundled YARA rules only. */
+  what: string
 }
 
 /** One `.yar` file in the workspace. The unit of management is the FILE,

@@ -164,30 +164,40 @@ class YaraScanTests(unittest.TestCase):
         self.assertEqual(str(self.ws / "yara"), yarascan.rules_dir(self.ws))
 
 
-class YaraOptionalTests(unittest.TestCase):
-    """The engine has to be a no-op without the package -- not an error."""
+class YaraIsRequiredTests(unittest.TestCase):
+    """It used to be optional, and the engine used to be a no-op without it.
 
-    def test_scan_without_the_package_returns_cleanly(self):
-        saved = yarascan.yara
-        try:
-            yarascan.yara = None
-            case = Path(tempfile.mkdtemp(prefix="shellhound-ynone-"))
-            db.connect(case).close()
-            stats = yarascan.scan(case, ["/nonexistent"], workspace=case)
-            self.assertFalse(stats["available"])
-            self.assertEqual(0, stats["findings"])
-        finally:
-            yarascan.yara = saved
+    That stopped being tenable when the web shell content rules became YARA
+    rules: a missing package would mean thirteen detections quietly not
+    running, and a scanner that silently finds less is worse than one that
+    refuses to start. These tests hold the new promise instead of the old
+    one -- that the package is there, and that the rules it needs shipped
+    with it."""
 
-    def test_status_without_the_package_says_which_silence_it_is(self):
-        saved = yarascan.yara
-        try:
-            yarascan.yara = None
-            st = yarascan.status(Path(tempfile.mkdtemp()))
-            self.assertFalse(st["available"])
-            self.assertEqual("package", st["reason"])
-        finally:
-            yarascan.yara = saved
+    def test_the_package_is_importable(self):
+        import yara
+        self.assertTrue(hasattr(yara, "compile"))
+
+    def test_it_is_declared_as_a_hard_dependency(self):
+        """Not in an extra. An install that omits it is an install that
+        detects less without saying so."""
+        root = Path(__file__).resolve().parent.parent
+        requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("yara-python", requirements)
+        deps = pyproject.split("[project.urls]")[0]
+        self.assertIn("yara-python", deps)
+
+    def test_the_bundled_rules_ship_with_the_package(self):
+        root = Path(__file__).resolve().parent.parent
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("rules_bundled/*.yar", pyproject)
+        self.assertTrue(list((root / "server" / "rules_bundled").glob("*.yar")))
+
+    def test_status_never_reports_a_missing_package(self):
+        st = yarascan.status(Path(tempfile.mkdtemp(prefix="shellhound-yreq-")))
+        self.assertTrue(st["available"])
+        self.assertNotEqual("package", st["reason"])
 
 
 if __name__ == "__main__":

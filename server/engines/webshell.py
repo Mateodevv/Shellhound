@@ -1,16 +1,32 @@
 # server/engines/webshell.py
-"""Static webshell scanner (ported from legacy modules/webshell_scanner.py).
+"""Static webshell scanner.
 
 The rules were tuned against real Joomla incident data; the single most
 effective discriminator is the CMS bootstrap guard (_JEXEC / ABSPATH): a PHP
 file in a writable upload directory is only flagged when the guard is ABSENT
-and the file has an executable surface. Ported rule-for-rule.
+and the file has an executable surface.
+
+THE CONTENT RULES ARE YARA NOW (`server/rules_bundled/`). What is left in
+this file is everything YARA cannot express, and the split is not arbitrary:
+
+  * A rule about a file's CONTENT is a YARA rule. That is what YARA is.
+  * A rule about its LOCATION, its NAME, or the fact that it could not be
+    read at all is not -- YARA is handed bytes and never learns where they
+    came from. Those stay here.
+
+So `Double extension disguise` and `Unguarded PHP in writable upload
+directory` are Python, and every pattern that looks INSIDE a file is a
+bundled YARA rule the analyst can read and switch off.
+
+The names the findings carry are unchanged across that move, because they
+are part of the triage fingerprint: a decision somebody made about a file
+last week still applies to it today.
 """
 import json
 import os
 import re
 
-from server import db, ruleswitch
+from server import bundled_rules, db, ruleswitch
 from server.engines.fsutil import get_files_recursive, sha256_of
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
@@ -46,43 +62,6 @@ INERT_STUB_BYTES = 4096
 DOUBLE_EXT_RE = re.compile(
     r"(?i)\.(jpe?g|png|gif|bmp|ico|pdf|txt|zip|xml)\.(php\d?|phtml|phar|inc)$")
 
-# (id, severity, rule name, regex) applied line-by-line. 0=HIGH 1=MEDIUM.
-#
-# THE ID SITS HERE, next to the rule, and not in a catalogue somewhere
-# else. A parallel list is a list that drifts: the rule gets renamed, the
-# catalogue does not, and the off-switch quietly stops matching anything.
-CONTENT_RULES = [
-    ("webshell.eval_input", 0, "eval/assert on decoded or request input",
-     re.compile(r"(?i)\b(eval|assert)\s*\(\s*(base64_decode|gzinflate|gzuncompress|str_rot13|strrev|\$_(POST|GET|REQUEST|COOKIE))")),
-    ("webshell.var_func", 0, "Variable function called on request input",
-     re.compile(r"\$\w+\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)")),
-    ("webshell.cmd_input", 0, "Command execution on request input",
-     re.compile(r"(?i)(shell_exec|passthru|proc_open|popen|pcntl_exec|system|exec)\s*\(\s*[^;]{0,40}\$_(POST|GET|REQUEST|COOKIE|SERVER)")),
-    ("webshell.preg_e", 0, "preg_replace with /e modifier (code execution)",
-     re.compile(r"(?i)preg_replace\s*\(\s*(['\"]).*?[/#~|!%@][a-zA-Z]*e[a-zA-Z]*\1")),
-    ("webshell.create_function", 0, "create_function / callback on request input",
-     re.compile(r"(?i)(create_function\s*\(\s*['\"]|call_user_func(_array)?\s*\(\s*\$_)")),
-    ("webshell.dropper", 0, "File dropper writing request input to disk",
-     re.compile(r"(?i)(move_uploaded_file|file_put_contents|fwrite)\s*\(.{0,80}\$_(POST|GET|REQUEST|FILES)")),
-    ("webshell.obfuscation", 1, "Obfuscation decode chain",
-     re.compile(r"(?i)(base64_decode\s*\(\s*(str_rot13|strrev|gzinflate|gzuncompress)|gzinflate\s*\(\s*(base64_decode|str_rot13)|str_rot13\s*\(\s*base64_decode)")),
-    ("webshell.hex_octal", 1, "Hex/octal string obfuscation",
-     re.compile(r"((\\x[0-9a-fA-F]{2}|\\[0-7]{3})){10,}")),
-    ("webshell.chr_concat", 1, "chr() concatenation obfuscation",
-     re.compile(r"(?i)(chr\s*\(\s*\d+\s*\)\s*\.\s*){5,}")),
-    ("webshell.goto", 1, "goto-based control-flow obfuscation",
-     re.compile(r"(?i)\bgoto\s+\w{1,20}\s*;")),
-    ("webshell.standalone_exec", 1, "Standalone command-execution shell",
-     re.compile(r"(?i)\b(shell_exec|passthru|proc_open|pcntl_exec)\s*\(")),
-]
-
-HTACCESS_RULES = [
-    ("webshell.htaccess_handler", 0, ".htaccess maps non-PHP extension to PHP handler",
-     re.compile(r"(?i)(AddHandler|AddType|SetHandler)[^\n]*(php|x-httpd)")),
-    ("webshell.htaccess_prepend", 0, ".htaccess auto_prepend/append_file backdoor",
-     re.compile(r"(?i)auto_(prepend|append)_file")),
-]
-
 MAX_CONTENT_SCAN_BYTES = 5 * 1024 * 1024
 GUARD_SNIFF_BYTES = 4096
 
@@ -96,11 +75,66 @@ def _truncate(text, limit=160):
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _scan_lines(text, rules):
-    for line_num, line in enumerate(text.splitlines(), 1):
-        for rid, severity, name, rx in rules:
-            if rx.search(line):
-                yield rid, severity, name, line_num, _truncate(line)
+def _line_index(raw):
+    """Byte offset -> line number, and the line's bounds. Built ONCE per
+    file: a match carries an offset, and every finding needs the line it sits
+    on plus that line's text as evidence."""
+    starts = [0]
+    for i, byte in enumerate(raw):
+        if byte == 0x0A:
+            starts.append(i + 1)
+    return starts
+
+
+def _at_offset(raw, starts, offset):
+    """(line number, the line) for a byte offset."""
+    lo, hi = 0, len(starts) - 1
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if starts[mid] <= offset:
+            lo = mid
+        else:
+            hi = mid - 1
+    begin = starts[lo]
+    end = raw.find(b"\n", begin)
+    line = raw[begin:end if end >= 0 else len(raw)]
+    return lo + 1, line.decode("utf-8", errors="replace")
+
+
+def _yara_findings(raw, kind):
+    """Run the bundled rules of one kind over a file's bytes.
+
+    Yields (rule_id, severity, name, line, evidence) -- the same shape the
+    regex tables produced, and deliberately so: everything downstream, up to
+    and including the triage fingerprint, must not notice the change.
+
+    ONE FINDING PER RULE PER LINE, like before. YARA reports every instance
+    of a string; a rule that matches four times on one line used to produce
+    one finding, not four."""
+    matches = bundled_rules.compiled(kind).match(data=raw)
+    if not matches:
+        return
+    starts = _line_index(raw)
+    seen = set()
+    out = []
+    for match in matches:
+        meta = match.meta
+        rule_id = meta.get("id")
+        if not rule_id:
+            continue
+        severity = bundled_rules.severity_of(meta.get("severity"))
+        name = meta.get("name") or match.rule
+        for string_match in match.strings:
+            for instance in string_match.instances:
+                line_no, line = _at_offset(raw, starts, instance.offset)
+                if (rule_id, line_no) in seen:
+                    continue
+                seen.add((rule_id, line_no))
+                out.append((rule_id, severity, name, line_no,
+                            _truncate(line)))
+    # By line, so a file reads top to bottom like it used to.
+    out.sort(key=lambda row: (row[3], row[0]))
+    yield from out
 
 
 def scan_file(file_path):
@@ -163,10 +197,10 @@ def scan_file(file_path):
     text = raw.decode("utf-8", errors="replace")
 
     if is_htaccess:
-        findings.extend(_scan_lines(text, HTACCESS_RULES))
+        findings.extend(_yara_findings(raw, "htaccess"))
         return findings, None, None
 
-    findings.extend(_scan_lines(text, CONTENT_RULES))
+    findings.extend(_yara_findings(raw, "content"))
 
     if in_upload_dir(abs_path) and not CMS_GUARD_RE.search(raw[:GUARD_SNIFF_BYTES]):
         if EXEC_SURFACE_RE.search(raw):

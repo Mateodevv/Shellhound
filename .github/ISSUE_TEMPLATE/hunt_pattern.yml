@@ -1,85 +1,51 @@
-name: Hunt pattern proposal
-description: Propose a URL pattern for a known exploit for a shared pattern library
-title: "[Hunt pattern] "
-labels: ["hunt-pattern", "enhancement"]
-assignees:
-  - Mateodevv
-
+name: Propose a hunt pattern
+description: A URL path that identifies a known exploit, for the shipped pattern library.
+title: "[Pattern] "
+labels: ["pattern"]
+assignees: ["Mateodevv"]
 body:
   - type: markdown
     attributes:
       value: |
-        For a URL path that identifies a known exploit, so that the pattern
-        hunt can answer who requested it, how often, and how much of it was
-        answered 2xx.
-
-        An accepted pattern is merged into
+        Accepted patterns are merged into
         [`server/patterns_bundled.json`](https://github.com/Mateodevv/shellhound/blob/main/server/patterns_bundled.json)
-        and ships with the next release, switched on by default in every
-        workspace. That is why the bar below is about false positives: a
-        pattern that also matches ordinary traffic does not cost you a look,
-        it costs every installation a filled work list.
+        and ship switched on in every workspace. That is why the last field
+        matters most: a pattern that also matches ordinary traffic does not
+        cost one analyst a look, it costs all of them a filled work list.
 
-        Shipped entries are read-only and identical on every installation of
-        a version, which is what lets a report cite one. Analysts who want a
-        variant switch it off and add their own.
+        Paths, not regular expressions — `*` is the wildcard.
 
-  - type: markdown
+  - type: textarea
+    id: patterns
     attributes:
-      value: |
-        **Nothing out of a real case.** No customer host names, no client
-        addresses, no file paths from an affected system, no lines out of real
-        access logs. Describe the shape, or build the example from invented
-        values: `example.test`, `203.0.113.4`, `2001:db8::1`, hashes as
-        `<sha256>`.
-
-        A pattern for a vulnerability that is not public yet does not belong in a
-        public issue — see
-        [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md).
-
-  - type: input
-    id: pattern
-    attributes:
-      label: Pattern
-      description: >
-        A path match, not a regular expression. It is compared
-        case-insensitively against the request target from the log line — path
-        and query string — and matches anywhere inside it. `*` stands for any
-        characters; nothing else is special. At least three characters besides
-        wildcards.
-      placeholder: "/index.php?option=com_jce&task=plugin&plugin=imgmanager"
+      label: Path(s)
+      description: One per line. Several are combined over CLIENTS — say below whether a hit needs one of them or all of them.
+      render: text
+      placeholder: /index.php?option=com_jce&task=profiles.import
     validations:
       required: true
 
   - type: input
-    id: software
+    id: name
     attributes:
-      label: Affected software and versions
-      description: The component, not only the product, and the versions the exploit works against.
-      placeholder: "Joomla 3.x, JCE editor extension before 2.5.5"
+      label: Name
+      description: What it is called in the library. Short enough to read in a list.
+      placeholder: Joomla JCE editor RCE
     validations:
       required: true
 
   - type: input
-    id: reference
+    id: cve
     attributes:
       label: CVE or advisory
-      description: >
-        A CVE identifier, or the advisory, vendor bulletin, Exploit-DB entry or
-        writeup the pattern comes from. Leave empty if it comes from your own
-        observation and there is no public reference — say so under context then.
-      placeholder: "CVE-2018-17057, or https://example.test/advisory/2018-004"
+      placeholder: CVE-2026-48907
 
-  - type: dropdown
-    id: normal_traffic
+  - type: textarea
+    id: description
     attributes:
-      label: Does this path occur in normal traffic
-      description: This decides whether the pattern can stand alone or needs its query string to be specific.
-      options:
-        - The path does not exist in a clean installation
-        - The path exists but is not requested in normal operation
-        - The path is requested in normal operation, only the query string makes it an exploit
-        - Unclear
+      label: What a hit proves
+      description: And what it does not. This is the sentence an analyst reads six months later, when the CVE number alone no longer says why the path was on the list.
+      placeholder: An unauthenticated upload endpoint. A 2xx means the handler answered — not that a file landed; look for a new file in the webroot around the same time.
     validations:
       required: true
 
@@ -87,78 +53,14 @@ body:
     id: also_matches
     attributes:
       label: What else would match this
-      description: >
-        The most important field here. A pattern that also catches ordinary
-        requests does not cost accuracy, it costs working time: every match lands
-        in the work list and has to be dismissed by hand. Name what you know it
-        hits besides the exploit — the component's own legitimate requests,
-        administration, update or backup routines, scanners probing the path
-        without effect. If you have run it against a clean installation, write
-        down what came back.
-      placeholder: >
-        The same path without the parameters is a normal editor request in the
-        backend. Run against a clean 3.9 installation, 0 hits in 40k lines.
+      description: Ordinary traffic, other software, scanner noise. "Nothing" is an answer, if you have checked.
     validations:
       required: true
 
-  - type: markdown
-    attributes:
-      value: |
-        **A match states that the request was made — not that it worked.** The
-        hunt reports the matching requests, the clients behind them, and how many
-        of those requests were answered 2xx. Whether a 2xx means the exploit
-        succeeded is a question about the software, not about the log.
-
-  - type: textarea
-    id: success_signal
-    attributes:
-      label: What a successful attempt looks like
-      description: >
-        Only if a 2xx alone is misleading here — the component answers 200 to
-        everything, or the exploit only works together with a follow-up request
-        to a dropped file. This becomes the note next to the pattern.
-      placeholder: >
-        The component answers 200 even on failure. It only worked if a request to
-        a .php file under /images/ follows within a few seconds.
-
-  - type: textarea
-    id: examples
-    attributes:
-      label: Request targets it should match
-      description: >
-        One per line, invented, so the pattern can be checked against them.
-        Example:
-        `/index.php?option=com_jce&task=plugin&plugin=imgmanager&file=imgmanager`
-      render: text
-
-  - type: dropdown
-    id: verified
-    attributes:
-      label: How the pattern was checked
-      options:
-        - Run against a lab installation of the affected software
-        - Run in SHELLHOUND against a case and it matched what was expected
-        - Taken from the advisory or a proof of concept, not run against traffic
-
-  - type: input
-    id: pattern_label
-    attributes:
-      label: Name for the library entry
-      description: What stands next to the pattern in the library. Short enough to read in a list.
-      placeholder: "JCE imgmanager upload (CVE-2018-17057)"
-
-  - type: textarea
-    id: context
-    attributes:
-      label: Context
-      description: Anything a maintainer needs in order to judge the pattern that is not covered above.
-
   - type: checkboxes
-    id: no_case_data
+    id: ack
     attributes:
-      label: Data
+      label: Before you submit
       options:
-        - label: >
-            This proposal contains no data from a real case — no host names, no
-            client addresses, no log excerpts, no paths from an affected system.
+        - label: No host names, addresses or log lines from a real case.
           required: true

@@ -963,4 +963,8 @@ export const en: Record<string, string> = {
   'hunt.match.any.hint': 'A client counts as a hit when it requested at least one of these paths.',
   'hunt.match.all': 'all of them',
   'hunt.match.all.hint': 'Only clients that requested every one of these paths. "This address fetched the exploit path AND the file it dropped" is a different claim from "it fetched one of them" — and the one that survives being questioned.',
+  'settings.rules.show.hint': 'Show the rule itself. What it matches on is the only thing that says whether you want it.',
+  'settings.rules.format.yara': 'YARA rule — shipped with this version, read-only',
+  'settings.rules.format.regex': 'Pattern',
+  'settings.rules.format.builtin': 'Built in',
 }

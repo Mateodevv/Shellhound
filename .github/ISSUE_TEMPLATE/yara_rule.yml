@@ -1,0 +1,69 @@
+name: Propose a YARA rule
+description: A rule over files in the webroot, for the shipped rule set.
+title: "[YARA] "
+labels: ["detection", "yara"]
+assignees: ["Mateodevv"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The web shell content rules ship as YARA
+        ([`server/rules_bundled/`](https://github.com/Mateodevv/shellhound/tree/main/server/rules_bundled)),
+        and an accepted rule joins them — switched on in every workspace, so
+        a false positive costs everybody rather than you.
+
+        You do not need this form to *use* a rule. Settings → Detection has
+        an editor for your own `.yar` files; they stay in your workspace and
+        nobody has to agree with them. This form is for a rule you think
+        every installation should run.
+
+        **What a rule can and cannot do here.** YARA is handed bytes and
+        never learns where they came from, so a rule about a file's location
+        or its name is not expressible — those live in the engine. A rule
+        about what is *inside* a file is exactly what belongs here.
+
+  - type: textarea
+    id: rule
+    attributes:
+      label: The rule
+      description: Complete and compiling. Include `meta:` with a one-line `what` — the interface shows it above the source.
+      render: text
+      placeholder: |
+        rule Webshell_Example
+        {
+            meta:
+                severity = "high"
+                what = "A one-line statement of what a match means."
+            strings:
+                $a = /some_function[^\S\n]*\([^\S\n]*\$_(POST|GET)/ nocase
+            condition:
+                $a
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_it_catches
+    attributes:
+      label: What it catches, and what a match proves
+      placeholder: The upload half of a known dropper family. A match means the code is present, not that it ran.
+    validations:
+      required: true
+
+  - type: textarea
+    id: false_positives
+    attributes:
+      label: What legitimate code would also match
+      description: Frameworks, CMS core, popular plugins. Say what you tested it against — "a clean WordPress 6.5 and Joomla 5.3 tree" is the useful answer.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Before you submit
+      options:
+        - label: The rule contains no strings taken from a real case — no host names, paths or credentials that appeared in one.
+          required: true
+        - label: It compiles, and I have run it against at least one clean CMS tree.
+          required: true
