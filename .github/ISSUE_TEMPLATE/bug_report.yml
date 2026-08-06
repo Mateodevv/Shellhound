@@ -1,0 +1,164 @@
+name: Bug report
+description: A crash, a hang, or an interface that showed something other than what happened.
+title: "[Bug] "
+labels: ["bug"]
+assignees: ["Mateodevv"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **A vulnerability in SHELLHOUND itself does not go here.** The tool has no
+        authentication beyond a loopback token and the material under analysis is live
+        attack code. Report it privately:
+        [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md).
+
+        **A rule that judged wrongly is a different form.** A rule that fired on a clean
+        file, missed a shell, or is merely too noisy needs other information than a
+        crash does — use the detection-rule form for that.
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Nothing from a real case
+
+        Everything you would naturally paste here — the path, the log line, the hash,
+        the IP, the account name — is evidence from somebody's incident, often under an
+        NDA. It also is not what reproduces the bug: the *shape* of the input is.
+
+        | Evidence | Write instead |
+        |---|---|
+        | A path inside the evidence copy | `<evidence>/wp-content/uploads/x.php` |
+        | A path to case or workspace | `<workspace>/<case>/logindex.db` |
+        | A client address | `203.0.113.7`, `2001:db8::7` |
+        | A host, domain or mail address | `example.test`, `admin@example.test` |
+        | A hash | `<sha256>` |
+        | A log line | Invent one with the same shape, or describe the shape |
+
+        Keep the part that might *be* the bug: depth of the path, the extension, spaces,
+        non-ASCII characters, drive letter or UNC prefix, overall length. A path
+        flattened to `<evidence>/x.php` has thrown away what broke it.
+
+        A **screenshot** of Findings, Trace or Files shows real paths, addresses and
+        account names. Crop and redact it, or describe what you saw.
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Working as designed
+
+        These come in as bugs regularly and are not:
+
+        - **Attack attempts were not flagged.** SQL injection, path traversal and
+          requests for PHP in upload directories become a finding only when at least one
+          such request was answered **2xx**. Repelled attempts stay a counter on the
+          actor — a blocked wave should not redden the work list.
+        - **INFO findings are missing.** They are hidden by default. The severity filter
+          brings them back.
+        - **No YARA results.** Without `yara-python` installed, or without `.yar` files
+          in `<workspace>/yara/`, there is nothing to run.
+        - **No countries on the actors.** Attribution needs a local `.mmdb`. Without one
+          everything works, only without flags.
+        - **Files missing from the webroot scan on Windows.** An antivirus scanner can
+          quarantine evidence files with PHP patterns before SHELLHOUND ever reads them.
+          Check the quarantine and exclude the evidence folder first.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release you run, or the commit if you run from a checkout.
+      placeholder: 0.1.1 — or main @ 1a2b3c4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: >-
+        Path handling breaks on one OS and not on the other, which is why CI runs Linux
+        and Windows. Name the exact release under evidence shape if it could matter.
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - WSL (Linux under Windows)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python_version
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      options:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.14"
+        - Older than 3.10 (below the supported floor)
+        - Other, or unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: >-
+        The steps that led to it, what you expected, and what happened instead. Steps on
+        invented or public test data are worth more than steps on a real case.
+      placeholder: |
+        1. New case, registered a webroot copy and one access log. Both under a folder
+           with a space in its name, on D:.
+        2. Analyse, all jobs finished green.
+        3. Findings, set the severity filter to HIGH.
+
+        Expected: the list shows the HIGH findings.
+        Actual: the list stays empty, the counter above it still says 12. After a page
+        reload the 12 are there.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence_shape
+    attributes:
+      label: Shape of the evidence
+      description: >-
+        Usually what decides whether this reproduces at all. Sizes, counts, formats and
+        where the data sits — no content.
+      placeholder: |
+        Access logs: 3 files, 2.1 GB total, one of them .gz, Apache combined
+        Webroot: WordPress 6.5, roughly 40,000 files, on an external drive (exFAT)
+        Dump: mysqldump, 800 MB, table prefix wp_
+        Evidence on a network share (UNC path), workspace on C:
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback or console output
+      description: >-
+        From the terminal that runs the server, or from the browser devtools console for
+        an interface bug — name the browser in that case. Redact paths as described
+        above and keep their structure:
+        `C:\Cases\ACME\evidence\webroot\wp-content\uploads\x.php`
+        becomes `<evidence>\wp-content\uploads\x.php`.
+      render: text
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before you submit
+      options:
+        - label: >-
+            This report contains no data from a real case: no evidence paths, log lines,
+            hashes, client addresses, account names or unredacted screenshots.
+          required: true
+        - label: >-
+            This is a defect, not a vulnerability in SHELLHOUND itself. Vulnerabilities
+            go through
+            [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md),
+            never into a public issue.
+          required: true

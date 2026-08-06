@@ -900,4 +900,10 @@ export const de: Record<string, string> = {
   'job.sqldb': 'SQL-Dump-Analyse',
   'job.errorlog': 'Error-Logs lesen',
   'job.yara': 'YARA-Regeln',
+  // Die Muster-Bibliothek hat zwei Hälften, und aus welcher ein Muster
+  // stammt, gehört zu dem, was ein Treffer bedeutet -- s. server/patterns.py.
+  'hunt.bundled': 'mitgeliefert',
+  'hunt.bundled.hint': 'Wird mit SHELLHOUND ausgeliefert und ist auf jeder Installation dieser Version identisch — genau das macht es im Bericht zitierbar. Nicht änderbar: schalte es ab, wenn du es nicht willst.',
+  'hunt.disable.hint': 'Für diesen Workspace abschalten. Es bleibt in der Liste und lässt sich wieder einschalten — löschen geht nicht, ein mitgeliefertes Muster käme beim nächsten Start zurück.',
+  'hunt.enable.hint': 'Wieder einschalten. Läuft ab der nächsten Jagd mit.',
 }

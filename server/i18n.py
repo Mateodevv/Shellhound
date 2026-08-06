@@ -344,6 +344,15 @@ CATALOGUE: dict[str, dict[str, str]] = {
     },
     "err.patternUnknown": {"en": "Unknown pattern.", "de": "Unbekanntes Muster."},
     "err.patternJson": {"en": "not valid JSON", "de": "Kein gültiges JSON"},
+    "err.patternBundled": {
+        "en": "A pattern shipped with SHELLHOUND cannot be edited — it is the "
+              "same on every installation, which is what makes it citable. "
+              "Switch it off and add your own version.",
+        "de": "Ein mit SHELLHOUND ausgeliefertes Muster lässt sich nicht "
+              "ändern — es ist auf jeder Installation dasselbe, und genau "
+              "das macht es zitierbar. Schalte es ab und lege deine eigene "
+              "Fassung an.",
+    },
 
     # --- account signal labels -------------------------------------------
     "signal.admin": {"en": "Admin", "de": "Admin"},

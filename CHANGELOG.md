@@ -6,6 +6,71 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — hunt patterns that ship with the tool
+
+Until now the pattern library started empty: a new installation could not hunt
+until the analyst had written something. It now ships with 18 known exploit
+paths for WordPress, Joomla, Drupal, Magento and a few framework-level ones,
+switched on by default.
+
+**The library has two halves, and which half a pattern came from travels into
+the case.** A finding produced by a shipped pattern records that it was
+shipped; one from the analyst's own pattern records that too. The distinction
+is not bookkeeping — a pattern this version ships is identical on every
+installation and can therefore be checked by whoever reads the report, and one
+written on the analysing machine cannot.
+
+- Shipped patterns live in the package (`server/patterns_bundled.json`), not
+  in the workspace, so an upgrade brings new entries and the analyst's own
+  library is never touched.
+- They are **read-only**. An entry that could be edited while keeping its id
+  and its CVE would make the same identifier mean two different things on two
+  machines.
+- They can be **switched off per workspace**, not deleted: a delete would last
+  until the next start and then quietly undo itself. The off-switch stores
+  ids, so decisions survive an upgrade that adds entries.
+- Adding a copy of a shipped pattern is refused, **including while it is
+  switched off** — otherwise switching it back on later would silently double
+  every hit.
+- The export carries the own patterns only. The shipped ones travel with the
+  tool; exporting them would arrive as duplicates on the other side.
+- Nothing runs automatically. A match still proves only that a request was
+  made; the status code decides, and the hunt reports it.
+
+Each entry states what a hit actually establishes, which is shown in the
+interface. Several are deliberately not vulnerabilities — `/xmlrpc.php` is a
+legitimate endpoint that turns one request into hundreds of login attempts,
+and the ThinkPHP path is there as noise calibration: a client that hits it and
+nothing else is an untargeted scanner.
+
+### Changed — issue templates
+
+The three GitHub default templates are replaced by four issue **forms**: bug
+report, detection rule report, hunt pattern proposal, feature request, plus a
+chooser config that routes vulnerability reports to `SECURITY.md` and turns
+blank issues off.
+
+Every form carries a **required acknowledgement that the report contains no
+data from a real case**. This is forensics software: the natural way to report
+a bug is to paste the log line, the path or the hash that broke it, and every
+one of those is somebody's incident, often under an NDA. Blank issues are off
+because they are the route around all four acknowledgements.
+
+The detection rule report is its own form because "this rule fired on a clean
+file" needs entirely different information from a crash — the shape of the
+artifact and the wrong conclusion, not a traceback. It heads off the two
+predictable non-bugs: probe rules are outcome-gated, and INFO severity is
+hidden by default.
+
+`tests/test_issue_forms.py` checks the forms parse and hold to the schema. A
+malformed form is not an error anywhere — GitHub simply stops offering it in
+the chooser, and nobody notices until somebody files nothing instead.
+
+### Changed — README
+
+Rewritten flatter on request: fewer paragraphs, more tables, the reasoning
+stated once instead of argued.
+
 ### Added — a mark of its own
 
 The favicon was a generic shield outline: at 16px, where a favicon actually

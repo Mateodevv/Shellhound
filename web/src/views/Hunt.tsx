@@ -15,7 +15,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Box, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Crosshair,
-  Download, HelpCircle, PencilLine, Play, Plus, Radar, Trash2, Upload,
+  Download, HelpCircle, PencilLine, Play, Plus, Radar, ToggleLeft,
+  ToggleRight, Trash2, Upload,
 } from 'lucide-react'
 import {
   api, del, downloadUrl, patch, post, type HuntClient, type HuntPattern,
@@ -51,7 +52,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
 
   const { data: lib } = useQuery({
     queryKey: ['patterns'],
-    queryFn: () => api<{ patterns: HuntPattern[]; path: string }>('/api/patterns'),
+    queryFn: () => api<{ patterns: HuntPattern[]; path: string
+                         bundled: number; disabled: number }>('/api/patterns'),
   })
   const { data: runs } = useQuery({
     queryKey: ['hunt-runs', slug],
@@ -85,6 +87,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
     mutationFn: (id: string) => del(`/api/patterns/${id}`),
     onSuccess: refresh,
   })
+  // A bundled pattern is switched off, never deleted: it lives in the
+  // package, so a delete would come back on the next start.
+  const toggle = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      post(`/api/patterns/${id}/enabled`, { enabled }),
+    onSuccess: refresh,
+  })
   const run = useMutation({
     mutationFn: (ids: string[]) =>
       post<{ results: HuntResult[]; findings: number }>(
@@ -99,6 +108,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   })
 
   const patterns = lib?.patterns ?? []
+  // Only what is switched on gets run, so that is what the button counts.
+  const runnable = patterns.filter((p) => p.enabled)
   const runByPattern = new Map((runs?.runs ?? []).map((r) => [r.pattern, r]))
   const shown = results ?? []
 
@@ -110,12 +121,12 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
           hint={tr('hunt.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">{tr('nav.hunt')}</h1>
         </Tooltip>
-        <Button variant="primary" disabled={!patterns.length || run.isPending}
+        <Button variant="primary" disabled={!runnable.length || run.isPending}
           onClick={() => run.mutate([])}>
           <Play size={14} />
           {run.isPending
             ? tr('hunt.searching')
-            : tr('hunt.runAll', { n: formatCount(patterns.length) })}
+            : tr('hunt.runAll', { n: formatCount(runnable.length) })}
         </Button>
         <Button onClick={() => setShowImport(!showImport)}>
           <Upload size={14} /> {tr('hunt.import')}
@@ -214,7 +225,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                    : <ChevronRight size={14} className="shrink-0 text-[var(--muted)]" />}
           <Radar size={14} className="shrink-0 text-[var(--muted)]" />
           <span className="shrink-0 text-[12px] font-semibold">
-            {tr('hunt.library', { n: formatCount(patterns.length) })}
+            {tr('hunt.library', { n: formatCount(runnable.length) })}
           </span>
           <InfoDot
             title={tr('hunt.library.title')}
@@ -234,14 +245,24 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
             return <PatternEditor key={p.id} slug={slug} entry={p}
               onDone={() => { setEditing(null); refresh() }} />
           }
+          const shipped = p.source === 'bundled'
           return (
             <div key={p.id}
-              className="flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]">
+              className={clsx('flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]',
+                !p.enabled && 'opacity-45')}>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-[13px] font-medium">
                     {p.label || <span className="mono">{p.pattern}</span>}
                   </span>
+                  {/* Where a pattern came from is part of what a hit means:
+                      one this version ships can be checked by whoever reads
+                      the report, one written here cannot. */}
+                  {shipped && (
+                    <Tag hint={p.about || tr('hunt.bundled.hint')}>
+                      {tr('hunt.bundled')}
+                    </Tag>
+                  )}
                   {p.note && <Tag>{p.note}</Tag>}
                 </div>
                 <div className="mono truncate text-[11px] text-[var(--muted)]" title={p.pattern}>
@@ -267,23 +288,42 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                   </span>
                 </Tooltip>
               )}
-              <Button variant="ghost" onClick={() => run.mutate([p.id])}>
-                <Play size={13} /> {tr('hunt.search')}
-              </Button>
-              <Tooltip hint={tr('hunt.edit.hint')}>
-                <button
-                  className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
-                  onClick={() => setEditing(p.id)}>
-                  <PencilLine size={14} />
-                </button>
-              </Tooltip>
-              <Tooltip hint={tr('hunt.delete.hint')}>
-                <button
-                  className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
-                  onClick={() => remove.mutate(p.id)}>
-                  <Trash2 size={14} />
-                </button>
-              </Tooltip>
+              {p.enabled && (
+                <Button variant="ghost" onClick={() => run.mutate([p.id])}>
+                  <Play size={13} /> {tr('hunt.search')}
+                </Button>
+              )}
+              {/* A bundled pattern is not editable. Changing it while it kept
+                  its id and its CVE would make the same identifier mean two
+                  things on two machines. */}
+              {!shipped && (
+                <Tooltip hint={tr('hunt.edit.hint')}>
+                  <button
+                    className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
+                    onClick={() => setEditing(p.id)}>
+                    <PencilLine size={14} />
+                  </button>
+                </Tooltip>
+              )}
+              {shipped ? (
+                <Tooltip hint={p.enabled ? tr('hunt.disable.hint')
+                                         : tr('hunt.enable.hint')}>
+                  <button
+                    className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
+                    onClick={() => toggle.mutate({ id: p.id, enabled: !p.enabled })}>
+                    {p.enabled ? <ToggleRight size={16} className="text-[var(--accent)]" />
+                               : <ToggleLeft size={16} />}
+                  </button>
+                </Tooltip>
+              ) : (
+                <Tooltip hint={tr('hunt.delete.hint')}>
+                  <button
+                    className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
+                    onClick={() => remove.mutate(p.id)}>
+                    <Trash2 size={14} />
+                  </button>
+                </Tooltip>
+              )}
               {result && <ResultBadge result={result} />}
             </div>
           )

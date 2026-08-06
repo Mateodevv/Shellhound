@@ -1,0 +1,206 @@
+name: Detection rule report
+description: A rule fired on something clean, missed something, or fires too often
+title: "[Rule] "
+labels: ["detection-rule"]
+assignees:
+  - Mateodevv
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For one of the detection rules: it fired on a clean artifact, it missed
+        something it should have caught, it fires so often that it buries the
+        work list, or it is right but weighted wrong.
+
+        Every rule is documented in
+        [docs/rules.md](https://github.com/Mateodevv/shellhound/blob/main/docs/rules.md)
+        with its trigger, what it **states** and what it does **not** state.
+        That entry usually settles whether this is a bug or the rule working as
+        written.
+
+        A crash or a stack trace belongs in the bug report instead. A security
+        problem in SHELLHOUND itself does **not** belong in a public issue — see
+        [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md).
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Nothing from a real case
+
+        This tracker is public and the material you work with is somebody's
+        incident. No log lines, no file contents, no host names, no client
+        addresses, no account names, no hashes out of the case.
+
+        Describe the **shape** instead — "a 3 KB PHP file under
+        `wp-content/uploads`, shipped by a plugin, no CMS guard", "about 200
+        GETs from one address, all answered 404" — or invent a minimal example.
+        The test suite is built exactly that way: tiny invented files, each one
+        triggering a single rule.
+
+        Invented data looks like this: `example.test`, `203.0.113.7`,
+        `2001:db8::1`, hashes written as `<sha256>`.
+
+  - type: checkboxes
+    id: data_ack
+    attributes:
+      label: Data
+      options:
+        - label: >-
+            Nothing in this report comes from a real case. Paths, log lines,
+            addresses, names and hashes are invented or generalised.
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Two behaviours that look like bugs
+
+        **Probe rules are outcome-gated.** SQL injection, path traversal and
+        requests for PHP in upload directories become a finding only once at
+        least one such request was answered **2xx**. Attempts the server
+        repelled stay as a counter on the actor and deliberately do not redden
+        the work list. "It did not flag the attacks in my log" is almost always
+        this.
+
+        **INFO starts hidden.** In the findings list every severity chip is a
+        hide toggle, and INFO — where the scanner User-Agent rule lives — begins
+        switched off, as do findings you marked as false positive. A rule that
+        seems not to fire is worth a second look with INFO shown.
+
+  - type: checkboxes
+    id: by_design
+    attributes:
+      label: Checked
+      description: Access log rules only. Leave both empty if neither applies.
+      options:
+        - label: At least one of the requests I mean was answered 2xx, so outcome gating is not the explanation.
+        - label: I looked with INFO shown.
+
+  - type: dropdown
+    id: report_kind
+    attributes:
+      label: What is wrong
+      options:
+        - The rule fired on something clean (false positive)
+        - The rule missed something it should have caught (false negative)
+        - The rule fires so often that it buries the work list (noise)
+        - The rule fires on the right things at the wrong severity
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      description: The overview table in docs/rules.md names the engine for every rule.
+      options:
+        - Webshell scan (files in the webroot)
+        - Database dump
+        - Access logs
+        - Error log
+        - YARA
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: rule
+    attributes:
+      label: Rule
+      description: >-
+        The name as it stands on the finding and in docs/rules.md. For a YARA
+        match, your own rule name and the severity in its meta.
+      placeholder: Unguarded PHP in writable upload directory
+    validations:
+      required: true
+
+  - type: dropdown
+    id: expected_severity
+    attributes:
+      label: Correct severity
+      description: What this artifact should have produced, if anything.
+      options:
+        - HIGH
+        - MEDIUM
+        - LOW
+        - INFO
+        - No finding at all
+        - Not sure
+
+  - type: textarea
+    id: artifact_shape
+    attributes:
+      label: Shape of the artifact
+      description: >-
+        What the file, log line, database value or error line looked like — in
+        shape, not in content. Useful: location and extension, rough size,
+        whether a CMS bootstrap guard was present, which construct the rule
+        matched on, and for log rules the number of requests, the methods and
+        the status codes.
+      placeholder: |
+        A ~3 KB PHP file in wp-content/uploads, part of a gallery plugin that
+        keeps its rendered thumbnails there. No CMS guard. It calls
+        file_put_contents on a path built a few lines above, and $_GET['id']
+        is inside that expression.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verdict
+    attributes:
+      label: Conclusion, and what it should be
+      description: >-
+        What SHELLHOUND stated about the artifact, and why that is wrong.
+        False positive: what the artifact legitimately is and what makes it
+        clean. False negative: what it actually is, and which trigger should
+        have caught it. Noise: what the rule keeps hitting.
+      placeholder: |
+        The finding states the file writes incoming data to disk (File dropper,
+        HIGH). It does write, but the request value never reaches the content:
+        it goes through md5() into the file name only, the directory is fixed,
+        and what is written is rendered output. This is HIGH on every install
+        of that plugin.
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal_example
+    attributes:
+      label: Minimal example you invented
+      description: |
+        The smallest artifact that reproduces this, written by you rather than
+        lifted from a case — that is what makes it usable as a fixture in
+        `tests/`. A few lines of PHP, one made-up log line, one INSERT row.
+        Preferred over anything real, and enough on its own for a false
+        positive.
+
+        ```
+        <?php
+        $cache = __DIR__ . '/cache/' . md5($_GET['id']) . '.html';
+        file_put_contents($cache, render_page());
+        ```
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`pip show shellhound`, or the tag or commit you run from."
+      placeholder: 0.1.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: >-
+        Load-bearing for the location rules and for the paths read out of the
+        error log: both work on paths, and paths are where the two systems
+        differ.
+      options:
+        - Linux
+        - Windows
+        - macOS
+        - Other
