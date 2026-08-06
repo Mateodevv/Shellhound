@@ -545,9 +545,15 @@ export interface HuntHit { ip: string; name: string; hits: number; ok_hits: numb
  *  created once, it is ready in every further case. */
 export interface HuntPattern {
   id: string
-  pattern: string
-  label: string
-  note: string
+  /** One or more paths. Several are combined OVER CLIENTS, not over one
+   *  request -- a URI cannot be two paths at once. */
+  patterns: string[]
+  /** `any` = a client that hit at least one; `all` = only clients that hit
+   *  every one. The second is the claim that survives a defence lawyer. */
+  match: 'any' | 'all'
+  name: string
+  cve: string
+  description: string
   added: string
   /** Which half of the library this came from. `bundled` ships inside the
    *  package and is identical on every installation of a version -- which is
@@ -556,8 +562,6 @@ export interface HuntPattern {
   /** Switched off for this workspace. Only ever false for a bundled entry:
    *  an own pattern is deleted rather than disabled. */
   enabled: boolean
-  /** What a hit actually establishes. Bundled entries only. */
-  about?: string
 }
 
 export interface HuntClient {

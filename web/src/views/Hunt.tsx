@@ -34,10 +34,13 @@ import type { ViewId } from '../App'
 export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
   const qc = useQueryClient()
-  const [pattern, setPattern] = useState('')
-  const [label, setLabel] = useState('')
-  const [note, setNote] = useState('')
-  const [about, setAbout] = useState('')
+  // A list, not a string: several paths in one entry are combined over
+  // CLIENTS -- "this address fetched the exploit path AND what it dropped".
+  const [paths, setPaths] = useState<string[]>([''])
+  const [match, setMatch] = useState<'any' | 'all'>('any')
+  const [name, setName] = useState('')
+  const [cve, setCve] = useState('')
+  const [description, setDescription] = useState('')
   const [importText, setImportText] = useState('')
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
@@ -67,10 +70,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   }
 
   const add = useMutation({
-    mutationFn: () => post('/api/patterns', { pattern, label, note, about }),
+    mutationFn: () => post('/api/patterns', {
+      patterns: paths.map((p) => p.trim()).filter(Boolean),
+      match, name, cve, description,
+    }),
     onSuccess: () => {
-      setPattern(''); setLabel(''); setNote(''); setAbout('')
-      setError(''); refresh()
+      setPaths(['']); setMatch('any'); setName(''); setCve('')
+      setDescription(''); setError(''); refresh()
     },
     onError: (e: Error) => setError(e.message),
   })
@@ -152,56 +158,55 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
 
       {/* ---- add a pattern ---- */}
       <Card className="flex flex-wrap items-end gap-2 px-4 py-3">
-        <label className="flex min-w-72 flex-1 flex-col gap-1">
+        <div className="flex basis-full flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
             {tr('hunt.field.pattern')}
           </span>
-          <input
-            value={pattern}
-            onChange={(e) => setPattern(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && pattern.trim()) add.mutate() }}
-            placeholder={tr('hunt.field.pattern.placeholder')}
-            className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
-          />
-        </label>
+          <PathList paths={paths} onChange={setPaths}
+            onSubmit={() => { if (paths.some((p) => p.trim())) add.mutate() }} />
+          {paths.filter((p) => p.trim()).length > 1 && (
+            <MatchPicker value={match} onChange={setMatch} />
+          )}
+        </div>
         <label className="flex w-56 flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
             {tr('hunt.field.name')}
           </span>
           <input
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="JCE imgmanager RCE"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Joomla JCE editor RCE"
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
         </label>
         <label className="flex w-48 flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('hunt.field.note')}
+            {tr('hunt.field.cve')}
           </span>
           <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="CVE-2018-17057"
+            value={cve}
+            onChange={(e) => setCve(e.target.value)}
+            placeholder="CVE-2026-48907"
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
         </label>
         <label className="flex min-w-72 flex-1 basis-full flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('hunt.field.about')}
+            {tr('hunt.field.description')}
           </span>
           {/* Its own row: this is a sentence, not a tag. What a hit here
               proves is the thing nobody remembers six months later, and the
               note field beside the name is too short to hold it. */}
           <textarea
-            value={about}
-            onChange={(e) => setAbout(e.target.value)}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            placeholder={tr('hunt.field.about.placeholder')}
+            placeholder={tr('hunt.field.description.placeholder')}
             className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
         </label>
-        <Button variant="primary" disabled={!pattern.trim()} onClick={() => add.mutate()}>
+        <Button variant="primary"
+          disabled={!paths.some((p) => p.trim())} onClick={() => add.mutate()}>
           <Plus size={14} /> {tr('hunt.store')}
         </Button>
       </Card>
@@ -259,7 +264,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
         </button>
         {libOpen && patterns.map((p) => {
           const result = shown.find((r) => r.id === p.id)
-          const last = runByPattern.get(p.pattern)
+          const last = runByPattern.get(joinPaths(p))
           if (editing === p.id) {
             return <PatternEditor key={p.id} slug={slug} entry={p}
               onDone={() => { setEditing(null); refresh() }} />
@@ -272,28 +277,35 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-[13px] font-medium">
-                    {p.label || <span className="mono">{p.pattern}</span>}
+                    {p.name || <span className="mono">{p.patterns[0]}</span>}
                   </span>
                   {/* Where a pattern came from is part of what a hit means:
                       one this version ships can be checked by whoever reads
                       the report, one written here cannot. */}
                   {shipped && (
-                    <Tag hint={p.about || tr('hunt.bundled.hint')}>
+                    <Tag hint={p.description || tr('hunt.bundled.hint')}>
                       {tr('hunt.bundled')}
                     </Tag>
                   )}
-                  {p.note && <Tag>{p.note}</Tag>}
+                  {p.cve && <Tag>{p.cve}</Tag>}
+                  {p.patterns.length > 1 && (
+                    <Tag tone={p.match === 'all' ? 'accent' : undefined}
+                      hint={tr(`hunt.match.${p.match}.hint`)}>
+                      {tr(`hunt.match.${p.match}`)}
+                    </Tag>
+                  )}
                 </div>
-                <div className="mono truncate text-[11px] text-[var(--muted)]" title={p.pattern}>
-                  {p.pattern}
+                <div className="mono truncate text-[11px] text-[var(--muted)]"
+                  title={p.patterns.join('\n')}>
+                  {joinPaths(p)}
                 </div>
                 {/* Shown for both halves. What a hit proves is the thing the
                     analyst wrote it down for, and it is no use hidden behind
                     a hover on a tag that only shipped patterns carry. */}
-                {p.about && (
+                {p.description && (
                   <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--muted)]"
-                    title={p.about}>
-                    {p.about}
+                    title={p.description}>
+                    {p.description}
                   </div>
                 )}
               </div>
@@ -386,16 +398,20 @@ function PatternEditor({ slug, entry, onDone }: {
   onDone: () => void
 }) {
   const tr = useT()
-  const [pattern, setPattern] = useState(entry.pattern)
-  const [label, setLabel] = useState(entry.label)
-  const [note, setNote] = useState(entry.note)
-  const [about, setAbout] = useState(entry.about ?? '')
+  const [paths, setPaths] = useState<string[]>(entry.patterns)
+  const [match, setMatch] = useState<'any' | 'all'>(entry.match)
+  const [name, setName] = useState(entry.name)
+  const [cve, setCve] = useState(entry.cve)
+  const [description, setDescription] = useState(entry.description)
   const [error, setError] = useState('')
   void slug
 
   const save = useMutation({
     mutationFn: () =>
-      patch(`/api/patterns/${entry.id}`, { pattern, label, note, about }),
+      patch(`/api/patterns/${entry.id}`, {
+        patterns: paths.map((p) => p.trim()).filter(Boolean),
+        match, name, cve, description,
+      }),
     onSuccess: onDone,
     onError: (e: Error) => setError(e.message),
   })
@@ -403,39 +419,43 @@ function PatternEditor({ slug, entry, onDone }: {
   return (
     <div className="flex flex-col gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-4 py-3 last:border-0">
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex min-w-64 flex-1 flex-col gap-1">
+        <div className="flex basis-full flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
             {tr('hunt.field.pattern')}
           </span>
-          <input value={pattern} onChange={(e) => setPattern(e.target.value)}
-            className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
-        </label>
+          <PathList paths={paths} onChange={setPaths} dark />
+          {paths.filter((p) => p.trim()).length > 1 && (
+            <MatchPicker value={match} onChange={setMatch} />
+          )}
+        </div>
         <label className="flex w-48 flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
             {tr('hunt.field.name')}
           </span>
-          <input value={label} onChange={(e) => setLabel(e.target.value)}
+          <input value={name} onChange={(e) => setName(e.target.value)}
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
         </label>
         <label className="flex w-40 flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('hunt.field.note')}
+            {tr('hunt.field.cve')}
           </span>
-          <input value={note} onChange={(e) => setNote(e.target.value)}
+          <input value={cve} onChange={(e) => setCve(e.target.value)}
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
         </label>
-        <Button variant="primary" disabled={!pattern.trim() || save.isPending}
+        <Button variant="primary"
+          disabled={!paths.some((p) => p.trim()) || save.isPending}
           onClick={() => save.mutate()}>
           {tr('common.save')}
         </Button>
         <Button variant="ghost" onClick={onDone}>{tr('common.cancel')}</Button>
         <label className="flex basis-full flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('hunt.field.about')}
+            {tr('hunt.field.description')}
           </span>
-          <textarea value={about} onChange={(e) => setAbout(e.target.value)}
+          <textarea value={description}
+            onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            placeholder={tr('hunt.field.about.placeholder')}
+            placeholder={tr('hunt.field.description.placeholder')}
             className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
         </label>
       </div>
@@ -754,4 +774,75 @@ function ResultCard({ slug, result, onTrace }: {
       )}
     </Card>
   )
+}
+
+
+/** Several paths in one entry. A list rather than one field because the
+ *  point is combining them -- and a comma-separated string would break on
+ *  the first path that legitimately contains a comma. */
+function PathList({ paths, onChange, onSubmit, dark }: {
+  paths: string[]
+  onChange: (next: string[]) => void
+  onSubmit?: () => void
+  dark?: boolean
+}) {
+  const tr = useT()
+  const set = (i: number, value: string) =>
+    onChange(paths.map((p, j) => (j === i ? value : p)))
+  return (
+    <div className="flex flex-col gap-1.5">
+      {paths.map((value, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <input
+            value={value}
+            onChange={(e) => set(i, e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && onSubmit) onSubmit() }}
+            placeholder={tr('hunt.field.pattern.placeholder')}
+            className={clsx('mono min-w-0 flex-1 rounded-lg border border-[var(--line)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70',
+              dark ? 'bg-[var(--panel)]' : 'bg-[var(--panel-2)]')}
+          />
+          {paths.length > 1 && (
+            <button onClick={() => onChange(paths.filter((_, j) => j !== i))}
+              title={tr('hunt.path.remove')}
+              className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]">
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      ))}
+      <button onClick={() => onChange([...paths, ''])}
+        className="inline-flex w-fit cursor-pointer items-center gap-1 text-[12px] text-[var(--accent-text)] hover:underline">
+        <Plus size={13} /> {tr('hunt.path.add')}
+      </button>
+    </div>
+  )
+}
+
+/** How several paths combine. OVER CLIENTS -- a URI cannot be two paths at
+ *  once, so per request the question would be meaningless. */
+function MatchPicker({ value, onChange }: {
+  value: 'any' | 'all'
+  onChange: (v: 'any' | 'all') => void
+}) {
+  const tr = useT()
+  return (
+    <div className="flex items-center gap-1.5">
+      {(['any', 'all'] as const).map((mode) => (
+        <Tooltip key={mode} hint={tr(`hunt.match.${mode}.hint`)}>
+          <button onClick={() => onChange(mode)}
+            className={clsx('cursor-pointer rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-colors',
+              value === mode
+                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--fg)]'
+                : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]')}>
+            {tr(`hunt.match.${mode}`)}
+          </button>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
+/** What the row shows for the paths: the combination made readable. */
+function joinPaths(p: HuntPattern): string {
+  return p.patterns.join(p.match === 'all' ? '  AND  ' : '  OR  ')
 }

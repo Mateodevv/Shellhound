@@ -745,7 +745,6 @@ export const de: Record<string, string> = {
   'hunt.field.pattern': 'URL-Muster',
   'hunt.field.pattern.placeholder': 'option=com_jce&task=plugin   ·   * ist Platzhalter',
   'hunt.field.name': 'Name',
-  'hunt.field.note': 'Notiz',
   'hunt.store': 'Hinterlegen',
   'hunt.import.a': 'Eine Zeile je Muster, optional',
   'hunt.import.b': 'Zeilen mit',
@@ -906,8 +905,7 @@ export const de: Record<string, string> = {
   'hunt.bundled.hint': 'Wird mit SHELLHOUND ausgeliefert und ist auf jeder Installation dieser Version identisch — genau das macht es im Bericht zitierbar. Nicht änderbar: schalte es ab, wenn du es nicht willst.',
   'hunt.disable.hint': 'Für diesen Workspace abschalten. Es bleibt in der Liste und lässt sich wieder einschalten — löschen geht nicht, ein mitgeliefertes Muster käme beim nächsten Start zurück.',
   'hunt.enable.hint': 'Wieder einschalten. Läuft ab der nächsten Jagd mit.',
-  'hunt.field.about': 'Beschreibung',
-  'hunt.field.about.placeholder': 'Was ein Treffer hier belegt — und was nicht. Der Satz, den du in sechs Monaten brauchst.',
+  'hunt.field.description.placeholder': 'Was ein Treffer hier belegt — und was nicht. Der Satz, den du in sechs Monaten brauchst.',
   // Die eigenen YARA-Regeln, verwaltet in den Einstellungen. Workspace,
   // nicht Fall -- ein Regelsatz wächst über Fälle hinweg, wie die
   // Muster-Bibliothek.
@@ -953,4 +951,14 @@ export const de: Record<string, string> = {
   'settings.rules.engine.sqldb': 'Datenbank-Export',
   'settings.rules.engine.logs': 'Access-Logs',
   'settings.rules.engine.errorlog': 'Error-Logs',
+  'hunt.field.cve': 'CVE',
+  'hunt.field.description': 'Beschreibung',
+  'hunt.path.add': 'Pfad hinzufügen',
+  'hunt.path.remove': 'Diesen Pfad entfernen',
+  // Pfade zu verknüpfen ist eine Aussage über einen CLIENT, nicht über eine
+  // einzelne Anfrage: eine URI kann nicht zwei Pfade zugleich sein.
+  'hunt.match.any': 'einer davon',
+  'hunt.match.any.hint': 'Ein Client zählt als Treffer, wenn er mindestens einen dieser Pfade angefragt hat.',
+  'hunt.match.all': 'alle davon',
+  'hunt.match.all.hint': 'Nur Clients, die jeden dieser Pfade angefragt haben. „Diese Adresse hat den Exploit-Pfad UND die abgelegte Datei geholt" ist eine andere Aussage als „sie hat einen davon geholt" — und die, die einer Nachfrage standhält.',
 }

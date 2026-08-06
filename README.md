@@ -203,6 +203,15 @@ stretch of time. Runs without a hit are recorded as well.
 
 ![Pattern hunt](assets/docs/pattern-hunt.png)
 
+**A pattern is four fields and one condition:** one or more paths, a name, the
+advisory it belongs to, and what a hit proves.
+
+Several paths in one entry are combined **over clients**, not over a single
+request — a URI cannot be two paths at once. `any` counts a client that hit at
+least one of them; `all` only clients that hit every one. "This address
+fetched the exploit path AND the file it dropped" is a different claim from
+"it fetched one of them", and the one that survives being questioned.
+
 The library has two halves, and which half a pattern came from is recorded on
 every finding it produces:
 

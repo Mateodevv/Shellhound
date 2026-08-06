@@ -6,6 +6,32 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — a hunt pattern is four fields, and paths can be combined
+
+An entry is now **one or more paths, a name, the advisory, and what a hit
+proves**. The old `label` / `note` / `about` are read on load, so a workspace
+file written by an earlier version arrives intact — a rename must not cost
+somebody their library.
+
+**Several paths combine OVER CLIENTS, not over one request.** A URI cannot be
+two paths at once, so ANDing them per request would be nonsense; ANDing them
+per client is the sentence an analyst actually wants:
+
+| | |
+|---|---|
+| `any` | a client that requested at least one of the paths |
+| `all` | only clients that requested every one of them |
+
+"This address fetched the exploit path AND the file it dropped" is a different
+claim from "it fetched one of them", and the one that survives being
+questioned.
+
+Two rules that differ only in the ORDER of their paths are the same rule and
+the second is refused — storing both would report every hit twice. The same
+paths with a different combination are a *different* rule, because "either of
+these" and "both of these" are different claims. At most eight paths in one
+entry: beyond that it stops being a rule and becomes a query.
+
 ### Added — every detection rule can be switched off
 
 All 34 built-in rules now carry a **stable id** and can be muted per
