@@ -15,12 +15,19 @@ FOUR MEASUREMENTS, ALL FROM WHAT IS ALREADY INDEXED:
   truncated The first line of a file is not a parsable record. Rotation cuts
             on line boundaries; a head that starts mid-record means somebody
             removed the beginning.
-  backwards Timestamps that go DOWN inside one file. Web servers append in
-            order, so a step backwards means lines were edited, reordered or
-            spliced -- the strongest single signal here.
   stale     The file's mtime is EARLIER than its last entry. A file cannot
             have been written before the last thing written into it; that is
             a copy whose timestamps were forged, or a rewrite that reset it.
+
+WHAT WAS REMOVED, AND WHY IT WAS NOT A THRESHOLD PROBLEM. There used to be a
+fourth check here: timestamps stepping BACKWARDS inside one file, read as
+"lines were edited, reordered or spliced". It was wrong in principle, not
+merely noisy. Apache and Nginx write a log line when a request COMPLETES, and
+the timestamp in it is when the request STARTED. A request that took three
+seconds is therefore written after a faster one that began later, and its
+stamp is lower. On any server with concurrent requests that happens
+constantly. The check was measuring normal operation and calling it
+tampering, which is the one thing this module must never do.
 
 WHAT IS AND IS NOT CLAIMED. None of these prove tampering. A quiet window can
 be a maintenance night, a nightly rotation, a firewall change. A truncated
@@ -108,9 +115,9 @@ def _first_record_line(path):
 
 
 def file_anomalies(case_dir):
-    """Per indexed source file: a truncated head, backwards time, a stale
-    mtime. All three are properties of the FILE, so they are read from the
-    file and from the index side by side."""
+    """Per indexed source file: a truncated head and a stale mtime. Both are
+    properties of the FILE, so they are read from the file and from the index
+    side by side."""
     out = []
     conn = logindex._open_ro(case_dir)
     if conn is None:
@@ -121,14 +128,13 @@ def file_anomalies(case_dir):
             "WHERE skipped_reason = ''").fetchall()
         for src in sources:
             entry = {"path": src["path"], "name": os.path.basename(src["path"]),
-                     "truncated": False, "backwards": 0, "stale_mtime": False,
+                     "truncated": False, "stale_mtime": False,
                      "last_epoch": None}
             first, parses = _first_record_line(src["path"])
             if first is not None and not parses:
                 entry["truncated"] = True
 
-            # Timestamps inside THIS file, in the order they were read.
-            # rowid is the insertion order, which is the file order.
+            # The last stamp in THIS file, to compare against its mtime.
             name_id = conn.execute(
                 "SELECT id FROM strings WHERE text = ?",
                 (os.path.basename(src["path"]),)).fetchone()
@@ -137,15 +143,13 @@ def file_anomalies(case_dir):
                     "SELECT epoch FROM requests WHERE source = ? "
                     "AND epoch IS NOT NULL AND epoch > 0 ORDER BY rowid",
                     (name_id[0],))]
-                entry["backwards"] = sum(
-                    1 for a, b in zip(stamps, stamps[1:]) if b < a)
                 if stamps:
                     entry["last_epoch"] = max(stamps)
                     # Written before the last thing written into it: a file
                     # cannot do that on its own.
                     if src["mtime"] and src["mtime"] + 60 < entry["last_epoch"]:
                         entry["stale_mtime"] = True
-            if entry["truncated"] or entry["backwards"] or entry["stale_mtime"]:
+            if entry["truncated"] or entry["stale_mtime"]:
                 out.append(entry)
     except sqlite3.Error:
         return out
@@ -154,7 +158,7 @@ def file_anomalies(case_dir):
     return out
 
 
-def report(case_dir, lang="en"):
+def report(case_dir, lang="en", tz_mode="log"):
     """Everything this module measured, plus the sentences for the
     chronology. The sentences are built here so the chain and the evidence
     view can never describe the same hole differently."""
@@ -167,22 +171,20 @@ def report(case_dir, lang="en"):
     for w in quiet["windows"]:
         notes.append(t(lang, "coverage.quiet",
                        hours=f"{w['seconds'] / 3600:.1f}",
-                       start=iso(local(w["from"])), end=iso(local(w["to"]))))
+                       start=iso(local(w["from"]), 0, tz_mode),
+                       end=iso(local(w["to"]), 0, tz_mode)))
     for a in anomalies:
         if a["truncated"]:
             notes.append(t(lang, "coverage.truncated", file=a["name"]))
-        if a["backwards"]:
-            notes.append(t(lang, "coverage.backwards", file=a["name"],
-                           n=a["backwards"]))
         if a["stale_mtime"]:
             notes.append(t(lang, "coverage.staleMtime", file=a["name"]))
     return {"quiet": quiet, "files": anomalies, "notes": notes}
 
 
-def evidence_note(case_dir, lang="en"):
+def evidence_note(case_dir, lang="en", tz_mode="log"):
     """One line for the evidence view, or ''. Deliberately short: the detail
     belongs where the analyst is reading the story."""
-    data = report(case_dir, lang)
+    data = report(case_dir, lang, tz_mode)
     if not data["notes"]:
         return ""
     return t(lang, "coverage.summary", n=len(data["notes"]))

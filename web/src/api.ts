@@ -6,6 +6,7 @@
 // where the data is. A download link cannot set headers and gets `?lang=`
 // from `downloadUrl()` instead.
 import { activeLang } from './i18n'
+import { activeTimeMode } from './format'
 
 declare global {
   interface Window { __SHELLHOUND_TOKEN__?: string }
@@ -30,6 +31,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     headers: {
       'X-Token': TOKEN,
       'X-Lang': activeLang(),
+      // Part of the chronology is prose the server renders times into.
+      'X-TZ': activeTimeMode(),
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
@@ -62,6 +65,7 @@ export function downloadUrl(path: string): string {
   const sep = path.includes('?') ? '&' : '?'
   return `${path}${sep}token=${encodeURIComponent(TOKEN)}`
        + `&lang=${encodeURIComponent(activeLang())}`
+       + `&tz=${encodeURIComponent(activeTimeMode())}`
 }
 
 // ---- types -----------------------------------------------------------------
@@ -636,6 +640,11 @@ export interface CaseChain {
   truncated: boolean
   /** Clock offset per source, set by the analyst, in seconds. */
   offsets: { logs: number; dump: number }
+  /** Which reading the events are in, and what to call it. They arrive
+   *  ALREADY SHIFTED and carry no offset of their own, so this is the only
+   *  thing that says what they mean. */
+  tz_mode: 'log' | 'utc'
+  zone: string
 }
 
 /** The record of the case: what was searched for -- unsuccessfully

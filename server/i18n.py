@@ -251,13 +251,6 @@ CATALOGUE: dict[str, dict[str, str]] = {
               "Zeilengrenzen — ein Anfang mitten in der Zeile heißt, dass "
               "der Beginn entfernt wurde.",
     },
-    "coverage.backwards": {
-        "en": "In {file} the timestamps step backwards {n}×. A web server "
-              "appends in order, so lines were edited, reordered or spliced.",
-        "de": "In {file} gehen die Zeitstempel {n}× rückwärts. Ein Webserver "
-              "hängt der Reihe nach an — also wurden Zeilen bearbeitet, "
-              "umsortiert oder zusammengesetzt.",
-    },
     "coverage.staleMtime": {
         "en": "{file} was last modified BEFORE its own last entry. A file "
               "cannot be written before the last thing written into it.",

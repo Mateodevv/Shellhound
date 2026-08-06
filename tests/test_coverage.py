@@ -94,13 +94,22 @@ class FileAnomalyTests(unittest.TestCase):
         self._index()
         self.assertTrue(self._by_name()["cut.log"]["truncated"])
 
-    def test_timestamps_stepping_backwards_are_counted(self):
+    def test_a_timestamp_stepping_backwards_is_not_an_anomaly(self):
+        """This used to be reported as tampering, and it was wrong in
+        principle rather than merely noisy.
+
+        Apache and Nginx write the line when a request COMPLETES, and the
+        timestamp in it is when the request STARTED. A request that took
+        three seconds is therefore written after a faster one that began
+        later, and carries a lower stamp. On any server with concurrent
+        requests that happens constantly, so the check was measuring normal
+        operation and calling it evidence."""
         rows = [line(BASE + i * 5) for i in range(40)]
         rows.append(line(BASE - 500))
         rows += [line(BASE + 500 + i * 5) for i in range(20)]
-        (self.logs / "spliced.log").write_text("".join(rows), encoding="utf-8")
+        (self.logs / "concurrent.log").write_text("".join(rows), encoding="utf-8")
         self._index()
-        self.assertGreaterEqual(self._by_name()["spliced.log"]["backwards"], 1)
+        self.assertEqual({}, self._by_name())
 
     def test_a_clean_file_produces_no_anomaly(self):
         rows = [line(BASE + i * 5) for i in range(60)]

@@ -148,16 +148,27 @@ export function CaseChain({ slug, onOpen, onTrace }: {
         ? tr('chain.sub', { n: data.events.length, confirmed: data.confirmed, span: formatSpan(first, last) })
         : tr('chain.empty')}
       right={
-        <Tooltip title={tr('chain.clock')}
-          body={tr('chain.clock.body')}
-          hint={tr('chain.clock.hint')}>
-          <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
-            <Clock size={13} />
-            {adjusted
-              ? `${tr('chain.clocks')} ${data.offsets.logs ? `${tr('chain.clock.logs')} ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
-              : tr('chain.clocks')}
-          </Button>
-        </Tooltip>
+        <div className="flex items-center gap-3">
+          {/* The events arrive already shifted and carry no offset of their
+              own, so this is the only thing that says what they mean. A
+              chronology whose times do not state their zone is one nobody
+              can quote. */}
+          {data.events.length > 0 && (
+            <span className="text-[11.5px] text-[var(--muted)]">
+              {tr('time.zone', { zone: data.zone })}
+            </span>
+          )}
+          <Tooltip title={tr('chain.clock')}
+            body={tr('chain.clock.body')}
+            hint={tr('chain.clock.hint')}>
+            <Button variant="ghost" onClick={() => setClockOpen(!clockOpen)}>
+              <Clock size={13} />
+              {adjusted
+                ? `${tr('chain.clocks')} ${data.offsets.logs ? `${tr('chain.clock.logs')} ${data.offsets.logs > 0 ? '+' : ''}${data.offsets.logs / 3600}h` : ''}${data.offsets.logs && data.offsets.dump ? ' · ' : ''}${data.offsets.dump ? `DB ${data.offsets.dump > 0 ? '+' : ''}${data.offsets.dump / 3600}h` : ''}`
+                : tr('chain.clocks')}
+            </Button>
+          </Tooltip>
+        </div>
       }
     >
       {clockOpen && (
