@@ -184,5 +184,47 @@ class ChainIntegrationTests(unittest.TestCase):
         self.assertTrue(case_chain(self._case())["gaps"])
 
 
+class DashboardOrderTests(unittest.TestCase):
+    """Where the two coverage blocks sit on the page.
+
+    This is a layout decision with a forensic reason, so it is guarded like
+    one. Both blocks describe the LOGS -- the chart the period they cover,
+    the notes what is missing from it -- and both must be read before the
+    chronology, which is assembled out of those same logs. An analyst who
+    reads the sequence first and learns only afterwards that fourteen hours
+    are absent has already formed the wrong picture.
+
+    A source-text check, because the ordering lives in JSX and there is no
+    frontend test runner here. Crude, but it fails when someone moves a
+    block, which is the entire point."""
+
+    SOURCE = (Path(__file__).resolve().parents[1]
+              / "web" / "src" / "views" / "Dashboard.tsx")
+
+    def setUp(self):
+        self.text = self.SOURCE.read_text(encoding="utf-8")
+
+    def _at(self, needle):
+        i = self.text.find(needle)
+        self.assertNotEqual(-1, i, f"{needle} is gone from the dashboard")
+        return i
+
+    def test_the_chart_comes_before_the_chronology(self):
+        self.assertLess(self._at("<TimelineChart"), self._at("<CaseChain"))
+
+    def test_the_gap_notes_come_before_the_chronology(self):
+        self.assertLess(self._at("<LogCoverage"), self._at("<CaseChain"))
+
+    def test_the_chart_comes_before_the_gaps_it_has_holes_in(self):
+        """Period first, then what is missing from it. The other way round
+        names holes in something the reader has not been shown yet."""
+        self.assertLess(self._at("<TimelineChart"), self._at("<LogCoverage"))
+
+    def test_both_stand_after_the_artifact_tiles(self):
+        """The tiles are the case at a glance and stay at the top."""
+        self.assertLess(self._at("dashboard.artifacts'"),
+                        self._at("<TimelineChart"))
+
+
 if __name__ == "__main__":
     unittest.main()

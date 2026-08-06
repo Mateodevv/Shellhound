@@ -110,22 +110,12 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         </div>
       </Section>
 
-      {/* Above the chronology, not below: it says how much of the period
-          the events below could have come from at all. Reading the order
-          without knowing six hours are missing is reading a sentence with a
-          word cut out and not noticing. */}
-      <LogCoverage slug={slug} />
-
-      <CaseChain slug={slug}
-        onOpen={(artifact, kind) => setSelected({
-          artifact,
-          artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
-          // The chain only ever shows confirmed artifacts; everything else
-          // the window fetches itself through the context endpoint.
-          worst: 0, triage: 'confirmed', triage_note: '',
-        })}
-        onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
-
+      {/* The two coverage blocks stand together ABOVE the chronology, and in
+          this order: the chart is the period the logs describe, the block
+          under it is what is missing from that period. Both are context for
+          the sequence below -- reading the order of events without knowing
+          six hours of log are gone is reading a sentence with a word cut out
+          and not noticing. */}
       {data.logs && (
         <Section
           title={tr('dashboard.logCoverage')}
@@ -149,6 +139,18 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
           </Card>
         </Section>
       )}
+
+      <LogCoverage slug={slug} />
+
+      <CaseChain slug={slug}
+        onOpen={(artifact, kind) => setSelected({
+          artifact,
+          artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
+          // The chain only ever shows confirmed artifacts; everything else
+          // the window fetches itself through the context endpoint.
+          worst: 0, triage: 'confirmed', triage_note: '',
+        })}
+        onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
 
       {data.cms_installs.length > 0 && (
         <Section title={tr('dashboard.installs')} sub={tr('dashboard.installs.sub')}>
