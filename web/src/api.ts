@@ -211,6 +211,16 @@ export interface Actor {
   triage: TriageState | null
 }
 
+/** One built-in detection rule. The id lives next to the rule that
+ *  implements it and is stable across versions -- the off-switch stores it. */
+export interface DetectionRule {
+  id: string
+  engine: string
+  severity: number
+  name: string
+  enabled: boolean
+}
+
 /** One `.yar` file in the workspace. The unit of management is the FILE,
  *  not the individual rule: a file is what a vendor feed or a CERT hands
  *  over, and switching one off must not edit somebody else's text. */

@@ -29,6 +29,22 @@ Every version carries with it the file it was read from (manifest,
 `style.css`, plugin header, `version.php`) and can be corrected by hand in
 the inventory; the measured value stays visible next to it.
 
+## Every rule can be switched off
+
+Under *Settings → Detection*, per workspace, by the stable id each rule
+carries (`webshell.upload_php`, `logs.sqli`, ...). The id lives beside the
+rule in the engine, so it survives a change of wording.
+
+**A switch is not a retraction.** A rule that is switched off stops running;
+findings it already wrote stay where they are, with their triage. An artifact
+somebody confirmed does not stop being confirmed because the rule that
+pointed at it was later muted.
+
+The setting belongs to the **workspace**, not the case: "this rule is noise on
+the systems I work on" is knowledge about the analyst's practice, not about
+one incident. A rule an upgrade adds arrives switched **on** — an unknown id
+counts as enabled, so a stale off-list cannot silence something new.
+
 ## Two principles that hold everywhere
 
 **Probe rules are outcome-gated.** SQL injection, path traversal and requests

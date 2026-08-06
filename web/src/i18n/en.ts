@@ -946,4 +946,13 @@ export const en: Record<string, string> = {
   'setup.key.virustotal': 'No VirusTotal key.',
   'setup.key.abuseipdb': 'No AbuseIPDB key.',
   'setup.key.body': 'Lookups are allowed but no key is set, so the button stays absent. A lookup sends {sends} and nothing else.',
+  'settings.rules': 'Detection rules',
+  'settings.rules.sub': 'What the analysis looks for. Switching a rule off stops it running; findings it already wrote stay where they are with their triage — a switch is not a retraction.',
+  'settings.rules.off': '{n} switched off',
+  'settings.rules.off.hint': 'Switch off for this workspace. It stops running on the next analysis. What it already found stays.',
+  'settings.rules.on.hint': 'Switch back on. It runs with the next analysis.',
+  'settings.rules.engine.webshell': 'Webroot',
+  'settings.rules.engine.sqldb': 'Database export',
+  'settings.rules.engine.logs': 'Access logs',
+  'settings.rules.engine.errorlog': 'Error logs',
 }

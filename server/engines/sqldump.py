@@ -10,7 +10,7 @@ import os
 import re
 from collections import namedtuple
 
-from server import db
+from server import db, ruleswitch
 from server.engines.fsutil import iter_target_files, open_text_auto
 
 _STREAM_CHUNK = 1 << 20
@@ -37,21 +37,21 @@ _NOT_A_COLUMN = re.compile(
 # HIGH: executable/obfuscated code has no business in a data column.
 # MEDIUM: markup that CAN be legitimate stored content.
 RULES = [
-    (0, "PHP open tag in database value",
+    ("sqldb.php_tag", 0, "PHP open tag in database value",
      re.compile(r"<\?php|<\?=")),
-    (0, "eval/assert on decoded or request input",
+    ("sqldb.eval_input", 0, "eval/assert on decoded or request input",
      re.compile(r"(?i)\b(eval|assert)\s*\(\s*(base64_decode|gzinflate|gzuncompress|str_rot13|\$_)")),
-    (0, "Obfuscation decode chain",
+    ("sqldb.obfuscation", 0, "Obfuscation decode chain",
      re.compile(r"(?i)(base64_decode|gzinflate|gzuncompress|str_rot13)\s*\(\s*(base64_decode|gzinflate|str_rot13|['\"])")),
-    (0, "Command execution call in database value",
+    ("sqldb.cmd_call", 0, "Command execution call in database value",
      re.compile(r"(?i)\b(system|shell_exec|passthru|proc_open|popen|pcntl_exec)\s*\(")),
-    (0, "create_function / dynamic callback",
+    ("sqldb.create_function", 0, "create_function / dynamic callback",
      re.compile(r"(?i)create_function\s*\(")),
-    (1, "Inline <script> in database value",
+    ("sqldb.script", 1, "Inline <script> in database value",
      re.compile(r"(?i)<script[\s>]")),
-    (1, "Injected <iframe> in database value",
+    ("sqldb.iframe", 1, "Injected <iframe> in database value",
      re.compile(r"(?i)<iframe[\s>]")),
-    (1, "document.write (script injection)",
+    ("sqldb.document_write", 1, "document.write (script injection)",
      re.compile(r"(?i)document\s*\.\s*write\s*\(")),
 ]
 
@@ -596,7 +596,7 @@ _Account = namedtuple(
     "cms table uid login email registered hash_type admin last_login blocked sessions")
 
 
-def scan(case_dir, targets, ctx=None):
+def scan(case_dir, targets, ctx=None, workspace=None):
     """Analyze every dump under `targets`; write findings, accounts, table
     inventory and dump metadata into case.db. Returns a stats dict."""
     files = []
@@ -605,6 +605,7 @@ def scan(case_dir, targets, ctx=None):
             if p.lower().endswith(SQL_EXTS):
                 files.append(p)
     files = list(dict.fromkeys(files))
+    off = ruleswitch.disabled_ids(workspace) if workspace else set()
     stats = {"dumps": 0, "schema_files": 0, "findings": 0, "accounts": 0,
              "admins": 0, "tables": 0, "rows": 0, "skipped": 0}
     total_size = sum(os.path.getsize(p) for p in files if os.path.isfile(p)) or 1
@@ -661,7 +662,9 @@ def scan(case_dir, targets, ctx=None):
                 stats["accounts"] += 1
                 if acc.admin:
                     stats["admins"] += 1
-            for sev, rule, table, row_no, evidence in result["findings"]:
+            for rid, sev, rule, table, row_no, evidence in result["findings"]:
+                if rid in off:
+                    continue
                 db.upsert_finding(conn, "sqldb", sev, rule, "table", table,
                                   line=row_no, evidence=evidence)
                 stats["findings"] += 1
@@ -738,10 +741,11 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                 for col in row:
                     if not isinstance(col, str) or len(col) < 4:
                         continue
-                    for sev, rule, rx in RULES:
+                    for rid, sev, rule, rx in RULES:
                         hit = rx.search(col)
                         if hit:
-                            findings.append((sev, rule, table, base + ridx + 1,
+                            findings.append((rid, sev, rule, table,
+                                             base + ridx + 1,
                                              _excerpt(col, *hit.span())))
                             break        # one finding per column is enough
             if _is_user_table(table, entry["columns"]):

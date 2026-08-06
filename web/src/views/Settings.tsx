@@ -15,10 +15,13 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
-  api, del, post, put, type SettingsInfo, type YaraRuleFile,
+  api, del, post, put, type DetectionRule, type SettingsInfo,
+  type YaraRuleFile,
 } from '../api'
 import { useT } from '../i18n'
-import { Button, Card, Section, Tabs, Tag } from '../components/ui'
+import {
+  Button, Card, Section, SeverityBadge, Tabs, Tag,
+} from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { GeoDownloadModal } from '../components/GeoBanner'
 import { useGeoStatus } from '../geo'
@@ -130,10 +133,87 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
       </Section>
       </>}
 
-      {tab === 'detection' && <YaraRules />}
+      {tab === 'detection' && <>
+        <DetectionRules />
+        <YaraRules />
+      </>}
     </div>
   )
 }
+
+/** The built-in rules, with a switch each.
+ *
+ *  SWITCHING ONE OFF STOPS IT RUNNING. It does not withdraw what it already
+ *  wrote: an artifact somebody confirmed does not stop being confirmed
+ *  because the rule that pointed at it was later muted. And the setting
+ *  belongs to the workspace, not the case -- "this rule is noise on the
+ *  systems I work on" is knowledge about the analyst's practice. */
+function DetectionRules() {
+  const tr = useT()
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['rules'],
+    queryFn: () => api<{ rules: DetectionRule[]; disabled: number }>('/api/rules'),
+  })
+  const toggle = useMutation({
+    mutationFn: (v: { id: string; enabled: boolean }) =>
+      post(`/api/rules/${encodeURIComponent(v.id)}/enabled`, { enabled: v.enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
+  })
+
+  const rows = data?.rules ?? []
+  const groups = ENGINE_ORDER
+    .map((engine) => [engine, rows.filter((r) => r.engine === engine)] as const)
+    .filter(([, rs]) => rs.length)
+
+  return (
+    <Section title={tr('settings.rules')} sub={tr('settings.rules.sub')}
+      right={data && data.disabled > 0
+        ? <span className="text-[12px] text-[var(--muted)]">
+            {tr('settings.rules.off', { n: data.disabled })}
+          </span>
+        : undefined}>
+      <div className="flex flex-col gap-3">
+        {groups.map(([engine, rs]) => (
+          <div key={engine}>
+            <div className="mb-1 flex items-center gap-2 px-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                {tr(`settings.rules.engine.${engine}`)}
+              </span>
+              <span className="text-[11px] text-[var(--muted)]">{rs.length}</span>
+            </div>
+            <Card className="overflow-hidden">
+              {rs.map((r) => (
+                <div key={r.id}
+                  className={clsx('flex items-center gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0',
+                    !r.enabled && 'opacity-45')}>
+                  <SeverityBadge severity={r.severity} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px]">{r.name}</div>
+                    <div className="mono truncate text-[11px] text-[var(--muted)]">
+                      {r.id}
+                    </div>
+                  </div>
+                  <Tooltip hint={r.enabled ? tr('settings.rules.off.hint')
+                                           : tr('settings.rules.on.hint')}>
+                    <button
+                      className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
+                      onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}>
+                      {r.enabled ? <ToggleRight size={17} className="text-[var(--accent)]" />
+                                 : <ToggleLeft size={17} />}
+                    </button>
+                  </Tooltip>
+                </div>
+              ))}
+            </Card>
+          </div>
+        ))}
+      </div>
+    </Section>
+  )
+}
+
+const ENGINE_ORDER = ['webshell', 'sqldb', 'logs', 'errorlog']
 
 /** The country database. It sits in this tab because it is the same kind of
  *  decision as the two lookup services -- something leaves this machine --

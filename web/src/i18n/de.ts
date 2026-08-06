@@ -944,4 +944,13 @@ export const de: Record<string, string> = {
   'setup.key.virustotal': 'Kein VirusTotal-Schlüssel.',
   'setup.key.abuseipdb': 'Kein AbuseIPDB-Schlüssel.',
   'setup.key.body': 'Abfragen sind erlaubt, aber es ist kein Schlüssel gesetzt, also fehlt der Knopf. Eine Abfrage sendet {sends} und sonst nichts.',
+  'settings.rules': 'Erkennungsregeln',
+  'settings.rules.sub': 'Wonach die Analyse sucht. Eine abgeschaltete Regel läuft nicht mehr; was sie bereits geschrieben hat, bleibt samt Triage stehen — ein Schalter ist kein Widerruf.',
+  'settings.rules.off': '{n} abgeschaltet',
+  'settings.rules.off.hint': 'Für diesen Workspace abschalten. Läuft ab der nächsten Analyse nicht mehr. Bereits Gefundenes bleibt.',
+  'settings.rules.on.hint': 'Wieder einschalten. Läuft ab der nächsten Analyse mit.',
+  'settings.rules.engine.webshell': 'Webroot',
+  'settings.rules.engine.sqldb': 'Datenbank-Export',
+  'settings.rules.engine.logs': 'Access-Logs',
+  'settings.rules.engine.errorlog': 'Error-Logs',
 }

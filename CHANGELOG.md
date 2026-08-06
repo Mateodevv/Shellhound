@@ -6,6 +6,32 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — every detection rule can be switched off
+
+All 34 built-in rules now carry a **stable id** and can be muted per
+workspace, under *Settings → Detection*, grouped by the evidence they read.
+
+**The id lives next to the rule that implements it**, not in a catalogue
+beside it. `server/rules.py` reads the engines rather than repeating them,
+because a parallel list is a list that drifts: the rule gets renamed, the
+catalogue does not, and the off-switch quietly stops matching anything. For
+the handful of rules that are not table-driven — the structural web shell
+rules and the two error-log ones — the ids are listed by hand, and
+`tests/test_rules.py` checks both directions against the engine sources.
+
+**A switch is not a retraction.** A muted rule stops running; findings it
+already wrote stay where they are with their triage. An artifact somebody
+confirmed does not stop being confirmed because the rule that pointed at it
+was later muted.
+
+**An unknown id counts as enabled.** A rule an upgrade adds arrives running —
+the alternative is a rule that silently does not fire because a stale off-list
+happens to name it.
+
+The setting belongs to the workspace, like the pattern library and the YARA
+rules: "this rule is noise on the systems I work on" is knowledge about the
+analyst's practice, not about one incident.
+
 ### Changed — settings in tabs, and one place for everything that reaches outward
 
 The settings page was one long scroll in which the outward-facing gate had
