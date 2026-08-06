@@ -51,6 +51,11 @@ export const post = <T = unknown>(path: string, body?: unknown) =>
 export const patch = <T = unknown>(path: string, body: unknown) =>
   api<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
 
+/** Replaces a whole thing rather than amending one -- a YARA rule file is
+ *  edited as a document, not field by field. */
+export const put = <T = unknown>(path: string, body: unknown) =>
+  api<T>(path, { method: 'PUT', body: JSON.stringify(body) })
+
 export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE' })
 
 export function downloadUrl(path: string): string {
@@ -204,6 +209,20 @@ export interface Actor {
   in_box: boolean
   /** Decision of the client artifact in Findings; null = no finding. */
   triage: TriageState | null
+}
+
+/** One `.yar` file in the workspace. The unit of management is the FILE,
+ *  not the individual rule: a file is what a vendor feed or a CERT hands
+ *  over, and switching one off must not edit somebody else's text. */
+export interface YaraRuleFile {
+  name: string
+  enabled: boolean
+  /** The rule names declared inside it. */
+  rules: string[]
+  /** Compile error, if it has one. A file that does not compile costs that
+   *  file and not the scan. */
+  error: string
+  bytes: number
 }
 
 /** Operator configuration. The real API keys never reach the browser --

@@ -6,6 +6,50 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — YARA rules are written and managed in the interface
+
+Until now a rule set had to be assembled in a text editor and dropped into
+`<workspace>/yara/`. *Settings* now holds an editor: write a rule file, edit
+one, switch it off, delete it.
+
+- **Saving compiles first.** A rule that does not compile costs that file and
+  not the scan — but hearing about it at save time is cheaper than hearing
+  about it in the middle of a case, as a line in the skipped table.
+- **A file is switched off, not edited.** It may have come from a CERT or a
+  vendor feed, and parking somebody else's ruleset must not rewrite it. The
+  off-switch is stored per workspace, by file name.
+- The files stay plain `.yar` on disk and nothing adds a dialect, so a set
+  can still be dropped into the folder by hand and shows up unchanged.
+- Without `yara-python` a file is stored **unchecked** and the page says so.
+  Refusing to save would make the editor useless on exactly the machines
+  where somebody is preparing rules for later.
+- The status now separates **three** silences instead of two: no rules, all
+  rules switched off, or no YARA installed. "No YARA findings" stays
+  unambiguous.
+
+**The file name is treated as hostile input.** It arrives from the browser and
+becomes a path, so it is held to one flat directory and one allowed shape, and
+the resolved path is checked to still sit inside the rules directory. A local
+single-seat tool is not a reason to hand out a write-anywhere endpoint.
+
+**Fixed along the way:** the rule count came from `text.count("rule ")`, which
+also counts the word inside comments and string literals. It now counts
+declarations.
+
+### Added — the mark, inside the tool
+
+The start screen carried a generic shield icon — the same generic shield the
+favicon replaced. It now carries the actual mark, and the sidebar carries a
+quiet wordmark at its foot. Not in the sidebar header: that belongs to the
+case, and a logo there would compete with the one thing an analyst navigates
+by.
+
+The mark exists in two files by necessity — the favicon has to be a standalone
+`.svg` the browser fetches before any script runs, and `Mark.tsx` is what the
+interface draws. `tests/test_brand.py` compares their geometry and colours, so
+they cannot drift into two different logos, which is a thing nobody notices
+until a screenshot is taken.
+
 ### Added — a description on every hunt pattern
 
 `note` sits beside the name as a tag and has to stay short, so it holds a CVE

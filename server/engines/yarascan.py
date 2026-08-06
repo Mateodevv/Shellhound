@@ -23,8 +23,9 @@ reported by name and skipped; the rest still run. An analyst who pastes a
 half-finished rule at 23:00 should lose that rule, not the run.
 """
 import os
+import re
 
-from server import db
+from server import db, settings as settingslib
 from server.engines.fsutil import get_files_recursive
 
 try:                                  # optional, exactly like maxminddb
@@ -54,15 +55,161 @@ def rules_dir(workspace):
     return os.path.join(str(workspace), RULES_DIR)
 
 
-def rule_files(workspace):
+def rule_file_names(workspace):
+    """Every rule file in the workspace, switched off ones included."""
     directory = rules_dir(workspace)
     if not os.path.isdir(directory):
         return []
+    return sorted(n for n in os.listdir(directory)
+                  if n.lower().endswith(RULE_SUFFIXES))
+
+
+def rule_files(workspace, include_disabled=False):
+    """The files a scan will actually compile."""
+    directory = rules_dir(workspace)
+    off = set() if include_disabled else settingslib.yara_disabled(workspace)
+    return [os.path.join(directory, n) for n in rule_file_names(workspace)
+            if n not in off]
+
+
+# --- rule files as things the analyst edits -----------------------------
+#
+# The name arrives from the browser and becomes a PATH. Everything below
+# treats it as hostile: one flat directory, one allowed shape, and the
+# resolved path is checked to still sit inside the rules directory before
+# anything is written. A local single-seat tool is not a reason to hand out
+# a write-anywhere endpoint.
+
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+# `rule Foo`, `private rule Foo`, `global private rule Foo` -- and NOT the
+# word "rule" inside a comment or a string, which is what a bare count of
+# "rule " used to pick up.
+_RULE_DECL = re.compile(
+    r"^[ \t]*(?:(?:private|global)[ \t]+)*rule[ \t]+([A-Za-z_]\w*)",
+    re.M)
+
+
+class RuleError(ValueError):
+    """An input the analyst has to correct. Carries a catalogue key so the
+    route can answer in the language of the request."""
+
+    def __init__(self, message, key=""):
+        super().__init__(message)
+        self.key = key
+
+
+def rule_names_in(text):
+    return _RULE_DECL.findall(text or "")
+
+
+def _safe_path(workspace, name):
+    name = str(name or "").strip()
+    if not name.lower().endswith(RULE_SUFFIXES):
+        name += ".yar"
+    if ".." in name or not _NAME_RE.match(name):
+        raise RuleError(
+            "A rule file name may hold letters, digits, dot, dash and "
+            "underscore only.", "err.yaraName")
+    directory = os.path.abspath(rules_dir(workspace))
+    full = os.path.abspath(os.path.join(directory, name))
+    if os.path.dirname(full) != directory:
+        # Unreachable through _NAME_RE; kept because the day somebody
+        # loosens that regex, this is the check that still holds.
+        raise RuleError("Outside the rules directory.", "err.yaraName")
+    return name, full
+
+
+def validate(text):
+    """Compile a rule file on its own. Returns the rule names it declares.
+
+    Without yara-python installed nothing can be compiled, and the text is
+    accepted unchecked -- it is inert until the package is there, and
+    refusing to save would make the editor useless on exactly the machines
+    where somebody is preparing rules for later."""
+    names = rule_names_in(text)
+    if yara is None:
+        return names, False
+    try:
+        yara.compile(source=text or "")
+    except Exception as e:                  # yara.SyntaxError and friends
+        raise RuleError(str(e)[:300], "err.yaraCompile") from e
+    return names, True
+
+
+def list_rules(workspace):
+    """Every rule file with what the interface needs to show it."""
+    off = settingslib.yara_disabled(workspace)
+    directory = rules_dir(workspace)
     out = []
-    for name in sorted(os.listdir(directory)):
-        if name.lower().endswith(RULE_SUFFIXES):
-            out.append(os.path.join(directory, name))
+    for name in rule_file_names(workspace):
+        full = os.path.join(directory, name)
+        entry = {"name": name, "enabled": name not in off,
+                 "rules": [], "error": "", "bytes": 0}
+        try:
+            entry["bytes"] = os.path.getsize(full)
+            with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError as e:
+            entry["error"] = str(e)[:200]
+            out.append(entry)
+            continue
+        entry["rules"] = rule_names_in(text)
+        if yara is not None:
+            try:
+                yara.compile(source=text)
+            except Exception as e:
+                entry["error"] = str(e)[:200]
+        out.append(entry)
     return out
+
+
+def read_rule(workspace, name):
+    _, full = _safe_path(workspace, name)
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError as e:
+        raise RuleError("No such rule file.", "err.yaraUnknown") from e
+
+
+def write_rule(workspace, name, text):
+    """Create or replace a rule file. Compiles first: a file that does not
+    compile is one the next scan reports as skipped, and finding that out at
+    save time is cheaper than finding it out mid-case."""
+    name, full = _safe_path(workspace, name)
+    names, compiled = validate(text)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    tmp = full + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text if text.endswith("\n") else text + "\n")
+    os.replace(tmp, full)
+    return {"name": name, "rules": names, "compiled": compiled,
+            "enabled": name not in settingslib.yara_disabled(workspace)}
+
+
+def delete_rule(workspace, name):
+    name, full = _safe_path(workspace, name)
+    try:
+        os.remove(full)
+    except OSError as e:
+        raise RuleError("No such rule file.", "err.yaraUnknown") from e
+    # A file that is gone must not stay on the off-list, or a later file of
+    # the same name would arrive switched off for no visible reason.
+    off = settingslib.yara_disabled(workspace)
+    if name in off:
+        settingslib.set_yara_disabled(workspace, off - {name})
+    return {"name": name, "removed": 1}
+
+
+def set_rule_enabled(workspace, name, enabled):
+    name, full = _safe_path(workspace, name)
+    if not os.path.isfile(full):
+        raise RuleError("No such rule file.", "err.yaraUnknown")
+    off = settingslib.yara_disabled(workspace)
+    off = (off - {name}) if enabled else (off | {name})
+    settingslib.set_yara_disabled(workspace, off)
+    return {"name": name, "enabled": bool(enabled)}
 
 
 def status(workspace):
@@ -70,15 +217,22 @@ def status(workspace):
 
     Distinguishes the two silences that look alike -- no YARA installed
     versus no rules placed."""
-    files = rule_files(workspace)
+    all_names = rule_file_names(workspace)
+    off = settingslib.yara_disabled(workspace)
     if yara is None:
         return {"available": False, "reason": "package",
-                "dir": rules_dir(workspace), "files": [], "rules": 0,
-                "broken": []}
+                "dir": rules_dir(workspace), "files": all_names, "rules": 0,
+                "broken": [], "disabled": sorted(off & set(all_names))}
     compiled, broken, count = _compile(workspace)
-    return {"available": True, "reason": "" if files else "norules",
+    enabled = [n for n in all_names if n not in off]
+    return {"available": True,
+            # The two silences the interface must not confuse: no rules at
+            # all, versus rules that are all switched off.
+            "reason": ("norules" if not all_names
+                       else "alloff" if not enabled else ""),
             "dir": rules_dir(workspace),
-            "files": [os.path.basename(f) for f in files],
+            "files": enabled,
+            "disabled": sorted(off & set(all_names)),
             "rules": count, "broken": broken,
             "ready": compiled is not None}
 
@@ -104,7 +258,9 @@ def _compile(workspace):
         compiled = yara.compile(sources=sources)
     except Exception as e:                     # pragma: no cover - defensive
         return None, broken + [{"file": "(combined)", "error": str(e)[:200]}], 0
-    count = sum(text.count("rule ") for text in sources.values())
+    # Declarations, not occurrences of the word: a bare count of "rule "
+    # also picks it up out of comments and string literals.
+    count = sum(len(rule_names_in(text)) for text in sources.values())
     return compiled, broken, count
 
 

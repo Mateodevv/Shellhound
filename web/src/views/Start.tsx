@@ -1,10 +1,11 @@
 // Start.tsx -- the landing view: pick an open case, create a new one, or
 // restore a closed case from the archive.
 import { useT } from '../i18n'
+import { Mark } from '../components/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, ArchiveRestore, FolderSearch, Package, Plus, Shield, TriangleAlert,
+  Archive, ArchiveRestore, FolderSearch, Package, Plus, TriangleAlert,
 } from 'lucide-react'
 import {
   api, post, type ArchivesResponse, type CaseInfo, type ImportResult,
@@ -55,9 +56,9 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center px-6 py-12">
       <div className="mb-8 flex items-center gap-3 animate-fade-up">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent-soft)]">
-          <Shield className="text-[var(--accent)]" size={22} />
-        </div>
+        {/* The mark, not a generic shield: this is the one screen where the
+            product introduces itself. */}
+        <Mark size={44} className="shrink-0 rounded-xl" />
         <div>
           <h1 className="text-xl font-bold tracking-tight">SHELLHOUND</h1>
           <p className="text-[13px] text-[var(--muted)]">

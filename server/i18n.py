@@ -344,6 +344,14 @@ CATALOGUE: dict[str, dict[str, str]] = {
     },
     "err.patternUnknown": {"en": "Unknown pattern.", "de": "Unbekanntes Muster."},
     "err.patternJson": {"en": "not valid JSON", "de": "Kein gültiges JSON"},
+    "err.yaraName": {
+        "en": "A rule file name may hold letters, digits, dot, dash and "
+              "underscore only.",
+        "de": "Ein Regeldateiname darf nur Buchstaben, Ziffern, Punkt, "
+              "Bindestrich und Unterstrich enthalten.",
+    },
+    "err.yaraUnknown": {"en": "No such rule file.",
+                        "de": "Keine solche Regeldatei."},
     "err.patternBundled": {
         "en": "A pattern shipped with SHELLHOUND cannot be edited — it is the "
               "same on every installation, which is what makes it citable. "

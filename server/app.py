@@ -431,6 +431,62 @@ def create_app(config: Config) -> FastAPI:
         between "the rules found nothing" and "there were no rules"."""
         return yarascan.status(config.workspace)
 
+    # --- the rule files, as things the analyst edits ----------------------
+    # They live in the WORKSPACE, like the pattern library and for the same
+    # reason: a rule set grows across cases. Editing them here rather than in
+    # a text editor is only convenience -- the files stay plain `.yar` and can
+    # still be dropped in by hand or pulled from a vendor feed.
+
+    def _yara_error(exc, lang):
+        return _t(lang, exc.key) if exc.key else str(exc)
+
+    @app.get("/api/yara/rules", dependencies=[auth])
+    def yara_rules():
+        return {"rules": yarascan.list_rules(config.workspace),
+                "dir": yarascan.rules_dir(config.workspace),
+                "available": yarascan.yara is not None}
+
+    @app.get("/api/yara/rules/{name}", dependencies=[auth])
+    def yara_rule_source(name: str, lang: str = lang_dep):
+        try:
+            return {"name": name,
+                    "source": yarascan.read_rule(config.workspace, name)}
+        except yarascan.RuleError as e:
+            raise HTTPException(404, _yara_error(e, lang)) from e
+
+    class RuleBody(BaseModel):
+        source: str = ""
+
+    @app.put("/api/yara/rules/{name}", dependencies=[auth])
+    def yara_rule_write(name: str, body: RuleBody, lang: str = lang_dep):
+        """Create or replace. Compiles first -- a rule that does not compile
+        is one the next scan reports as skipped, and hearing that at save
+        time is cheaper than hearing it in the middle of a case."""
+        try:
+            return yarascan.write_rule(config.workspace, name, body.source)
+        except yarascan.RuleError as e:
+            raise HTTPException(400, _yara_error(e, lang)) from e
+
+    @app.delete("/api/yara/rules/{name}", dependencies=[auth])
+    def yara_rule_delete(name: str, lang: str = lang_dep):
+        try:
+            return yarascan.delete_rule(config.workspace, name)
+        except yarascan.RuleError as e:
+            raise HTTPException(404, _yara_error(e, lang)) from e
+
+    class RuleToggle(BaseModel):
+        enabled: bool = True
+
+    @app.post("/api/yara/rules/{name}/enabled", dependencies=[auth])
+    def yara_rule_toggle(name: str, body: RuleToggle, lang: str = lang_dep):
+        """Switched off, not deleted: a rule file may have come from a vendor
+        feed, and parking it must not edit somebody else's text."""
+        try:
+            return yarascan.set_rule_enabled(config.workspace, name,
+                                             body.enabled)
+        except yarascan.RuleError as e:
+            raise HTTPException(404, _yara_error(e, lang)) from e
+
     class DetectBody(BaseModel):
         folder: str
 

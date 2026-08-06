@@ -908,4 +908,22 @@ export const de: Record<string, string> = {
   'hunt.enable.hint': 'Wieder einschalten. Läuft ab der nächsten Jagd mit.',
   'hunt.field.about': 'Beschreibung',
   'hunt.field.about.placeholder': 'Was ein Treffer hier belegt — und was nicht. Der Satz, den du in sechs Monaten brauchst.',
+  // Die eigenen YARA-Regeln, verwaltet in den Einstellungen. Workspace,
+  // nicht Fall -- ein Regelsatz wächst über Fälle hinweg, wie die
+  // Muster-Bibliothek.
+  'settings.yara': 'YARA-Regeln',
+  'settings.yara.sub': 'Deine eigenen Regeln über die Webroot. Sie gehören dem Workspace, nicht einem Fall, und sind schlichte .yar-Dateien auf der Platte — ein Satz vom CERT oder aus einem Vendor-Feed lässt sich von Hand in den Ordner legen.',
+  'settings.yara.new': 'Neue Regeldatei',
+  'settings.yara.file': 'Dateiname',
+  'settings.yara.count': '{n} Regel(n)',
+  'settings.yara.broken': 'übersetzt nicht',
+  'settings.yara.empty': 'Noch keine Regeldateien. Ohne sie hat der YARA-Scan nichts auszuführen, und der Job meldet genau das statt „nichts gefunden".',
+  'settings.yara.edit.hint': 'Datei bearbeiten. Sie wird gespeichert, wie sie dasteht — SHELLHOUND fügt keinen Dialekt hinzu.',
+  'settings.yara.off.hint': 'Für diesen Workspace abschalten. Die Datei bleibt; der nächste Scan übersetzt sie nicht.',
+  'settings.yara.on.hint': 'Wieder einschalten. Läuft ab der nächsten Analyse mit.',
+  'settings.yara.delete.hint': 'Datei aus dem Workspace löschen. Bereits erzeugte Funde bleiben in ihren Fällen.',
+  'settings.yara.compiles': 'Beim Speichern wird die Datei übersetzt. Eine Regel, die nicht übersetzt, kostet diese Datei und nicht den Scan — das jetzt zu erfahren ist billiger als mitten im Fall.',
+  'settings.yara.unchecked': 'Ohne yara-python lässt sich die Datei nicht übersetzen, sie wird also ungeprüft gespeichert. Sie ist wirkungslos, bis das Paket installiert ist.',
+  'settings.yara.missing': 'yara-python ist nicht installiert',
+  'settings.yara.missing.body': 'Regeln lassen sich schreiben und ablegen, aber nichts führt sie aus. Optional wie die GeoIP-Datenbank: alles Übrige läuft unverändert.',
 }
