@@ -462,22 +462,29 @@ affected is in the trace.
 
 ### Request matching a stored pattern — HIGH / LOW
 
-**Trigger:** a URL pattern from the analyst's **pattern library** (view
-*Pattern hunt*) matches a requested URI. Answered with 2xx → HIGH, attempts
-only → LOW.
+**Trigger:** a URL pattern from the **pattern library** (view *Pattern hunt*)
+matches a requested URI. Answered with 2xx → HIGH, attempts only → LOW.
 
-**What it states:** this client requested a path that *you* determined
-belongs to an exploit.
+**What it states:** this client requested a path that was determined to belong
+to an exploit — either by you, or by the version of SHELLHOUND you are running.
 
-**Why it counts:** the only rule whose weight depends on your input — it is
-as good as the pattern. That is why the view always shows the URLs actually
-hit: a pattern that reaches too far can only be recognised by *what* it hit.
+**Why it counts:** the only rule whose weight depends on the pattern rather
+than on the code — it is as good as the pattern is. That is why the view
+always shows the URLs actually hit: a pattern that reaches too far can only be
+recognised by *what* it hit.
 
-**Particularity:** the library belongs to the **workspace**, not to the case
-— created once, a pattern is ready in every further case. The case records
-what was searched for in it, **including without success**: "we checked for
-this, there was nothing" is written down nowhere else, because findings only
-record finds.
+**Particularity:** the evidence line records **which half of the library the
+pattern came from**. A pattern shipped with the tool is identical on every
+installation and can therefore be checked by whoever reads the report; one
+written on the analysing machine cannot, and the report should say so.
+
+Shipped patterns live in the package and are read-only; your own live in the
+**workspace**, not in the case — created once, a pattern is ready in every
+further case. A shipped pattern is switched off, an own one deleted: the
+shipped one would come back on the next start, so parking it is the only
+honest form of removal. The case records what was searched for in it,
+**including without success**: "we checked for this, there was nothing" is
+written down nowhere else, because findings only record finds.
 
 ### Scanner tool User-Agent — INFO
 

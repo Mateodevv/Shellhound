@@ -37,6 +37,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   const [pattern, setPattern] = useState('')
   const [label, setLabel] = useState('')
   const [note, setNote] = useState('')
+  const [about, setAbout] = useState('')
   const [importText, setImportText] = useState('')
   const [showImport, setShowImport] = useState(false)
   const [results, setResults] = useState<HuntResult[] | null>(null)
@@ -66,8 +67,11 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
   }
 
   const add = useMutation({
-    mutationFn: () => post('/api/patterns', { pattern, label, note }),
-    onSuccess: () => { setPattern(''); setLabel(''); setNote(''); setError(''); refresh() },
+    mutationFn: () => post('/api/patterns', { pattern, label, note, about }),
+    onSuccess: () => {
+      setPattern(''); setLabel(''); setNote(''); setAbout('')
+      setError(''); refresh()
+    },
     onError: (e: Error) => setError(e.message),
   })
   const bulk = useMutation({
@@ -182,6 +186,21 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
         </label>
+        <label className="flex min-w-72 flex-1 basis-full flex-col gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.field.about')}
+          </span>
+          {/* Its own row: this is a sentence, not a tag. What a hit here
+              proves is the thing nobody remembers six months later, and the
+              note field beside the name is too short to hold it. */}
+          <textarea
+            value={about}
+            onChange={(e) => setAbout(e.target.value)}
+            rows={2}
+            placeholder={tr('hunt.field.about.placeholder')}
+            className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
+          />
+        </label>
         <Button variant="primary" disabled={!pattern.trim()} onClick={() => add.mutate()}>
           <Plus size={14} /> {tr('hunt.store')}
         </Button>
@@ -268,6 +287,15 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                 <div className="mono truncate text-[11px] text-[var(--muted)]" title={p.pattern}>
                   {p.pattern}
                 </div>
+                {/* Shown for both halves. What a hit proves is the thing the
+                    analyst wrote it down for, and it is no use hidden behind
+                    a hover on a tag that only shipped patterns carry. */}
+                {p.about && (
+                  <div className="mt-0.5 line-clamp-2 text-[11.5px] text-[var(--muted)]"
+                    title={p.about}>
+                    {p.about}
+                  </div>
+                )}
               </div>
               {last && (
                 <Tooltip title={tr('hunt.lastRun', { at: last.ran_at.replace('T', ' ') })}
@@ -361,11 +389,13 @@ function PatternEditor({ slug, entry, onDone }: {
   const [pattern, setPattern] = useState(entry.pattern)
   const [label, setLabel] = useState(entry.label)
   const [note, setNote] = useState(entry.note)
+  const [about, setAbout] = useState(entry.about ?? '')
   const [error, setError] = useState('')
   void slug
 
   const save = useMutation({
-    mutationFn: () => patch(`/api/patterns/${entry.id}`, { pattern, label, note }),
+    mutationFn: () =>
+      patch(`/api/patterns/${entry.id}`, { pattern, label, note, about }),
     onSuccess: onDone,
     onError: (e: Error) => setError(e.message),
   })
@@ -375,14 +405,14 @@ function PatternEditor({ slug, entry, onDone }: {
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex min-w-64 flex-1 flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            URL-Muster
+            {tr('hunt.field.pattern')}
           </span>
           <input value={pattern} onChange={(e) => setPattern(e.target.value)}
             className="mono w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
         </label>
         <label className="flex w-48 flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Name
+            {tr('hunt.field.name')}
           </span>
           <input value={label} onChange={(e) => setLabel(e.target.value)}
             className="w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
@@ -399,6 +429,15 @@ function PatternEditor({ slug, entry, onDone }: {
           {tr('common.save')}
         </Button>
         <Button variant="ghost" onClick={onDone}>{tr('common.cancel')}</Button>
+        <label className="flex basis-full flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.field.about')}
+          </span>
+          <textarea value={about} onChange={(e) => setAbout(e.target.value)}
+            rows={2}
+            placeholder={tr('hunt.field.about.placeholder')}
+            className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
       </div>
       <div className="text-[11px] text-[var(--muted)]">
         {tr('hunt.edit.note')}

@@ -206,18 +206,28 @@ every finding it produces:
 | **Shipped** | The package ([`server/patterns_bundled.json`](server/patterns_bundled.json)) | No | Switched off per workspace |
 | **Own** | `<workspace>/hunt_patterns.json` | Yes | Yes |
 
-Shipped patterns are known exploit paths for WordPress, Joomla, Drupal,
-Magento and a few framework-level ones. They are identical on every
-installation of a version, which is what lets a report cite one; that is also
-why they are read-only, since an entry that changed while keeping its id and
-its CVE would mean two different things on two machines. An upgrade brings new
-entries without touching the own half, and entries switched off stay off.
+Shipped patterns are identical on every installation of a version, which is
+what lets a report cite one; that is also why they are read-only, since an
+entry that changed while keeping its id and its CVE would mean two different
+things on two machines. An upgrade brings new entries without touching the own
+half, and entries switched off stay off.
+
+The shipped set is deliberately short. A pattern that ships is one every
+installation runs, so a false positive there does not cost one analyst a look
+— it costs all of them a filled work list. Entries are added when somebody has
+hunted with them, through the
+[hunt pattern issue form](https://github.com/Mateodevv/shellhound/issues/new?template=hunt_pattern.yml),
+not because a path appears on a scanner list.
+
+Every pattern carries a **description**: what a hit proves, and what it does
+not. It is the field that is worth something six months later, when the CVE
+number alone no longer says why the path was on the list.
 
 Nothing runs automatically. A match proves that a request was made — the
 status code decides the rest, and the hunt reports it.
 
-The export carries the own patterns only. The shipped ones travel with the
-tool, so exporting them would arrive as duplicates.
+The export carries the own patterns only, descriptions included. The shipped
+ones travel with the tool, so exporting them would arrive as duplicates.
 
 ### CMS inventory
 

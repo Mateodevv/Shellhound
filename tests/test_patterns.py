@@ -168,6 +168,65 @@ class ExchangeTests(unittest.TestCase):
                          patterns.import_text(self.ws, text))
 
 
+class DescriptionTests(unittest.TestCase):
+    """`note` is a tag beside the name and has to stay short. The description
+    is the long form -- what a hit here proves, and what it does not."""
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp(prefix="shellhound-about-"))
+        self.text = ("Only requested by someone running the exploit. A 2xx "
+                     "means the upload handler answered, not that a file "
+                     "landed.")
+
+    def test_a_pattern_can_be_created_with_one(self):
+        entry = patterns.add(self.ws, "/exploit/path.php", "Name", "CVE-2026-1",
+                             self.text)
+        self.assertEqual(self.text, entry["about"])
+        self.assertEqual(self.text, patterns.load(self.ws)[0]["about"])
+
+    def test_it_can_be_added_afterwards(self):
+        entry = patterns.add(self.ws, "/exploit/path.php")
+        self.assertEqual("", entry["about"])
+        patterns.update(self.ws, entry["id"], about=self.text)
+        self.assertEqual(self.text, patterns.load(self.ws)[0]["about"])
+
+    def test_editing_the_name_leaves_it_alone(self):
+        """`update` takes None for "do not touch"; an omitted description
+        must not blank the one that is there."""
+        entry = patterns.add(self.ws, "/exploit/path.php", about=self.text)
+        patterns.update(self.ws, entry["id"], label="Renamed")
+        got = patterns.load(self.ws)[0]
+        self.assertEqual("Renamed", got["label"])
+        self.assertEqual(self.text, got["about"])
+
+    def test_it_can_be_cleared(self):
+        entry = patterns.add(self.ws, "/exploit/path.php", about=self.text)
+        patterns.update(self.ws, entry["id"], about="")
+        self.assertEqual("", patterns.load(self.ws)[0]["about"])
+
+    def test_it_survives_export_and_import(self):
+        """The export is the exchange format. A description that does not
+        travel is a description the receiving analyst has to guess."""
+        patterns.add(self.ws, "/exploit/path.php", "Name", "CVE-2026-1",
+                     self.text)
+        other = Path(tempfile.mkdtemp(prefix="shellhound-about2-"))
+        patterns.import_text(other, patterns.export_text(self.ws))
+        self.assertEqual(self.text, patterns.load(other)[0]["about"])
+
+    def test_a_pattern_without_one_is_still_fine(self):
+        entry = patterns.add(self.ws, "/exploit/path.php")
+        self.assertIn("about", entry)
+        self.assertEqual("", entry["about"])
+
+    def test_the_line_import_form_leaves_it_empty(self):
+        """Three fields separated by `|`. Prose would run into the separator,
+        so the line form does not carry a description at all."""
+        patterns.import_text(self.ws, "/a/path.php | Name | CVE-2026-1")
+        got = patterns.load(self.ws)[0]
+        self.assertEqual("CVE-2026-1", got["note"])
+        self.assertEqual("", got["about"])
+
+
 class WorkspaceFileTests(unittest.TestCase):
 
     def setUp(self):

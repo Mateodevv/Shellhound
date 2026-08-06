@@ -6,12 +6,34 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — a description on every hunt pattern
+
+`note` sits beside the name as a tag and has to stay short, so it holds a CVE
+number and nothing else. The new **description** is the long form: what a hit
+on this path proves, and what it does not. That is the field worth having six
+months later, when the CVE number alone no longer says why the path was on the
+list.
+
+Settable when a pattern is created and afterwards, shown under the pattern in
+the library, and carried through export and import — a description that does
+not travel is one the receiving analyst has to guess. The line-based import
+form (`pattern | name | note`) does not carry it: prose would run into the
+separator, and the export writes JSON anyway.
+
+**Fixed along the way:** the pattern editor had two hard-coded German labels
+(`URL-Muster`, `Name`) sitting in the English interface.
+
 ### Added — hunt patterns that ship with the tool
 
 Until now the pattern library started empty: a new installation could not hunt
-until the analyst had written something. It now ships with 18 known exploit
-paths for WordPress, Joomla, Drupal, Magento and a few framework-level ones,
+until the analyst had written something. It now ships with a starter set,
 switched on by default.
+
+**The set is deliberately short — one entry.** A pattern that ships is one
+every installation runs, so a false positive there does not cost one analyst a
+look, it costs all of them a filled work list. Entries earn their place by
+somebody having hunted with them, through the hunt pattern issue form, not by
+appearing on a scanner list.
 
 **The library has two halves, and which half a pattern came from travels into
 the case.** A finding produced by a shipped pattern records that it was
@@ -37,11 +59,10 @@ written on the analysing machine cannot.
 - Nothing runs automatically. A match still proves only that a request was
   made; the status code decides, and the hunt reports it.
 
-Each entry states what a hit actually establishes, which is shown in the
-interface. Several are deliberately not vulnerabilities — `/xmlrpc.php` is a
-legitimate endpoint that turns one request into hundreds of login attempts,
-and the ThinkPHP path is there as noise calibration: a client that hits it and
-nothing else is an untargeted scanner.
+The entry states what a hit actually establishes, which is shown in the
+interface: the JCE file manager has carried more than one upload flaw, so a
+hit names the family rather than a single advisory, and the version in the CMS
+inventory has to be checked before a report cites one.
 
 ### Changed — issue templates
 

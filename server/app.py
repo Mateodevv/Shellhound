@@ -1389,7 +1389,8 @@ def create_app(config: Config) -> FastAPI:
     class NewPattern(BaseModel):
         pattern: str = ""
         label: str = ""
-        note: str = ""
+        note: str = ""          # a tag beside the name, kept short
+        about: str = ""         # what a hit here proves -- the long form
         text: str = ""          # several at once (lines or JSON)
 
     @app.post("/api/patterns", dependencies=[auth])
@@ -1399,7 +1400,8 @@ def create_app(config: Config) -> FastAPI:
                 return patternlib.import_text(config.workspace, body.text)
             return {"added": 1, "skipped": 0, "invalid": 0,
                     "entry": patternlib.add(config.workspace, body.pattern,
-                                            body.label, body.note)}
+                                            body.label, body.note,
+                                            body.about)}
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 
@@ -1407,13 +1409,15 @@ def create_app(config: Config) -> FastAPI:
         pattern: str | None = None
         label: str | None = None
         note: str | None = None
+        about: str | None = None
 
     @app.patch("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_patch(pattern_id: str, body: PatchPattern,
                        lang: str = lang_dep):
         try:
             return patternlib.update(config.workspace, pattern_id,
-                                     body.pattern, body.label, body.note)
+                                     body.pattern, body.label, body.note,
+                                     body.about)
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 

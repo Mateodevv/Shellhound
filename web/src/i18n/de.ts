@@ -906,4 +906,6 @@ export const de: Record<string, string> = {
   'hunt.bundled.hint': 'Wird mit SHELLHOUND ausgeliefert und ist auf jeder Installation dieser Version identisch — genau das macht es im Bericht zitierbar. Nicht änderbar: schalte es ab, wenn du es nicht willst.',
   'hunt.disable.hint': 'Für diesen Workspace abschalten. Es bleibt in der Liste und lässt sich wieder einschalten — löschen geht nicht, ein mitgeliefertes Muster käme beim nächsten Start zurück.',
   'hunt.enable.hint': 'Wieder einschalten. Läuft ab der nächsten Jagd mit.',
+  'hunt.field.about': 'Beschreibung',
+  'hunt.field.about.placeholder': 'Was ein Treffer hier belegt — und was nicht. Der Satz, den du in sechs Monaten brauchst.',
 }
