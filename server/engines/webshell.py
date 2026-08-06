@@ -252,7 +252,8 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 if rule_id in off:
                     continue
                 db.upsert_finding(conn, "webshell", severity, rule, "file",
-                                  abs_path, line=line, evidence=evidence)
+                                  abs_path, line=line, evidence=evidence,
+                                  rule_id=rule_id)
                 stats["findings"] += 1
                 flagged.add(abs_path)
             if inert:

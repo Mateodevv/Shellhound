@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS findings (
     source TEXT NOT NULL,              -- webshell | sqldb | logs
     severity INTEGER NOT NULL,         -- 0=HIGH 1=MEDIUM 2=LOW
     rule TEXT NOT NULL,
+    -- WHICH rule, as a stable id. `rule` is the text a report quotes and can
+    -- be reworded; this is what the off-switch stores. Deliberately NOT part
+    -- of the fingerprint: adding it there would orphan every triage decision
+    -- made before the column existed.
+    rule_id TEXT NOT NULL DEFAULT '',
     artifact_kind TEXT NOT NULL,       -- file | table | client | dump
     artifact TEXT NOT NULL,
     line INTEGER,
@@ -292,6 +297,7 @@ _ADDED_COLUMNS = {
         ("meta_at", "TEXT DEFAULT ''"),
         ("meta_partial", "INTEGER DEFAULT 0"),
     ],
+    "findings": [("rule_id", "TEXT NOT NULL DEFAULT ''")],
     "cms_installs": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "cms_items": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "db_accounts": [
@@ -313,7 +319,7 @@ _ADDED_COLUMNS = {
 # The version of the case schema. BUMP IT when SCHEMA, _ADDED_COLUMNS or one
 # of the data corrections in _upgrade() changes -- that is how an existing
 # case database recognises that it has to be touched once.
-CASE_SCHEMA_VERSION = 2
+CASE_SCHEMA_VERSION = 3
 
 
 def _stored_version(conn):
@@ -445,19 +451,23 @@ def fingerprint(source, rule, artifact, line):
 
 
 def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
-                   line=None, evidence=""):
-    """Insert a finding or refresh last_seen -- triage state is never reset."""
+                   line=None, evidence="", rule_id=""):
+    """Insert a finding or refresh last_seen -- triage state is never reset.
+
+    `rule_id` is stored but NOT fingerprinted. The fingerprint is what keeps
+    a decision attached to a finding across re-scans, so a new field in it
+    would silently orphan every decision an analyst has already made."""
     fp = fingerprint(source, rule, artifact, line)
     ts = now()
     conn.execute(
-        """INSERT INTO findings (fingerprint, source, severity, rule,
+        """INSERT INTO findings (fingerprint, source, severity, rule, rule_id,
                artifact_kind, artifact, line, evidence, created, last_seen)
-           VALUES (?,?,?,?,?,?,?,?,?,?)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(fingerprint) DO UPDATE SET
                severity=excluded.severity, evidence=excluded.evidence,
-               last_seen=excluded.last_seen""",
-        (fp, source, int(severity), rule, artifact_kind, artifact, line,
-         evidence, ts, ts))
+               rule_id=excluded.rule_id, last_seen=excluded.last_seen""",
+        (fp, source, int(severity), rule, str(rule_id or ""), artifact_kind,
+         artifact, line, evidence, ts, ts))
     return fp
 
 

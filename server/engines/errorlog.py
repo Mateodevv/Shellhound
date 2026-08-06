@@ -294,7 +294,8 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 conn, "errorlog", severity, rule, "file", artifact,
                 line=agg["line"],
                 evidence=(f"{agg['n']}× in the error log as {agg['logged']}"
-                          f" · {agg['example']}")[:400])
+                          f" · {agg['example']}")[:400],
+                rule_id=rule_id)
             stats["findings"] += 1
         conn.commit()
     finally:

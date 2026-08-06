@@ -32,7 +32,9 @@ from server import coverage, db, enrich, geoip, iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
-from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
+from server.artifacts import (ART_SQL, art_sql,
+                              counts as artifact_counts, uri_path,
+                              web_path)
 from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
@@ -866,8 +868,18 @@ def create_app(config: Config) -> FastAPI:
         that IS shown always arrives COMPLETE: filtering must never hide part
         of what a decision is based on.
 
-        `severity` is the artifact's worst finding, `triage` its decision."""
+        `severity` is the artifact's worst finding, `triage` its decision.
+
+        A SWITCHED-OFF RULE ALSO HIDES. An artifact whose findings ALL came
+        from muted rules leaves the work list -- that is what switching a
+        rule off is for. But only while it is still UNDECIDED: a confirmed or
+        reviewed artifact stays, because the decision is the analyst's and a
+        muted rule is not a retraction. Nothing is deleted either way, and
+        the response says how many went, because a list that quietly shrinks
+        is a list nobody can trust."""
         case_dir = case_dir_or_404(slug)
+        muted = ruleswitch.disabled_ids(config.workspace)
+        art = art_sql(muted)
 
         def csv_values(raw, allowed):
             return [v for v in (p.strip() for p in raw.split(",")) if v in allowed]
@@ -896,15 +908,26 @@ def create_app(config: Config) -> FastAPI:
                          "WHERE rule LIKE ? OR artifact LIKE ? OR evidence LIKE ?)")
             like = f"%{search}%"
             params += [like, like, like]
-        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        # The muted-rule filter, applied on top of the chip filters.
+        muted_clause = "active > 0 OR triage != 'new'"
+        where.append(muted_clause)
+        clause = "WHERE " + " AND ".join(where)
         conn = db.connect(case_dir)
         try:
             total = conn.execute(
-                f"WITH art AS ({ART_SQL}) SELECT count(*) FROM art {clause}",
+                f"WITH art AS ({art}) SELECT count(*) FROM art {clause}",
                 params).fetchone()[0]
+            # How many the muted rules took out, as a number the interface
+            # can state. Same filters otherwise -- so it answers "and how
+            # many did the switches cost me", not "how many exist".
+            without = [w for w in where if w is not muted_clause]
+            silent_clause = ("WHERE " + " AND ".join(without)) if without else ""
+            muted_hidden = conn.execute(
+                f"WITH art AS ({art}) SELECT count(*) FROM art "
+                f"{silent_clause}", params).fetchone()[0] - total
             artifacts = db.rows(
                 conn,
-                f"WITH art AS ({ART_SQL}) SELECT * FROM art {clause} "
+                f"WITH art AS ({art}) SELECT * FROM art {clause} "
                 f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
                 params + [min(limit, 2000), offset])
             rows = []
@@ -922,6 +945,11 @@ def create_app(config: Config) -> FastAPI:
             return {"total": total, "artifacts": artifacts, "findings": rows,
                     "findings_total": conn.execute(
                         "SELECT count(*) FROM findings").fetchone()[0],
+                    # Artifacts a switched-off rule took out of this list.
+                    # Stated, not silent: a list that shrinks without saying
+                    # so is a list nobody can trust.
+                    "muted_hidden": muted_hidden,
+                    "muted_rules": len(muted),
                     "counts": counts, "roots": roots}
         finally:
             conn.close()

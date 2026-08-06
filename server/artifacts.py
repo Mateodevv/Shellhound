@@ -15,6 +15,7 @@ rows of one artifact disagree) has to be the same everywhere, or the
 dashboard and the findings list quietly count different things.
 """
 import os
+import re
 
 from server import db
 
@@ -23,12 +24,39 @@ from server import db
 # artifact real), dismissed only counts when it is unanimous. Legacy cases
 # triaged per finding therefore stay readable instead of showing a state
 # their rows do not agree on.
-ART_SQL = """
+# Rule ids are internal strings, but SIGMA ids come from files the analyst
+# wrote, so they are held to a shape before they are ever put into SQL. An id
+# outside it simply cannot be muted -- which is a visible failure, not a
+# silent injection.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def art_sql(muted=()):
+    """The artifact view, optionally knowing which rules are switched off.
+
+    `active` counts the findings on an artifact that came from a rule this
+    workspace still runs. A finding whose `rule_id` is empty always counts:
+    it is either older than the column or from the analyst's own YARA files,
+    which are switched off as FILES and not through this.
+
+    Nothing is filtered here. The column is offered and the WORK LIST decides
+    -- because a confirmed artifact must not vanish just because the rule
+    that first pointed at it was later muted. That decision is the analyst's,
+    and a switch is not a retraction."""
+    ids = sorted({i for i in muted if _SAFE_ID.match(str(i))})
+    if ids:
+        values = ", ".join("'" + i + "'" for i in ids)
+        active = (f"SUM(CASE WHEN rule_id = '' OR rule_id NOT IN ({values}) "
+                  f"THEN 1 ELSE 0 END)")
+    else:
+        active = "COUNT(*)"
+    return f"""
     SELECT artifact,
            MIN(artifact_kind) AS artifact_kind,
            MIN(severity)      AS worst,
            MIN(source)        AS source,
            COUNT(*)           AS findings,
+           {active}           AS active,
            MAX(triaged_at)    AS triaged_at,
            MAX(triage_note)   AS triage_note,
            MAX(last_seen)     AS last_seen,
@@ -40,6 +68,12 @@ ART_SQL = """
            END AS triage
     FROM findings GROUP BY artifact
 """
+
+
+# The view without any rule switched off. Most callers -- the chronology, the
+# exports, the IOC box -- want every artifact regardless: what a case FOUND
+# does not change because a rule was later muted.
+ART_SQL = art_sql()
 
 
 def counts(conn):

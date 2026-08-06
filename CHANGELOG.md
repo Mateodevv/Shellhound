@@ -6,6 +6,41 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — a switched-off rule now empties the work list too
+
+Muting a rule used to stop it running and nothing else: the artifacts it had
+already named stayed on the list, which made the switch half a feature. An
+artifact whose findings **all** came from muted rules now leaves the work
+list.
+
+**Only while it is undecided.** A confirmed or reviewed artifact stays. The
+decision is the analyst's and outranks the rule that prompted it — otherwise
+switching a rule off could quietly drop a confirmed shell out of a case.
+
+**Nothing is deleted, and the list says what it dropped.** The findings are
+still there with their triage; switch the rule back on and everything is
+where it was. And the list states how many artifacts went, because a work
+list that quietly shrinks reads like a clean system.
+
+This needed a `rule_id` on every finding (**schema 3**, added in place — no
+re-analysis). It is deliberately **not** part of the triage fingerprint: a new
+field there would have orphaned every decision made before the column
+existed. Findings older than the column, and the analyst's own YARA rules —
+which are switched off as *files* — carry an empty id and always count as
+live.
+
+Rule ids reach SQL, and SIGMA ids come from files the analyst wrote, so they
+are held to a plain-identifier shape first. An id outside it cannot be muted,
+which is a visible failure rather than a silent injection.
+
+### Changed — the settings page uses the width it has
+
+It was a 3xl column on a screen twice that. The country database and the API
+keys now sit side by side under the gate, which stays full width because it is
+prose that has to be read. The rule list flows in columns rather than one
+18-row strip — a grid left half a column empty, since the groups are wildly
+different lengths.
+
 ### Removed — the backwards-timestamp check
 
 The log coverage report used to flag timestamps that step backwards inside one

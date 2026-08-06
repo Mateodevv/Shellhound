@@ -137,7 +137,8 @@ def scan(case_dir, workspace=None, ctx=None):
                     evidence=(f"{client['hits']}x matched, of those "
                               f"{client['ok_hits']}x 2xx - SIGMA rule "
                               f"{rule['id']} ({rule['file']})"
-                              + (f" - e.g. {example}" if example else ""))[:400])
+                              + (f" - e.g. {example}" if example else ""))[:400],
+                    rule_id=rule["id"])
                 stats["findings"] += 1
                 touched.add(client["ip"])
         stats["clients"] = len(touched)

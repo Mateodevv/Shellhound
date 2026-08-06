@@ -560,7 +560,7 @@ def _write_alert_findings(case_dir, workspace=None):
                 continue
             sev, rule = _ALERT_FINDING.get(kind, (2, kind))
             db.upsert_finding(conn, "logs", sev, rule, "client", ip,
-                              evidence=detail)
+                              evidence=detail, rule_id=f"logs.{kind}")
         conn.commit()
     finally:
         conn.close()

@@ -974,4 +974,6 @@ export const de: Record<string, string> = {
   'time.mode.utc.hint': 'Derselbe Augenblick in UTC. Der einzige Weg, zwei Quellen mit verschiedenen Offsets sicher auf eine Zeitachse zu legen.',
   'time.noNames': 'Offsets, keine Zonennamen: eine Logzeile trägt +02:00, und das ist genauso CEST wie EET oder SAST. Ein Name wäre eine Vermutung im Gewand einer Messung.',
   'time.zone': 'Zeiten in {zone}',
+  'findings.muted': '{n} Artefakt(e) werden nicht gezeigt: jede Regel, die sie benannt hat, ist abgeschaltet. Gelöscht wurde nichts — schalte eine Regel wieder ein, und sie sind samt Triage zurück.',
+  'findings.muted.cta': 'Regeln',
 }
