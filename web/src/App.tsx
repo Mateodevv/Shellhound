@@ -12,6 +12,7 @@ import { useLiveEvents } from './ws'
 import { ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { LanguageSwitcher } from './components/LanguageSwitcher'
+import { Mark } from './components/Mark'
 import { CommandPalette } from './components/CommandPalette'
 import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from './components/TraceWindow'
@@ -149,7 +150,16 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           ))}
         </div>
 
-        <div className="mt-auto p-3">
+        {/* Quiet, at the foot. The sidebar HEADER belongs to the case --
+            a mark up there would compete with the case name, which is the
+            one thing an analyst navigates by. */}
+        <div className="mt-auto flex items-center gap-2 px-4 pb-1 pt-3">
+          <Mark size={15} tile={false} className="shrink-0 opacity-60" />
+          <span className="text-[10.5px] font-semibold tracking-[0.14em] text-[var(--muted)]">
+            SHELLHOUND
+          </span>
+        </div>
+        <div className="p-3 pt-1">
           <div className="mb-1">
             <LanguageSwitcher up />
             <ThemeSwitcher up />

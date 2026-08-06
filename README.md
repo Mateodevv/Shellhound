@@ -47,11 +47,16 @@ workspace directory is created on first start.
 
 | Feature | Requirement | Location | Without it |
 |---|---|---|---|
-| YARA scan | `pip install "yara-python>=4.3"` | `.yar` files in `<workspace>/yara/` | Everything else works unchanged. The interface states which of the two silences it is: no rules, or no YARA |
+| YARA scan | `pip install "yara-python>=4.3"` | `.yar` files in `<workspace>/yara/`, written in *Settings* or dropped in by hand | Everything else works unchanged. The interface states which of the three silences it is: no rules, all switched off, or no YARA |
 | Country flags for IP addresses | A GeoIP database (`.mmdb`) | `SHELLHOUND_GEOIP`, or a `.mmdb` file in the workspace | Everything works, only without flags |
 
 YARA rules belong to the workspace, not to a case: a rule set grows across
-cases. Country attribution reads a local database and never queries a lookup
+cases. They are managed under *Settings* — write, edit, switch off, delete —
+and stay plain `.yar` files, so a set from a CERT or a vendor feed can be
+dropped into the folder instead. Saving compiles first: a rule that does not
+compile costs that file and not the scan, and hearing it at save time beats
+hearing it mid-case. A file is switched off rather than edited, because it may
+be somebody else's text. Country attribution reads a local database and never queries a lookup
 service.
 
 <details>

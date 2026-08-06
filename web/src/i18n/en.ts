@@ -912,4 +912,21 @@ export const en: Record<string, string> = {
   'hunt.enable.hint': 'Switch back on. It runs with the next hunt.',
   'hunt.field.about': 'Description',
   'hunt.field.about.placeholder': 'What a hit here proves — and what it does not. The sentence you will want in six months.',
+  // The analyst's own YARA rules, managed from Settings. Workspace, not
+  // case -- a rule set grows across cases, like the pattern library.
+  'settings.yara': 'YARA rules',
+  'settings.yara.sub': 'Your own rules over the webroot. They belong to the workspace, not to a case, and are plain .yar files on disk — a set from a CERT or a vendor feed can be dropped into the folder by hand.',
+  'settings.yara.new': 'New rule file',
+  'settings.yara.file': 'File name',
+  'settings.yara.count': '{n} rule(s)',
+  'settings.yara.broken': 'does not compile',
+  'settings.yara.empty': 'No rule files yet. Without them the YARA scan has nothing to run, which the job reports as such rather than as "found nothing".',
+  'settings.yara.edit.hint': 'Edit the file. It is saved as written — SHELLHOUND adds no dialect.',
+  'settings.yara.off.hint': 'Switch off for this workspace. The file stays; the next scan does not compile it.',
+  'settings.yara.on.hint': 'Switch back on. It runs with the next analysis.',
+  'settings.yara.delete.hint': 'Delete the file from the workspace. Findings it already produced stay in their cases.',
+  'settings.yara.compiles': 'Saving compiles the file first. A rule that does not compile costs that file and not the scan — hearing it now beats hearing it mid-case.',
+  'settings.yara.unchecked': 'Without yara-python the file cannot be compiled, so it is stored unchecked. It is inert until the package is installed.',
+  'settings.yara.missing': 'yara-python is not installed',
+  'settings.yara.missing.body': 'Rules can be written and stored, but nothing runs them. Optional like the GeoIP database: everything else works unchanged.',
 }

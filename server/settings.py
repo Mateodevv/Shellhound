@@ -42,6 +42,11 @@ _DEFAULTS = {
     # true, no request leaves the machine -- the same gate as the GeoIP
     # download, and for the same reason.
     "enrichment_ack": False,
+    # YARA rule FILES switched off for this workspace, by file name. Stored
+    # here rather than as a marker inside the rule, because the rule file is
+    # the analyst's own text and may have come from a vendor feed: switching
+    # it off must not edit it.
+    "yara_disabled": [],
 }
 
 
@@ -53,7 +58,8 @@ def load(workspace) -> dict:
     """The settings, with defaults filled in. A broken file never raises --
     it must not be the reason the interface stops opening."""
     out = {"keys": dict(_DEFAULTS["keys"]),
-           "enrichment_ack": _DEFAULTS["enrichment_ack"]}
+           "enrichment_ack": _DEFAULTS["enrichment_ack"],
+           "yara_disabled": []}
     try:
         raw = json.loads(path(workspace).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -67,6 +73,11 @@ def load(workspace) -> dict:
             if isinstance(value, str):
                 out["keys"][name] = value.strip()
     out["enrichment_ack"] = bool(raw.get("enrichment_ack"))
+    # Anything not understood is dropped on the next write, so every key the
+    # file is allowed to carry has to be read back here.
+    off = raw.get("yara_disabled")
+    if isinstance(off, list):
+        out["yara_disabled"] = sorted({str(n) for n in off if str(n).strip()})
     return out
 
 
@@ -107,6 +118,18 @@ def public(workspace) -> dict:
         }
     return {"services": services, "enrichment_ack": data["enrichment_ack"],
             "path": str(path(workspace))}
+
+
+def yara_disabled(workspace) -> set:
+    """Rule files switched off for this workspace."""
+    return set(load(workspace).get("yara_disabled", []))
+
+
+def set_yara_disabled(workspace, names) -> list:
+    data = load(workspace)
+    data["yara_disabled"] = sorted({str(n) for n in names if str(n).strip()})
+    save(workspace, data)
+    return data["yara_disabled"]
 
 
 def set_key(workspace, service, key) -> dict:
