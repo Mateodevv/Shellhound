@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from server import coverage, db, enrich, geoip, iocs as ioclib
+from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.artifacts import ART_SQL, counts as artifact_counts, uri_path, web_path
@@ -431,6 +432,26 @@ def create_app(config: Config) -> FastAPI:
         between "the rules found nothing" and "there were no rules"."""
         return yarascan.status(config.workspace)
 
+    @app.get("/api/rules", dependencies=[auth])
+    def rules_list():
+        """Every built-in rule and whether this workspace runs it."""
+        return rulelib.public(config.workspace)
+
+    class RuleSwitch(BaseModel):
+        enabled: bool = True
+
+    @app.post("/api/rules/{rule_id}/enabled", dependencies=[auth])
+    def rules_toggle(rule_id: str, body: RuleSwitch, lang: str = lang_dep):
+        """Switch a rule off for this workspace.
+
+        It stops running; findings it already wrote stay where they are with
+        their triage. A switch is not a retraction -- an artifact somebody
+        confirmed does not stop being confirmed because the rule that pointed
+        at it was later muted."""
+        if rule_id not in rulelib.known_ids():
+            raise HTTPException(404, _t(lang, "err.ruleUnknown"))
+        return ruleswitch.set_enabled(config.workspace, rule_id, body.enabled)
+
     # --- the rule files, as things the analyst edits ----------------------
     # They live in the WORKSPACE, like the pattern library and for the same
     # reason: a rule set grows across cases. Editing them here rather than in
@@ -592,7 +613,7 @@ def create_app(config: Config) -> FastAPI:
             ids = [e["id"] for e in logs]
 
             def run_logs(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = logindex.build(case_dir, paths, ctx)
+                stats = logindex.build(case_dir, paths, ctx, config.workspace)
                 _mark_scanned(case_dir, ids, stats)
                 return stats
 
@@ -604,7 +625,7 @@ def create_app(config: Config) -> FastAPI:
             # cannot see. Own job: it reads the same directory but answers a
             # different question.
             def run_errors(ctx, paths=paths, case_dir=case_dir):
-                return errorlog.scan(case_dir, paths, ctx)
+                return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
             started.append({"kind": "errorlog",
                             "job": manager.submit(case_dir, "errorlog", run_errors)})
@@ -615,7 +636,7 @@ def create_app(config: Config) -> FastAPI:
             ids = [e["id"] for e in webroots]
 
             def run_shell(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = webshell.scan(case_dir, paths, ctx)
+                stats = webshell.scan(case_dir, paths, ctx, config.workspace)
                 _mark_scanned(case_dir, ids, stats)
                 return stats
 
@@ -643,7 +664,7 @@ def create_app(config: Config) -> FastAPI:
             ids = [e["id"] for e in dumps]
 
             def run_sql(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = sqldump.scan(case_dir, paths, ctx)
+                stats = sqldump.scan(case_dir, paths, ctx, config.workspace)
                 _mark_scanned(case_dir, ids, stats)
                 return stats
 

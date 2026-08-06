@@ -344,6 +344,7 @@ CATALOGUE: dict[str, dict[str, str]] = {
     },
     "err.patternUnknown": {"en": "Unknown pattern.", "de": "Unbekanntes Muster."},
     "err.patternJson": {"en": "not valid JSON", "de": "Kein gültiges JSON"},
+    "err.ruleUnknown": {"en": "Unknown rule.", "de": "Unbekannte Regel."},
     "err.yaraName": {
         "en": "A rule file name may hold letters, digits, dot, dash and "
               "underscore only.",

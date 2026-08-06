@@ -29,7 +29,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from server import db
+from server import db, ruleswitch
 from server.engines import accesslog
 from server.i18n import t
 from server.engines.fsutil import (get_files_recursive, is_compressed,
@@ -173,7 +173,7 @@ class _Actor:
         self.examples = {}          # kind -> first matching uri
 
 
-def build(case_dir, targets, ctx=None):
+def build(case_dir, targets, ctx=None, workspace=None):
     """Parse every access-log file under `targets` into <case>/logindex.db.
 
     Returns a stats dict. Rebuilds from scratch -- the index is cheap relative
@@ -511,7 +511,7 @@ def build(case_dir, targets, ctx=None):
         conn.close()
 
     # --- alert findings into the case DB (one truth, two views) -----------
-    _write_alert_findings(case_dir)
+    _write_alert_findings(case_dir, workspace)
     try:
         stats["index_size"] = log_db.stat().st_size
     except OSError:
@@ -525,6 +525,9 @@ def _day_iso(epoch_day):
     return date.fromordinal(int(epoch_day) + 719163).isoformat()
 
 
+# The alert KIND is the rule id, prefixed. It was already a stable string
+# stored in the log index, so inventing a second identifier beside it would
+# only create something to keep in sync.
 _ALERT_FINDING = {
     # kind -> (severity, rule text)
     "login_success": (0, "Possible successful brute-force (redirect after login flood)"),
@@ -536,7 +539,7 @@ _ALERT_FINDING = {
 }
 
 
-def _write_alert_findings(case_dir):
+def _write_alert_findings(case_dir, workspace=None):
     """Restate the index's alerts as findings (artifact = the client IP), so
     the Findings view is the one list of everything the case knows."""
     log_db = db.log_db_path(case_dir)
@@ -551,7 +554,10 @@ def _write_alert_findings(case_dir):
         lconn.close()
     conn = db.connect(case_dir)
     try:
+        off = ruleswitch.disabled_ids(workspace) if workspace else set()
         for kind, detail, ip in alert_rows:
+            if f"logs.{kind}" in off:
+                continue
             sev, rule = _ALERT_FINDING.get(kind, (2, kind))
             db.upsert_finding(conn, "logs", sev, rule, "client", ip,
                               evidence=detail)

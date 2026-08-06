@@ -35,7 +35,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from server import db
+from server import db, ruleswitch
 from server.engines.fsutil import is_scannable_text, open_text_auto
 
 # Apache:  [Fri Jun 26 05:19:59.123456 2026] [php:error] [pid 123] [client 1.2.3.4:5] PHP Fatal error: ...
@@ -198,11 +198,12 @@ def _resolver(conn):
     return resolve
 
 
-def scan(case_dir, targets, ctx=None):
+def scan(case_dir, targets, ctx=None, workspace=None):
     """Read every error log under `targets`; write findings on the FILE
     artifacts they name."""
     stats = {"files": 0, "lines": 0, "matched": 0, "findings": 0,
              "unresolved": 0, "skipped": 0}
+    off = ruleswitch.disabled_ids(workspace) if workspace else set()
     files = []
     for target in targets:
         if os.path.isfile(target):
@@ -280,6 +281,12 @@ def scan(case_dir, targets, ctx=None):
             # verdict about the file: it is proof that this path existed and
             # ran. The weight comes from landing on the same artifact as
             # something else -- which is what artifact triage is for.
+            # Two rules, not one: "the interpreter died in this file" and
+            # "the interpreter complained about this file" are different
+            # statements, and an analyst may want only the first.
+            rule_id = ("errorlog.hard" if agg["hard"] else "errorlog.soft")
+            if rule_id in off:
+                continue
             severity = db.SEV_MEDIUM if agg["hard"] else db.SEV_LOW
             rule = ("PHP error names this file (fatal/parse)" if agg["hard"]
                     else "PHP error names this file")

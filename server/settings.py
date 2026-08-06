@@ -47,6 +47,10 @@ _DEFAULTS = {
     # the analyst's own text and may have come from a vendor feed: switching
     # it off must not edit it.
     "yara_disabled": [],
+    # Detection rules switched off for this workspace, by rule id. See
+    # server/ruleswitch.py -- an unknown id counts as ENABLED, so a rule an
+    # upgrade adds arrives running.
+    "rules_disabled": [],
 }
 
 
@@ -59,7 +63,7 @@ def load(workspace) -> dict:
     it must not be the reason the interface stops opening."""
     out = {"keys": dict(_DEFAULTS["keys"]),
            "enrichment_ack": _DEFAULTS["enrichment_ack"],
-           "yara_disabled": []}
+           "yara_disabled": [], "rules_disabled": []}
     try:
         raw = json.loads(path(workspace).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -75,9 +79,10 @@ def load(workspace) -> dict:
     out["enrichment_ack"] = bool(raw.get("enrichment_ack"))
     # Anything not understood is dropped on the next write, so every key the
     # file is allowed to carry has to be read back here.
-    off = raw.get("yara_disabled")
-    if isinstance(off, list):
-        out["yara_disabled"] = sorted({str(n) for n in off if str(n).strip()})
+    for key in ("yara_disabled", "rules_disabled"):
+        raw_list = raw.get(key)
+        if isinstance(raw_list, list):
+            out[key] = sorted({str(n) for n in raw_list if str(n).strip()})
     return out
 
 

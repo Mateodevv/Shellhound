@@ -10,7 +10,7 @@ import json
 import os
 import re
 
-from server import db
+from server import db, ruleswitch
 from server.engines.fsutil import get_files_recursive, sha256_of
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
@@ -46,36 +46,40 @@ INERT_STUB_BYTES = 4096
 DOUBLE_EXT_RE = re.compile(
     r"(?i)\.(jpe?g|png|gif|bmp|ico|pdf|txt|zip|xml)\.(php\d?|phtml|phar|inc)$")
 
-# (severity, rule name, regex) applied line-by-line. 0=HIGH 1=MEDIUM.
+# (id, severity, rule name, regex) applied line-by-line. 0=HIGH 1=MEDIUM.
+#
+# THE ID SITS HERE, next to the rule, and not in a catalogue somewhere
+# else. A parallel list is a list that drifts: the rule gets renamed, the
+# catalogue does not, and the off-switch quietly stops matching anything.
 CONTENT_RULES = [
-    (0, "eval/assert on decoded or request input",
+    ("webshell.eval_input", 0, "eval/assert on decoded or request input",
      re.compile(r"(?i)\b(eval|assert)\s*\(\s*(base64_decode|gzinflate|gzuncompress|str_rot13|strrev|\$_(POST|GET|REQUEST|COOKIE))")),
-    (0, "Variable function called on request input",
+    ("webshell.var_func", 0, "Variable function called on request input",
      re.compile(r"\$\w+\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)")),
-    (0, "Command execution on request input",
+    ("webshell.cmd_input", 0, "Command execution on request input",
      re.compile(r"(?i)(shell_exec|passthru|proc_open|popen|pcntl_exec|system|exec)\s*\(\s*[^;]{0,40}\$_(POST|GET|REQUEST|COOKIE|SERVER)")),
-    (0, "preg_replace with /e modifier (code execution)",
+    ("webshell.preg_e", 0, "preg_replace with /e modifier (code execution)",
      re.compile(r"(?i)preg_replace\s*\(\s*(['\"]).*?[/#~|!%@][a-zA-Z]*e[a-zA-Z]*\1")),
-    (0, "create_function / callback on request input",
+    ("webshell.create_function", 0, "create_function / callback on request input",
      re.compile(r"(?i)(create_function\s*\(\s*['\"]|call_user_func(_array)?\s*\(\s*\$_)")),
-    (0, "File dropper writing request input to disk",
+    ("webshell.dropper", 0, "File dropper writing request input to disk",
      re.compile(r"(?i)(move_uploaded_file|file_put_contents|fwrite)\s*\(.{0,80}\$_(POST|GET|REQUEST|FILES)")),
-    (1, "Obfuscation decode chain",
+    ("webshell.obfuscation", 1, "Obfuscation decode chain",
      re.compile(r"(?i)(base64_decode\s*\(\s*(str_rot13|strrev|gzinflate|gzuncompress)|gzinflate\s*\(\s*(base64_decode|str_rot13)|str_rot13\s*\(\s*base64_decode)")),
-    (1, "Hex/octal string obfuscation",
+    ("webshell.hex_octal", 1, "Hex/octal string obfuscation",
      re.compile(r"((\\x[0-9a-fA-F]{2}|\\[0-7]{3})){10,}")),
-    (1, "chr() concatenation obfuscation",
+    ("webshell.chr_concat", 1, "chr() concatenation obfuscation",
      re.compile(r"(?i)(chr\s*\(\s*\d+\s*\)\s*\.\s*){5,}")),
-    (1, "goto-based control-flow obfuscation",
+    ("webshell.goto", 1, "goto-based control-flow obfuscation",
      re.compile(r"(?i)\bgoto\s+\w{1,20}\s*;")),
-    (1, "Standalone command-execution shell",
+    ("webshell.standalone_exec", 1, "Standalone command-execution shell",
      re.compile(r"(?i)\b(shell_exec|passthru|proc_open|pcntl_exec)\s*\(")),
 ]
 
 HTACCESS_RULES = [
-    (0, ".htaccess maps non-PHP extension to PHP handler",
+    ("webshell.htaccess_handler", 0, ".htaccess maps non-PHP extension to PHP handler",
      re.compile(r"(?i)(AddHandler|AddType|SetHandler)[^\n]*(php|x-httpd)")),
-    (0, ".htaccess auto_prepend/append_file backdoor",
+    ("webshell.htaccess_prepend", 0, ".htaccess auto_prepend/append_file backdoor",
      re.compile(r"(?i)auto_(prepend|append)_file")),
 ]
 
@@ -94,14 +98,18 @@ def _truncate(text, limit=160):
 
 def _scan_lines(text, rules):
     for line_num, line in enumerate(text.splitlines(), 1):
-        for severity, name, rx in rules:
+        for rid, severity, name, rx in rules:
             if rx.search(line):
-                yield severity, name, line_num, _truncate(line)
+                yield rid, severity, name, line_num, _truncate(line)
 
 
 def scan_file(file_path):
     """Scan one file. Returns (findings, skip_reason, inert) where findings is
-    [(severity, rule, line, evidence)]."""
+    [(rule_id, severity, rule, line, evidence)].
+
+    Every finding carries the id of the rule that produced it, so `scan` can
+    drop the ones this workspace has switched off in one place instead of
+    each rule having to remember to ask."""
     abs_path = os.path.abspath(file_path)
     base_name = os.path.basename(file_path).lower()
     ext = os.path.splitext(base_name)[1]
@@ -112,7 +120,8 @@ def scan_file(file_path):
     is_htaccess = base_name == ".htaccess"
 
     if DOUBLE_EXT_RE.search(base_name):
-        findings.append((0, "Double extension disguise (e.g. logo.jpg.php)",
+        findings.append(("webshell.double_ext", 0,
+                         "Double extension disguise (e.g. logo.jpg.php)",
                          None, base_name))
 
     if not (is_php or is_image or is_htaccess):
@@ -122,13 +131,15 @@ def scan_file(file_path):
         size = os.path.getsize(file_path)
     except OSError as e:
         if is_php and in_upload_dir(abs_path):
-            findings.append((0, "Unguarded-location PHP could not be read",
+            findings.append(("webshell.unreadable", 0,
+                             "Unguarded-location PHP could not be read",
                              None, base_name))
         return findings, f"read error: {e}", None
 
     if size > MAX_CONTENT_SCAN_BYTES:
         if is_php and in_upload_dir(abs_path):
-            findings.append((0, "PHP in writable upload directory (too large to inspect)",
+            findings.append(("webshell.too_large", 0,
+                             "PHP in writable upload directory (too large to inspect)",
                              None, base_name))
         return findings, f"too large for content scan ({size} bytes)", None
 
@@ -137,13 +148,15 @@ def scan_file(file_path):
             raw = f.read()
     except OSError as e:
         if is_php and in_upload_dir(abs_path):
-            findings.append((0, "Unguarded-location PHP could not be read",
+            findings.append(("webshell.unreadable", 0,
+                             "Unguarded-location PHP could not be read",
                              None, base_name))
         return findings, f"read error: {e}", None
 
     if is_image:
         if b"<?php" in raw or b"<?=" in raw:
-            findings.append((0, "PHP code hidden inside image file", None,
+            findings.append(("webshell.php_in_image", 0,
+                             "PHP code hidden inside image file", None,
                              f"'<?php' tag found in {ext} file"))
         return findings, None, None
 
@@ -157,8 +170,9 @@ def scan_file(file_path):
 
     if in_upload_dir(abs_path) and not CMS_GUARD_RE.search(raw[:GUARD_SNIFF_BYTES]):
         if EXEC_SURFACE_RE.search(raw):
-            findings.append((0, "Unguarded PHP in writable upload directory "
-                                "(executable, no _JEXEC/ABSPATH)", None, base_name))
+            findings.append(("webshell.upload_php", 0,
+                             "Unguarded PHP in writable upload directory "
+                             "(executable, no _JEXEC/ABSPATH)", None, base_name))
         else:
             reason = (f"no executable surface ({len(raw)} bytes"
                       + (", likely a directory stub)" if len(raw) <= INERT_STUB_BYTES
@@ -168,12 +182,15 @@ def scan_file(file_path):
     return findings, None, None
 
 
-def scan(case_dir, targets, ctx=None):
+def scan(case_dir, targets, ctx=None, workspace=None):
     """Scan every file under `targets`; write findings straight into case.db.
     Flagged files are hashed (SHA-256) so the IOC box can carry both path and
     hash without a second pass."""
     stats = {"scanned": 0, "findings": 0, "flagged_files": 0, "inert": 0,
              "skipped": 0}
+    # Read ONCE. The answer cannot change mid-run, and a settings read per
+    # line of every file in a webroot is a different kind of tool.
+    off = ruleswitch.disabled_ids(workspace) if workspace else set()
     files = []
     for target in targets:
         if os.path.isfile(target):
@@ -197,7 +214,9 @@ def scan(case_dir, targets, ctx=None):
             stats["scanned"] += 1
             findings, skip_reason, inert = scan_file(file_path)
             abs_path = os.path.abspath(file_path)
-            for severity, rule, line, evidence in findings:
+            for rule_id, severity, rule, line, evidence in findings:
+                if rule_id in off:
+                    continue
                 db.upsert_finding(conn, "webshell", severity, rule, "file",
                                   abs_path, line=line, evidence=evidence)
                 stats["findings"] += 1
