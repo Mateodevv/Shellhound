@@ -1554,7 +1554,7 @@ class CmsDirPhpTests(unittest.TestCase):
     `.php` one level in is not a shape the CMS ships.
 
     Nothing reported it. On a compromised Joomla the log held
-    `/templates/4044.php` answered 2xx five times -- the post-compromise
+    `/templates/x.php` answered 2xx five times -- the post-compromise
     phase of the intrusion, and every view of the case was silent about it.
     Widening the upload-directory rule to cover these four folders was the
     obvious move and the wrong one: measured on that webroot it would have
@@ -1590,7 +1590,7 @@ class CmsDirPhpTests(unittest.TestCase):
 
     def test_a_bare_php_in_templates_answered_2xx_is_reported(self):
         self.assertIn("cms_dir_php",
-                      self._alerts(("/templates/4044.php", 200)))
+                      self._alerts(("/templates/x.php", 200)))
 
     def test_the_shape_the_cms_actually_ships_is_not(self):
         """One directory deeper is where every legitimate template, module
@@ -1610,7 +1610,7 @@ class CmsDirPhpTests(unittest.TestCase):
 
     def test_a_query_string_does_not_hide_the_path(self):
         self.assertIn("cms_dir_php",
-                      self._alerts(("/templates/4044.php?cmd=id", 200)))
+                      self._alerts(("/templates/x.php?cmd=id", 200)))
 
 
 class ActorTagTests(unittest.TestCase):

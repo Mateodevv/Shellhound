@@ -380,7 +380,7 @@ def _relativize_ioc_paths(conn):
 
     TWO SPELLINGS TO UNDO, not one. Until the evidence root's own folder name
     was dropped from the relative form, a case collected
-    `joomla-webshells/images/x.phtml` -- no longer absolute, so the loop
+    `webroot-copy/images/x.phtml` -- no longer absolute, so the loop
     below walks straight past it. Those get the second pass."""
     try:
         rows = conn.execute(
@@ -505,10 +505,10 @@ def relative_to_evidence(roots, path):
     THE ROOT'S OWN FOLDER NAME GOES TOO. It used to stay in ("the folder name
     says which evidence this is about, and with two webroots in the same case
     it is the difference"), and on a real case that produced the indicator
-    `joomla-webshells/images/dlbjbz.phtml` -- where `joomla-webshells` is
+    `webroot-copy/images/shell.phtml` -- where `webroot-copy` is
     what the ANALYST called a directory on their own machine. Handed to
     anyone else that path matches nothing: the web server calls the file
-    `/images/dlbjbz.phtml`, and so does every other view in this tool. Two
+    `/images/shell.phtml`, and so does every other view in this tool. Two
     answers to one question, and the one that leaves the machine was the
     wrong one.
 

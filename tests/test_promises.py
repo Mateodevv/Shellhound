@@ -212,7 +212,7 @@ class ExportedPathsTests(unittest.TestCase):
         The name is the one the WEB SERVER would use. This assertion used to
         read `"WebRoot/" + shell_rel`, keeping the evidence directory in
         front -- and that spelling is what a real case turned into
-        `joomla-webshells/images/x.phtml`, a directory nobody but the analyst
+        `webroot-copy/images/x.phtml`, a directory nobody but the analyst
         has. So the prefix is now asserted ABSENT as well."""
         evidence, app, slug = self._case(mixed_case=True)
         exports = every_export(app, slug)
