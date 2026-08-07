@@ -39,10 +39,22 @@ from server import db
 # SIGMA field names for a webserver logsource, mapped onto this schema. A
 # field that is not here cannot be answered, and a rule that asks for one is
 # refused rather than quietly matching nothing.
+#
+# THE THREE URI FIELDS ARE NOT THE SAME COLUMN. The index stores one string,
+# the full request target; SIGMA distinguishes the stem (the path) from the
+# query, and a rule that says `cs-uri-stem: '/shell.php'` means the path IS
+# that -- it must not be defeated by `?cmd=id` hanging off the end. Mapping
+# all three onto the raw column made every stem rule a rule about a URI that
+# happens to have no parameters.
+_URI_STEM = ("substr(uri.text, 1, CASE WHEN instr(uri.text, '?') > 0 "
+             "THEN instr(uri.text, '?') - 1 ELSE length(uri.text) END)")
+_URI_QUERY = ("CASE WHEN instr(uri.text, '?') > 0 "
+              "THEN substr(uri.text, instr(uri.text, '?') + 1) ELSE '' END")
+
 FIELDS = {
     "c-uri": "uri.text",
-    "c-uri-query": "uri.text",
-    "cs-uri-stem": "uri.text",
+    "c-uri-query": _URI_QUERY,
+    "cs-uri-stem": _URI_STEM,
     "c-useragent": "agent.text",
     "cs-method": "req.method",
     "sc-status": "req.status",
@@ -80,18 +92,61 @@ def _escape_like(value):
             .replace("%", "\\%").replace("_", "\\_"))
 
 
+def _like_from_value(value):
+    """A SIGMA value as a LIKE pattern.
+
+    SIGMA's wildcards are `*` (any run) and `?` (exactly one), escaped with a
+    backslash when meant literally. They used to be compared as the characters
+    they are, so `c-uri: '/shell.php*'` looked for a URI ENDING IN AN
+    ASTERISK -- every rule written the way the SIGMA repository writes them
+    matched nothing, and matched nothing quietly.
+
+    Everything that is not a wildcard is escaped, so a `%` or `_` in the rule
+    -- and URLs are full of both -- stays the character it is."""
+    out, i, text = [], 0, str(value)
+    while i < len(text):
+        char = text[i]
+        if char == "\\" and i + 1 < len(text) and text[i + 1] in "*?\\":
+            out.append(_escape_like(text[i + 1]))
+            i += 2
+            continue
+        if char == "*":
+            out.append("%")
+        elif char == "?":
+            out.append("_")
+        else:
+            out.append(_escape_like(char))
+        i += 1
+    return "".join(out)
+
+
+def _has_wildcard(value):
+    text = str(value)
+    return any(text[i] in "*?" and (i == 0 or text[i - 1] != "\\")
+               for i in range(len(text)))
+
+
 def _leaf_condition(column, value, modifier):
     """One field/value pair as SQL."""
+    # `field: null` in SIGMA means the field is ABSENT. It used to compile to
+    # `column = NULL`, which SQL never answers true -- so the rule loaded,
+    # looked healthy and could not fire.
+    if value is None:
+        return f"({column} IS NULL OR {column} = '')", []
     if modifier == "contains":
-        return f"{column} LIKE ? ESCAPE '\\'", [f"%{_escape_like(value)}%"]
+        return f"{column} LIKE ? ESCAPE '\\'", [f"%{_like_from_value(value)}%"]
     if modifier == "startswith":
-        return f"{column} LIKE ? ESCAPE '\\'", [f"{_escape_like(value)}%"]
+        return f"{column} LIKE ? ESCAPE '\\'", [f"{_like_from_value(value)}%"]
     if modifier == "endswith":
-        return f"{column} LIKE ? ESCAPE '\\'", [f"%{_escape_like(value)}"]
-    # Bare equality. Numbers stay numbers so `sc-status: 200` does not become
-    # a string comparison that never matches.
+        return f"{column} LIKE ? ESCAPE '\\'", [f"%{_like_from_value(value)}"]
     if isinstance(value, bool):
         raise SigmaError("A boolean is not a value this index can compare.")
+    # Bare equality -- unless the value carries wildcards, which is how SIGMA
+    # writes a prefix or suffix without a modifier.
+    if isinstance(value, str) and _has_wildcard(value):
+        return f"{column} LIKE ? ESCAPE '\\'", [_like_from_value(value)]
+    # Numbers stay numbers so `sc-status: 200` does not become a string
+    # comparison that never matches.
     return f"{column} = ?", [value]
 
 
@@ -188,12 +243,25 @@ def _condition_sql(condition, selections):
                              f"selection in this rule.")
         return _selection_sql(token, selections[token])
 
-    def expression():
+    # AND BINDS TIGHTER THAN OR, in SIGMA as in every other language that has
+    # both. One flat left-to-right loop read `a or b and c` as `(a or b) and c`
+    # -- a rule that fires on `a` alone then does not fire at all, and the
+    # difference never shows up as an error, only as a quiet miss.
+    def and_expression():
         sql, params = primary()
-        while peek() in ("and", "or"):
-            operator = take().upper()
+        while peek() == "and":
+            take()
             right, right_params = primary()
-            sql = f"({sql} {operator} {right})"
+            sql = f"({sql} AND {right})"
+            params.extend(right_params)
+        return sql, params
+
+    def expression():
+        sql, params = and_expression()
+        while peek() == "or":
+            take()
+            right, right_params = and_expression()
+            sql = f"({sql} OR {right})"
             params.extend(right_params)
         return sql, params
 
