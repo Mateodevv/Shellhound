@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 
 from server import db
 from server import coverage
-from server.artifacts import ART_SQL, uri_path, web_path
+from server.artifacts import ART_SQL, uri_targets, web_path
 from server.engines import logindex
 from server.i18n import t
 
@@ -217,9 +217,8 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
     for artifact, rel in files.items():
         row = by_artifact[artifact]
         name = os.path.basename(rel)
-        tail = "/" + rel
         hits = [h for h in facts["files"].get(name, [])
-                if uri_path(h["uri"]).endswith(tail)]
+                if uri_targets(h["uri"], rel)]
         if not hits:
             continue
         tz = max((h["tz"] or 0) for h in hits)

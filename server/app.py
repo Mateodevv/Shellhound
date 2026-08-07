@@ -34,7 +34,7 @@ from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
-                              web_path)
+                              uri_targets, web_path)
 from server.chain import case_chain
 from server.i18n import lang_of
 from server.i18n import t as _t
@@ -1074,10 +1074,9 @@ def create_app(config: Config) -> FastAPI:
         rows = logindex.requests_for_names(case_dir, names)
         out = {}
         for artifact, rel in files.items():
-            tail = "/" + rel
             hits = {}
             for r in rows:
-                if not uri_path(r["uri"]).endswith(tail):
+                if not uri_targets(r["uri"], rel):
                     continue
                 agg = hits.setdefault(r["ip"], {"ip": r["ip"], "hits": 0,
                                                 "ok_hits": 0, "uri": r["uri"]})

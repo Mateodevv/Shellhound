@@ -106,6 +106,32 @@ def uri_path(uri):
     return str(uri or "").split("?", 1)[0].split("#", 1)[0].strip().lower()
 
 
+def uri_targets(uri, rel):
+    """Was THIS request aimed at THIS file?
+
+    `rel` is webroot-relative, the URI is absolute from the site root, and
+    the two need not share an origin: a site served out of /shop/ turns the
+    file `wp-content/x.php` into the request `/shop/wp-content/x.php`.
+    Comparing the tail of the URI against the path is what accounts for that.
+
+    A TAIL OF ONE SEGMENT IS NOT A TAIL, IT IS A NAME. For a file sitting
+    directly in the webroot the tail is just `/index.php`, and `endswith`
+    then also accepts /shop/index.php, /wp-admin/index.php and every other
+    index.php on the site. That is the bare name comparison this module says
+    elsewhere is no proof, arrived at by accident -- and it put customers who
+    browsed the shop into the list of clients that touched a confirmed
+    webshell. A single-segment path therefore has to match exactly; the
+    deeper the path, the more context its tail carries and the more `endswith`
+    is worth.
+    """
+    rel = str(rel or "").strip("/").lower()
+    if not rel:
+        return False
+    path = uri_path(uri)
+    tail = "/" + rel
+    return path == tail if "/" not in rel else path.endswith(tail)
+
+
 def web_path(conn, artifact):
     """The file as it would appear in a URL: the path below the evidence root
     it sits under. Falls back to the file name when no root matches.
