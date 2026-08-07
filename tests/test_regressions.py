@@ -492,6 +492,30 @@ class JoomlaGenerationTests(unittest.TestCase):
 class EngineHonestyTests(unittest.TestCase):
     """Smaller engine claims that each made the tool say something false."""
 
+    def test_three_bytes_of_pixel_data_are_not_a_php_tag(self):
+        """A PHP short tag in constructed binary noise is not executable source.
+
+        The fixture is synthetic and contains no incident-derived sample bytes.
+        """
+        noise = b"<?=" + bytes(range(0x80, 0x89))
+        self.assertEqual([], self._image(b"\x89PNG\r\n\x1a\n" + noise * 40))
+
+    def test_a_short_tag_followed_by_source_is_still_a_finding(self):
+        """The other half: `<?=` IS a PHP tag, and a shell may well use it.
+        What separates the two is whether what follows reads as code."""
+        self.assertIn("webshell.php_in_image", self._image(
+            b"\x89PNG\r\n\x1a\n<?= system($_GET['c']); ?>\n"))
+
+    def _image(self, body):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-imgfp-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = root / "x.png"
+        path.write_bytes(body)
+        findings, _skip, _inert = webshell.scan_file(str(path))
+        return [f[0] for f in findings]
+
     def test_a_shouting_php_tag_in_an_image_is_found(self):
         import shutil
         from server.engines import webshell
