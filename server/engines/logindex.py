@@ -37,7 +37,11 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
                                    is_scannable_text, open_text_auto)
 
 # 3: days.ok (requests answered with 2xx per day) for the timeline curves.
-SCHEMA_VERSION = "3"
+# 4: requests.source points at sources.id instead of an interned BASENAME.
+#    Two vhosts each with an access.log used to share one source, so the
+#    coverage check compared one file's mtime against the other's newest
+#    entry and announced forged timestamps.
+SCHEMA_VERSION = "4"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -294,7 +298,17 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 done_size += file_size
                 continue
 
-            src_id = intern(name)
+            # THE SOURCE IS THE FILE, NOT ITS NAME. Interning the basename
+            # made two vhosts that each keep an `access.log` one and the same
+            # source: the coverage check then held one file's mtime against
+            # the other's newest entry and told the analyst the file had been
+            # written before its own last line -- a tampering claim produced
+            # from two honestly timestamped files.
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO sources (path, size, mtime, lines,"
+                " unparsed) VALUES (?,?,?,0,0)",
+                (abs_path, file_size, file_mtime))
+            src_id = cur.lastrowid
             file_lines = file_unparsed = file_undated = 0
             chars = 0
             # Compressed logs decompress to roughly 3-10x; the per-file
@@ -422,9 +436,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 continue
 
             conn.execute(
-                "INSERT OR REPLACE INTO sources (path, size, mtime, lines, unparsed)"
-                " VALUES (?,?,?,?,?)",
-                (abs_path, file_size, file_mtime, file_lines, file_unparsed))
+                "UPDATE sources SET lines = ?, unparsed = ? WHERE id = ?",
+                (file_lines, file_unparsed, src_id))
             stats["files"] += 1
             stats["lines"] += file_lines
             stats["unparsed"] += file_unparsed
@@ -928,12 +941,12 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
         rows = conn.execute(
             f"""SELECT i.ip AS client, r.epoch, r.tz, r.method,
                        u.text AS uri, r.status, r.size,
-                       f.text AS referrer, a.text AS agent, s.text AS source
+                       f.text AS referrer, a.text AS agent, s.path AS source
                 FROM requests r
                 JOIN ips i ON i.id = r.ip
                 {joins}
                 LEFT JOIN strings f ON f.id = r.referrer
-                LEFT JOIN strings s ON s.id = r.source
+                LEFT JOIN sources s ON s.id = r.source
                 WHERE {clause}
                 ORDER BY {TRACE_SORTS.get(sort, TRACE_SORTS['time'])}
                 LIMIT ? OFFSET ?""",
@@ -944,8 +957,16 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
             f"SELECT DISTINCT r.method FROM requests r "
             f"WHERE r.ip IN (SELECT id FROM ips WHERE ip IN ({marks})) "
             f"ORDER BY r.method", wanted) if r[0]]
-        return {"total": total, "rows": [dict(r) for r in rows],
-                "methods": methods}
+        # The source column now holds the file's PATH, because that is what
+        # identifies it. What travels out is the name: the trace ends up in
+        # exports, and an absolute path there would carry the analyst's own
+        # directory layout into somebody else's hands.
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["source"] = os.path.basename(item.get("source") or "")
+            out.append(item)
+        return {"total": total, "rows": out, "methods": methods}
     finally:
         conn.close()
 

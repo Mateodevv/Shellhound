@@ -135,20 +135,20 @@ def file_anomalies(case_dir):
                 entry["truncated"] = True
 
             # The last stamp in THIS file, to compare against its mtime.
-            name_id = conn.execute(
-                "SELECT id FROM strings WHERE text = ?",
-                (os.path.basename(src["path"]),)).fetchone()
-            if name_id is not None:
-                stamps = [r[0] for r in conn.execute(
-                    "SELECT epoch FROM requests WHERE source = ? "
-                    "AND epoch IS NOT NULL AND epoch > 0 ORDER BY rowid",
-                    (name_id[0],))]
-                if stamps:
-                    entry["last_epoch"] = max(stamps)
-                    # Written before the last thing written into it: a file
-                    # cannot do that on its own.
-                    if src["mtime"] and src["mtime"] + 60 < entry["last_epoch"]:
-                        entry["stale_mtime"] = True
+            # BY THE FILE, NOT BY ITS NAME: the source used to be an interned
+            # basename, so two vhosts each keeping an `access.log` shared one
+            # source and this comparison held one file's mtime against the
+            # other's newest entry -- and reported forged timestamps on two
+            # honestly timestamped files.
+            newest = conn.execute(
+                "SELECT max(epoch) FROM requests WHERE source = ? "
+                "AND epoch IS NOT NULL AND epoch > 0", (src["id"],)).fetchone()
+            if newest is not None and newest[0]:
+                entry["last_epoch"] = newest[0]
+                # Written before the last thing written into it: a file
+                # cannot do that on its own.
+                if src["mtime"] and src["mtime"] + 60 < entry["last_epoch"]:
+                    entry["stale_mtime"] = True
             if entry["truncated"] or entry["stale_mtime"]:
                 out.append(entry)
     except sqlite3.Error:

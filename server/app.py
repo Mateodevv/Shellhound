@@ -45,6 +45,23 @@ from server.engines import (cmsinventory, detect, errorlog, logindex,
 from server.events import hub
 from server.jobs import manager
 
+def _csv_safe(value):
+    """One CSV cell that a spreadsheet will not execute.
+
+    Excel and LibreOffice read a cell beginning with `=`, `+`, `-` or `@` as a
+    formula, and `=cmd|'/c calc'!A1` in a user agent is a working command as
+    soon as somebody opens the export. Every field in a log line comes off the
+    wire, so every field is prefixed -- guarding only the URI, which is what
+    this did, left the two most obvious ones open.
+
+    A leading apostrophe is the conventional escape: spreadsheets drop it and
+    show the text, and a reader that is not a spreadsheet sees the value with
+    one visible marker rather than a silently changed one.
+    """
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
 def _find_web_dist():
     """The built interface -- under web/dist in the repository, under
     server/static in an installed package. Both routes, so that `pip install`
@@ -1413,7 +1430,7 @@ def create_app(config: Config) -> FastAPI:
                 hit["hits"], hit["ok_hits"])
         for f in findings:
             for ip in ioclib.IP_RE.findall(f["evidence"] or "")[:10]:
-                add(ip, f"steht in der Evidence von: {f['rule']}")
+                add(ip, t(lang, "related.fromEvidence", rule=f["rule"]))
         return out[:40]
 
     # --- looking at an evidence file ---------------------------------------
@@ -1780,7 +1797,8 @@ def create_app(config: Config) -> FastAPI:
                     hash_id = db.add_ioc(
                         conn, digest, "hash",
                         [ioclib.TAG_ANALYST, ioclib.TAG_DERIVED],
-                        origin=f"sha-256 von {os.path.basename(path)}")
+                        # Stored, and therefore English: it travels into every export.
+                        origin=f"sha-256 of {os.path.basename(path)}")
                     db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
                     added.append({"value": digest, "type": "hash"})
             conn.commit()
@@ -1987,11 +2005,15 @@ def create_app(config: Config) -> FastAPI:
                 stamp = datetime.fromtimestamp(
                     r["epoch"] + (r["tz"] or 0), tz=timezone.utc
                 ).strftime("%Y-%m-%d %H:%M:%S")
-            uri = r["uri"] or ""
-            if uri and uri[0] in ("=", "+", "-", "@"):
-                uri = "'" + uri
-            w.writerow([r["client"], stamp, r["method"], uri, r["status"],
-                        r["size"], r["referrer"], r["agent"], r["source"]])
+            # EVERY FIELD THE CLIENT CONTROLS, not just the URI. Referrer,
+            # user agent and the request method come straight off the wire,
+            # and this file exists to be opened in a spreadsheet: a user agent
+            # of `=cmd|'/c calc'!A1` executed when the analyst double-clicked
+            # the export. Only the URI was guarded.
+            w.writerow([_csv_safe(r["client"]), stamp, _csv_safe(r["method"]),
+                        _csv_safe(r["uri"]), r["status"], r["size"],
+                        _csv_safe(r["referrer"]), _csv_safe(r["agent"]),
+                        _csv_safe(r["source"])])
         csv_bytes = buf.getvalue().encode("utf-8")
         digest = hashlib.sha256(csv_bytes).hexdigest()
 
@@ -2345,8 +2367,15 @@ def create_app(config: Config) -> FastAPI:
     # accounts one would not otherwise find it.
     _YOUNG_DAYS = 30
 
+    # phpMyAdmin writes "Generation Time: Jan 06, 2026 at 08:00 AM" (and
+    # "06. Jan 2026 um 08:00" in German). None of the ISO or dotted forms
+    # parse that, so the export reference date was missing for the most
+    # common export on shared hosting -- and the "young account" aid, which
+    # measures against it, had nothing to measure against.
     _STAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d",
-                      "%d.%m.%Y %H:%M:%S", "%d.%m.%Y")
+                      "%d.%m.%Y %H:%M:%S", "%d.%m.%Y",
+                      "%b %d, %Y at %I:%M %p", "%b %d, %Y at %H:%M",
+                      "%d. %b %Y um %H:%M", "%d %b %Y at %I:%M %p")
 
     def _parse_stamp(text):
         raw = str(text or "").strip()

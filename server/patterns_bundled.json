@@ -1,39 +1,40 @@
 {
-  "_comment": [
-    "Hunt patterns shipped with SHELLHOUND. Read-only: this file lives in the",
-    "package, not in the workspace, so an upgrade brings new entries and the",
-    "analyst's own library is never touched. An entry can be switched off per",
-    "workspace; it cannot be edited, because editing it while it keeps its id",
-    "and its CVE would make the same identifier mean different things on two",
-    "machines.",
-    "",
-    "AN ENTRY IS: one or more paths, a name, the advisory it belongs to, and",
-    "what a hit proves. `match` says how several paths combine -- OVER CLIENTS,",
-    "not over one request: 'any' is a client that hit at least one of them,",
-    "'all' only clients that hit every one.",
-    "",
-    "WHAT A HIT PROVES: that a request was made. Nothing here says the request",
-    "succeeded, and nothing here is a finding on its own -- the status code",
-    "decides, and that is what the hunt reports back.",
-    "",
-    "THE SET IS DELIBERATELY SHORT. A pattern that ships is one every",
-    "installation runs, so a false positive here does not cost one analyst a",
-    "look -- it costs all of them a filled work list.",
-    "",
-    "ids are stable strings, never regenerated: the per-workspace off-switch",
-    "refers to them across versions. '*' is a wildcard, not a regex."
-  ],
-  "version": 1,
-  "patterns": [
-    {
-      "id": "joomla-jce-rce",
-      "patterns": [
-        "/index.php?option=com_jce&task=profiles.import"
-      ],
-      "match": "any",
-      "name": "Joomla JCE editor RCE",
-      "cve": "CVE-2026-48907",
-      "description": "CVE-2026-48907 is a critical Remote Code Execution (RCE) vulnerability affecting the Joomla Content Editor (JCE) extension. Due to improper access control, unauthenticated attackers can upload and execute malicious PHP files, potentially leading to full compromise of the affected web server."
-    }
-  ]
+ "_comment": [
+  "Hunt patterns shipped with SHELLHOUND. Read-only: this file lives in the",
+  "package, not in the workspace, so an upgrade brings new entries and the",
+  "analyst's own library is never touched. An entry can be switched off per",
+  "workspace; it cannot be edited, because editing it while it keeps its id",
+  "and its CVE would make the same identifier mean different things on two",
+  "machines.",
+  "",
+  "AN ENTRY IS: one or more paths, a name, the advisory it belongs to, and",
+  "what a hit proves. `match` says how several paths combine -- OVER CLIENTS,",
+  "not over one request: 'any' is a client that hit at least one of them,",
+  "'all' only clients that hit every one.",
+  "",
+  "WHAT A HIT PROVES: that a request was made. Nothing here says the request",
+  "succeeded, and nothing here is a finding on its own -- the status code",
+  "decides, and that is what the hunt reports back.",
+  "",
+  "THE SET IS DELIBERATELY SHORT. A pattern that ships is one every",
+  "installation runs, so a false positive here does not cost one analyst a",
+  "look -- it costs all of them a filled work list.",
+  "",
+  "ids are stable strings, never regenerated: the per-workspace off-switch",
+  "refers to them across versions. '*' is a wildcard, not a regex."
+ ],
+ "version": 1,
+ "patterns": [
+  {
+   "id": "joomla-jce-rce",
+   "patterns": [
+    "*option=com_jce*",
+    "*task=profiles.import*"
+   ],
+   "match": "all",
+   "name": "Joomla JCE editor RCE",
+   "cve": "CVE-2026-48907",
+   "description": "CVE-2026-48907 is a critical Remote Code Execution (RCE) vulnerability affecting the Joomla Content Editor (JCE) extension. Due to improper access control, unauthenticated attackers can upload and execute malicious PHP files, potentially leading to full compromise of the affected web server."
+  }
+ ]
 }

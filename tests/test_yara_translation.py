@@ -162,6 +162,16 @@ class TranslationTests(unittest.TestCase):
             declared |= set(re.findall(r'id\s*=\s*"([^"]+)"', text))
         self.assertEqual(set(REFERENCE), declared)
 
+    # DELIBERATELY NOT EQUIVALENT. The equivalence table proves each YARA
+    # rule kept the meaning of the regex it replaced. This one must NOT keep
+    # it: the original fired on every handler line mentioning PHP, including
+    # `AddHandler application/x-httpd-ea-php81 .php .php8 .phtml` -- the block
+    # every shared host ships -- and then called those "non-PHP extensions",
+    # which is the opposite of what the line says. It stays in REFERENCE so
+    # the id and severity bookkeeping below still covers it; its behaviour is
+    # asserted directly in test_regressions.EngineHonestyTests.
+    CORRECTED = {"webshell.htaccess_handler"}
+
     def test_the_translation_matches_the_originals_exactly(self):
         cases = samples()
         self.assertGreater(len(cases), 100, "the mutation step did nothing")
@@ -169,6 +179,8 @@ class TranslationTests(unittest.TestCase):
         for text in cases:
             found = self._yara_hits(text)
             for rule_id in REFERENCE:
+                if rule_id in self.CORRECTED:
+                    continue
                 want = reference_hits(rule_id, text)
                 if want != (rule_id in found):
                     mismatches.append(

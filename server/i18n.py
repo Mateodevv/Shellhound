@@ -155,6 +155,13 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "en": "More than {n} events; the chronology shows the earliest.",
         "de": "Mehr als {n} Ereignisse; die Chronologie zeigt die frühesten.",
     },
+    # Why this address is shown next to the artifact. It used to be a German
+    # sentence hard-coded in the route, so the English interface said it in
+    # German.
+    "related.fromEvidence": {
+        "en": "named in the evidence of: {rule}",
+        "de": "steht in der Evidence von: {rule}",
+    },
     "chain.gap.clockOffset": {
         "en": "Clock alignment: the times from the {source} are moved "
               "{hours} hour(s) {direction} — set by the analyst.",

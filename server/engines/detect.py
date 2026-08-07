@@ -73,7 +73,12 @@ CMS_MIN_SCORE = 6
 DUMP_SUFFIXES = (".sql", ".sql.gz", ".sql.bz2", ".dump", ".sql.xz")
 DUMP_MARKERS = ("CREATE TABLE", "INSERT INTO", "MySQL dump", "MariaDB dump",
                 "PostgreSQL database dump", "DROP TABLE", "LOCK TABLES")
-LOG_SUFFIXES = (".log", ".gz", ".bz2", ".txt", "")
+# NO EMPTY STRING HERE. `str.endswith` is true for every string against "",
+# so every file in a directory counted as a log file -- images, core dumps,
+# databases -- and the size and count in a log-directory proposal described
+# the whole folder. Extensionless log files are still caught: the caller
+# also accepts a name containing ".log", and the content sniff decides.
+LOG_SUFFIXES = (".log", ".gz", ".bz2", ".txt", ".xz")
 
 
 def _looks_like_dump(path, lang="en"):
