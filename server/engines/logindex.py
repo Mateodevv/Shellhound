@@ -44,7 +44,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -114,6 +114,17 @@ CMS_DIR_PHP_RE = re.compile(
     r"/[^/?\s]+\.ph(?:p\d?|tml|ar)(?=[?\s]|$)")
 
 BF_THRESHOLD = 30            # login POSTs per client before it is a flood
+# THE THRESHOLD KNOWS NO TIME, and deliberately keeps not knowing it. Adding
+# a rate to the CONDITION would silently drop findings on a case whose logs
+# are thin, and the count is what an analyst can check by hand.
+#
+# What was missing is the WINDOW in the sentence. Measured on a real case,
+# four clients crossed the threshold: 92 POSTs over twenty-three days
+# (0.2/h), 714 over eight days (3.9/h), and two that fired 40 and 32 inside
+# the same second (thousands per hour). All four were reported with the same
+# word and the same number of digits, and nothing on screen told them apart.
+# The count alone cannot: the rate is the difference between somebody
+# signing in and somebody guessing.
 
 # Alert kinds that are CONTEXT rather than a statement about this system.
 # Defined by NAME, not by the severity stored in the index: an index built by
@@ -160,6 +171,7 @@ CREATE TABLE actors (
     upload_php_attempts INTEGER, upload_php_ok INTEGER,
     cms_dir_php_attempts INTEGER DEFAULT 0,
     cms_dir_php_ok INTEGER DEFAULT 0,
+    login_first INTEGER, login_last INTEGER,
     agents INTEGER
 );
 CREATE TABLE actor_hours (
@@ -208,6 +220,7 @@ class _Actor:
                  "admin_ok",
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
+                 "login_first", "login_last",
                  "agents", "examples")
 
     def __init__(self):
@@ -232,6 +245,8 @@ class _Actor:
         self.uphp_ok = 0
         self.cmsphp = 0
         self.cmsphp_ok = 0
+        self.login_first = None
+        self.login_last = None
         self.agents = set()
         self.examples = {}          # kind -> first matching uri
 
@@ -445,6 +460,16 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 a.login_statuses[status] += 1
                                 if status in (301, 302, 303):
                                     a.login_redirects += 1
+                                # The window of the LOGIN POSTS, not of the
+                                # client. A visitor who browses for three
+                                # weeks and guesses passwords for one minute
+                                # would otherwise be measured as a very slow
+                                # attacker.
+                                if epoch:
+                                    if a.login_first is None or epoch < a.login_first:
+                                        a.login_first = epoch
+                                    if a.login_last is None or epoch > a.login_last:
+                                        a.login_last = epoch
                             # Any method: reaching the backend is a GET.
                             if flags & F_ADMIN_AREA and ok:
                                 a.admin_ok += 1
@@ -544,10 +569,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 _json.dumps({str(k): v for k, v in a.login_statuses.items()}),
                 _json.dumps(sorted(a.scanner_uas)[:5]),
                 a.sqli, a.sqli_ok, a.trav, a.trav_ok, a.uphp, a.uphp_ok,
-                a.cmsphp, a.cmsphp_ok,
+                a.cmsphp, a.cmsphp_ok, a.login_first, a.login_last,
                 len(a.agents)))
         conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             actor_rows)
         conn.executemany(
             "INSERT INTO actor_hours VALUES (?,?,?)",
@@ -567,7 +592,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     f"{s} ×{n}" for s, n in sorted(a.login_statuses.items()))
                 alert_rows.append((ip_id, "login_flood", 1,
                                    f"{a.login_posts} POSTs against login "
-                                   f"endpoints (status: {breakdown})", ""))
+                                   f"endpoints {_login_rate(a)}"
+                                   f"(status: {breakdown})", ""))
                 # A REDIRECT IS NOT A SUCCESS. Joomla answers EVERY login POST
                 # with a 303 -- plain POST-Redirect-GET -- whether the
                 # credentials were right or wrong, so on a real case a client
@@ -665,6 +691,49 @@ def _day_iso(epoch_day):
 # The alert KIND is the rule id, prefixed. It was already a stable string
 # stored in the log index, so inventing a second identifier beside it would
 # only create something to keep in sync.
+def _span_words(seconds):
+    """`3 s`, `47 min`, `8 h`, `23 d` -- one unit, the biggest that fits.
+
+    Stored English, like every other measured string this module writes."""
+    seconds = int(seconds)
+    if seconds < 90:
+        return f"{seconds} s"
+    if seconds < 5400:
+        return f"{seconds // 60} min"
+    if seconds < 172800:
+        return f"{seconds / 3600:.0f} h"
+    return f"{seconds / 86400:.0f} d"
+
+
+def _login_rate(a):
+    """"over 23 d (0.2/h) " -- or "" when there is no window to state.
+
+    THE SENTENCE USED TO CARRY A COUNT AND NOTHING ELSE. On a real case
+    "92 POSTs against login endpoints" and "40 POSTs against login
+    endpoints" stood side by side: the first spread over twenty-three days,
+    the second fired inside one second. Same word, same shape, and no way to
+    tell somebody signing in from somebody guessing.
+
+    Empty when the log carries no readable time for these requests. An
+    invented rate would be worse than a missing one."""
+    first, last = a.login_first, a.login_last
+    if not first or not last:
+        return ""
+    span = int(last) - int(first)
+    if span <= 0:
+        # Every login POST in the same second the log can resolve. A rate
+        # per hour off a zero-length window is a number about the log's
+        # granularity, not about the client.
+        return "within one second "
+    rate = a.login_posts / (span / 3600)
+    # NOT `%g` throughout: it renders a real burst as `2.03e+03/h`, and a
+    # number in that shape is one a reader skips. Thousands separators above
+    # a hundred, three significant digits below -- the range where the
+    # fraction is the whole statement (`0.16/h` is somebody signing in).
+    shown = f"{rate:,.0f}" if rate >= 100 else f"{rate:.3g}"
+    return f"over {_span_words(span)} ({shown}/h) "
+
+
 _ALERT_FINDING = {
     # kind -> (severity, rule text)
     "login_success": (0, "Possible successful brute-force (redirect after login flood)"),

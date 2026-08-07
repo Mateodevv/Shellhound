@@ -233,6 +233,13 @@ export interface ActorProfile {
    *  in was put there by somebody. */
   cms_dir_php_attempts: number
   cms_dir_php_ok: number
+  /** First and last login POST from this client, as epoch seconds. The
+   *  window the flood ran in: 92 POSTs over three weeks and 40 inside one
+   *  second are the same count and not the same event, and the count
+   *  alone cannot tell them apart. Null when no login POST carried a
+   *  readable time. */
+  login_first: number | null
+  login_last: number | null
   agents: number
 }
 

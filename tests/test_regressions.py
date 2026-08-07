@@ -1670,6 +1670,67 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class LoginRateTests(unittest.TestCase):
+    """A count of login POSTs without the window it ran in.
+
+    The sentence read "92 POSTs against login endpoints" and stopped there.
+    On a real case four clients crossed the threshold: 92 POSTs spread over
+    twenty-three days, 714 over eight, and two that fired 40 and 32 inside
+    the same minute. Same word, same shape of number, and nothing on screen
+    told a person signing in apart from a person guessing.
+
+    The THRESHOLD deliberately stays a plain count. Putting a rate into the
+    condition would silently drop findings on a case whose logs are thin,
+    and a count is what an analyst can check by hand. What was missing was
+    not a filter but a fact.
+    """
+
+    class _Actor:
+        def __init__(self, posts, first, last):
+            self.login_posts, self.login_first, self.login_last = (
+                posts, first, last)
+
+    def _rate(self, posts, seconds):
+        from server.engines import logindex
+        return logindex._login_rate(
+            self._Actor(posts, 1767582000, 1767582000 + seconds))
+
+    def test_a_burst_and_a_trickle_do_not_read_alike(self):
+        self.assertNotEqual(self._rate(40, 71), self._rate(40, 23 * 86400))
+
+    def test_the_rate_is_readable_rather_than_exponential(self):
+        """`%g` renders a real burst as `2.03e+03/h`, and a number in that
+        shape is one a reader skips -- which is the whole failure this fixes,
+        one step further along."""
+        fast = self._rate(40, 71)
+        self.assertIn("2,028/h", fast)
+        self.assertNotIn("e+", fast)
+
+    def test_a_trickle_keeps_the_fraction_that_is_the_statement(self):
+        """`0.16/h` IS the finding: somebody signing in now and then."""
+        self.assertIn("0.164/h", self._rate(92, 560 * 3600))
+
+    def test_all_in_one_second_is_said_and_not_divided(self):
+        """A rate off a zero-length window is a number about the log's
+        granularity, not about the client."""
+        self.assertEqual("within one second ", self._rate(40, 0))
+
+    def test_without_a_readable_time_it_says_nothing(self):
+        """An invented rate would be worse than a missing one."""
+        from server.engines import logindex
+        self.assertEqual("", logindex._login_rate(self._Actor(40, None, None)))
+        self.assertEqual("", logindex._login_rate(self._Actor(40, 0, 0)))
+
+    def test_the_span_uses_one_unit_and_the_biggest_that_fits(self):
+        from server.engines import logindex as li
+        self.assertEqual("89 s", li._span_words(89))
+        self.assertEqual("1 min", li._span_words(90))
+        self.assertEqual("59 min", li._span_words(3599))
+        self.assertEqual("2 h", li._span_words(5400))
+        self.assertEqual("48 h", li._span_words(172799))
+        self.assertEqual("2 d", li._span_words(172800))
+
+
 class DoorwayPageTests(unittest.TestCase):
     """The site's own homepage, replaced, and nothing said so.
 
