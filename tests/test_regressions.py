@@ -370,6 +370,125 @@ class SqlDumpTests(unittest.TestCase):
         self.assertIn("site-b.sql", rows[0]["evidence"])
 
 
+class JoomlaGenerationTests(unittest.TestCase):
+    """Joomla answers "is this an administrator?" in two different places,
+    and only one of them was ever read.
+
+    From 3.0 the answer is a row in `#__user_usergroup_map`. In 1.x and 2.5
+    there is no such table: the permission sits on the account itself, in
+    `gid` and in `usertype`. A 1.5 export therefore reported no
+    administrators at all -- and old installations are disproportionately the
+    compromised ones, which is the whole population this tool is for.
+
+    The same shift moves the DATE columns. 1.x carries `usertype` and `gid`
+    between the password and the timestamps, so reading by position gave the
+    sendEmail flag as the registration date and the group id as the last
+    login. The chronology then dropped the account entirely, because "1" is
+    not a timestamp -- an administrator created during the incident, gone
+    from the story without a word.
+
+    Read by COLUMN NAME now, which is what makes both generations work
+    without the code having to guess which one it is looking at.
+    """
+
+    HEAD_15 = ("CREATE TABLE `jos_users` (`id` int, `name` varchar(255),"
+               " `username` varchar(150), `email` varchar(100),"
+               " `password` varchar(100), `usertype` varchar(25),"
+               " `block` tinyint, `sendEmail` tinyint, `gid` tinyint,"
+               " `registerDate` datetime, `lastvisitDate` datetime,"
+               " `activation` varchar(100), `params` text);\n")
+    HEAD_3 = ("CREATE TABLE `j_users` (`id` int, `name` varchar(255),"
+              " `username` varchar(150), `email` varchar(100),"
+              " `password` varchar(100), `block` tinyint,"
+              " `sendEmail` tinyint, `registerDate` datetime,"
+              " `lastvisitDate` datetime, `activation` varchar(100),"
+              " `params` text);\n")
+    # Two marker tables, or the dump is not recognised as Joomla at all and
+    # the generic reader takes over -- which is what made an earlier check of
+    # this defect come out clean against a one-table fixture.
+    MARKERS_15 = ("CREATE TABLE `jos_content` (`id` int, `title` text);\n"
+                  "INSERT INTO `jos_content` VALUES (1,'Home');\n"
+                  "CREATE TABLE `jos_session` (`session_id` varchar(200));\n"
+                  "INSERT INTO `jos_session` VALUES ('abc');\n")
+    MARKERS_3 = ("CREATE TABLE `j_content` (`id` int, `title` text);\n"
+                 "INSERT INTO `j_content` VALUES (1,'Home');\n"
+                 "CREATE TABLE `j_session` (`session_id` varchar(200));\n"
+                 "INSERT INTO `j_session` VALUES ('abc');\n")
+
+    JOOMLA_15 = HEAD_15 + (
+        "INSERT INTO `jos_users` VALUES (62,'Administrator','admin',"
+        "'admin@example.test','x','Super Administrator',0,1,25,"
+        "'2019-03-04 09:12:00','2026-01-08 03:17:00','','');\n"
+        "INSERT INTO `jos_users` VALUES (64,'Support','support-tmp',"
+        "'tmp@example.test','y','Registered',0,0,18,"
+        "'2026-01-06 12:00:00','2026-01-06 12:30:00','','');\n") + MARKERS_15
+    JOOMLA_3 = HEAD_3 + (
+        "INSERT INTO `j_users` VALUES (62,'Administrator','admin',"
+        "'admin@example.test','x',0,1,'2019-03-04 09:12:00',"
+        "'2026-01-08 03:17:00','','');\n"
+        "CREATE TABLE `j_user_usergroup_map` (`user_id` int, `group_id` int);\n"
+        "INSERT INTO `j_user_usergroup_map` VALUES (62,8);\n") + MARKERS_3
+
+    def _accounts(self, text):
+        import shutil
+        from server.engines import sqldump
+        root = Path(tempfile.mkdtemp(prefix="shellhound-joomla-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case = root / "case"
+        case.mkdir()
+        dump = root / "dump.sql"
+        dump.write_text(text, encoding="utf-8")
+        db.connect(case).close()
+        sqldump.scan(case, [str(dump)])
+        conn = db.connect(case)
+        try:
+            cms = db.one(conn, "SELECT cms FROM db_dumps")["cms"]
+            rows = {r["login"]: dict(r) for r in db.rows(
+                conn, "SELECT login, registered, last_login, admin, blocked "
+                      "FROM db_accounts")}
+        finally:
+            conn.close()
+        return cms, rows
+
+    def test_a_joomla_15_export_is_recognised_as_joomla(self):
+        """The premise of everything below. Without two marker tables the
+        generic reader runs instead and the positional bug cannot be seen."""
+        self.assertEqual("Joomla", self._accounts(self.JOOMLA_15)[0])
+
+    def test_a_joomla_15_super_administrator_is_flagged(self):
+        _cms, rows = self._accounts(self.JOOMLA_15)
+        self.assertEqual(1, rows["admin"]["admin"])
+
+    def test_an_ordinary_joomla_15_account_is_not(self):
+        """The guard against flagging everyone: an account list in which
+        everybody is an administrator says nothing."""
+        _cms, rows = self._accounts(self.JOOMLA_15)
+        self.assertEqual(0, rows["support-tmp"]["admin"])
+
+    def test_the_joomla_15_dates_are_dates(self):
+        """Read positionally these came back as `1` and `25` -- the sendEmail
+        flag and the group id."""
+        _cms, rows = self._accounts(self.JOOMLA_15)
+        self.assertEqual("2019-03-04 09:12:00", rows["admin"]["registered"])
+        self.assertEqual("2026-01-08 03:17:00", rows["admin"]["last_login"])
+
+    def test_the_login_is_the_username_not_the_display_name(self):
+        """`name` is 'Administrator', `username` is 'admin'. Only the second
+        one can be looked for in a log."""
+        _cms, rows = self._accounts(self.JOOMLA_15)
+        self.assertIn("admin", rows)
+        self.assertNotIn("Administrator", rows)
+
+    def test_a_joomla_3_export_still_reads_the_same_way(self):
+        """The generation that already worked has to keep working -- it
+        answers the admin question in a different table entirely."""
+        cms, rows = self._accounts(self.JOOMLA_3)
+        self.assertEqual("Joomla", cms)
+        self.assertEqual(1, rows["admin"]["admin"])
+        self.assertEqual("2019-03-04 09:12:00", rows["admin"]["registered"])
+        self.assertEqual("2026-01-08 03:17:00", rows["admin"]["last_login"])
+
+
 class EngineHonestyTests(unittest.TestCase):
     """Smaller engine claims that each made the tool say something false."""
 

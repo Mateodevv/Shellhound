@@ -494,20 +494,60 @@ def _clean_stamp(value):
     return "" if text in _NEVER else text
 
 
-def _extract_users(table, rows, cms):
-    """(uid, login, email, registered, hash, last_login, blocked).
+def _flag(value):
+    """A tinyint column as 0/1. Anything unreadable is 0 -- claiming an
+    account is blocked when the column could not be read would be a statement
+    the data does not support."""
+    try:
+        return 1 if int(str(value).strip() or 0) else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+# Joomla 1.x/2.5 kept the permission on the account itself. 25 is Super
+# Administrator, 24 Administrator; the `usertype` column spells the same
+# thing out. From 3.0 the answer moved to #__user_usergroup_map, which is
+# where `_joomla_super_ids` reads it.
+_JOOMLA_LEGACY_ADMIN_GIDS = {"24", "25"}
+_JOOMLA_LEGACY_ADMIN_TYPES = {"administrator", "super administrator"}
+
+
+def _joomla_legacy_admin(row, index_of):
+    """Is this 1.x account an administrator? False when the columns that
+    would say so are not in this dump."""
+    gid = index_of.get("gid")
+    if gid is not None and gid < len(row):
+        if str(row[gid]).strip() in _JOOMLA_LEGACY_ADMIN_GIDS:
+            return True
+    usertype = index_of.get("usertype")
+    if usertype is not None and usertype < len(row):
+        return str(row[usertype]).strip().lower() in _JOOMLA_LEGACY_ADMIN_TYPES
+    return False
+
+
+def _extract_users(table, rows, cms, columns=()):
+    """(uid, login, email, registered, hash, last_login, blocked, admin).
 
     Last login and block status only exist where the CMS carries them: Joomla
     has both fixed in its schema (lastvisitDate, block), WordPress core has no
     last login at all -- there it comes, if at all, from the usermeta of a
     plugin and is added later. What is missing stays empty; a guessed
     timestamp would be worse than none."""
+    index_of = {str(name).strip().strip("`").lower(): i
+                for i, name in enumerate(columns or ())}
     users = []
     for row in rows:
         if len(row) < 4:
             continue
+
+        def at(name, fallback):
+            """The value of a named column, or the fallback when this dump
+            gave no CREATE TABLE to read the names from."""
+            i = index_of.get(name)
+            return row[i] if i is not None and i < len(row) else fallback
+
         uid = str(row[0]).strip() if row[0] is not None else "?"
-        last, blocked = "", 0
+        last, blocked, admin = "", 0, False
         if cms == "WordPress" and _looks_wordpress(row):
             login, pw, email, reg = row[1], row[2], row[4], row[6]
             # user_status: barely used in core, but when set, meant as a
@@ -518,26 +558,41 @@ def _extract_users(table, rows, cms):
                 except ValueError:
                     blocked = 0
         elif cms == "Joomla" and len(row) >= 5:
-            login = row[2]
-            email = row[3]
-            pw = row[4]
-            # Fixed column order: 5 block, 7 registerDate, 8 lastvisitDate.
-            if len(row) >= 9:
-                try:
-                    blocked = 1 if int(str(row[5]).strip() or 0) else 0
-                except ValueError:
-                    blocked = 0
+            login = at("username", row[2])
+            email = at("email", row[3])
+            pw = at("password", row[4])
+            # BY NAME WHERE THE NAMES ARE KNOWN. The fixed positions below
+            # are Joomla 3.x and later; version 1.x and 2.5 carry `usertype`
+            # and `gid` between the password and the dates, which pushes both
+            # of them two columns along. Read positionally, a 1.5 export
+            # reported the sendEmail flag as the registration date and the
+            # group id as the last login -- and the chronology then dropped
+            # the account entirely, because "1" is not a timestamp.
+            if columns:
+                reg = at("registerdate", None)
+                last = _clean_stamp(at("lastvisitdate", None))
+                blocked = _flag(at("block", None))
+            elif len(row) >= 9:
+                blocked = _flag(row[5])
                 reg = row[7]
                 last = _clean_stamp(row[8])
             else:
                 reg = _first(_is_datetime, row)
+            # Joomla 1.x/2.5 kept the permission on the ACCOUNT. From 3.0 it
+            # lives in the group map, and only that was ever read -- so on a
+            # 1.5 export, which has no such table, the Super Administrator
+            # came back as an ordinary user and the case reported no admins
+            # at all. Old installations are disproportionately the
+            # compromised ones.
+            admin = _joomla_legacy_admin(row, index_of)
         else:
             email = _first(_is_email, row)
             reg = _first(_is_datetime, row)
             login = row[1] if len(row) > 1 else uid
             pw = _first(lambda v: isinstance(v, str) and v.startswith("$"), row)
         users.append((uid, str(login or "?"), str(email or "-"),
-                      _clean_stamp(reg) or "-", _hash_type(pw), last, blocked))
+                      _clean_stamp(reg) or "-", _hash_type(pw), last, blocked,
+                      admin))
     return users
 
 
@@ -864,12 +919,16 @@ def _scan_dump(path, size, total_size, done_before, ctx):
         else:
             tbl_cms = ""
         if tbl_cms:
-            extracted = _extract_users(table, rows, tbl_cms)
+            extracted = _extract_users(table, rows, tbl_cms, columns)
         else:
-            extracted = _extract_users_by_columns(rows, columns)
+            extracted = [row + (False,)
+                         for row in _extract_users_by_columns(rows, columns)]
             tbl_cms = ", ".join(sorted(cms)) or "unknown"
-        for uid, login, email, reg, htype, last, blocked in extracted:
-            admin = (uid in wp_admin_ids) or (uid in joomla_super_ids)
+        for uid, login, email, reg, htype, last, blocked, own in extracted:
+            # Three sources, because three Joomla generations answer it in
+            # three places: WordPress in usermeta, Joomla 3+ in the group
+            # map, Joomla 1.x/2.5 on the account row itself.
+            admin = own or (uid in wp_admin_ids) or (uid in joomla_super_ids)
             # Do NOT call this `meta`: in this function that is the header
             # data of the dump, which appears further down in the return
             # value.
