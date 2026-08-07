@@ -231,5 +231,118 @@ class ChainRelativePathTests(unittest.TestCase):
         self.assertNotIn(str(self.ev.root).replace("\\", "\\\\"), text)
 
 
+class SigmaTranslationTests(unittest.TestCase):
+    """Four ways a loaded SIGMA rule could not fire.
+
+    All four shared a shape: the rule parsed, the catalogue listed it, the
+    switch showed it as on -- and it could never match. That is the object the
+    module's own docstring calls the worst one in a forensic tool, because it
+    looks like evidence of absence.
+
+    Every test runs the compiled SQL against a real index rather than
+    asserting on the generated string: what matters is what comes back.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from server import sigma
+        cls.sigma = sigma
+        cls.conn = sqlite3.connect(":memory:")
+        cls.conn.row_factory = sqlite3.Row
+        cls.conn.executescript("""
+        CREATE TABLE strings (id INTEGER PRIMARY KEY, text TEXT);
+        CREATE TABLE ips (id INTEGER PRIMARY KEY, ip TEXT);
+        CREATE TABLE requests (id INTEGER PRIMARY KEY, uri INT, agent INT,
+                               ip INT, method TEXT, status INT, epoch INT);
+        INSERT INTO strings VALUES (1, '/shell.php?cmd=id'), (2, '/index.php'),
+                                   (3, 'curl/8');
+        INSERT INTO ips VALUES (1, '203.0.113.5');
+        INSERT INTO requests VALUES (1, 1, 3, 1, 'GET', 200, 1780000000),
+                                    (2, 2, 3, 1, 'GET', 200, 1780000005),
+                                    (3, 2, NULL, 1, 'POST', 404, 1780000009);
+        """)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+
+    def _hits(self, rule):
+        meta, where, params = self.sigma.compile_rule(rule)
+        return len(self.sigma.clients_matching(self.conn, where, params))
+
+    def _rule(self, detection):
+        return ("id: t\ntitle: t\nlevel: high\ndetection:\n" + detection)
+
+    def test_a_trailing_wildcard_is_a_prefix_match(self):
+        """`*` was compared as the character it is, so every rule written the
+        way the SIGMA repository writes them matched nothing."""
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    c-uri: '/shell.php*'\n  condition: sel\n")))
+
+    def test_a_single_character_wildcard_matches_one_character(self):
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    c-uri: '/inde?.php'\n  condition: sel\n")))
+
+    def test_a_literal_percent_is_still_literal(self):
+        """URLs are full of `%`. It must not become a wildcard just because
+        SQL would read it as one."""
+        self.assertEqual(0, self._hits(self._rule(
+            "  sel:\n    c-uri: '%'\n  condition: sel\n")))
+
+    def test_an_escaped_asterisk_is_a_literal_asterisk(self):
+        self.assertEqual(0, self._hits(self._rule(
+            "  sel:\n    c-uri: '/shell.php\\\\*'\n  condition: sel\n")))
+
+    def test_and_binds_tighter_than_or(self):
+        """`a or b and c` with a true and c false. SIGMA reads it as
+        `a or (b and c)` and must fire; left-to-right reads `(a or b) and c`
+        and stays silent."""
+        self.assertEqual(1, self._hits(self._rule(
+            "  a:\n    c-uri|contains: '/shell.php'\n"
+            "  b:\n    c-uri|contains: '/never'\n"
+            "  c:\n    cs-method: POST\n"
+            "  condition: a or b and c\n")))
+
+    def test_brackets_still_override_the_precedence(self):
+        self.assertEqual(0, self._hits(self._rule(
+            "  a:\n    c-uri|contains: '/shell.php'\n"
+            "  b:\n    c-uri|contains: '/never'\n"
+            "  c:\n    cs-method: POST\n"
+            "  condition: (a or b) and c\n")))
+
+    def test_the_stem_ignores_the_query_string(self):
+        """`cs-uri-stem` is the PATH. `/shell.php?cmd=id` has the stem
+        `/shell.php`, and a rule about the stem must not be defeated by
+        whatever the attacker hung off the end."""
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    cs-uri-stem: '/shell.php'\n  condition: sel\n")))
+
+    def test_the_stem_endswith_ignores_the_query_string_too(self):
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    cs-uri-stem|endswith: '.php'\n  condition: sel\n")))
+
+    def test_the_query_field_sees_only_the_query(self):
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    c-uri-query: 'cmd=id'\n  condition: sel\n")))
+
+    def test_a_null_field_matches_the_requests_that_lack_it(self):
+        """`field: null` means ABSENT. `column = NULL` is never true, so the
+        rule loaded and could not fire."""
+        self.assertEqual(1, self._hits(self._rule(
+            "  sel:\n    c-useragent: null\n  condition: sel\n")))
+
+    def test_the_refusals_still_refuse(self):
+        """The fixes must not have widened what this backend claims to
+        answer -- an unsupported rule is still rejected at load."""
+        for detection, why in (
+            ("  sel:\n    c-uri|re: '.*'\n  condition: sel\n", "|re"),
+            ("  sel:\n    nonesuch: 'x'\n  condition: sel\n", "unknown field"),
+            ("  sel:\n    c-uri: 'x'\n  timeframe: 5m\n  condition: sel\n",
+             "timeframe"),
+        ):
+            with self.assertRaises(self.sigma.SigmaError, msg=why):
+                self.sigma.compile_rule(self._rule(detection))
+
+
 if __name__ == "__main__":
     unittest.main()
