@@ -992,6 +992,7 @@ export const de: Record<string, string> = {
   'coverage.body': 'Wo die Logs schweigen, und wo eine Datei aussieht, als wäre etwas herausgenommen worden. Daraus ist die Chronologie darunter gebaut — eine Lücke hier ist eine Strecke, die sie nicht beschreiben kann.',
   'coverage.hint': 'Nichts davon beweist Manipulation. Eine stille Strecke kann eine Wartungsnacht sein, eine Rotation oder eine Firewall-Änderung, und von hier aus sehen alle gleich aus. Deshalb trägt das keine Severity und erzeugt keine Funde: es zeigt auf die Frage, die Antwort ist deine.',
   'coverage.window': 'keine Anfrage über {span}',
+  'coverage.more': '{n} weitere stille Fenster, nicht aufgeführt — die Liste zeigt die längsten.',
   'coverage.file.truncated': 'die erste Zeile ist kein ganzer Eintrag — der Anfang fehlt',
   'coverage.file.stale': 'die Datei ist älter als ihr eigener letzter Eintrag',
   'coverage.disclaimer': '{n} Beobachtung(en). Keine davon beweist für sich etwas — sie sagen, wo zu fragen ist.',

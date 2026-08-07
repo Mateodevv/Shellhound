@@ -394,6 +394,24 @@ class ReportedWindowTests(unittest.TestCase):
         for window in self.out["windows"]:
             self.assertLess(window["from"], window["to"], window)
 
+    def test_the_one_line_summary_counts_the_measurement(self):
+        """The cap is there so a screen stays readable. It has no business
+        changing a number.
+
+        `notes` carries one sentence per window SHOWN -- six of them here,
+        nine measured. The summary counted the sentences, so on a real case
+        with fourteen holes the evidence view said six, and six is the number
+        a reader carries into the report."""
+        note = coverage.evidence_note(self.case)
+        self.assertIn("9", note)
+        self.assertNotIn("6 ", note)
+
+    def test_the_note_list_itself_stays_capped(self):
+        """The other half: the count grows, the list does not. Nine sentences
+        on the evidence card would be the thing the cap exists to prevent."""
+        report = coverage.report(self.case)
+        self.assertEqual(coverage._MAX_QUIET, len(report["notes"]))
+
 
 class StaleMtimeTests(unittest.TestCase):
     """A file written BEFORE the last thing written into it.

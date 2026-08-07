@@ -994,6 +994,7 @@ export const en: Record<string, string> = {
   'coverage.body': 'Where the logs are silent, and where a file looks like something was taken out of it. This is what the chronology below was built from — a gap here is a stretch it cannot describe.',
   'coverage.hint': 'None of this proves tampering. A quiet window can be a maintenance night, a rotation or a firewall change, and they all look identical from here. That is why it carries no severity and produces no findings: it points at the question, and the answer is yours.',
   'coverage.window': 'no request for {span}',
+  'coverage.more': '{n} further quiet window(s), not listed — the list shows the longest.',
   'coverage.file.truncated': 'the first line is not a whole record — the beginning is missing',
   'coverage.file.stale': 'the file is older than its own last entry',
   'coverage.disclaimer': '{n} observation(s). None of them proves anything on its own — they say where to ask.',
