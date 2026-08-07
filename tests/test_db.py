@@ -165,7 +165,7 @@ class RelativePathTests(unittest.TestCase):
         try:
             conn.execute(
                 "INSERT INTO evidence (kind, path, added) VALUES (?,?,?)",
-                ("webroot", r"D:\SyntheticEvidence\case-42\sample-webroot", db.now()))
+                ("webroot", r"D:\SyntheticEvidence\case-42\webroot-copy", db.now()))
             conn.commit()
         finally:
             conn.close()
@@ -180,14 +180,14 @@ class RelativePathTests(unittest.TestCase):
     def test_the_evidence_folder_name_is_not_part_of_the_indicator(self):
         self.assertEqual(
             "images/x.phtml",
-            self._relative(r"D:\SyntheticEvidence\case-42\sample-webroot\images\x.phtml"))
+            self._relative(r"D:\SyntheticEvidence\case-42\webroot-copy\images\x.phtml"))
 
     def test_the_case_of_the_root_does_not_have_to_match(self):
         """Registered with one spelling, walked with another -- Windows hands
         both out for the same directory."""
         self.assertEqual(
             "images/x.phtml",
-            self._relative(r"d:/syntheticevidence/CASE-42/Sample-Webroot/images/x.phtml"))
+            self._relative(r"d:/syntheticevidence/CASE-42/Webroot-Copy/images/x.phtml"))
 
     def test_a_path_below_no_root_is_handed_back_unchanged(self):
         """Better an absolute path than an invented relative one."""
@@ -195,8 +195,8 @@ class RelativePathTests(unittest.TestCase):
         self.assertEqual(other, self._relative(other))
 
     def test_the_root_itself_is_named_by_its_own_folder(self):
-        self.assertEqual("sample-webroot",
-                         self._relative(r"D:\SyntheticEvidence\case-42\sample-webroot"))
+        self.assertEqual("webroot-copy",
+                         self._relative(r"D:\SyntheticEvidence\case-42\webroot-copy"))
 
     def test_the_more_specific_root_wins(self):
         conn = db.connect(self.case)
@@ -209,16 +209,16 @@ class RelativePathTests(unittest.TestCase):
             conn.close()
         self.assertEqual(
             "images/x.phtml",
-            self._relative(r"D:\SyntheticEvidence\case-42\sample-webroot\images\x.phtml"))
+            self._relative(r"D:\SyntheticEvidence\case-42\webroot-copy\images\x.phtml"))
 
     def test_an_older_case_is_brought_along(self):
         """A case collected before this changed carries
-        `sample-webroot/images/x.phtml` -- no longer absolute, so the
+        `webroot-copy/images/x.phtml` -- no longer absolute, so the
         migration that strips roots walks straight past it. It gets a second
         pass, and the pass has to be idempotent and leave the edges alone."""
         conn = db.connect(self.case)
         try:
-            stale = db.add_ioc(conn, "sample-webroot/images/x.phtml", "path",
+            stale = db.add_ioc(conn, "webroot-copy/images/x.phtml", "path",
                                ["confirmed"])
             digest = db.add_ioc(conn, "b" * 64, "hash", ["derived"])
             db.link_iocs(conn, digest, stale, "hash-of")
@@ -244,7 +244,7 @@ class RelativePathTests(unittest.TestCase):
         conn = db.connect(self.case)
         try:
             db.add_ioc(conn, "images/x.phtml", "path", ["analyst"])
-            db.add_ioc(conn, "sample-webroot/images/x.phtml", "path",
+            db.add_ioc(conn, "webroot-copy/images/x.phtml", "path",
                        ["confirmed"])
             conn.execute("UPDATE meta SET value = '3' "
                          "WHERE key = 'schema_version'")
@@ -256,7 +256,7 @@ class RelativePathTests(unittest.TestCase):
             values = sorted(r[0] for r in conn.execute(
                 "SELECT value FROM iocs WHERE type = 'path'"))
             self.assertEqual(
-                ["images/x.phtml", "sample-webroot/images/x.phtml"], values)
+                ["images/x.phtml", "webroot-copy/images/x.phtml"], values)
         finally:
             conn.close()
 

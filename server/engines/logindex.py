@@ -103,7 +103,7 @@ UPLOAD_PHP_RE = re.compile(
 # These directories are the opposite: full of legitimate PHP, none of it
 # at this depth. Measured on a compromised Joomla with 1744 files -- 615
 # PHP files under these four directories, and not ONE of them directly
-# inside. The log held three: /templates/4044.php answered 2xx five
+# inside. The log held three: /templates/x.php answered 2xx five
 # times, /plugins/function.php and /plugins/shell.php. No rule said a
 # word about any of them.
 #
