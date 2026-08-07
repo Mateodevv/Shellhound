@@ -227,6 +227,12 @@ export interface ActorProfile {
   traversal_ok: number
   upload_php_attempts: number
   upload_php_ok: number
+  /** Requests for a PHP file lying DIRECTLY in templates/, modules/,
+   *  plugins/ or components/. The CMS ships nothing at that depth --
+   *  a template is `templates/<name>/...` -- so a bare .php one level
+   *  in was put there by somebody. */
+  cms_dir_php_attempts: number
+  cms_dir_php_ok: number
   agents: number
 }
 

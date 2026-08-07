@@ -2108,12 +2108,7 @@ def create_app(config: Config) -> FastAPI:
                 tags = [ioclib.TAG_ACTOR]
                 origin = "actor: collected from the actors list"
                 if a:
-                    if a["scanner_uas"] != "[]":
-                        tags.append(ioclib.TAG_SCANNER)
-                    if a["login_posts"] >= logindex.BF_THRESHOLD:
-                        tags.append(ioclib.TAG_BRUTE)
-                    if a["login_redirects"] > 0 and a["login_posts"] >= logindex.BF_THRESHOLD:
-                        tags.append(ioclib.TAG_SUCCESS)
+                    tags = ioclib.actor_tags(a, logindex.BF_THRESHOLD)
                     origin = f"actor: {a['requests']} request(s)"
                 # A supplied origin replaces the generic one: it says WHY
                 # this address was taken in, and that is the fact that counts

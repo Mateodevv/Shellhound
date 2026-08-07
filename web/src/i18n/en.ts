@@ -147,6 +147,8 @@ export const en: Record<string, string> = {
   'rule.loginFlood.why': 'A serial login attempt. Only the status code shows success — see redirects.',
   'rule.uploadPhpOk.what': 'Someone requested PHP in an upload/cache directory — and the server answered successfully.',
   'rule.uploadPhpOk.why': 'This is not a scan into the void: something executable was there and was served. The strongest log trace of a shell in use.',
+  'rule.cmsDirPhp.what': 'A PHP file lying directly in templates/, modules/, plugins/ or components/ was requested — and served.',
+  'rule.cmsDirPhp.why': 'The CMS ships nothing at that depth: a template is templates/<name>/…, a module modules/mod_<name>/…. A bare .php one level in was put there by somebody, and it ran.',
   'rule.sqliOk.what': 'Database injection patterns in the URL, answered successfully by the server.',
   'rule.sqliOk.why': '"Answered" does not yet mean "worked" — but it is worth comparing against the database findings.',
   'rule.traversalOk.what': 'Attempts to break out of the web directory using ../ were answered successfully.',
@@ -228,6 +230,7 @@ export const en: Record<string, string> = {
   // --- actor badges --------------------------------------------------------
   'badge.loginSuccess': 'login succeeded?',
   'badge.shellAccess': 'shell access',
+  'badge.cmsDirPhp': 'PHP in a CMS directory',
   'badge.bruteForce': 'brute force ×{n}',
   'badge.scanner': 'scanner',
   'badge.sqliOk': 'SQLi ×{n}',

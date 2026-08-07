@@ -61,8 +61,14 @@ const BF_FALLBACK = 30
 
 function actorBadges(a: Actor, tr: Translate, bfThreshold = BF_FALLBACK) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
-  if (a.login_redirects > 0 && a.login_posts >= bfThreshold)
+  // `admin_ok`, NOT `login_redirects`: Joomla answers every login POST
+  // with a redirect whether the credentials were right or wrong. The
+  // engine stopped raising the alert on that; this badge did not follow,
+  // so the screen went on accusing a client the case no longer does.
+  if (a.admin_ok > 0)
     badges.push({ key: 'loginSuccess', label: tr('badge.loginSuccess'), tone: 'danger' })
+  if (a.cms_dir_php_ok > 0)
+    badges.push({ key: 'cmsDirPhp', label: tr('badge.cmsDirPhp'), tone: 'danger' })
   if (a.upload_php_ok > 0)
     badges.push({ key: 'shellAccess', label: tr('badge.shellAccess'), tone: 'danger' })
   if (a.login_posts >= bfThreshold)

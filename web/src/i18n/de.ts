@@ -142,6 +142,8 @@ export const de: Record<string, string> = {
   'rule.loginFlood.why': 'Ein Anmelde-Versuch in Serie. Erfolg zeigt erst der Statuscode — siehe Weiterleitungen.',
   'rule.uploadPhpOk.what': 'Jemand hat PHP in einem Upload-/Cache-Verzeichnis abgerufen — und der Server hat mit Erfolg geantwortet.',
   'rule.uploadPhpOk.why': 'Das ist kein Scan ins Leere: Dort lag etwas Ausführbares und wurde ausgeliefert. Die stärkste Log-Spur einer benutzten Shell.',
+  'rule.cmsDirPhp.what': 'Eine PHP-Datei, die direkt in templates/, modules/, plugins/ oder components/ liegt, wurde angefragt — und ausgeliefert.',
+  'rule.cmsDirPhp.why': 'Das CMS liefert auf dieser Ebene nichts aus: ein Template ist templates/<name>/…, ein Modul modules/mod_<name>/…. Eine nackte .php eine Ebene darin hat jemand dorthin gelegt, und sie lief.',
   'rule.sqliOk.what': 'Angriffs-Muster für Datenbank-Injektion in der URL, vom Server mit Erfolg beantwortet.',
   'rule.sqliOk.why': 'Nur „beantwortet" heißt noch nicht „geklappt" — aber es lohnt der Abgleich mit den Datenbank-Funden.',
   'rule.traversalOk.what': 'Versuche, mit ../ aus dem Web-Verzeichnis auszubrechen, wurden erfolgreich beantwortet.',
@@ -223,6 +225,7 @@ export const de: Record<string, string> = {
   // --- actor badges --------------------------------------------------------
   'badge.loginSuccess': 'Login erfolgreich?',
   'badge.shellAccess': 'Shell-Zugriff',
+  'badge.cmsDirPhp': 'PHP in einem CMS-Verzeichnis',
   'badge.bruteForce': 'Brute-Force ×{n}',
   'badge.scanner': 'Scanner',
   'badge.sqliOk': 'SQLi ×{n}',
