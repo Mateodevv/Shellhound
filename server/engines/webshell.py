@@ -66,6 +66,34 @@ MAX_CONTENT_SCAN_BYTES = 5 * 1024 * 1024
 GUARD_SNIFF_BYTES = 4096
 
 
+def _short_tag_in_source(raw, window=48, need=0.9):
+    """Is there a `<?=` here that is actually PHP rather than three bytes of
+    pixel data that happen to line up?
+
+    PHP is TEXT. A shell smuggled into an image is source code sitting inside
+    the file, so the bytes after the tag read as code -- letters, spaces,
+    brackets. A coincidence in compressed data is followed by more compressed
+    data. That is the whole distinction, and it is one the entropy makes for
+    us rather than one this function has to guess at.
+
+    Deliberately NOT a check for specific functions: naming them would turn
+    this into a list a shell can be written around, and the point of the rule
+    is that PHP has no business in an image at all.
+    """
+    start = 0
+    while True:
+        i = raw.find(b"<?=", start)
+        if i < 0:
+            return False
+        tail = raw[i + 3:i + 3 + window]
+        if tail:
+            readable = sum(1 for b in tail
+                           if 32 <= b < 127 or b in (9, 10, 13))
+            if readable / len(tail) >= need:
+                return True
+        start = i + 3
+
+
 def _site_path(abs_path, root):
     """The file as the SERVER sees it: `/` plus its path below the webroot.
 
@@ -215,7 +243,17 @@ def scan_file(file_path, root=None):
         # `<?PHP` and `<?Php` open PHP just as `<?php` does -- the language
         # does not care about the case and neither may the check. A shell
         # hidden in an image only had to shout to get past it.
-        if b"<?php" in raw.lower() or b"<?=" in raw:
+        #
+        # `<?=` IS THREE BYTES, AND THAT IS THE WHOLE PROBLEM. In compressed
+        # pixel data any given three-byte sequence turns up about once per
+        # 16 MB, so on a real Joomla webroot this rule announced "PHP code
+        # hidden inside image file" -- at HIGH -- about a 1.4 MB photograph
+        # whose only `<?=` sat at byte 374243 between `54 8a` and `3d 79`.
+        # Measured over that site's 79 images: zero contained `<?php`, one
+        # contained `<?=`, and it was the false one. `<?php` is five bytes
+        # and coincidence there is negligible, so only the short tag needs
+        # the second question: is what follows it SOURCE?
+        if b"<?php" in raw.lower() or _short_tag_in_source(raw):
             findings.append(("webshell.php_in_image", 0,
                              "PHP code hidden inside image file", None,
                              f"'<?php' tag found in {ext} file"))

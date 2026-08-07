@@ -623,8 +623,15 @@ export interface HuntResult {
    *  reaches too far. */
   uris: { uri: string; hits: number; ok_hits: number }[]
   clients: HuntClient[]
-  /** The pattern hit more distinct URIs than were collected. */
+  /** The pattern hit more distinct URIs than could be collected at all --
+   *  the interning cap, not the display cap. */
   truncated: boolean
+  /** The client list is a sample: more addresses matched than are listed.
+   *  `clients_total` is the real number and is what belongs in a report. */
+  clients_truncated: boolean
+  /** The URI list is a sample too. Without this the block reads as the whole
+   *  answer, and a pattern reaching too far looks precise. */
+  uris_truncated: boolean
   /** The key figures of the search. `ok_clients` is the number for the
    *  record: how many addresses got through, not how often someone knocked.
    *  `uri_total` counts ALL URLs hit -- `uris` is only the sample. */

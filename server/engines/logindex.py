@@ -1238,6 +1238,13 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
     firsts = [c["first_epoch"] for c in clients if c["first_epoch"]]
     lasts = [c["last_epoch"] for c in clients if c["last_epoch"]]
     tzs = [c["tz"] for c in clients if c["tz"] is not None]
+    # COUNTED ONCE, NOT ONCE PER PATH. Summing each path's URI total counts
+    # every URI that matches two of them twice, and an AND-combination is
+    # written precisely because its paths describe the same requests -- the
+    # shipped JCE rule reported 39 distinct URIs on a real case that had 29.
+    # A figure that exists to show whether a pattern reaches too far must not
+    # be the one that overstates its reach.
+    uri_total = _distinct_uris(case_dir, paths, {c["ip"] for c in clients})
     return {
         "pattern": (" AND " if mode == "all" else " OR ").join(paths),
         "patterns": paths, "match": mode,
@@ -1246,12 +1253,42 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
         "ok_hits": sum(c["ok_hits"] for c in clients),
         "clients_total": len(clients),
         "ok_clients": sum(1 for c in clients if c["ok_hits"] > 0),
-        "uri_total": sum(p["uri_total"] for p in parts),
+        "uri_total": uri_total,
+        # THE SAME QUESTIONS A SINGLE-PATH RESULT ANSWERS. This branch has its
+        # own return, so the caps fixed in `match_pattern` were never fixed
+        # here -- and this is the branch the application actually calls for
+        # every pattern with more than one path, which the bundled rule is.
+        "clients_truncated": any(p.get("clients_truncated") for p in parts),
+        "uris_truncated": len(uris[:_PATTERN_URI_SHOWN]) < uri_total,
         "first_epoch": min(firsts) if firsts else None,
         "last_epoch": max(lasts) if lasts else None,
         "tz": max(tzs) if tzs else 0,
         "truncated": any(p["truncated"] for p in parts),
     }
+
+
+def _distinct_uris(case_dir, paths, ips):
+    """How many distinct URIs these clients requested that any of the paths
+    matches. One query, so a URI matching several paths counts once."""
+    if not ips or not paths:
+        return 0
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return 0
+    try:
+        ip_list = sorted(ips)
+        likes = " OR ".join("s.text LIKE ? ESCAPE '\\'" for _ in paths)
+        marks = ",".join("?" * len(ip_list))
+        return conn.execute(
+            f"""SELECT count(DISTINCT r.uri) FROM requests r
+                JOIN strings s ON s.id = r.uri
+                JOIN ips i ON i.id = r.ip
+                WHERE i.ip IN ({marks}) AND ({likes})""",
+            ip_list + [_like_from_pattern(p) for p in paths]).fetchone()[0]
+    except sqlite3.Error:
+        return 0
+    finally:
+        conn.close()
 
 
 def _chunks(seq, size):

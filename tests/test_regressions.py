@@ -492,6 +492,38 @@ class JoomlaGenerationTests(unittest.TestCase):
 class EngineHonestyTests(unittest.TestCase):
     """Smaller engine claims that each made the tool say something false."""
 
+    def test_three_bytes_of_pixel_data_are_not_a_php_tag(self):
+        """`<?=` is three bytes, and in compressed image data any given
+        three-byte sequence turns up about once per 16 MB.
+
+        On a real Joomla webroot this rule announced "PHP code hidden inside
+        image file" -- at HIGH -- about a 1.4 MB photograph whose only `<?=`
+        sat between two runs of pixel data. Measured over that site's 79
+        images: none contained `<?php`, one contained `<?=`, and it was the
+        false one. A forensic tool that accuses a holiday photo teaches the
+        analyst to skim past the rule that matters.
+
+        The byte run below is the actual neighbourhood from that file."""
+        noise = bytes([0x54, 0x8a, 0x3c, 0x3f, 0x3d, 0x3d, 0x79, 0xf8,
+                       0xf0, 0xe1, 0x83, 0x07])
+        self.assertEqual([], self._image(b"\x89PNG\r\n\x1a\n" + noise * 40))
+
+    def test_a_short_tag_followed_by_source_is_still_a_finding(self):
+        """The other half: `<?=` IS a PHP tag, and a shell may well use it.
+        What separates the two is whether what follows reads as code."""
+        self.assertIn("webshell.php_in_image", self._image(
+            b"\x89PNG\r\n\x1a\n<?= system($_GET['c']); ?>\n"))
+
+    def _image(self, body):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-imgfp-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = root / "x.png"
+        path.write_bytes(body)
+        findings, _skip, _inert = webshell.scan_file(str(path))
+        return [f[0] for f in findings]
+
     def test_a_shouting_php_tag_in_an_image_is_found(self):
         import shutil
         from server.engines import webshell
