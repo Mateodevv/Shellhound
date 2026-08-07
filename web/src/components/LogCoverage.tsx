@@ -67,6 +67,12 @@ export function LogCoverage({ slug }: { slug: string }) {
 
   const windows = data?.quiet.windows ?? []
   const files = data?.files ?? []
+  // THE MEASUREMENT, NOT THE LIST. `windows` is capped at six so the block
+  // stays readable; `total` says how many there were. Counting the list made
+  // the sentence below say "6 observations" on a case with fourteen holes --
+  // and that is the number a reader carries into the report.
+  const measured = Math.max(data?.quiet.total ?? windows.length, windows.length)
+  const unlisted = measured - windows.length
   if (!data || (!windows.length && !files.length)) return null
 
   return (
@@ -102,6 +108,11 @@ export function LogCoverage({ slug }: { slug: string }) {
               </span>
             </div>
           ))}
+          {unlisted > 0 && (
+            <div className="pl-[20px] text-[12px] text-[var(--muted)]">
+              {tr('coverage.more', { n: formatCount(unlisted) })}
+            </div>
+          )}
         </div>
       )}
 
@@ -121,7 +132,7 @@ export function LogCoverage({ slug }: { slug: string }) {
           block carries no severity: none of it proves anything. */}
       <p className="text-[11.5px] leading-snug text-[var(--muted)]">
         {tr('coverage.disclaimer', {
-          n: formatCount(windows.length + files.length),
+          n: formatCount(measured + files.length),
         })}
       </p>
     </Card>

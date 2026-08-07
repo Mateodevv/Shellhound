@@ -205,8 +205,17 @@ def report(case_dir, lang="en", tz_mode="log"):
 
 def evidence_note(case_dir, lang="en", tz_mode="log"):
     """One line for the evidence view, or ''. Deliberately short: the detail
-    belongs where the analyst is reading the story."""
+    belongs where the analyst is reading the story.
+
+    IT COUNTS THE MEASUREMENT, NOT THE LIST. `notes` holds one sentence per
+    quiet window SHOWN, and that list is capped at `_MAX_QUIET`. On a real
+    case fourteen windows were measured and this line said six -- the number
+    a reader would carry into the report, and eight holes short. The cap is
+    there so a screen is readable; it has no business changing a count."""
     data = report(case_dir, lang, tz_mode)
     if not data["notes"]:
         return ""
-    return t(lang, "coverage.summary", n=len(data["notes"]))
+    quiet = data["quiet"]
+    shown = len(quiet.get("windows") or ())
+    unlisted = max(0, int(quiet.get("total") or shown) - shown)
+    return t(lang, "coverage.summary", n=len(data["notes"]) + unlisted)
