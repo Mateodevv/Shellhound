@@ -6,6 +6,9 @@ and, just as importantly, that a clean log stays quiet. A tamper detector
 that fires on ordinary data is worse than none: it teaches the analyst to
 ignore it.
 """
+import os
+import re
+import shutil
 import tempfile
 import time
 import unittest
@@ -17,9 +20,14 @@ from server.engines import logindex
 BASE = 1780000000
 
 
-def line(epoch, path="/index.php", ip="203.0.113.5"):
-    stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0000", time.gmtime(epoch))
-    return f'{ip} - - [{stamp}] "GET {path} HTTP/1.1" 200 12 "-" "curl"\n'
+def line(epoch, path="/index.php", ip="203.0.113.5", offset="+0000"):
+    """One access-log line. `epoch` is UTC; `offset` is what the server wrote,
+    so the stamp is shifted into that offset the way a real log is."""
+    sign = 1 if offset[0] == "+" else -1
+    shift = sign * (int(offset[1:3]) * 3600 + int(offset[3:5]) * 60)
+    stamp = time.strftime("%d/%b/%Y:%H:%M:%S ", time.gmtime(epoch + shift))
+    return (f'{ip} - - [{stamp}{offset}] "GET {path} HTTP/1.1" 200 12 '
+            f'"-" "curl"\n')
 
 
 class QuietWindowTests(unittest.TestCase):
@@ -224,6 +232,325 @@ class DashboardOrderTests(unittest.TestCase):
         """The tiles are the case at a glance and stay at the top."""
         self.assertLess(self._at("dashboard.artifacts'"),
                         self._at("<TimelineChart"))
+
+
+class MeasuredNumbersTests(unittest.TestCase):
+    """The numbers this module COMPUTES, not the fact that it answered.
+
+    A mutation run over coverage.py left 144 of 250 mutants alive, and they
+    were not scattered. The fixtures fed this module logs with one uniform
+    gap between requests and then asserted only coarse facts -- did it check,
+    how many windows, roughly how long. Every arithmetic step in between
+    could be changed without a single test objecting: the median summed
+    instead of averaged, the hours multiplied instead of divided, the window
+    boundaries taken from the wrong pair.
+
+    So these state the numbers. Each fixture has an answer that can be worked
+    out by hand and written into the assertion, which is the only thing that
+    makes an arithmetic test worth having.
+    """
+
+    def test_the_median_of_an_odd_number_of_gaps(self):
+        self.assertEqual(5, coverage._median([1, 5, 100]))
+
+    def test_the_median_of_an_even_number_of_gaps_is_the_average(self):
+        """The branch a uniform fixture never reaches. Summed instead of
+        averaged, the yardstick doubles -- and every threshold derived from
+        it doubles with it, which is the whole quiet-window mechanism."""
+        self.assertEqual(7.5, coverage._median([1, 5, 10, 100]))
+        self.assertEqual(3, coverage._median([2, 4]))
+
+    def test_the_median_ignores_the_order_it_is_given(self):
+        self.assertEqual(coverage._median([100, 1, 5]),
+                         coverage._median([1, 5, 100]))
+
+    def test_no_gaps_is_zero_rather_than_an_error(self):
+        self.assertEqual(0, coverage._median([]))
+
+
+class ThresholdTests(unittest.TestCase):
+    """How long a silence has to be before it is worth mentioning.
+
+    Two arms, and there was a fixture for neither. The RHYTHM arm -- the
+    median times QUIET_FACTOR -- only decides anything on a log whose own
+    pace is slow, and every fixture was busy enough that the absolute floor
+    won instead. The FLOOR only decides anything on a fast log, and the one
+    test that named it asserted `threshold >= QUIET_MIN_SECONDS`, which stays
+    true when the constant itself is changed to zero.
+    """
+
+    def _case(self, spacing, count, hole=0):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-thr-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-thrlogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        rows, when = [], BASE
+        for i in range(count):
+            rows.append(line(when))
+            when += spacing + (hole if i == count // 2 else 0)
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        logindex.build(case, [str(logs)])
+        return case
+
+    def test_a_slow_log_is_measured_by_its_own_rhythm(self):
+        """One request an hour is a quiet server, not a server standing
+        still. Sixty times its median puts the threshold at sixty hours, so
+        its ordinary hourly intervals say nothing -- with the rhythm arm
+        broken the floor takes over and every one of them is reported as a
+        window somebody may have removed."""
+        out = coverage.quiet_windows(self._case(3600, 80))
+        self.assertEqual(3600, out["median_gap"])
+        self.assertEqual(3600 * coverage.QUIET_FACTOR, out["threshold"])
+        self.assertEqual([], out["windows"],
+                         "an hourly rhythm was reported as holes in itself")
+
+    def test_a_busy_log_is_held_to_the_absolute_floor(self):
+        """A request every five seconds makes sixty medians five minutes, and
+        a five-minute threshold turns every maintenance pause into a finding.
+        The floor is what stops that, and nothing measured it."""
+        out = coverage.quiet_windows(self._case(5, 200))
+        self.assertEqual(5, out["median_gap"])
+        self.assertEqual(coverage.QUIET_MIN_SECONDS, out["threshold"])
+
+    def test_a_ten_minute_pause_on_a_busy_log_is_not_a_finding(self):
+        """The floor as behaviour rather than as a number: ten minutes is a
+        deploy, a restart, a backup window."""
+        self.assertEqual([], coverage.quiet_windows(
+            self._case(5, 200, hole=600))["windows"])
+
+    def test_an_hour_long_pause_on_a_busy_log_is_a_finding(self):
+        """The guard against a floor raised until nothing fires at all."""
+        self.assertEqual(1, len(coverage.quiet_windows(
+            self._case(5, 200, hole=3600))["windows"]))
+
+
+class ReportedWindowTests(unittest.TestCase):
+    """WHICH holes are shown, and WHERE each one starts and ends.
+
+    The list is capped at six and sorted longest first, and nothing checked
+    either. With the sort reversed the block showed the six SHORTEST holes
+    while the total still said nineteen, so an analyst read "the longest
+    silence is one hour" with a nineteen-hour hole in the data. And the
+    boundaries came out of a zip of three sequences that nothing pinned: one
+    step out of line and a four-hour silence is reported between one instant
+    and itself.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.case = Path(tempfile.mkdtemp(prefix="shellhound-win-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-winlogs-"))
+        cls._dirs = [cls.case, logs]
+        db.connect(cls.case).close()
+        # Holes of 1 h, 2 h ... 9 h in ASCENDING order, so the longest arrive
+        # last: a sort that does nothing looks correct when the input happens
+        # to be sorted already.
+        rows, when, cls.expected = [], BASE, []
+        for hours in range(1, 10):
+            for _ in range(40):
+                rows.append(line(when))
+                when += 5
+            # The silence runs from the LAST request before it to the FIRST
+            # one after it, so it is five seconds longer than the hole itself.
+            cls.expected.append((when - 5, when + hours * 3600))
+            when += hours * 3600
+        for _ in range(40):
+            rows.append(line(when))
+            when += 5
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        logindex.build(cls.case, [str(logs)])
+        cls.out = coverage.quiet_windows(cls.case)
+
+    @classmethod
+    def tearDownClass(cls):
+        for directory in cls._dirs:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_every_hole_is_counted(self):
+        self.assertEqual(9, self.out["total"])
+
+    def test_only_the_cap_is_shown(self):
+        self.assertEqual(coverage._MAX_QUIET, len(self.out["windows"]))
+
+    def test_the_ones_shown_are_the_longest(self):
+        """Not any six. A cap that keeps the small ones hides the finding and
+        leaves a total that reads as if everything were present."""
+        self.assertEqual([9, 8, 7, 6, 5, 4],
+                         [round(w["seconds"] / 3600)
+                          for w in self.out["windows"]])
+
+    def test_a_window_spans_the_two_requests_it_sits_between(self):
+        """`from` is the last request before the silence, `to` the first one
+        after it -- not one instant printed twice, and not a pair one step
+        out of line."""
+        longest = self.out["windows"][0]
+        want_from, want_to = self.expected[-1]
+        self.assertEqual(want_from, longest["from"])
+        self.assertEqual(want_to, longest["to"])
+        self.assertEqual(longest["to"] - longest["from"], longest["seconds"])
+
+    def test_every_window_moves_forwards(self):
+        for window in self.out["windows"]:
+            self.assertLess(window["from"], window["to"], window)
+
+
+class StaleMtimeTests(unittest.TestCase):
+    """A file written BEFORE the last thing written into it.
+
+    Not one test in this repository built such a file, so the whole detection
+    could be hard-coded to False with all four hundred and eighty-one tests
+    still green: one of the three measurements this module documents, switched
+    off in silence.
+
+    It is also the measurement that ACCUSES, so it is tested from both sides.
+    A forged file has to be caught, and an honest one must not be called
+    forged -- the second is the half that matters more.
+    """
+
+    def _case(self, mtime_offset):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-stale-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-stalelogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        path = logs / "access.log"
+        path.write_text("".join(line(BASE + i * 5) for i in range(61)),
+                        encoding="utf-8")
+        # BEFORE the build. The index records the mtime it saw while reading,
+        # so a file touched afterwards is not the file the index describes --
+        # and the check compares the two as they were AT INDEX TIME.
+        stamp = BASE + 60 * 5 + mtime_offset
+        os.utime(path, (stamp, stamp))
+        logindex.build(case, [str(logs)])
+        return case
+
+    def test_a_file_written_before_its_own_last_entry_is_reported(self):
+        found = coverage.file_anomalies(self._case(-3600))
+        self.assertEqual(1, len(found))
+        self.assertTrue(found[0]["stale_mtime"])
+
+    def test_a_file_written_after_its_last_entry_is_not(self):
+        self.assertEqual([], coverage.file_anomalies(self._case(3600)))
+
+    def test_a_file_written_in_the_same_second_is_not(self):
+        """A log is written the moment its last line is, so equality is the
+        NORMAL case. An accusation triggered by it would fire on every
+        healthy file in every case."""
+        self.assertEqual([], coverage.file_anomalies(self._case(0)))
+
+    def test_the_accusation_is_made_only_where_it_is_true(self):
+        """Negating one condition attached a forgery accusation to a merely
+        TRUNCATED file. Saying that about an honest file is the one thing
+        this module's docstring rules out.
+
+        The file has to be truncated, because that is what puts it in the
+        anomaly list in the first place: a file with nothing wrong with it is
+        never looked at, so the wrong note cannot be seen on one."""
+        case = Path(tempfile.mkdtemp(prefix="shellhound-honest-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-honestlogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        path = logs / "cut.log"
+        path.write_text('5 "-" "curl"\n' + "".join(
+            line(BASE + i * 5) for i in range(61)), encoding="utf-8")
+        stamp = BASE + 60 * 5 + 3600           # written well after its last line
+        os.utime(path, (stamp, stamp))
+        logindex.build(case, [str(logs)])
+
+        found = coverage.file_anomalies(case)
+        self.assertEqual(1, len(found))
+        self.assertTrue(found[0]["truncated"])
+        self.assertFalse(found[0]["stale_mtime"])
+        notes = coverage.report(case, "en")["notes"]
+        self.assertTrue([n for n in notes if "cut.log" in n], notes)
+        self.assertFalse([n for n in notes if "BEFORE" in n], notes)
+
+
+class NoteNumberTests(unittest.TestCase):
+    """The sentences, read as sentences.
+
+    The note tests checked that a filename appears in one and that English
+    and German differ. Nothing read the NUMBER inside, so the hours could be
+    multiplied instead of divided and the block would report a silence of
+    fifty million hours with the suite still green.
+    """
+
+    def _case(self):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-note-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-notelogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        rows, when = [], BASE
+        for _ in range(60):
+            rows.append(line(when))
+            when += 5
+        when += 4 * 3600                      # a four-hour hole, exactly
+        for _ in range(60):
+            rows.append(line(when))
+            when += 5
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        logindex.build(case, [str(logs)])
+        return case
+
+    def test_the_note_states_the_length_in_hours(self):
+        notes = coverage.report(self._case(), "en")["notes"]
+        self.assertTrue(notes)
+        self.assertIn("4.0 h", notes[0], notes[0])
+
+    def test_the_note_names_both_ends_of_the_silence(self):
+        """Two different timestamps. One instant printed twice is the shape
+        the boundary defect produced, and it reads perfectly."""
+        note = coverage.report(self._case(), "en")["notes"][0]
+        stamps = re.findall(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", note)
+        self.assertEqual(2, len(stamps), note)
+        self.assertNotEqual(stamps[0], stamps[1], note)
+
+
+class CoverageZoneTests(unittest.TestCase):
+    """Which offset the reported times are labelled with.
+
+    One offset may be named; several may not, because naming one of them is
+    wrong by an hour for the rest. And a case whose logs were never indexed
+    has to answer "nothing measured" rather than raise: `GET /coverage` sits
+    on the dashboard, and an exception there is a card that fails to load.
+    """
+
+    def _case(self, offsets):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-covtz-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-covtzlogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        rows, when = [], BASE
+        for offset in offsets:
+            for _ in range(60):
+                rows.append(line(when, offset=offset))
+                when += 5
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        logindex.build(case, [str(logs)])
+        return case
+
+    def test_one_offset_is_carried(self):
+        self.assertEqual(7200, coverage.report(self._case(["+0200"]))["tz"])
+
+    def test_several_offsets_name_none(self):
+        """A log straddling a daylight-saving change carries two. Stamping
+        the windows with one of them asserts a single unambiguous zone for
+        times that are a mixture of both."""
+        self.assertEqual(
+            0, coverage.report(self._case(["+0100", "+0200"]))["tz"])
+
+    def test_a_case_without_an_index_answers_instead_of_raising(self):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-covnone-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        db.connect(case).close()
+        out = coverage.report(case)
+        self.assertEqual(0, out["tz"])
+        self.assertFalse(out["quiet"]["checked"])
+        self.assertEqual([], out["notes"])
 
 
 if __name__ == "__main__":
