@@ -32,7 +32,7 @@ from server import coverage, db, enrich, geoip, iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
-from server.artifacts import (ART_SQL, art_sql,
+from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
                               web_path)
 from server.chain import case_chain
@@ -908,8 +908,10 @@ def create_app(config: Config) -> FastAPI:
                          "WHERE rule LIKE ? OR artifact LIKE ? OR evidence LIKE ?)")
             like = f"%{search}%"
             params += [like, like, like]
-        # The muted-rule filter, applied on top of the chip filters.
-        muted_clause = "active > 0 OR triage != 'new'"
+        # The muted-rule filter, applied on top of the chip filters. Defined
+        # in artifacts.py, brackets included -- see the note there on what
+        # SQL's AND/OR precedence does to it without them.
+        muted_clause = MUTED_CLAUSE
         where.append(muted_clause)
         clause = "WHERE " + " AND ".join(where)
         conn = db.connect(case_dir)

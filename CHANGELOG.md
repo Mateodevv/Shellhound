@@ -6,6 +6,51 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — the artifact filters returned what they were told to hide
+
+The muted-rule condition was AND-ed onto the chip filters **without
+brackets**. SQL binds `AND` tighter than `OR`, so
+`chips AND active > 0 OR triage != 'new'` read as
+`(chips AND active > 0) OR triage != 'new'` and every **decided** artifact
+walked straight past every filter: hiding a severity still showed the
+confirmed low ones, filtering to files returned clients, and asking to hide
+the confirmed ones returned exactly those.
+
+The condition now lives in `artifacts.MUTED_CLAUSE`, brackets included, so
+the regression test asserts against the string the server actually uses
+rather than a copy of it.
+
+### Fixed — deciding an artifact erased the note attached to it
+
+The note box was filled from the artifact **stub** the calling view built,
+and seven of those views hard-code an empty note because they cannot know
+it. So opening a decided artifact from the chronology, the actor list, the
+file browser or the palette showed an empty box next to an artifact that had
+a note — and the next click on a triage button wrote that emptiness back
+over it. Reasoning the analyst had typed was gone, silently.
+
+The box is now filled from the `/artifact` response, which carries the real
+note, and remembers which artifact it was filled for so a refetch never
+overwrites what is being typed.
+
+### Fixed — a crafted case archive could write outside the workspace
+
+The zip-slip guard checked for `:` only in the **first** path segment.
+`sub/C:/evil.txt` passed it, and `Path(*parts)` then folded the member into
+`C:evil.txt` — a drive-relative path landing outside the workspace
+altogether. `notes.txt:hidden` was the other half: on NTFS that writes an
+alternate data stream, whose content no directory listing shows. Every
+segment is checked now.
+
+### Fixed — exports carried the analyst's own directory layout
+
+IOC values have been webroot-relative since the box existed. The chronology
+was added to the JSON export later and passed its artifact paths through
+unchanged, so a bundle meant to be handed to somebody else contained
+`C:\Cases\2026-05\webroot\…\shell.php`. Chain events now carry the
+webroot-relative path alongside the absolute one the interface needs, and
+the export states only the former.
+
 ### Fixed — the chronology named the wrong time zone, always
 
 The zone label shipped one release ago read an `overview()` key that
