@@ -37,11 +37,14 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
                                    is_scannable_text, open_text_auto)
 
 # 3: days.ok (requests answered with 2xx per day) for the timeline curves.
+# 5: actors.admin_ok -- 2xx responses from the admin backend, which is
+#    what a successful login leaves behind. A redirect is not: Joomla
+#    answers every login POST with one, right or wrong.
 # 4: requests.source points at sources.id instead of an interned BASENAME.
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -50,9 +53,31 @@ SCANNER_UA_RE = re.compile(
     r"(?i)(sqlmap|nikto|nmap|masscan|dirbuster|gobuster|feroxbuster|wpscan|"
     r"joomscan|hydra|acunetix|nessus|nuclei|zgrab|censys|httpx|wfuzz|ffuf)")
 
+# A POST that is an ATTEMPT TO LOG IN -- not any POST the backend receives.
+#
+# `/administrator/index.php` used to be in here on its own, and in Joomla that
+# is the URL of the entire admin application: saving an article, reordering a
+# menu, running a backup, every ajax call. On a real case the site's own
+# administrator was credited with 127 login attempts, of which 8 were logins
+# and 119 were article edits and backup jobs -- and was then reported at HIGH
+# as a break-in. An accusation like that costs an analyst hours and points
+# them at the wrong person.
+#
+# The backend is therefore only a login endpoint when the request carries NO
+# `option=com_*`: Joomla's login form posts to the bare URL, its application
+# always names the component it is talking to.
 LOGIN_POST_ENDPOINTS = re.compile(
-    r"(?i)(wp-login\.php|xmlrpc\.php|/administrator/index\.php|/administrator/?(?=[?\s]|$)|"
+    r"(?i)(wp-login\.php|xmlrpc\.php|"
+    r"/administrator/(index\.php)?(?![^?\s]*\?[^\s]*option=com_(?!login|users))"
+    r"(?=[?\s]|$|\?(?![^\s]*option=com_(?!login|users)))|"
     r"option=com_login|task=user\.login|option=com_users)")
+
+# A page only an AUTHENTICATED session is served. Joomla answers every login
+# POST with a 303 whether the credentials were right or wrong -- it is a
+# plain POST-Redirect-GET -- so the redirect proves nothing on its own. What
+# an unauthenticated client cannot obtain is a 2xx on the backend itself.
+AUTHENTICATED_AREA_RE = re.compile(
+    r"(?i)/administrator/index\.php\?[^\s]*option=com_(?!login|users\b)")
 
 SQLI_URI_RE = re.compile(
     r"(?i)(union[+%20\s]+select|information_schema|concat\s*\(|"
@@ -80,6 +105,9 @@ F_LOGIN = 1
 F_SQLI = 2
 F_TRAVERSAL = 4
 F_UPLOAD_PHP = 8
+# The backend itself, named with a component: what a login has
+# to have succeeded for.
+F_ADMIN_AREA = 16
 
 _LOG_SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -102,6 +130,7 @@ CREATE TABLE actors (
     requests INTEGER, first_epoch INTEGER, last_epoch INTEGER, tz INTEGER,
     err4 INTEGER, err5 INTEGER, bytes INTEGER,
     posts INTEGER, login_posts INTEGER, login_redirects INTEGER,
+    admin_ok INTEGER DEFAULT 0,
     login_statuses TEXT DEFAULT '{}',
     scanner_uas TEXT DEFAULT '[]',
     sqli_attempts INTEGER, sqli_ok INTEGER,
@@ -152,6 +181,7 @@ class _Actor:
     a big log can carry six figures of distinct clients."""
     __slots__ = ("requests", "first", "last", "tz", "err4", "err5", "bytes",
                  "posts", "login_posts", "login_statuses", "login_redirects",
+                 "admin_ok",
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "agents", "examples")
 
@@ -167,6 +197,7 @@ class _Actor:
         self.login_posts = 0
         self.login_statuses = Counter()
         self.login_redirects = 0
+        self.admin_ok = 0
         self.scanner_uas = set()
         self.sqli = 0
         self.sqli_ok = 0
@@ -251,6 +282,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     flags |= F_TRAVERSAL
                 if UPLOAD_PHP_RE.search(text):
                     flags |= F_UPLOAD_PHP
+                if AUTHENTICATED_AREA_RE.search(text):
+                    flags |= F_ADMIN_AREA
                 got = uri_cache[text] = (uri_id, leaf_id, flags)
             return got
 
@@ -383,6 +416,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 a.login_statuses[status] += 1
                                 if status in (301, 302, 303):
                                     a.login_redirects += 1
+                            # Any method: reaching the backend is a GET.
+                            if flags & F_ADMIN_AREA and ok:
+                                a.admin_ok += 1
                             if flags & F_SQLI:
                                 a.sqli += 1
                                 if ok:
@@ -470,13 +506,13 @@ def build(case_dir, targets, ctx=None, workspace=None):
             actor_rows.append((
                 ip_id, ip_by_id.get(ip_id, "?"), a.requests, a.first, a.last,
                 a.tz, a.err4, a.err5, a.bytes, a.posts, a.login_posts,
-                a.login_redirects,
+                a.login_redirects, a.admin_ok,
                 _json.dumps({str(k): v for k, v in a.login_statuses.items()}),
                 _json.dumps(sorted(a.scanner_uas)[:5]),
                 a.sqli, a.sqli_ok, a.trav, a.trav_ok, a.uphp, a.uphp_ok,
                 len(a.agents)))
         conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             actor_rows)
         conn.executemany(
             "INSERT INTO actor_hours VALUES (?,?,?)",
@@ -497,12 +533,22 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 alert_rows.append((ip_id, "login_flood", 1,
                                    f"{a.login_posts} POSTs against login "
                                    f"endpoints (status: {breakdown})", ""))
-                if a.login_redirects:
+                # A REDIRECT IS NOT A SUCCESS. Joomla answers EVERY login POST
+                # with a 303 -- plain POST-Redirect-GET -- whether the
+                # credentials were right or wrong, so on a real case a client
+                # whose 121 attempts ALL failed was reported at HIGH as a
+                # break-in, and the 100 % redirect rate that proved the
+                # opposite was the very thing that triggered it.
+                #
+                # What an unauthenticated client cannot obtain is a 2xx on the
+                # backend with a component named. The flood plus that is a
+                # statement worth making; the flood plus a redirect is not.
+                if a.admin_ok:
                     alert_rows.append((
                         ip_id, "login_success", 0,
-                        f"{a.login_redirects} redirect(s) among "
-                        f"{a.login_posts} login POSTs — after a flood, "
-                        f"301/302/303 usually means a successful login. "
+                        f"{a.login_posts} login POSTs, then {a.admin_ok} "
+                        f"request(s) to the admin backend answered 2xx — a "
+                        f"page an unauthenticated session does not get. "
                         f"Verify!", ""))
             for ua in sorted(a.scanner_uas):
                 # INFORMATIONAL (severity 3): every host on the internet is

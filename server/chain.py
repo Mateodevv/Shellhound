@@ -180,6 +180,8 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         ips=clients)
 
     events, undated, gaps = [], [], []
+    # Confirmed artifacts whose events exist but fall past the cap.
+    beyond = set()
 
     # Every log time through ONE funnel, every dump time through the other --
     # that way no single spot can forget the offset.
@@ -325,16 +327,24 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         # WHAT THE CAP CUTS OFF STILL HAS TO BE ACCOUNTED FOR. `dated` was
         # filled while the events were being built, so an artifact whose only
         # events fall past the cap counted as dated and then vanished with
-        # them -- present in neither list. A hundred accounts registered
-        # during the log period is enough to push a confirmed shell over the
-        # edge, and that is what a mass registration through a compromised
-        # form looks like. Anything cut goes back to being undated, which is
-        # the honest answer: this chronology does not show it.
+        # them -- present in neither list.
+        #
+        # THE FIRST ATTEMPT AT THIS PUT THEM IN `undated`, AND THAT WAS WORSE.
+        # `undated` says "the log proves no request for this file", so on a
+        # real case nine confirmed webshells -- every JCE drop -- were listed
+        # as never requested while the log holds 91 successful retrievals of
+        # them. Losing a fact is bad; asserting its opposite is a different
+        # thing altogether.
+        #
+        # Cut artifacts are their own answer: they HAVE measured times, and
+        # this chronology does not reach them.
         events, cut = events[:EVENT_CAP], events[EVENT_CAP:]
         still_shown = {e["artifact"] for e in events}
         for event in cut:
-            if event["artifact"] and event["artifact"] not in still_shown:
-                dated.discard(event["artifact"])
+            artifact = event["artifact"]
+            if artifact and artifact not in still_shown:
+                dated.discard(artifact)
+                beyond.add(artifact)
 
     # EVERY CONFIRMED ARTIFACT MUST SHOW UP -- in the chain or here. A
     # chronology from which a decision of the analyst quietly disappears is
@@ -343,13 +353,16 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         if row["artifact"] in dated:
             continue
         kind = row["artifact_kind"]
-        key = ("chain.undated." + kind
-               if kind in ("table", "dump", "file", "client")
-               else "chain.undated.other")
+        if row["artifact"] in beyond:
+            key = "chain.beyondCap"
+        else:
+            key = ("chain.undated." + kind
+                   if kind in ("table", "dump", "file", "client")
+                   else "chain.undated.other")
         undated.append({
             "artifact": row["artifact"], "artifact_kind": kind,
             "artifact_rel": files.get(row["artifact"], row["artifact"]),
-            "why": t(lang, key)})
+            "why": t(lang, key, n=EVENT_CAP)})
 
     # --- what the case does NOT prove ----------------------------------
     if not confirmed:

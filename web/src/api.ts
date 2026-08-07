@@ -214,6 +214,11 @@ export interface ActorProfile {
   posts: number
   login_posts: number
   login_redirects: number
+  /** Requests to the admin backend answered 2xx -- a page an unauthenticated
+   *  session does not get, and the only thing in a log that says a login
+   *  actually worked. A redirect does not: Joomla answers every login POST
+   *  with one whether the credentials were right or wrong. */
+  admin_ok: number
   login_statuses: string
   scanner_uas: string
   sqli_attempts: number
