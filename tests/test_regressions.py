@@ -671,6 +671,68 @@ class EngineHonestyTests(unittest.TestCase):
             self.assertIn("webshell.htaccess_handler", self._htaccess(body),
                           body.decode())
 
+    def test_two_unrelated_directives_are_not_one_finding(self):
+        """The rule's second branch was `$set_all and $files_image`, and
+        YARA's `and` means only that both strings appear SOMEWHERE in the
+        file. Neither block below is remarkable, `robots.txt` is why every
+        webroot has a <Files> block at all, and `txt` was in the image list
+        -- so the ordinary case scored HIGH under a sentence that was true
+        of neither block."""
+        self.assertEqual([], self._htaccess(
+            b'<Files "robots.txt">\n  Require all granted\n</Files>\n'
+            b'<FilesMatch "\\.php$">\n'
+            b"  SetHandler application/x-httpd-php\n"
+            b"</FilesMatch>\n"))
+
+    def _php(self, body):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-php-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = root / "x.php"
+        path.write_bytes(body)
+        findings, _skip, _inert = webshell.scan_file(str(path))
+        return {f[0]: f[1] for f in findings}
+
+    def test_the_documented_upload_idiom_is_not_a_dropper(self):
+        """`move_uploaded_file($_FILES[...]['tmp_name'], $target)` is the one
+        correct way to accept an upload in PHP -- the function exists to
+        REFUSE a path that was not uploaded. Every CMS with an upload form
+        contains it, and each one was answered with HIGH and "that is how
+        the next shell arrives"."""
+        self.assertNotIn("webshell.dropper", self._php(
+            b"<?php move_uploaded_file($_FILES['f']['tmp_name'], $target);"))
+
+    def test_request_content_written_to_a_file_is_still_a_dropper(self):
+        """The half that does carry the claim, kept."""
+        self.assertIn("webshell.dropper", self._php(
+            b"<?php file_put_contents('s.php', $_POST['c']);"))
+
+    def test_an_upload_destination_from_the_request_is_reported_lower(self):
+        """The narrow case worth keeping: the request picks the path, so it
+        picks the extension. A form that keeps the browser's filename looks
+        the same from here, which is why it is not high."""
+        found = self._php(
+            b"<?php move_uploaded_file($_FILES['f']['tmp_name'], $_POST['p']);")
+        self.assertEqual(db.SEV_MEDIUM, found.get("webshell.upload_dest"))
+        self.assertEqual(db.SEV_HIGH, self._php(
+            b"<?php file_put_contents('s.php', $_POST['c']);")
+            ["webshell.dropper"])
+
+    def test_create_function_does_not_claim_request_input(self):
+        """The rule was named "create_function / callback on request input"
+        and fired on either half -- but `create_function('$a', 'return 1;')`
+        names no superglobal. It is how a library written before PHP 7.2
+        built a closure, and it was reported at HIGH under a sentence about
+        request input that no part of the file supports."""
+        found = self._php(b"<?php create_function('$a', 'return 1;');")
+        self.assertNotIn("webshell.callback_input", found)
+        self.assertEqual(db.SEV_MEDIUM, found.get("webshell.create_function"))
+
+    def test_a_callback_named_by_the_request_stays_high(self):
+        found = self._php(b"<?php call_user_func_array($_POST['f'], []);")
+        self.assertEqual(db.SEV_HIGH, found.get("webshell.callback_input"))
+
     def test_a_reordered_query_string_still_matches_the_bundled_pattern(self):
         """HTTP query order carries no meaning, so a hunt pattern must not
         depend on it. The shipped JCE rule was one literal string and missed

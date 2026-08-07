@@ -47,6 +47,12 @@ REFERENCE = {
         r"(?i)(create_function\s*\(\s*['\"]|call_user_func(_array)?\s*\(\s*\$_)"),
     "webshell.dropper": re.compile(
         r"(?i)(move_uploaded_file|file_put_contents|fwrite)\s*\(.{0,80}\$_(POST|GET|REQUEST|FILES)"),
+    # NO PREDECESSOR. These two rules were carved out of the two above when
+    # those turned out to make a claim they could not support; there is no
+    # frozen regex to be equivalent to. They stay in this table because the
+    # id and severity bookkeeping below must still cover every shipped rule.
+    "webshell.callback_input": None,
+    "webshell.upload_dest": None,
     "webshell.obfuscation": re.compile(
         r"(?i)(base64_decode\s*\(\s*(str_rot13|strrev|gzinflate|gzuncompress)|gzinflate\s*\(\s*(base64_decode|str_rot13)|str_rot13\s*\(\s*base64_decode)"),
     "webshell.hex_octal": re.compile(
@@ -163,14 +169,23 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(set(REFERENCE), declared)
 
     # DELIBERATELY NOT EQUIVALENT. The equivalence table proves each YARA
-    # rule kept the meaning of the regex it replaced. This one must NOT keep
-    # it: the original fired on every handler line mentioning PHP, including
-    # `AddHandler application/x-httpd-ea-php81 .php .php8 .phtml` -- the block
-    # every shared host ships -- and then called those "non-PHP extensions",
-    # which is the opposite of what the line says. It stays in REFERENCE so
-    # the id and severity bookkeeping below still covers it; its behaviour is
-    # asserted directly in test_regressions.EngineHonestyTests.
-    CORRECTED = {"webshell.htaccess_handler"}
+    # rule kept the meaning of the regex it replaced. These must NOT keep it,
+    # because the regex was wrong about what it found -- and a rule that is
+    # wrong about what it found is worse than one that finds less. They stay
+    # in REFERENCE so the id and severity bookkeeping below still covers
+    # them; their behaviour is asserted directly in
+    # test_regressions.EngineHonestyTests.
+    #
+    #   htaccess_handler  fired on every handler line mentioning PHP,
+    #                     including the `AddHandler ... .php .php8 .phtml`
+    #                     block every shared host ships, and called those
+    #                     "non-PHP extensions".
+    #   create_function   said "on request input" about `create_function`,
+    #                     which names no superglobal.
+    #   dropper           said "that is how the next shell arrives" about
+    #                     `move_uploaded_file`, the one correct idiom.
+    CORRECTED = {"webshell.htaccess_handler", "webshell.create_function",
+                 "webshell.dropper"}
 
     def test_the_translation_matches_the_originals_exactly(self):
         cases = samples()
@@ -179,7 +194,7 @@ class TranslationTests(unittest.TestCase):
         for text in cases:
             found = self._yara_hits(text)
             for rule_id in REFERENCE:
-                if rule_id in self.CORRECTED:
+                if rule_id in self.CORRECTED or REFERENCE[rule_id] is None:
                     continue
                 want = reference_hits(rule_id, text)
                 if want != (rule_id in found):

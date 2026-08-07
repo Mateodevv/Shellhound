@@ -107,8 +107,12 @@ export const en: Record<string, string> = {
   'rule.fileDropper.why': 'This is how further shells get loaded. Check what else is new in the surrounding directory.',
   'rule.pregReplaceE.what': 'A removed PHP function that executes the replacement text as CODE.',
   'rule.pregReplaceE.why': 'Gone since PHP 7 — there is no legitimate reason for it in current code.',
-  'rule.createFunction.what': 'Code is generated from text at runtime.',
-  'rule.createFunction.why': 'Long deprecated; common in webshells to hide the actual payload.',
+  'rule.createFunction.what': 'A function body is built from a string at runtime.',
+  'rule.createFunction.why': 'In a shell it stands in for eval. In a library older than PHP 7.2 it is ordinary, which is why this alone is not high.',
+  'rule.callbackInput.what': 'The function to call is named by the request.',
+  'rule.callbackInput.why': 'Whatever the browser can spell, it can call. Legitimate code names its own callbacks.',
+  'rule.uploadDest.what': 'An upload is moved to a path the request chose.',
+  'rule.uploadDest.why': 'Whoever picks the path picks the extension. A form that keeps the browser filename looks the same, so check whether the extension is restricted.',
   'rule.decodeChain.what': 'Several encoding steps are nested inside one another (base64, gzinflate, rot13 …).',
   'rule.decodeChain.why': 'Obfuscation of this shape serves to hide. What comes out at the end needs to be looked at.',
   'rule.hexObfuscation.what': 'Text is written as a long chain of hex/octal escapes instead of plain characters.',
@@ -880,7 +884,7 @@ export const en: Record<string, string> = {
   'source.errorlog': 'Error log',
   'category.errorlog.label': 'Named in the error log',
   'category.errorlog.what': 'A PHP error names this file with a line number — proof that the path existed and RAN. Not proof that it is malicious: legitimate code throws warnings too. It weighs when it lands on the same file as something else.',
-  'rule.errorNames': 'A PHP error names this file with a line number.',
+  'rule.errorNames.what': 'A PHP error names this file with a line number.',
   'rule.errorNames.why': 'The interpreter executed this path at that moment. The access log cannot show that for a shell run from cron, pulled in by an include, or deleted before the copy was taken.',
   // Column headings of the account table. The same keys the CSV export uses
   // on the server, with the same values -- what you read on screen is what

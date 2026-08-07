@@ -88,15 +88,44 @@ rule Webshell_PregReplace_E_Modifier
         any of them
 }
 
-rule Webshell_Create_Function_Or_Callback
+/*
+    ONE RULE MADE TWO DIFFERENT CLAIMS UNDER ONE SEVERITY. It was called
+    "create_function / callback on request input" and fired HIGH on either
+    half -- but only one half involves request input. `create_function('$a',
+    'return 1;')` names no superglobal at all; it is how every library
+    written before PHP 7.2 built a closure, and PHP 8 removed the function
+    rather than anyone abusing it. The finding said "on request input" about
+    files where no request input appears.
+
+    Split, because the two are not one finding at a lower resolution: the
+    callback half is as clear a shell signal as exists, and the assembly
+    half is ordinary in old code. Neither name is now attached to a file it
+    is not true of. This DOES orphan triage decisions taken on the old rule
+    -- the name is part of the fingerprint -- and that is the right outcome
+    here: the analyst decided about a sentence that was wrong.
+*/
+rule Webshell_Callback_From_Request
+{
+    meta:
+        id = "webshell.callback_input"
+        severity = "high"
+        name = "Callback taken straight from the request"
+        what = "The function to call is named by the request. Whatever the browser can spell, it can call."
+    strings:
+        $a = /call_user_func(_array)?[^\S\n]*\([^\S\n]*\$_/ nocase
+    condition:
+        $a
+}
+
+rule Webshell_Runtime_Code_Assembly
 {
     meta:
         id = "webshell.create_function"
-        severity = "high"
-        name = "create_function / callback on request input"
-        what = "Code is assembled from a string at runtime, or a callback is taken straight from the request."
+        severity = "medium"
+        name = "Code assembled at runtime with create_function"
+        what = "A function body is built from a string. In a shell it stands in for eval; in a library older than PHP 7.2 it is ordinary."
     strings:
-        $a = /(create_function[^\S\n]*\([^\S\n]*['"]|call_user_func(_array)?[^\S\n]*\([^\S\n]*\$_)/ nocase
+        $a = /create_function[^\S\n]*\([^\S\n]*['"]/ nocase
     condition:
         $a
 }
@@ -106,10 +135,37 @@ rule Webshell_File_Dropper
     meta:
         id = "webshell.dropper"
         severity = "high"
+        /*
+            NO move_uploaded_file HERE. It was in this rule, and it is the
+            ONE correct way to accept an upload in PHP -- the documented
+            idiom, `move_uploaded_file($_FILES['f']['tmp_name'], $target)`,
+            whose whole purpose is to refuse a path that was not uploaded.
+            Every CMS with an upload form contains it, and this rule
+            answered each one with HIGH and "that is how the next shell
+            arrives". What the remaining two prove is different in kind:
+            request CONTENT ends up inside a file.
+
+            The narrow case worth keeping got its own rule below, with the
+            sentence that is actually true of it.
+        */
         name = "File dropper writing request input to disk"
         what = "Something out of the request is written to a file. That is how the next shell arrives."
     strings:
-        $a = /(move_uploaded_file|file_put_contents|fwrite)[^\S\n]*\(.{0,80}\$_(POST|GET|REQUEST|FILES)/ nocase
+        $a = /(file_put_contents|fwrite)[^\S\n]*\(.{0,80}\$_(POST|GET|REQUEST|FILES)/ nocase
+    condition:
+        $a
+}
+
+rule Webshell_Upload_Destination_From_Request
+{
+    meta:
+        id = "webshell.upload_dest"
+        severity = "medium"
+        name = "Upload destination taken from the request"
+        what = "An uploaded file is moved to a path the request chose -- and whoever chooses the path chooses the extension."
+        note = "Medium, not high: a form that keeps the name the browser sent looks the same from here. What it is not is the plain idiom, which names no superglobal after the comma."
+    strings:
+        $a = /move_uploaded_file[^\S\n]*\([^,\n]{0,120},[^;\n]{0,120}\$_(POST|GET|REQUEST)/ nocase
     condition:
         $a
 }

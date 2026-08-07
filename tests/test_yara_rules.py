@@ -201,5 +201,44 @@ class CompileTests(unittest.TestCase):
         self.assertTrue(row["error"])
 
 
+class ExplanationCoverageTests(unittest.TestCase):
+    """Every shipped rule has to be explainable in the interface.
+
+    `explain.ts` maps a SUBSTRING of the rule name to a translation key, and
+    the fallback for an unmatched name is silence -- a finding on screen with
+    nothing behind the "what does this mean" panel. Nothing failed when two
+    new rules arrived without an entry, because the mapping lives in
+    TypeScript and the rule names in a .yar file, and no test looked at both.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def _rule_keys(self):
+        import re
+        text = (self.ROOT / "web" / "src" / "explain.ts").read_text(
+            encoding="utf-8")
+        # Not `split("]")`: the type annotation `[string, string][]` puts two
+        # of them before the array even opens.
+        block = text.split("RULE_KEYS", 1)[1].split("\n];", 1)[0]
+        return re.findall(r"\[\s*'((?:[^'\\]|\\.)*)'\s*,\s*'([^']+)'\s*\]",
+                          block)
+
+    def test_every_bundled_rule_name_reaches_an_explanation(self):
+        from server import rules
+        keys = self._rule_keys()
+        self.assertGreater(len(keys), 20, "the mapping did not parse")
+        missing = [r["name"] for r in rules.catalogue()
+                   if not any(k.lower() in r["name"].lower() for k, _ in keys)]
+        self.assertEqual([], missing)
+
+    def test_every_key_the_mapping_names_exists_in_both_languages(self):
+        for lang in ("en", "de"):
+            text = (self.ROOT / "web" / "src" / "i18n" / f"{lang}.ts").read_text(
+                encoding="utf-8")
+            for _, key in self._rule_keys():
+                for part in (".what", ".why"):
+                    self.assertIn(f"'{key}{part}'", text, f"{lang}: {key}{part}")
+
+
 if __name__ == "__main__":
     unittest.main()
