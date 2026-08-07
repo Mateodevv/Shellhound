@@ -600,16 +600,17 @@ class EngineHonestyTests(unittest.TestCase):
         """`<?=` is three bytes, and in compressed image data any given
         three-byte sequence turns up about once per 16 MB.
 
-        On a real Joomla webroot this rule announced "PHP code hidden inside
-        image file" -- at HIGH -- about a 1.4 MB photograph whose only `<?=`
-        sat between two runs of pixel data. Measured over that site's 79
-        images: none contained `<?php`, one contained `<?=`, and it was the
-        false one. A forensic tool that accuses a holiday photo teaches the
-        analyst to skim past the rule that matters.
+        On a photograph of a little over a megabyte this rule announced "PHP
+        code hidden inside image file" -- at HIGH -- because the file's only
+        `<?=` sat between two runs of pixel data. A forensic tool that
+        accuses a holiday photo teaches the analyst to skim past the rule
+        that matters.
 
-        The byte run below is the actual neighbourhood from that file."""
-        noise = bytes([0x54, 0x8a, 0x3c, 0x3f, 0x3d, 0x3d, 0x79, 0xf8,
-                       0xf0, 0xe1, 0x83, 0x07])
+        The bytes below are constructed, not sampled from any image: the
+        only property that decides the case is that the tag is surrounded by
+        data that does not read as source, and a run of high bytes around it
+        reproduces that exactly."""
+        noise = b"<?=" + bytes(range(0x80, 0x89))
         self.assertEqual([], self._image(b"\x89PNG\r\n\x1a\n" + noise * 40))
 
     def test_a_short_tag_followed_by_source_is_still_a_finding(self):
