@@ -146,7 +146,7 @@ be cancelled.
 
 ### Findings
 
-37 rules across webroot, database export and logs produce findings
+38 rules across webroot, database export and logs produce findings
 ([`docs/rules.md`](docs/rules.md)). The work list is not a list of findings:
 findings are grouped into the object they are about, a file, a client or a
 table, and the decision is made once per object. Five rules firing on one

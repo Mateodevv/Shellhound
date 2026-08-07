@@ -95,6 +95,8 @@ export const en: Record<string, string> = {
   'rule.unguardedUpload.why': 'Every genuine CMS file carries that guard; uploaded files do not. Together with "can execute something" this is the classic find of a dropped shell.',
   'rule.doubleExtension.what': 'The filename hides its real extension behind a harmless one (e.g. image.jpg.php).',
   'rule.doubleExtension.why': 'The LAST extension is what executes. This combination essentially only arises when bypassing upload filters.',
+  'rule.noPhp.what': 'A .php file that contains no PHP at all — only a complete HTML page.',
+  'rule.noPhp.why': 'The interpreter has nothing to do here, yet a visitor is served this page under the site’s own address. Where the file is the webroot’s index.php, the homepage is no longer the site.',
   'rule.phpInImage.what': 'An image file contains a PHP tag.',
   'rule.phpInImage.why': 'A genuine image contains no PHP code. Typical for uploads smuggled past an image check.',
   'rule.evalOnInput.what': 'The code executes what comes in from outside or was just unpacked.',

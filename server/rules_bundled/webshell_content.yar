@@ -235,3 +235,39 @@ rule Webshell_Standalone_Command_Execution
     condition:
         $a
 }
+
+rule Webshell_Php_File_Is_A_Plain_Page
+{
+    meta:
+        id = "webshell.no_php"
+        severity = "medium"
+        name = "PHP file containing no PHP, only an HTML page"
+        what = "The interpreter has nothing to do with this file, yet a visitor is served it under the site's own address."
+        note = "Measured on a compromised Joomla: 671 PHP files, exactly two without a single `<?`. One was a changelog carrying the extension -- text, no HTML, not matched here. The other was the site's index.php: 893 KB of a foreign-language spam page, no PHP in it at all, and not one rule said a word."
+    strings:
+        /*
+            `<?`, NOT `<?php`. The absence has to be COMPLETE -- a short tag
+            or an XML prolog is still something the file has to be read as.
+            What this rule states is that there is NOTHING here for the
+            interpreter: a document, served through PHP.
+
+            ONE ANCHOR, on purpose. A finding is emitted per rule per LINE,
+            and `<!DOCTYPE html>` and `<html>` sit on lines of their own --
+            two findings for one fact, and an analyst deciding twice about a
+            single file. `<html` is the tag that makes it a document; a
+            doctype without one is not a page anybody is served.
+
+            The HTML is what separates a doorway from a text file that
+            happens to carry the extension. A changelog named `.php` is a
+            small untidiness. A full HTML document at a `.php` address is a
+            page somebody wants visitors and search engines to reach.
+
+            MEDIUM: nothing here executes. What it states is that a file is
+            not what its name says, and where that file is the webroot's own
+            index.php it is the most visible fact about the case.
+        */
+        $open = "<?"
+        $html = "<html" nocase
+    condition:
+        $html and not $open
+}

@@ -37,6 +37,7 @@ const RULE_KEYS: [string, string][] = [
   ['Unguarded PHP in writable upload', 'rule.unguardedUpload'],
   ['Double extension disguise', 'rule.doubleExtension'],
   ['PHP code hidden inside image', 'rule.phpInImage'],
+  ['PHP file containing no PHP', 'rule.noPhp'],
   ['eval/assert on decoded or request input', 'rule.evalOnInput'],
   ['Variable function called on request input', 'rule.variableFunction'],
   ['Command execution on request input', 'rule.commandExec'],
