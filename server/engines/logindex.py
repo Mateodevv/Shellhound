@@ -1042,9 +1042,13 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
     too far), per client the hit count, of those the 2xx, plus first/last
     request -- and the key figures of the search itself, so a run can be
     summarised in one sentence."""
+    # THE SAME SHAPE AS A REAL RESULT. A caller cannot know in advance which
+    # of the two it is holding, so a key that exists only when something was
+    # found raises where it should simply answer "no".
     empty = {"pattern": pattern, "uris": [], "clients": [], "hits": 0,
              "ok_hits": 0, "clients_total": 0, "ok_clients": 0, "uri_total": 0,
              "first_epoch": None, "last_epoch": None, "tz": 0,
+             "clients_truncated": False, "uris_truncated": False,
              "truncated": False}
     conn = _open_ro(case_dir)
     if conn is None or not str(pattern).strip():
@@ -1148,6 +1152,13 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                 "clients_total": int(totals["clients"] or 0),
                 "ok_clients": int(totals["ok_clients"] or 0),
                 "clients_truncated": len(clients) < int(totals["clients"] or 0),
+                # The URI list has its own cap, and `truncated` is about a
+                # different one entirely -- the 4000 interned strings the
+                # pattern was matched against. A search over 120 distinct URIs
+                # returned 50 rows next to uri_total=120 and truncated=False,
+                # so the result actively claimed to be complete. uri_total
+                # exists precisely so a pattern reaching too far is visible.
+                "uris_truncated": len(uris) < uri_total,
                 "uri_total": uri_total,
                 "first_epoch": min(firsts) if firsts else None,
                 "last_epoch": max(lasts) if lasts else None,

@@ -192,7 +192,16 @@ export interface ActorAlert {
   example: string
 }
 
-export interface Actor {
+/** What `logindex.actor_profile` measures about one client -- the part that
+ *  comes out of the log index and nothing else.
+ *
+ *  SPLIT FROM `Actor` ON PURPOSE. The three fields below this one are what
+ *  the Actors LIST adds for its own rows: a sparkline to draw, whether the
+ *  address is in the IOC box, and the decision on it. The artifact window
+ *  embeds a profile and gets none of them, so declaring one type for both
+ *  paths meant `actor.triage` read as undefined there -- no error, no
+ *  render, just a value that is never right. */
+export interface ActorProfile {
   ip_id: number
   ip: string
   requests: number
@@ -214,6 +223,13 @@ export interface Actor {
   upload_php_attempts: number
   upload_php_ok: number
   agents: number
+}
+
+/** A profile as the Actors list needs it: the measurements, plus the alerts
+ *  raised against this client and what the row itself has to draw. Only the
+ *  list endpoint sends these -- the artifact window gets the measurements
+ *  with the alerts BESIDE them, in the envelope, not inside the row. */
+export interface Actor extends ActorProfile {
   alerts: ActorAlert[]
   sparkline: number[]
   in_box: boolean
@@ -741,7 +757,7 @@ export interface ArtifactContext {
   }
   hunt?: HuntHit[]
   actor?: {
-    actor: Actor
+    actor: ActorProfile
     alerts: { kind: string; severity: number; detail: string; example: string }[]
     top_paths: { uri: string; n: number; ok: number }[]
     top_agents: { agent: string; n: number }[]

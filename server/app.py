@@ -757,6 +757,14 @@ def create_app(config: Config) -> FastAPI:
             accounts = conn.execute("SELECT count(*) FROM db_accounts").fetchone()[0]
             installs = db.rows(conn, "SELECT * FROM cms_installs ORDER BY root")
             evidence = db.rows(conn, "SELECT * FROM evidence ORDER BY kind")
+            # DECODED, like everywhere else this row is sent. It left here as
+            # the raw JSON text from the column, so the same declared type
+            # arrived as an object from the case detail and as a string from
+            # here -- and reading a field off a string is `undefined` in the
+            # browser rather than an error, so the component simply showed
+            # nothing depending on which view had opened it.
+            for e in evidence:
+                e["stats"] = json.loads(e.get("stats") or "{}")
             running = db.rows(conn,
                               "SELECT * FROM jobs WHERE state IN ('queued','running') "
                               "ORDER BY id DESC")
@@ -921,9 +929,18 @@ def create_app(config: Config) -> FastAPI:
             # An artifact matches when ANY of its findings matches -- and then
             # shows all of them. A hit on one rule is a reason to look at the
             # file, not a reason to see only that rule.
+            # ESCAPED, like every other list endpoint. Unescaped, `_` is a
+            # single-character wildcard and `%` matches anything, so an analyst
+            # searching for the table `wp_options` also got `wpXoptions` --
+            # and a work list answering with rows nobody asked about is a work
+            # list that has to be checked by hand. Table and column names are
+            # full of underscores, which is what makes this bite here.
             where.append("artifact IN (SELECT artifact FROM findings "
-                         "WHERE rule LIKE ? OR artifact LIKE ? OR evidence LIKE ?)")
-            like = f"%{search}%"
+                         "WHERE rule LIKE ? ESCAPE '\\' "
+                         "OR artifact LIKE ? ESCAPE '\\' "
+                         "OR evidence LIKE ? ESCAPE '\\')")
+            like = "%" + (search.replace("\\", "\\\\").replace("%", "\\%")
+                          .replace("_", "\\_")) + "%"
             params += [like, like, like]
         # The muted-rule filter, applied on top of the chip filters. Defined
         # in artifacts.py, brackets included -- see the note there on what
@@ -994,7 +1011,12 @@ def create_app(config: Config) -> FastAPI:
         artifacts: list[str] = []
         fingerprints: list[str] = []
         state: str
-        note: str = ""
+        # NOT "" BY DEFAULT. An empty string is a note the analyst wrote and
+        # then cleared; no field at all is a caller that has no note to send.
+        # The five bare confirm buttons and the bulk decision are the second
+        # kind, and treating them as the first erased the sentence somebody
+        # had typed while looking at the file.
+        note: str | None = None
         # Whether a confirmation may travel along proven links (see
         # _propagate). Off for undo and for applying a suggestion -- those
         # must not start a second wave.
@@ -1017,10 +1039,17 @@ def create_app(config: Config) -> FastAPI:
             rows = db.rows(conn,
                            f"SELECT * FROM findings WHERE artifact IN ({marks}) "
                            f"ORDER BY severity, line", artifacts)
-            conn.execute(
-                f"UPDATE findings SET triage = ?, triage_note = ?, triaged_at = ? "
-                f"WHERE artifact IN ({marks})",
-                [body.state, body.note, db.now()] + artifacts)
+            if body.note is None:
+                # Deciding again is not retracting what was written.
+                conn.execute(
+                    f"UPDATE findings SET triage = ?, triaged_at = ? "
+                    f"WHERE artifact IN ({marks})",
+                    [body.state, db.now()] + artifacts)
+            else:
+                conn.execute(
+                    f"UPDATE findings SET triage = ?, triage_note = ?, "
+                    f"triaged_at = ? WHERE artifact IN ({marks})",
+                    [body.state, body.note, db.now()] + artifacts)
             # Confirming collects the artifact into the IOC box -- provenance
             # is written at the moment of collection -- and travels one step
             # along the links the log index can PROVE.
@@ -1318,7 +1347,8 @@ def create_app(config: Config) -> FastAPI:
                 "total_lines": len(lines), "truncated": truncated}
 
     @app.get("/api/cases/{slug}/artifact", dependencies=[auth])
-    def artifact_context(slug: str, artifact: str):
+    def artifact_context(slug: str, artifact: str,
+                         lang: str = lang_dep):
         """EVERYTHING about one artifact, in one answer -- this is the view an
         analyst decides from.
 
@@ -1399,12 +1429,13 @@ def create_app(config: Config) -> FastAPI:
                                      (artifact,))
                 if out["dump"]:
                     out["dump"]["meta"] = json.loads(out["dump"]["meta"] or "{}")
-            out["related_ips"] = _related_ips(conn, kind, artifact, findings, hunt)
+            out["related_ips"] = _related_ips(conn, kind, artifact,
+                                              findings, hunt, lang)
             return out
         finally:
             conn.close()
 
-    def _related_ips(conn, kind, artifact, findings, hunt):
+    def _related_ips(conn, kind, artifact, findings, hunt, lang="en"):
         """Every client address this artifact points at, with WHY it is here.
         Ordered by how much it says: the client itself first, then whoever
         requested the file most often, then addresses left in the evidence."""
@@ -1430,7 +1461,7 @@ def create_app(config: Config) -> FastAPI:
                 hit["hits"], hit["ok_hits"])
         for f in findings:
             for ip in ioclib.IP_RE.findall(f["evidence"] or "")[:10]:
-                add(ip, t(lang, "related.fromEvidence", rule=f["rule"]))
+                add(ip, _t(lang, "related.fromEvidence", rule=f["rule"]))
         return out[:40]
 
     # --- looking at an evidence file ---------------------------------------

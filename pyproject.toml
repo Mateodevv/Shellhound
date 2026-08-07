@@ -73,3 +73,50 @@ include = ["server*"]
 # version, which is what makes "SHELLHOUND 0.2.0 ships this pattern" a
 # statement the reader of a report can verify.
 "server" = ["static/**/*", "patterns_bundled.json", "rules_bundled/*.yar"]
+
+# ---------------------------------------------------------------------------
+# Mutation testing. See docs/TESTING.md.
+#
+# The question a mutation run answers is not "does the suite pass" but "does
+# the suite FAIL when the code is wrong". A surviving mutant is a change to
+# server/ that no test objected to, which means the behaviour it changed is
+# not defended by anything.
+#
+# COSMIC-RAY AND NOT MUTMUT, for one blunt reason: mutmut 3 refuses to start
+# on Windows -- it checks `platform.system()` before it does anything else and
+# tells you to use WSL (upstream issue 397). This repository is developed on
+# Windows and its CI deliberately runs the suite on Windows too, because path
+# handling is the class of bug the other operating system reveals. A mutation
+# tool that only the Linux CI can start is a tool nobody reaches for while
+# they are writing the test, and that is the moment it is worth anything.
+# Cosmic-ray runs on both.
+#
+# THE TABLE IS TOP-LEVEL, not under [tool.], because cosmic-ray reads the
+# `cosmic-ray` key of whatever TOML file it is handed and has no notion of
+# PEP 518 tool tables. Setuptools ignores top-level keys it does not know, so
+# the packaging configuration above is unaffected -- `python -m build` was run
+# with this table in place to confirm that rather than assume it.
+[cosmic-ray]
+# Everything the server does. This is the honest default and it is expensive:
+# roughly ten and a half thousand mutants, each one a full run of the suite.
+# Nobody runs that at their desk -- copy this table into a scratch file with a
+# single file as the module-path when you want an answer this afternoon, which
+# is what .github/workflows/mutation.yml does per shard.
+module-path = "server"
+excluded-modules = []
+# No pytest: the suite is stdlib unittest and stays that way. Cosmic-ray only
+# looks at the exit code, so `discover` is all it needs. `-t .` keeps the
+# import root at the repository root so that `server` resolves.
+test-command = "python -m unittest discover -s tests -t ."
+# The unmutated suite takes about four seconds. Sixty is not a performance
+# budget, it is the leash on mutants that turn a loop condition into
+# something that never ends -- a mutant that hangs counts as killed, which is
+# the right answer, but only if something stops it.
+timeout = 60.0
+
+[cosmic-ray.distributor]
+# Sequential and in-process. The distributor mutates the file ON DISK and puts
+# it back afterwards, so two runs in one working tree would corrupt each
+# other's source; parallelism belongs in the CI matrix, across checkouts, not
+# here.
+name = "local"
