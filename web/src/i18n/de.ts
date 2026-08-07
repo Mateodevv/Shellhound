@@ -90,6 +90,8 @@ export const de: Record<string, string> = {
   'rule.unguardedUpload.why': 'Jede echte CMS-Datei trägt diesen Schutz; hochgeladene Dateien nicht. Zusammen mit „kann etwas ausführen" ist das der klassische Fund einer abgelegten Shell.',
   'rule.doubleExtension.what': 'Der Dateiname tarnt sich mit einer harmlosen Endung vor der echten (z.B. bild.jpg.php).',
   'rule.doubleExtension.why': 'Ausgeführt wird die LETZTE Endung. Diese Kombination entsteht praktisch nur beim Umgehen von Upload-Filtern.',
+  'rule.noPhp.what': 'Eine .php-Datei ohne jedes PHP — nur eine vollständige HTML-Seite.',
+  'rule.noPhp.why': 'Der Interpreter hat hier nichts zu tun, und trotzdem wird Besuchern diese Seite unter der Adresse der Site ausgeliefert. Ist die Datei die index.php des Webroots, ist die Startseite nicht mehr die Seite.',
   'rule.phpInImage.what': 'In einer Bilddatei steht ein PHP-Tag.',
   'rule.phpInImage.why': 'Ein echtes Bild enthält keinen PHP-Code. Typisch für Uploads, die an einer Bildprüfung vorbeigeschmuggelt wurden.',
   'rule.evalOnInput.what': 'Der Code führt aus, was von außen hereinkommt oder gerade entpackt wurde.',

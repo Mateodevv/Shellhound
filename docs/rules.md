@@ -149,6 +149,7 @@ is reported, not passed over in silence.
 | Webshell | goto-based control-flow obfuscation | MEDIUM |
 | Webshell | Standalone command-execution shell | MEDIUM |
 | Webshell | Code assembled at runtime with create_function | MEDIUM |
+| Webshell | PHP file containing no PHP, only an HTML page | MEDIUM |
 | Webshell | Upload destination taken from the request | MEDIUM |
 | Database | PHP open tag in database value | HIGH |
 | Database | eval/assert on decoded or request input | HIGH |
@@ -349,6 +350,24 @@ input in the DESTINATION argument, after the comma.
 **Why it counts:** whoever picks the path picks the extension. MEDIUM and not
 HIGH because a form that keeps the filename the browser sent looks the same
 from here; what to check is whether the extension is restricted.
+
+### PHP file containing no PHP, only an HTML page — MEDIUM
+
+**Trigger:** a `.php` file with `<html` in it and no `<?` anywhere.
+
+**What it states:** the interpreter has nothing to do with this file,
+and a visitor is served it under the site's own address.
+
+**Why it counts:** measured on a compromised Joomla — 671 PHP files, two
+of them without a single `<?`. One was a changelog carrying the
+extension: text, no HTML, not matched here. The other was the site's
+`index.php`, 893 KB of a foreign-language spam page, and not one rule
+said a word about it. Across all 1744 files of that webroot this rule
+fires once.
+
+**Why MEDIUM.** Nothing here executes. What the finding states is that a
+file is not what its name says — and where that file is the webroot's own
+`index.php`, it is the most visible fact about the case.
 
 ### Obfuscation decode chain — MEDIUM
 

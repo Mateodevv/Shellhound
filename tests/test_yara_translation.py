@@ -53,6 +53,7 @@ REFERENCE = {
     # id and severity bookkeeping below must still cover every shipped rule.
     "webshell.callback_input": None,
     "webshell.upload_dest": None,
+    "webshell.no_php": None,
     "webshell.obfuscation": re.compile(
         r"(?i)(base64_decode\s*\(\s*(str_rot13|strrev|gzinflate|gzuncompress)|gzinflate\s*\(\s*(base64_decode|str_rot13)|str_rot13\s*\(\s*base64_decode)"),
     "webshell.hex_octal": re.compile(

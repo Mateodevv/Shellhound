@@ -1670,6 +1670,64 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class DoorwayPageTests(unittest.TestCase):
+    """The site's own homepage, replaced, and nothing said so.
+
+    On a compromised Joomla the webroot's `index.php` was 893 KB of a
+    foreign-language spam page -- valid HTML, not one `<?` in it. That is the
+    most visible fact about the whole case: whoever opens the site does not
+    get the site. Every rule stayed quiet, because every rule was looking for
+    CODE and there was none.
+    """
+
+    PAGE = (b'<!DOCTYPE html>\n<html lang="id">\n'
+            b"<head><title>x</title></head>\n"
+            b'<body><a href="http://elsewhere.example">buy</a></body>\n'
+            b"</html>\n")
+
+    def _rules(self, body, name="index.php"):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-door-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / name).write_bytes(body)
+        found, _skip, _inert = webshell.scan_file(str(root / name),
+                                                  root=str(root))
+        return [f[0] for f in found]
+
+    def test_a_php_file_that_is_only_a_page_is_reported(self):
+        self.assertIn("webshell.no_php", self._rules(self.PAGE))
+
+    def test_it_is_reported_once_and_not_per_tag(self):
+        """A property of the FILE has no line to point at, and the engine
+        emits one finding per rule per LINE. Anchored on both `<!DOCTYPE
+        html>` and `<html>` the rule produced two findings for one fact, on
+        the two lines they happen to sit on -- and the analyst decided twice
+        about one file."""
+        self.assertEqual(1, self._rules(self.PAGE).count("webshell.no_php"))
+
+    def test_an_ordinary_php_page_is_not(self):
+        """Almost every CMS entry point mixes HTML and PHP. If that fired,
+        the rule would report the whole webroot."""
+        self.assertNotIn("webshell.no_php", self._rules(
+            b"<?php defined('_JEXEC') or die; ?>\n" + self.PAGE))
+
+    def test_a_short_tag_is_still_something_to_interpret(self):
+        """The absence has to be COMPLETE. A short tag, and even an XML
+        prolog, mean the file is read as more than a document."""
+        for prefix in (b"<?= $x ?>", b'<?xml version="1.0"?>'):
+            self.assertNotIn("webshell.no_php",
+                             self._rules(prefix + b"\n" + self.PAGE),
+                             prefix.decode())
+
+    def test_a_text_file_carrying_the_extension_is_not_a_page(self):
+        """A changelog named .php is a small untidiness, not a doorway -- and
+        it was the one other file in that webroot without a `<?`."""
+        self.assertNotIn("webshell.no_php", self._rules(
+            b"CHANGELOG\n=========\n\n1.2.3  fixed a thing\n",
+            name="CHANGELOG.php"))
+
+
 class DetectOfferTests(unittest.TestCase):
     """The guided scan proposes what is in the folder -- or used to skip it.
 
