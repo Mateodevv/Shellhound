@@ -581,7 +581,16 @@ answered 2xx five times, and no rule said a word about any of them.
 `option=com_users`.
 
 **What it states:** a conspicuous number of login submissions from the same
-address.
+address, **and the window they ran in** — `40 POSTs against login endpoints
+over 71 s (2,028/h)`.
+
+The window is not part of the condition, on purpose: a rate in the trigger
+would silently drop findings on a case whose logs are thin, and a count is
+what an analyst can check by hand. But the count ALONE cannot tell the two
+apart. Measured on a real case, four clients crossed the threshold — 92 POSTs
+spread over twenty-three days, 714 over eight, and two that fired 40 and 32
+inside the same minute. All four were reported with the same word and the
+same shape of number.
 
 **Why it counts:** login attempts in series. Success only shows in the status
 code — see redirects.
