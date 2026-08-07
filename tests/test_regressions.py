@@ -231,6 +231,251 @@ class ChainRelativePathTests(unittest.TestCase):
         self.assertNotIn(str(self.ev.root).replace("\\", "\\\\"), text)
 
 
+class ChainTimeTests(unittest.TestCase):
+    """The chronology on a log that is NOT in UTC.
+
+    Everything here is about +0200, because every bug in this family hid
+    perfectly on a +0000 fixture -- which is what the suite had.
+    """
+
+    SHELL = "wp-content/uploads/2026/01/kb-media.php"
+
+    @classmethod
+    def _line(cls, ip, day, hour, uri, status):
+        return (f'{ip} - - [0{day}/Jan/2026:{hour:02d}:00:00 +0200] '
+                f'"GET {uri} HTTP/1.1" {status} 512 "-" "curl/8"\n')
+
+    @classmethod
+    def setUpClass(cls):
+        from server.engines import logindex, webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-chaintz-"))
+        cls.root = root
+        cls.case = root / "case"
+        cls.case.mkdir()
+        webroot = root / "webroot"
+        logs = root / "logs"
+        logs.mkdir()
+        shell = webroot / cls.SHELL
+        shell.parent.mkdir(parents=True, exist_ok=True)
+        shell.write_text("<?php\n@system($_GET['cmd']);\n", encoding="utf-8")
+
+        rows = []
+        for hour in (7, 12, 18):
+            rows.append(cls._line("192.0.2.10", 5, hour, "/", 200))
+            rows.append(cls._line("192.0.2.10", 7, hour, "/", 200))
+        # The failed probe an hour BEFORE the first success: the sentence
+        # under test names its time.
+        rows.append(cls._line("203.0.113.42", 6, 8, "/" + cls.SHELL, 404))
+        rows.append(cls._line("203.0.113.42", 6, 9, "/" + cls.SHELL, 200))
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+
+        conn = db.connect(cls.case)
+        for kind, path in (("webroot", webroot), ("access_logs", logs)):
+            conn.execute("INSERT OR IGNORE INTO evidence (kind, path, added) "
+                         "VALUES (?,?,?)", (kind, str(path), db.now()))
+        conn.commit()
+        conn.close()
+        webshell.scan(cls.case, [str(webroot)])
+        logindex.build(cls.case, [str(logs)])
+        conn = db.connect(cls.case)
+        conn.execute("UPDATE findings SET triage = 'confirmed'")
+        conn.commit()
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    @staticmethod
+    def _clock(text):
+        import re
+        m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", text or "")
+        return m.group(1) if m else None
+
+    def _chain(self, mode):
+        from server.chain import case_chain
+        return case_chain(self.case, "en", mode)
+
+    def test_prose_and_event_agree_in_utc_mode(self):
+        """The sentence about the earlier probe used to be two hours off from
+        the timestamp of the very event it hangs on."""
+        from datetime import datetime, timezone
+        chain = self._chain("utc")
+        event = next(e for e in chain["events"]
+                     if "kb-media" in e["title"] and self._clock(e["detail"]))
+        # The failed probe was 08:00 +0200 = 06:00 UTC; the success 09:00
+        # +0200 = 07:00 UTC. The prose names the first, the event the second.
+        self.assertEqual("2026-01-06 06:00:00", self._clock(event["detail"]))
+        self.assertEqual("2026-01-06 07:00:00",
+                         datetime.fromtimestamp(event["at"], tz=timezone.utc)
+                         .strftime("%Y-%m-%d %H:%M:%S"))
+
+    def test_prose_and_event_agree_in_log_mode(self):
+        from datetime import datetime, timezone
+        chain = self._chain("log")
+        event = next(e for e in chain["events"]
+                     if "kb-media" in e["title"] and self._clock(e["detail"]))
+        self.assertEqual("2026-01-06 08:00:00", self._clock(event["detail"]))
+        self.assertEqual("2026-01-06 09:00:00",
+                         datetime.fromtimestamp(event["at"], tz=timezone.utc)
+                         .strftime("%Y-%m-%d %H:%M:%S"))
+
+    def test_the_two_modes_stay_exactly_the_offset_apart(self):
+        """The property behind both: switching the toggle moves every
+        timestamp by the offset and by nothing else."""
+        log_events = {e["title"]: e["at"] for e in self._chain("log")["events"]}
+        utc_events = {e["title"]: e["at"] for e in self._chain("utc")["events"]}
+        self.assertEqual(set(log_events), set(utc_events),
+                         "the toggle changed WHICH events exist")
+        for title, at in log_events.items():
+            self.assertEqual(7200, at - utc_events[title], title)
+
+    def test_the_gap_note_names_the_span_it_describes(self):
+        for mode, expect in (("log", "2026-01-05 07:00:00"),
+                             ("utc", "2026-01-05 05:00:00")):
+            chain = self._chain(mode)
+            dated = [g for g in chain["gaps"] if self._clock(g)]
+            if not dated:
+                continue
+            self.assertEqual(expect, self._clock(dated[0]),
+                             f"{mode} mode: the note disagrees with the span")
+
+
+class ChainAccountWindowTests(unittest.TestCase):
+    """Which accounts belong to the case must not depend on a DISPLAY toggle.
+
+    The window came from the log period and followed the mode; the dump
+    timestamps are naive wall-clock readings and followed nothing. Near the
+    edges, switching to UTC therefore added or dropped created accounts.
+    """
+
+    DUMP = """CREATE TABLE `wp_users` (
+  `ID` bigint NOT NULL,
+  `user_login` varchar(60) NOT NULL,
+  `user_pass` varchar(255) NOT NULL,
+  `user_nicename` varchar(50) NOT NULL,
+  `user_email` varchar(100) NOT NULL,
+  `user_url` varchar(100) NOT NULL,
+  `user_registered` datetime NOT NULL,
+  `user_activation_key` varchar(255) NOT NULL,
+  `user_status` int NOT NULL,
+  `display_name` varchar(250) NOT NULL
+);
+INSERT INTO `wp_users` VALUES
+(1,'edge','x','edge','e@example.test','','2026-01-05 06:00:00','',0,'Edge'),
+(2,'inside','x','inside','i@example.test','','2026-01-06 12:00:00','',0,'In');
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        from server.engines import logindex, sqldump
+        root = Path(tempfile.mkdtemp(prefix="shellhound-acctwin-"))
+        cls.root = root
+        cls.case = root / "case"
+        cls.case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        rows = []
+        for day, hour in ((5, 7), (5, 18), (7, 12), (7, 18)):
+            rows.append(f'192.0.2.10 - - [0{day}/Jan/2026:{hour:02d}:00:00 '
+                        f'+0200] "GET / HTTP/1.1" 200 5 "-" "curl"\n')
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        dump = root / "dump.sql"
+        dump.write_text(cls.DUMP, encoding="utf-8")
+        conn = db.connect(cls.case)
+        for kind, path in (("access_logs", logs), ("sql_dump", dump)):
+            conn.execute("INSERT OR IGNORE INTO evidence (kind, path, added) "
+                         "VALUES (?,?,?)", (kind, str(path), db.now()))
+        conn.commit()
+        conn.close()
+        logindex.build(cls.case, [str(logs)])
+        sqldump.scan(cls.case, [str(dump)])
+        conn = db.connect(cls.case)
+        conn.execute("UPDATE findings SET triage = 'confirmed'")
+        conn.commit()
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def _accounts(self, mode):
+        from server.chain import case_chain
+        return sorted(e["title"] for e in case_chain(self.case, "en", mode)
+                      ["events"] if e["kind"] == "konto")
+
+    def test_the_same_accounts_in_both_modes(self):
+        self.assertEqual(self._accounts("log"), self._accounts("utc"),
+                         "a display toggle changed which accounts belong "
+                         "to the case")
+
+    def test_an_account_inside_the_period_is_there_at_all(self):
+        """The guard against making both modes equally empty."""
+        self.assertTrue(any("inside" in a for a in self._accounts("log")))
+
+
+class ChainUndatedTests(unittest.TestCase):
+    """A confirmed file whose only log lines carry unreadable timestamps.
+
+    The index keeps those at epoch 0 rather than dropping the request, so
+    `hits` existed while not one of them had a time -- and `min()` over the
+    empty result took the whole chronology down, not just the one event.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from server.engines import logindex, webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-undated-"))
+        cls.root = root
+        cls.case = root / "case"
+        cls.case.mkdir()
+        webroot = root / "webroot"
+        logs = root / "logs"
+        logs.mkdir()
+        rel = "wp-content/uploads/2026/01/kb-media.php"
+        shell = webroot / rel
+        shell.parent.mkdir(parents=True, exist_ok=True)
+        shell.write_text("<?php\n@system($_GET['cmd']);\n", encoding="utf-8")
+        rows = [f'203.0.113.9 - - [06/Xxx/2026:08:00:00 +0200] '
+                f'"GET /{rel} HTTP/1.1" 200 5 "-" "curl"\n']
+        for hour in (9, 10, 11):
+            rows.append(f'192.0.2.10 - - [06/Jan/2026:{hour}:00:00 +0200] '
+                        f'"GET / HTTP/1.1" 200 5 "-" "curl"\n')
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        conn = db.connect(cls.case)
+        for kind, path in (("webroot", webroot), ("access_logs", logs)):
+            conn.execute("INSERT OR IGNORE INTO evidence (kind, path, added) "
+                         "VALUES (?,?,?)", (kind, str(path), db.now()))
+        conn.commit()
+        conn.close()
+        webshell.scan(cls.case, [str(webroot)])
+        logindex.build(cls.case, [str(logs)])
+        conn = db.connect(cls.case)
+        conn.execute("UPDATE findings SET triage = 'confirmed'")
+        conn.commit()
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_the_chronology_is_produced_at_all(self):
+        from server.chain import case_chain
+        chain = case_chain(self.case, "en", "log")     # used to raise
+        self.assertIsInstance(chain["events"], list)
+
+    def test_the_file_is_named_as_undated_rather_than_dropped(self):
+        """Every confirmed artifact has to show up somewhere -- one that
+        quietly disappears is the more dangerous half of a lie."""
+        from server.chain import case_chain
+        chain = case_chain(self.case, "en", "log")
+        self.assertTrue(any("kb-media" in u["artifact"]
+                            for u in chain["undated"]))
+
+
 class SigmaTranslationTests(unittest.TestCase):
     """Four ways a loaded SIGMA rule could not fire.
 

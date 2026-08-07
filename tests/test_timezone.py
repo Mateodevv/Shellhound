@@ -48,27 +48,44 @@ class OffsetLabelTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
-    """`iso` is handed an ALREADY LOCAL value -- see the module docstring."""
+    """`iso` is handed a value ALREADY IN THE MODE'S FRAME and only formats
+    and labels it.
+
+    It used to subtract the offset again in `utc` mode, on the assumption
+    that every value reaching it was local. That assumption was false:
+    `log_at` adds the offset in `log` mode and adds NOTHING in `utc` mode, so
+    a UTC value had the offset taken off a second time. The sentence then
+    disagreed by two hours with the event it was attached to -- and both read
+    perfectly.
+
+    Shifting now happens in exactly one place, `log_at`. These tests state
+    that boundary from both sides."""
 
     EPOCH = 1780000000          # 2026-05-28 20:26:40 UTC
     TZ = 7200                   # the log said +0200
 
     def test_log_mode_renders_what_it_was_given(self):
-        already_local = local(self.EPOCH, self.TZ)
         self.assertEqual("2026-05-28 22:26:40 UTC+02:00",
-                         iso(already_local, self.TZ, "log"))
+                         iso(local(self.EPOCH, self.TZ), self.TZ, "log"))
 
-    def test_utc_mode_takes_the_offset_back_off(self):
-        """The value arrives shifted. UTC mode must UNDO that, not add to
-        it -- adding twice is a two-hour error that reads perfectly."""
-        already_local = local(self.EPOCH, self.TZ)
+    def test_utc_mode_renders_what_it_was_given_too(self):
+        """A UTC value stays a UTC value. Subtracting the offset here was the
+        bug: `log_at` already decided not to add it."""
         self.assertEqual("2026-05-28 20:26:40 UTC",
-                         iso(already_local, self.TZ, "utc"))
+                         iso(self.EPOCH, self.TZ, "utc"))
+
+    def test_the_offset_is_applied_exactly_once(self):
+        """The property behind both tests above: whatever the mode, the
+        rendered clock reading equals the value handed in."""
+        for mode, value in (("log", local(self.EPOCH, self.TZ)),
+                            ("utc", self.EPOCH)):
+            rendered = iso(value, self.TZ, mode)
+            self.assertEqual(value, _seconds(rendered[:19]),
+                             f"{mode} mode shifted the value it was given")
 
     def test_the_two_modes_describe_the_same_instant(self):
-        already_local = local(self.EPOCH, self.TZ)
-        as_log = iso(already_local, self.TZ, "log")
-        as_utc = iso(already_local, self.TZ, "utc")
+        as_log = iso(local(self.EPOCH, self.TZ), self.TZ, "log")
+        as_utc = iso(self.EPOCH, self.TZ, "utc")
         self.assertNotEqual(as_log[:19], as_utc[:19])
         # 22:26 +02:00 and 20:26 UTC are the same moment.
         self.assertEqual(2 * 3600,

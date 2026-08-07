@@ -70,15 +70,19 @@ def iso(value, tz=0, mode="log"):
     A bare `2026-06-10 22:58:11` in a report is not a time, it is a time and
     a question.
 
-    `value` is ALREADY LOCAL -- it came through `local()` or `log_at()`, both
-    of which add the offset. So `log` mode renders it as it stands and only
-    names the zone, and `utc` mode takes the offset back off. Shifting twice
-    here would move every timestamp in the prose by an hour or two, which is
-    exactly the class of error nobody notices in a report."""
+    `value` IS ALREADY IN THE FRAME `mode` NAMES. Everything that reaches
+    here has come through `log_at()`, which adds the log's offset in `log`
+    mode and adds nothing in `utc` mode -- so this function only formats and
+    labels. It used to subtract the offset again in `utc` mode, on the
+    assumption that the value was always local; for values that were already
+    UTC that made the prose wrong by exactly the offset, while the event the
+    sentence hung on carried the right time. Two timestamps for one moment,
+    two hours apart, in one paragraph.
+
+    Shifting belongs in ONE place, and that place is `log_at`."""
     if not value:
         return "—"
-    shift = -int(tz or 0) if mode == "utc" else 0
-    stamp = datetime.fromtimestamp(int(value) + shift, tz=timezone.utc).strftime(
+    stamp = datetime.fromtimestamp(int(value), tz=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S")
     return f"{stamp} {'UTC' if mode == 'utc' else offset_label(tz)}"
 
@@ -152,6 +156,24 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
                       0 if tz_mode == "utc" else span_tz)
     if span_last is not None:
         span_last += off_logs
+
+    # THE WINDOW THAT DECIDES WHICH ACCOUNTS BELONG IS NOT THE ONE ON SCREEN.
+    # `span_first`/`span_last` follow the display mode, because that is what
+    # the reader sees. The account filter below compares them against dump
+    # timestamps, which are naive wall-clock readings and do not follow any
+    # mode -- so with the display window moving and the dump times standing
+    # still, switching to UTC added or dropped accounts near the edges. A
+    # display toggle decided whether a created account was part of the story.
+    #
+    # This window is the log period as a WALL CLOCK reading, always, which is
+    # the same thing the dump timestamps are. Comparing like with like.
+    window_first = local(overview.get("first_epoch"), span_tz)
+    if window_first is not None:
+        window_first += off_logs
+    window_last = local(overview.get("last_epoch"), span_tz)
+    if window_last is not None:
+        window_last += off_logs
+
     facts = logindex.chain_facts(
         case_dir,
         leaves=[os.path.basename(p) for p in files.values()],
@@ -202,8 +224,20 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
             continue
         tz = max((h["tz"] or 0) for h in hits)
         oks = [h["first_ok"] for h in hits if h["first_ok"]]
-        first_any = min(h["first_epoch"] for h in hits if h["first_epoch"])
-        last_any = max(h["last_epoch"] for h in hits if h["last_epoch"])
+        # A file can be requested by lines whose TIMESTAMP could not be read.
+        # The index keeps those at epoch 0 rather than throwing the request
+        # away, so `hits` can exist while not one of them carries a time --
+        # and `min()` over the empty result raised, taking the whole
+        # chronology with it, not just this one event.
+        firsts = [h["first_epoch"] for h in hits if h["first_epoch"]]
+        lasts = [h["last_epoch"] for h in hits if h["last_epoch"]]
+        if not firsts:
+            # Requested, but never at a time this case can state. It belongs
+            # in `undated` with the rest -- which is where it lands, because
+            # `add` is never called and the loop at the bottom catches it.
+            continue
+        first_any = min(firsts)
+        last_any = max(lasts) if lasts else first_any
         total = sum(h["hits"] for h in hits)
         ok_total = sum(h["ok_hits"] for h in hits)
         if oks:
@@ -262,12 +296,13 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
     # for that.
     for acc in accounts:
         at = dump_at(acc["registered"])
-        if at is None or span_first is None or not (span_first <= at <= span_last):
+        if at is None or window_first is None \
+                or not (window_first <= at <= window_last):
             continue
         detail = t(lang, "chain.account.detail",
                    table=acc["tbl"] or t(lang, "chain.account.userTable"))
         last = dump_at(acc["last_login"])
-        if last and span_first <= last <= span_last:
+        if last and window_first <= last <= window_last:
             detail += t(lang, "chain.account.lastLogin", at=iso(last, 0, tz_mode))
         title = t(lang, "chain.account.created", login=acc["login"])
         if acc["admin"]:
