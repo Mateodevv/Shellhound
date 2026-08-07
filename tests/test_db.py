@@ -6,6 +6,7 @@ connection used to write unconditionally, so a read-only request that
 arrived while an engine held the write lock died with "database is locked".
 It reproduced every time; it must never come back silently.
 """
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -144,6 +145,118 @@ class ConnectTests(unittest.TestCase):
             conn.commit()
             self.assertEqual(db.ioc_links(conn), [],
                              "a link to a deleted indicator must not survive")
+        finally:
+            conn.close()
+
+
+class RelativePathTests(unittest.TestCase):
+    """What a path indicator says, and what it must not say.
+
+    The value has to be what the WEB SERVER would call the file, because
+    that is the only spelling anyone receiving it can look for. Everything
+    above the evidence root -- including the root's own folder name -- is a
+    fact about the analyst's laptop.
+    """
+
+    def setUp(self):
+        self.case = Path(tempfile.mkdtemp(prefix="shellhound-relpath-"))
+        self.addCleanup(shutil.rmtree, self.case, True)
+        conn = db.connect(self.case)
+        try:
+            conn.execute(
+                "INSERT INTO evidence (kind, path, added) VALUES (?,?,?)",
+                ("webroot", r"D:\Work\case-42\joomla-webshells", db.now()))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _relative(self, path):
+        conn = db.connect(self.case)
+        try:
+            return db.case_relative_path(conn, path)
+        finally:
+            conn.close()
+
+    def test_the_evidence_folder_name_is_not_part_of_the_indicator(self):
+        self.assertEqual(
+            "images/x.phtml",
+            self._relative(r"D:\Work\case-42\joomla-webshells\images\x.phtml"))
+
+    def test_the_case_of_the_root_does_not_have_to_match(self):
+        """Registered with one spelling, walked with another -- Windows hands
+        both out for the same directory."""
+        self.assertEqual(
+            "images/x.phtml",
+            self._relative(r"d:/work/CASE-42/Joomla-Webshells/images/x.phtml"))
+
+    def test_a_path_below_no_root_is_handed_back_unchanged(self):
+        """Better an absolute path than an invented relative one."""
+        other = r"D:\Elsewhere\notes.txt"
+        self.assertEqual(other, self._relative(other))
+
+    def test_the_root_itself_is_named_by_its_own_folder(self):
+        self.assertEqual("joomla-webshells",
+                         self._relative(r"D:\Work\case-42\joomla-webshells"))
+
+    def test_the_more_specific_root_wins(self):
+        conn = db.connect(self.case)
+        try:
+            conn.execute(
+                "INSERT INTO evidence (kind, path, added) VALUES (?,?,?)",
+                ("webroot", r"D:\Work\case-42", db.now()))
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(
+            "images/x.phtml",
+            self._relative(r"D:\Work\case-42\joomla-webshells\images\x.phtml"))
+
+    def test_an_older_case_is_brought_along(self):
+        """A case collected before this changed carries
+        `joomla-webshells/images/x.phtml` -- no longer absolute, so the
+        migration that strips roots walks straight past it. It gets a second
+        pass, and the pass has to be idempotent and leave the edges alone."""
+        conn = db.connect(self.case)
+        try:
+            stale = db.add_ioc(conn, "joomla-webshells/images/x.phtml", "path",
+                               ["confirmed"])
+            digest = db.add_ioc(conn, "b" * 64, "hash", ["derived"])
+            db.link_iocs(conn, digest, stale, "hash-of")
+            conn.execute("UPDATE meta SET value = '3' "
+                         "WHERE key = 'schema_version'")
+            conn.commit()
+        finally:
+            conn.close()
+
+        for _ in range(2):
+            conn = db.connect(self.case)
+            try:
+                values = [r[0] for r in conn.execute(
+                    "SELECT value FROM iocs WHERE type = 'path'")]
+                self.assertEqual(["images/x.phtml"], values)
+                self.assertEqual(1, len(db.ioc_links(conn)))
+            finally:
+                conn.close()
+
+    def test_a_collision_leaves_the_older_entry_alone(self):
+        """Two spellings of one file, and the target already taken. Losing
+        the analyst's tags would be worse than carrying two rows."""
+        conn = db.connect(self.case)
+        try:
+            db.add_ioc(conn, "images/x.phtml", "path", ["analyst"])
+            db.add_ioc(conn, "joomla-webshells/images/x.phtml", "path",
+                       ["confirmed"])
+            conn.execute("UPDATE meta SET value = '3' "
+                         "WHERE key = 'schema_version'")
+            conn.commit()
+        finally:
+            conn.close()
+        conn = db.connect(self.case)
+        try:
+            values = sorted(r[0] for r in conn.execute(
+                "SELECT value FROM iocs WHERE type = 'path'"))
+            self.assertEqual(
+                ["images/x.phtml", "joomla-webshells/images/x.phtml"], values)
         finally:
             conn.close()
 

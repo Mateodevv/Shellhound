@@ -1743,7 +1743,7 @@ def create_app(config: Config) -> FastAPI:
             # database.
             box = {str(r["value"]).replace("\\", "/").rstrip("/").lower()
                    for r in db.rows(conn, "SELECT value FROM iocs WHERE type = 'path'")}
-            bases = db.evidence_bases(conn)
+            roots_abs = db.evidence_roots(conn)
             flagged = {str(r["artifact"]).replace("\\", "/").lower(): r
                        for r in db.rows(
                            conn, f"WITH art AS ({ART_SQL}) SELECT artifact, worst,"
@@ -1761,12 +1761,11 @@ def create_app(config: Config) -> FastAPI:
         dirs, files, truncated = _list_dir(target)
 
         def relative(p):
-            norm = p.replace("\\", "/").rstrip("/")
-            low = norm.lower()
-            for root, base in bases:
-                if low == root.lower() or low.startswith(root.lower() + "/"):
-                    return (norm[len(base) + 1:] if base else norm)
-            return norm
+            # ONE implementation, not a second one that drifts: this used to
+            # be a hand-copied twin of the rule in db.py, and the day that
+            # rule changed the browser went on marking `in_box` against the
+            # old spelling -- every flagged file silently unflagged.
+            return db.relative_to_evidence(roots_abs, p)
 
         def annotate(entry):
             key = entry["path"].replace("\\", "/").lower()

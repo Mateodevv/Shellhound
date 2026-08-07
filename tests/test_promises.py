@@ -207,13 +207,23 @@ class ExportedPathsTests(unittest.TestCase):
         Exports of an empty case contain no paths at all and pass every
         assertion in this class. So one shape is checked the other way round:
         the confirmed shell has to BE in the exports, under its
-        webroot-relative name, or the sweep is measuring nothing."""
+        webroot-relative name, or the sweep is measuring nothing.
+
+        The name is the one the WEB SERVER would use. This assertion used to
+        read `"WebRoot/" + shell_rel`, keeping the evidence directory in
+        front -- and that spelling is what a real case turned into
+        `joomla-webshells/images/x.phtml`, a directory nobody but the analyst
+        has. So the prefix is now asserted ABSENT as well."""
         evidence, app, slug = self._case(mixed_case=True)
         exports = every_export(app, slug)
-        relative = "WebRoot/" + evidence.shell_rel
+        relative = evidence.shell_rel
         for name in ("iocs.json (en/log)", "iocs.csv (en/log)"):
             self.assertIn(relative, exports[name],
                           f"{name} does not name the confirmed shell at all")
+            self.assertNotIn(evidence.webroot.name + "/" + relative,
+                             exports[name],
+                             f"{name} prefixes the indicator with the folder "
+                             f"the analyst happened to unpack into")
         self.assertIn(Path(evidence.shell_rel).name, exports["iocs.stix (en/log)"],
                       "the STIX bundle does not name the confirmed shell")
 
@@ -266,10 +276,27 @@ class ExportedPathsTests(unittest.TestCase):
                         Path(value).is_absolute() or ":" in value,
                         f"the collected indicator {value!r} is an absolute "
                         f"path on this machine")
-                    self.assertFalse(
-                        value.startswith(evidence.root.name + "/"),
-                        f"the collected indicator {value!r} starts in a "
-                        f"directory of the analyst's own making")
+                    # EVERY REGISTERED ROOT, not `evidence.root`. This
+                    # assertion named the CASE folder ("cases"), which no
+                    # relative path ever began with, so it passed while the
+                    # tool was writing `webroot/...` in front of every
+                    # indicator -- the exact thing it was written to catch.
+                    for folder in registered_folder_names(evidence.case_dir):
+                        self.assertFalse(
+                            value.lower().startswith(folder.lower() + "/"),
+                            f"the collected indicator {value!r} starts in "
+                            f"{folder!r}, a directory of the analyst's own "
+                            f"making")
+
+
+def registered_folder_names(case_dir):
+    """The folder name of every evidence root registered in the case."""
+    conn = db.connect(case_dir)
+    try:
+        return [Path(str(row["path"])).name
+                for row in db.rows(conn, "SELECT path FROM evidence")]
+    finally:
+        conn.close()
 
 
 # --- promise 2 --------------------------------------------------------------

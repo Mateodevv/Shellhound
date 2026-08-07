@@ -319,7 +319,9 @@ _ADDED_COLUMNS = {
 # The version of the case schema. BUMP IT when SCHEMA, _ADDED_COLUMNS or one
 # of the data corrections in _upgrade() changes -- that is how an existing
 # case database recognises that it has to be touched once.
-CASE_SCHEMA_VERSION = 3
+# 4: path indicators lose the evidence root's own folder name, so a
+#    collected `webroot/images/x.php` becomes `images/x.php`.
+CASE_SCHEMA_VERSION = 4
 
 
 def _stored_version(conn):
@@ -374,14 +376,27 @@ def _relativize_ioc_paths(conn):
     A case should not carry half absolute, half relative paths. Runs
     idempotently (an already relative path no longer matches any root) and
     steps around every conflict: if the target value already exists, the old
-    entry stays as it is -- losing data would be worse than two spellings."""
+    entry stays as it is -- losing data would be worse than two spellings.
+
+    TWO SPELLINGS TO UNDO, not one. Until the evidence root's own folder name
+    was dropped from the relative form, a case collected
+    `joomla-webshells/images/x.phtml` -- no longer absolute, so the loop
+    below walks straight past it. Those get the second pass."""
     try:
         rows = conn.execute(
             "SELECT id, value FROM iocs WHERE type = 'path'").fetchall()
     except Exception:
         return
+    stale = tuple(root.rsplit("/", 1)[-1].lower() + "/"
+                  for root in evidence_roots(conn) if "/" in root)
     for ioc_id, value in rows:
         relative = case_relative_path(conn, value)
+        if relative == value:
+            low = str(value).replace("\\", "/").lstrip("/").lower()
+            for prefix in stale:
+                if low.startswith(prefix):
+                    relative = str(value).replace("\\", "/")[len(prefix):]
+                    break
         if relative == value:
             continue
         exists = conn.execute("SELECT 1 FROM iocs WHERE value = ?",
@@ -475,39 +490,49 @@ def _norm(path):
     return str(path).replace("\\", "/").rstrip("/")
 
 
-def evidence_bases(conn):
-    """Per registered evidence root: (root, base).
+def evidence_roots(conn):
+    """Every registered evidence root, longest first.
 
-    The BASE is the folder ABOVE the root -- that way the root's own name
-    stays in the relative path (`webroot/images/shell.php`, not
-    `images/shell.php`). The folder name says which evidence this is about,
-    and with two webroots in the same case it is the difference."""
-    out = []
-    for row in conn.execute("SELECT path FROM evidence"):
-        root = _norm(row[0])
-        if not root:
-            continue
-        base = root.rsplit("/", 1)[0] if "/" in root else ""
-        out.append((root, base))
-    # Longest root first: if a webroot lies INSIDE another path, the more
-    # specific one wins.
-    return sorted(out, key=lambda p: -len(p[0]))
+    Longest first because a webroot may lie INSIDE another registered path,
+    and then the more specific one is the one that answers."""
+    roots = [_norm(row[0]) for row in conn.execute("SELECT path FROM evidence")]
+    return sorted((r for r in roots if r), key=len, reverse=True)
+
+
+def relative_to_evidence(roots, path):
+    """`images/shell.php` -- the path BELOW the evidence root, nothing above.
+
+    THE ROOT'S OWN FOLDER NAME GOES TOO. It used to stay in ("the folder name
+    says which evidence this is about, and with two webroots in the same case
+    it is the difference"), and on a real case that produced the indicator
+    `joomla-webshells/images/dlbjbz.phtml` -- where `joomla-webshells` is
+    what the ANALYST called a directory on their own machine. Handed to
+    anyone else that path matches nothing: the web server calls the file
+    `/images/dlbjbz.phtml`, and so does every other view in this tool. Two
+    answers to one question, and the one that leaves the machine was the
+    wrong one.
+
+    Telling two webroots apart is a real need and this was the wrong place
+    for it: an indicator has to be what the other side can look for. The
+    distinction survives in the SHA-256 beside it and in the edge between
+    them, which is where a difference between two files belongs.
+
+    Pure string work so the file browser can call it per entry without a
+    database. If no root matches, the value is handed back UNCHANGED -- an
+    absolute path is better than an invented relative one."""
+    norm = _norm(path)
+    low = norm.lower()
+    for root in roots:
+        if low == root.lower():
+            return norm.rsplit("/", 1)[-1]
+        if low.startswith(root.lower() + "/"):
+            return norm[len(root) + 1:]
+    return str(path)
 
 
 def case_relative_path(conn, path):
-    """`webroot/images/shell.php` instead of `D:/Work/copies/webroot/images/…`.
-
-    The absolute path describes where the COPY sits on the analyst's machine
-    -- a fact that helps nobody in a report and that is wrong on another
-    machine. What matters is where the file sat in the webroot. If no
-    evidence root matches, the value stays unchanged: better an absolute path
-    than an invented one."""
-    norm = _norm(path)
-    low = norm.lower()
-    for root, base in evidence_bases(conn):
-        if low == root.lower() or low.startswith(root.lower() + "/"):
-            return norm[len(base) + 1:] if base else norm
-    return str(path)
+    """`relative_to_evidence` for a single path, roots read from the case."""
+    return relative_to_evidence(evidence_roots(conn), path)
 
 
 def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
