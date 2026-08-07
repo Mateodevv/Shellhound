@@ -130,7 +130,14 @@ def scan(case_dir, workspace=None, ctx=None):
                 ok = client["ok_hits"] > 0
                 # The rule's own level applies only when something was
                 # answered. A wave that was refused is not the same finding.
-                severity = rule["severity"] if ok else db.SEV_LOW
+                #
+                # GATING LOWERS, IT NEVER RAISES. A rule declared
+                # `level: informational` already sits below LOW -- higher
+                # number, milder -- so forcing the refused case to LOW made
+                # "everything was blocked" more serious than "some got
+                # through", which is the statement backwards.
+                severity = (rule["severity"] if ok
+                            else max(rule["severity"], db.SEV_LOW))
                 db.upsert_finding(
                     conn, "logs", severity, rule["title"], "client",
                     client["ip"],

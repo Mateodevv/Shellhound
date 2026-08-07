@@ -231,6 +231,234 @@ class ChainRelativePathTests(unittest.TestCase):
         self.assertNotIn(str(self.ev.root).replace("\\", "\\\\"), text)
 
 
+class SqlDumpTests(unittest.TestCase):
+    """A dump is evidence. Rows that vanish and rows that double are both
+    statements about the database that are not true."""
+
+    DDL = ("CREATE TABLE `wp_options` (`id` int, `k` varchar(60), "
+           "`v` longtext);\n")
+
+    def _scan(self, text, name="dump.sql"):
+        import shutil
+        from server.engines import sqldump
+        root = Path(tempfile.mkdtemp(prefix="shellhound-sqlreg-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        path = root / name
+        path.write_text(text, encoding="utf-8")
+        db.connect(case).close()
+        sqldump.scan(case, [str(path)])
+        return case
+
+    def _tables(self, case):
+        conn = db.connect(case)
+        try:
+            return {r["name"]: r["rows"] for r in
+                    db.rows(conn, "SELECT name, rows FROM db_tables")}
+        finally:
+            conn.close()
+
+    def test_ddl_text_inside_a_value_is_not_a_create_statement(self):
+        """A wp_options row holding a schema backup used to swallow the whole
+        INSERT: its rows never reached the inventory or the scanner, and a
+        table that exists nowhere in the database appeared instead."""
+        case = self._scan(self.DDL + (
+            "INSERT INTO `wp_options` VALUES "
+            "(1,'backup','CREATE TABLE `x` (`c` int)'),(2,'other','plain');\n"))
+        self.assertEqual({"wp_options": 2}, self._tables(case))
+
+    def test_a_dump_that_starts_with_comments_still_parses(self):
+        """The guard against over-tightening the anchor: a real mysqldump
+        opens with `-- MySQL dump ...` before the first CREATE."""
+        case = self._scan("-- MySQL dump 10.13\n-- Host: localhost\n--\n\n"
+                          + self.DDL + "INSERT INTO `wp_options` VALUES "
+                                       "(1,'a','b');\n")
+        self.assertEqual({"wp_options": 1}, self._tables(case))
+
+    def test_a_prefix_placeholder_in_data_is_not_a_schema_file(self):
+        """`#__users` marks a shipped SCHEMA by its table NAME. Looking for
+        it anywhere in the text filed a real export as a template as soon as
+        one row mentioned it -- which CMS documentation tables do."""
+        case = self._scan(self.DDL + (
+            "INSERT INTO `wp_options` VALUES "
+            "(1,'doc','the table is called #__content in templates');\n"))
+        conn = db.connect(case)
+        try:
+            self.assertEqual("export",
+                             db.one(conn, "SELECT kind FROM db_dumps")["kind"])
+        finally:
+            conn.close()
+
+    def test_an_escaped_backslash_stays_a_backslash(self):
+        """In a dump `\\\\` is ONE literal backslash, so 'C:\\\\new' means
+        C:\\new -- backslash, then the letter n. A chain of replaces turned it
+        into a line break."""
+        from server.engines.sqldump import _decode
+        self.assertEqual("C:\\new", _decode(r"'C:\\new'"))
+        self.assertEqual("a\nb", _decode(r"'a\nb'"))
+        self.assertEqual("a\\", _decode(r"'a\\'"))
+        self.assertEqual("it's", _decode(r"'it\'s'"))
+        self.assertEqual("it's", _decode("'it''s'"))
+
+    def test_rescanning_a_dump_does_not_double_its_accounts(self):
+        """With a second dump in the case the rowid is not reused, so the old
+        children were never deleted and the chronology -- which does not join
+        db_dumps -- read the same account twice."""
+        import shutil
+        from server.engines import sqldump
+        users = ("CREATE TABLE `wp_users` (`ID` bigint, `user_login` varchar(60),"
+                 " `user_pass` varchar(255), `user_nicename` varchar(50),"
+                 " `user_email` varchar(100), `user_url` varchar(100),"
+                 " `user_registered` datetime, `user_activation_key` varchar(255),"
+                 " `user_status` int, `display_name` varchar(250));\n")
+        root = Path(tempfile.mkdtemp(prefix="shellhound-sqlre-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        db.connect(case).close()
+        paths = []
+        for who in ("alice", "bob"):
+            path = root / f"{who}.sql"
+            path.write_text(users + (
+                f"INSERT INTO `wp_users` VALUES (1,'{who}','x','{who}',"
+                f"'{who}@example.test','','2026-01-08 03:17:00','',0,'{who}');\n"),
+                encoding="utf-8")
+            paths.append(path)
+            sqldump.scan(case, [str(path)])
+        sqldump.scan(case, [str(paths[0])])          # the re-scan
+        conn = db.connect(case)
+        try:
+            logins = sorted(r["login"] for r in
+                            db.rows(conn, "SELECT login FROM db_accounts"))
+            orphans = db.one(conn, "SELECT count(*) c FROM db_accounts a "
+                                   "LEFT JOIN db_dumps d ON d.id = a.dump_id "
+                                   "WHERE d.id IS NULL")["c"]
+        finally:
+            conn.close()
+        self.assertEqual(["alice", "bob"], logins)
+        self.assertEqual(0, orphans)
+
+    def test_a_finding_names_every_dump_it_was_seen_in(self):
+        """Two dumps sharing a table, a row number and a rule are ONE finding
+        -- the fingerprint deliberately stays source|rule|artifact|line, since
+        widening it would orphan every decision already made. The evidence
+        therefore has to name both, or the second host silently overwrites the
+        first."""
+        import shutil
+        from server.engines import sqldump
+        body = ("CREATE TABLE `wp_posts` (`ID` bigint, `post_content` longtext);\n"
+                "INSERT INTO `wp_posts` VALUES "
+                "(1,'<iframe src=\"//evil.test/t.js\" width=\"0\"></iframe>');\n")
+        root = Path(tempfile.mkdtemp(prefix="shellhound-sqlfp-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        db.connect(case).close()
+        for who in ("site-a", "site-b"):
+            path = root / f"{who}.sql"
+            path.write_text(body, encoding="utf-8")
+            sqldump.scan(case, [str(path)])
+        conn = db.connect(case)
+        try:
+            rows = db.rows(conn, "SELECT evidence FROM findings "
+                                 "WHERE source = 'sqldb'")
+        finally:
+            conn.close()
+        self.assertEqual(1, len(rows))
+        self.assertIn("site-a.sql", rows[0]["evidence"])
+        self.assertIn("site-b.sql", rows[0]["evidence"])
+
+
+class EngineHonestyTests(unittest.TestCase):
+    """Smaller engine claims that each made the tool say something false."""
+
+    def test_a_shouting_php_tag_in_an_image_is_found(self):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-img-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        for tag in (b"<?php", b"<?PHP", b"<?Php"):
+            path = root / "x.png"
+            path.write_bytes(b"\x89PNG\r\n\x1a\n" + tag + b" echo 1; ?>\n")
+            findings, _skip, _inert = webshell.scan_file(str(path))
+            self.assertTrue([f for f in findings
+                             if f[0] == "webshell.php_in_image"],
+                            f"{tag!r} was not recognised as PHP")
+
+    def test_editing_a_pattern_into_a_duplicate_is_refused(self):
+        """add() refuses a copy because it would run twice and be reported
+        twice; editing an entry INTO that copy has the same effect."""
+        import shutil
+        from server import patterns
+        root = Path(tempfile.mkdtemp(prefix="shellhound-patreg-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        ws = root / "ws"
+        ws.mkdir()
+        patterns.add(ws, ["*com_jce*"], name="JCE", match="any")
+        other = patterns.add(ws, ["*com_fabrik*"], name="Fabrik", match="any")
+        with self.assertRaises(patterns.PatternError):
+            patterns.update(ws, other["id"], patterns_in=["*com_jce*"])
+
+    def test_saving_a_pattern_unchanged_is_still_allowed(self):
+        """The guard against a duplicate check that refuses every edit."""
+        import shutil
+        from server import patterns
+        root = Path(tempfile.mkdtemp(prefix="shellhound-patreg2-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        ws = root / "ws"
+        ws.mkdir()
+        entry = patterns.add(ws, ["*com_jce*"], name="JCE", match="any")
+        patterns.update(ws, entry["id"], name="JCE editor RCE")
+        self.assertEqual("JCE editor RCE", patterns.load(ws)[0]["name"])
+
+    def test_the_identical_count_is_never_negative(self):
+        """`modified` is produced in two places and only one of them came out
+        of the same-size set; subtracting all of them took off rows that had
+        never been added."""
+        import shutil
+        from server.engines import webrootdiff
+
+        class Ctx:
+            def __init__(self, case_dir):
+                self.case_dir = case_dir
+
+            def cancelled(self):
+                return False
+
+            def progress(self, *a, **k):
+                pass
+
+        root = Path(tempfile.mkdtemp(prefix="shellhound-diffreg-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        live = root / "webroot"
+        ref = root / "reference"
+        live.mkdir()
+        ref.mkdir()
+        (live / "same.php").write_text("AAAA", encoding="utf-8")
+        (ref / "same.php").write_text("BBBB", encoding="utf-8")
+        for i in range(3):
+            (live / f"big{i}.php").write_text("A" * (10 + i), encoding="utf-8")
+            (ref / f"big{i}.php").write_text("B" * (99 + i), encoding="utf-8")
+        for i in range(2):
+            (live / f"ok{i}.php").write_text("SAME", encoding="utf-8")
+            (ref / f"ok{i}.php").write_text("SAME", encoding="utf-8")
+        conn = db.connect(case)
+        for kind, path in (("webroot", live), ("webroot_reference", ref)):
+            conn.execute("INSERT INTO evidence (kind, path, added) "
+                         "VALUES (?,?,?)", (kind, str(path), db.now()))
+        rows = db.rows(conn, "SELECT id, kind FROM evidence")
+        conn.commit()
+        conn.close()
+        ids = {r["kind"]: r["id"] for r in rows}
+        out = webrootdiff.run(Ctx(case), ids["webroot"], str(live),
+                              ids["webroot_reference"], str(ref))
+        self.assertEqual(2, out["identical"])
+        self.assertEqual(4, out["modified"])
+
+
 class UriAttributionTests(unittest.TestCase):
     """Which requests belong to which file.
 
