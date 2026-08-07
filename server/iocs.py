@@ -158,11 +158,23 @@ def to_json(iocs, case_name="", links=(), chain=None):
     # `gaps` belongs to it -- what the case does NOT prove is part of the
     # report.
     if chain is not None:
+        # WEBROOT-RELATIVE, ALWAYS. The IOC values themselves have been
+        # relativised since the box existed; the chronology was added later
+        # and carried `artifact` straight through, which put paths like
+        # `C:\Cases\2026-05\webroot\...\shell.php` into a file meant to be
+        # handed to somebody else. The absolute path is an identity for this
+        # machine's interface and has no business in an export.
+        def outward(row):
+            out_row = {k: v for k, v in row.items() if k != "artifact_rel"}
+            if row.get("artifact_rel"):
+                out_row["artifact"] = row["artifact_rel"]
+            return out_row
+
         out["chain"] = {
             "span": chain["span"],
-            "events": chain["events"],
+            "events": [outward(e) for e in chain["events"]],
             "gaps": chain["gaps"],
-            "undated": chain["undated"],
+            "undated": [outward(u) for u in chain["undated"]],
             "clock_offsets": chain.get("offsets", {}),
             "note": "Times are naive local times of the respective source "
                     "(log server resp. database server), encoded as Unix "
