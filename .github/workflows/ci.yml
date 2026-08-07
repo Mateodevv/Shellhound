@@ -26,6 +26,14 @@ jobs:
       - name: oxlint
         run: npx oxlint src --deny-warnings
         working-directory: web
+      # Thirteen of the fifty-five bugs the hunt confirmed were in web/src,
+      # which had no test runner at all. A suite that does not run here is a
+      # suite that rots, and these guard state machines -- a note filled from
+      # the wrong object, a verdict left over from the previous artifact --
+      # which no amount of type checking can see.
+      - name: Tests
+        run: npm test -- --run
+        working-directory: web
       - name: Build
         run: npm run build
         working-directory: web
