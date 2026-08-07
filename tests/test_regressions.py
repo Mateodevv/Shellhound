@@ -370,6 +370,110 @@ class SqlDumpTests(unittest.TestCase):
         self.assertIn("site-b.sql", rows[0]["evidence"])
 
 
+class BruteForceEvidenceTests(unittest.TestCase):
+    """What a log can and cannot prove about a login.
+
+    Both halves of this were wrong on real traffic, and both accused somebody.
+
+    A REDIRECT IS NOT A SUCCESS. Joomla answers every login POST with a 303 --
+    plain POST-Redirect-GET -- whether the credentials were right or wrong. On
+    a real case a client whose 121 attempts ALL failed was reported at HIGH as
+    a break-in, and the 100 % redirect rate that proves the opposite was the
+    very thing that triggered it.
+
+    AND A POST TO THE BACKEND IS NOT A LOGIN ATTEMPT. `/administrator/index.php`
+    is the URL of Joomla's whole admin application: saving an article,
+    reordering a menu, running a backup. The site's own administrator was
+    credited with 127 login attempts -- 8 real, 119 article edits and backup
+    jobs -- and reported as an intruder.
+
+    What an unauthenticated client cannot obtain is a 2xx from the backend
+    with a component named. That, after a flood, is worth saying.
+    """
+
+    @staticmethod
+    def _line(ip, when, uri, status, method="GET"):
+        import time
+        stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0200", time.gmtime(when))
+        return (f'{ip} - - [{stamp}] "{method} {uri} HTTP/1.1" {status} 512 '
+                f'"-" "Mozilla/5.0"\n')
+
+    def _actors(self, rows):
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-bf-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case = root / "case"
+        case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        conn = logindex.open_readonly(case)
+        try:
+            return {r["ip"]: dict(r) for r in conn.execute(
+                """SELECT a.ip, a.login_posts, a.admin_ok,
+                          (SELECT count(*) FROM alerts al
+                           WHERE al.ip_id = a.ip_id AND al.kind = 'login_success')
+                          AS success,
+                          (SELECT count(*) FROM alerts al
+                           WHERE al.ip_id = a.ip_id AND al.kind = 'login_flood')
+                          AS flood
+                   FROM actors a""")}
+        finally:
+            conn.close()
+
+    LOGIN = "/index.php/component/users/?task=user.login"
+    BACKEND = "/administrator/index.php?option=com_content&view=articles"
+
+    def test_a_flood_answered_only_with_redirects_is_not_a_break_in(self):
+        rows = [self._line("203.0.113.5", 1780000000 + i * 60, self.LOGIN,
+                           303, "POST") for i in range(60)]
+        actors = self._actors(rows)
+        self.assertEqual(1, actors["203.0.113.5"]["flood"],
+                         "the flood itself must still be reported")
+        self.assertEqual(0, actors["203.0.113.5"]["success"],
+                         "121 failed attempts were called a successful login")
+
+    def test_a_flood_followed_by_the_backend_is_a_break_in(self):
+        """The guard against silencing the rule altogether: this is the shape
+        of the one real intrusion in the case material."""
+        rows = [self._line("203.0.113.6", 1780000000 + i * 60, self.LOGIN,
+                           303, "POST") for i in range(60)]
+        rows += [self._line("203.0.113.6", 1780004000 + i * 60, self.BACKEND,
+                            200) for i in range(5)]
+        actors = self._actors(rows)
+        self.assertEqual(1, actors["203.0.113.6"]["success"])
+        self.assertEqual(5, actors["203.0.113.6"]["admin_ok"])
+
+    def test_working_in_the_backend_is_not_attempting_to_log_in(self):
+        """An administrator saving fifty articles. Every save is a POST to
+        the admin URL answered with a redirect -- the exact shape the old
+        rule read as a brute-force flood followed by a break-in."""
+        rows = []
+        for i in range(50):
+            rows.append(self._line(
+                "192.0.2.10", 1780000000 + i * 120,
+                f"/administrator/index.php?option=com_content&layout=edit&id={i}",
+                303, "POST"))
+            rows.append(self._line("192.0.2.10", 1780000060 + i * 120,
+                                   self.BACKEND, 200))
+        actors = self._actors(rows)
+        self.assertEqual(0, actors["192.0.2.10"]["login_posts"],
+                         "article saves were counted as login attempts")
+        self.assertEqual(0, actors["192.0.2.10"]["flood"])
+        self.assertEqual(0, actors["192.0.2.10"]["success"])
+
+    def test_the_bare_backend_url_is_still_a_login_endpoint(self):
+        """The other direction: a real backend login carries no component,
+        and dropping it would blind the rule to admin brute force."""
+        rows = [self._line("203.0.113.7", 1780000000 + i * 60,
+                           "/administrator/index.php", 200, "POST")
+                for i in range(40)]
+        self.assertEqual(40, self._actors(rows)["203.0.113.7"]["login_posts"])
+
+
 class JoomlaGenerationTests(unittest.TestCase):
     """Joomla answers "is this an administrator?" in two different places,
     and only one of them was ever read.

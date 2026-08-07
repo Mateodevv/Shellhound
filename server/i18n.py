@@ -119,6 +119,16 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "en": "without a measured point in time",
         "de": "ohne gemessenen Zeitpunkt",
     },
+    # NOT "no measured time". These artifacts HAVE one; the chronology stops
+    # before it. Filing them under the sentences above told an analyst that
+    # nine confirmed webshells were never requested while the log held
+    # ninety-one successful retrievals of them.
+    "chain.beyondCap": {
+        "en": "measured, but later than the {n} events shown here — the "
+              "chronology is cut, not the evidence",
+        "de": "gemessen, aber später als die {n} hier gezeigten Ereignisse — "
+              "abgeschnitten ist die Chronologie, nicht der Beweis",
+    },
 
     # --- chronology: what the case does NOT prove ---------------------
     "chain.gap.noConfirmed": {
