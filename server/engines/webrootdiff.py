@@ -81,7 +81,11 @@ def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
         return {"cancelled": True}
 
     rows = []          # (status, path, size, ref_size)
-    counts = {"extra": 0, "missing": 0, "modified": 0, "too_big": 0}
+    counts = {"extra": 0, "missing": 0, "modified": 0, "too_big": 0,
+              # Of the modified ones, how many came out of the
+              # same-size set -- the only ones `identical` may
+              # be reduced by.
+              "modified_same_size": 0}
     truncated = False
 
     def keep(status, path, size, ref_size):
@@ -117,6 +121,7 @@ def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
         b = _sha256(os.path.join(reference_path, rel))
         if a is None or b is None or a != b:
             keep("modified", rel, left[rel], right[rel])
+            counts["modified_same_size"] += 1
 
     ctx.progress(0.97, "Storing result…")
     conn = db.connect(ctx.case_dir)
@@ -134,7 +139,15 @@ def run(ctx, webroot_id, webroot_path, reference_id, reference_path):
     finally:
         conn.close()
 
+    # COUNTED, NOT SUBTRACTED. `modified` is produced in two places -- once
+    # for files whose SIZE differs, which were never in `same_size`, and once
+    # after hashing files that were. Subtracting all of them from
+    # len(same_size) therefore took off rows that had never been added, and
+    # with more size-differing files than same-size ones the count went
+    # negative. It also read from `rows`, which is capped, while len(same_size)
+    # is not.
+    identical = len(same_size) - counts["modified_same_size"] - counts["too_big"]
     return {"files_webroot": len(left), "files_reference": len(right),
-            "identical": len(same_size) - sum(
-                1 for s, *_ in rows if s in ("modified", "too_big")),
-            **counts, "truncated": truncated}
+            "identical": max(0, identical),
+            **{k: v for k, v in counts.items() if k != "modified_same_size"},
+            "truncated": truncated}

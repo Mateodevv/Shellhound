@@ -25,9 +25,16 @@ INSERT_RE = re.compile(
     r"INSERT\s+(?:IGNORE\s+)?INTO\s+`?(?P<table>[A-Za-z0-9_$#]+)`?\s*"
     r"(?:\((?P<cols>[^)]*)\))?\s+VALUES",
     re.IGNORECASE)
+# ANCHORED AT THE START OF THE STATEMENT. Unanchored it also found the words
+# inside a VALUE -- a wp_options row holding a schema backup, a post about SQL,
+# an attacker staging DDL -- and the whole INSERT was then read as a CREATE:
+# its rows vanished from the inventory without ever being scanned, and a table
+# that exists nowhere in the database appeared instead.
 CREATE_RE = re.compile(
-    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(?P<table>[A-Za-z0-9_$#]+)`?\s*\(",
-    re.IGNORECASE)
+    r"^(?:\s*(?:--[^\n]*\n|\#[^\n]*\n|/\*.*?\*/))*\s*"
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"`?(?P<table>[A-Za-z0-9_$#]+)`?\s*\(",
+    re.IGNORECASE | re.DOTALL)
 _COL_RE = re.compile(r"^\s*`(?P<name>[^`]+)`\s+(?P<type>[A-Za-z]+)")
 _NOT_A_COLUMN = re.compile(
     r"^\s*(PRIMARY\s+KEY|UNIQUE|KEY|INDEX|FULLTEXT|SPATIAL|CONSTRAINT|FOREIGN\s+KEY|CHECK)\b",
@@ -269,11 +276,41 @@ def _decode(token):
     if t.upper() == "NULL" or t == "":
         return None
     if len(t) >= 2 and t[0] == "'" and t[-1] == "'":
-        inner = t[1:-1]
-        return (inner.replace("\\'", "'").replace("''", "'").replace('\\"', '"')
-                     .replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
-                     .replace("\\\\", "\\"))
+        return _unescape(t[1:-1])
     return t
+
+
+_SQL_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "b": "\b",
+                "Z": "\x1a"}
+
+
+def _unescape(inner):
+    """MySQL's backslash escapes, read LEFT TO RIGHT.
+
+    A chain of `.replace()` calls cannot do this. In a dump `\\\\` is ONE
+    literal backslash, so `'C:\\\\new'` means `C:\\new` -- backslash, then the
+    letter n. Replacing the `\\n` sequence first consumed the second backslash
+    and produced a line break before the `\\\\` rule ever looked at it, and the
+    value in the report was then not the value in the database.
+
+    One pass, each escape decided once, so no rule can eat another's input."""
+    out, i = [], 0
+    while i < len(inner):
+        char = inner[i]
+        if char == "\\" and i + 1 < len(inner):
+            nxt = inner[i + 1]
+            # An unknown escape is the character itself -- that is what MySQL
+            # does, and inventing a meaning for it would be worse.
+            out.append(_SQL_ESCAPES.get(nxt, nxt))
+            i += 2
+            continue
+        if char == "'" and i + 1 < len(inner) and inner[i + 1] == "'":
+            out.append("'")
+            i += 2
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
 
 
 def iter_statements(fh, chunk_size=_STREAM_CHUNK):
@@ -596,6 +633,26 @@ _Account = namedtuple(
     "cms table uid login email registered hash_type admin last_login blocked sessions")
 
 
+def _with_source(conn, rule, table, row_no, evidence, dump_name):
+    """`evidence`, with every dump this finding has been seen in named.
+
+    Two dumps holding the same table, the same row number and the same rule
+    produce ONE finding -- the fingerprint is source|rule|artifact|line, and
+    widening it would orphan every triage decision already made. Without this
+    the second dump silently overwrote the first one's evidence and the case
+    reported one compromised host where there were two.
+    """
+    tag = f"dump: {dump_name}"
+    fp = db.fingerprint("sqldb", rule, table, row_no)
+    row = db.one(conn, "SELECT evidence FROM findings WHERE fingerprint = ?",
+                 (fp,))
+    seen = [part for part in str(row["evidence"] if row else "").split(" · ")
+            if part.startswith("dump: ")]
+    if tag not in seen:
+        seen.append(tag)
+    return (evidence + " · " + ", ".join(seen))[:400]
+
+
 def scan(case_dir, targets, ctx=None, workspace=None):
     """Analyze every dump under `targets`; write findings, accounts, table
     inventory and dump metadata into case.db. Returns a stats dict."""
@@ -634,6 +691,19 @@ def scan(case_dir, targets, ctx=None, workspace=None):
 
             import json as _json
             cms_label = ", ".join(sorted(result["cms"])) or ""
+            # THE OLD ROWS BELONG TO THE OLD ID. Deleting the children by the
+            # id the INSERT has just handed out misses them entirely -- it
+            # only appeared to work because SQLite reuses the rowid when the
+            # deleted row was the last one. With a second dump in the case the
+            # id is not reused, the old accounts stay behind orphaned, and the
+            # chronology -- which does not join db_dumps -- then read the same
+            # account twice.
+            for old in conn.execute("SELECT id FROM db_dumps WHERE path = ?",
+                                    (abs_path,)).fetchall():
+                conn.execute("DELETE FROM db_tables WHERE dump_id = ?",
+                             (old["id"],))
+                conn.execute("DELETE FROM db_accounts WHERE dump_id = ?",
+                             (old["id"],))
             conn.execute("DELETE FROM db_dumps WHERE path = ?", (abs_path,))
             cur = conn.execute(
                 "INSERT INTO db_dumps (path, meta, statements, size, cms, kind) "
@@ -641,8 +711,6 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 (abs_path, _json.dumps(result["meta"]), result["statements"],
                  size, cms_label, result["kind"]))
             dump_id = cur.lastrowid
-            conn.execute("DELETE FROM db_tables WHERE dump_id = ?", (dump_id,))
-            conn.execute("DELETE FROM db_accounts WHERE dump_id = ?", (dump_id,))
             for name, t in sorted(result["tables"].items()):
                 conn.execute(
                     "INSERT INTO db_tables (dump_id, name, columns, rows, bytes,"
@@ -665,8 +733,20 @@ def scan(case_dir, targets, ctx=None, workspace=None):
             for rid, sev, rule, table, row_no, evidence in result["findings"]:
                 if rid in off:
                     continue
+                # WHICH DUMP THIS CAME OUT OF. The fingerprint is
+                # source|rule|artifact|line and deliberately stays that way --
+                # widening it would orphan every decision an analyst has
+                # already made. The consequence is that the same table, row
+                # and rule in two dumps is ONE finding, so the evidence has to
+                # name every dump it was seen in; otherwise the second host
+                # silently overwrites the first and the case reports one
+                # compromise where there were two.
                 db.upsert_finding(conn, "sqldb", sev, rule, "table", table,
-                                  line=row_no, evidence=evidence, rule_id=rid)
+                                  line=row_no,
+                                  evidence=_with_source(
+                                      conn, rule, table, row_no, evidence,
+                                      os.path.basename(abs_path)),
+                                  rule_id=rid)
                 stats["findings"] += 1
             if result["kind"] == "schema":
                 stats["schema_files"] += 1
@@ -708,8 +788,16 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                 ctx.progress(0.02 + frac * 0.93,
                              f"{name}: {statements:,} statements, "
                              f"{sum(t['rows'] for t in inv.values()):,} rows")
-            if not placeholder_seen and _PREFIX_PLACEHOLDER in stmt:
-                placeholder_seen = True
+            # The placeholder marks a SHIPPED SCHEMA, where table names read
+            # `#__users` because the installer fills the prefix in later. It
+            # is a statement about the NAME -- looking for it anywhere in the
+            # text filed a real export as a template as soon as one row
+            # happened to mention `#__content`, which any CMS documentation
+            # table does.
+            if not placeholder_seen:
+                named = CREATE_RE.search(stmt) or INSERT_RE.search(stmt)
+                if named and _PREFIX_PLACEHOLDER in named.group("table"):
+                    placeholder_seen = True
             created = parse_create(stmt)
             if created:
                 tname, cols = created

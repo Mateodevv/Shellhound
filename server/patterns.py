@@ -290,6 +290,16 @@ def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
             entry["patterns"] = _validate(patterns_in)
         if match is not None:
             entry["match"] = _mode(match)
+        # THE SAME CHECK add() MAKES. It refuses a copy of something already
+        # in the library because the pattern would then run twice and be
+        # reported twice -- and editing an entry into that copy has exactly
+        # the same effect. Checked against BOTH halves and against every
+        # OTHER entry, so saving an unchanged pattern stays allowed.
+        sig = _signature(entry)
+        for other in library(workspace, include_disabled=True):
+            if other["id"] != pattern_id and _signature(other) == sig:
+                raise PatternError("This pattern is already in the library.",
+                                   "err.patternKnown")
         if name is not None:
             entry["name"] = str(name).strip()
         if cve is not None:

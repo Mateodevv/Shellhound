@@ -188,7 +188,10 @@ def scan_file(file_path):
         return findings, f"read error: {e}", None
 
     if is_image:
-        if b"<?php" in raw or b"<?=" in raw:
+        # `<?PHP` and `<?Php` open PHP just as `<?php` does -- the language
+        # does not care about the case and neither may the check. A shell
+        # hidden in an image only had to shout to get past it.
+        if b"<?php" in raw.lower() or b"<?=" in raw:
             findings.append(("webshell.php_in_image", 0,
                              "PHP code hidden inside image file", None,
                              f"'<?php' tag found in {ext} file"))
