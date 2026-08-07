@@ -140,6 +140,29 @@ def _cms_score(directory, entries):
     return best
 
 
+def _collect_dumps(here, filenames, out, lang):
+    """Offer every database export in this directory.
+
+    Its own function because the CMS branch needs it too: a dump inside a
+    webroot is the normal case after a compromise, and that branch stops the
+    walk as soon as it recognises a CMS."""
+    for name in filenames:
+        if not name.lower().endswith(DUMP_SUFFIXES):
+            continue
+        path = here / name
+        ok, why = _looks_like_dump(path, lang)
+        if not ok:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        out["candidates"]["sql_dump"].append({
+            "path": str(path), "score": size,
+            "why": f"{size:,} bytes — {why}", "kind": "dump",
+        })
+
+
 def scan(folder, lang="en"):
     """{"candidates": {kind: [...]}, "scanned": n, "truncated": bool, ...}"""
     root = Path(str(folder or "")).expanduser()
@@ -185,6 +208,20 @@ def scan(folder, lang="en"):
                         + (" · " + t(lang, "detect.phpHere", n=php) if php else "")),
                 "kind": cms,
             })
+            # A DUMP INSIDE A WEBROOT IS THE NORMAL CASE AFTER A COMPROMISE,
+            # and this branch used to make it invisible: recognising the CMS
+            # cleared `dirnames` and jumped straight to the next directory,
+            # skipping the dump loop for this one and everything below it. On
+            # a real case a 31 MB export of the whole database sat in the
+            # served document root under a random-looking name -- publicly
+            # downloadable, attacker-made -- and the guided flow offered it
+            # nowhere, so the Database view stayed empty and the planted
+            # administrator account was never surfaced.
+            #
+            # Walking below a recognised webroot is still not worth it: a CMS
+            # has thousands of directories and none of them is a second
+            # webroot. This directory's own files are another matter.
+            _collect_dumps(here, filenames, out, lang)
             dirnames[:] = []
             continue
 
@@ -203,22 +240,7 @@ def scan(folder, lang="en"):
                                   "sampled": sampled, "size": size,
                                   "example": example}
 
-        for name in filenames:
-            low = name.lower()
-            if not low.endswith(DUMP_SUFFIXES):
-                continue
-            path = here / name
-            ok, why = _looks_like_dump(path, lang)
-            if not ok:
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                size = 0
-            out["candidates"]["sql_dump"].append({
-                "path": str(path), "score": size,
-                "why": f"{size:,} bytes — {why}", "kind": "dump",
-            })
+        _collect_dumps(here, filenames, out, lang)
 
     # Fold nested log directories into their topmost log-only parent.
     changed = True

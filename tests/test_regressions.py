@@ -1424,5 +1424,54 @@ class SigmaTranslationTests(unittest.TestCase):
                 self.sigma.compile_rule(self._rule(detection))
 
 
+class DetectOfferTests(unittest.TestCase):
+    """The guided scan proposes what is in the folder -- or used to skip it.
+
+    Recognising a CMS cleared the walk list and jumped to the next directory
+    to avoid descending through thousands of shipped files. It jumped over
+    the dump loop as well, so a database export lying IN the webroot was
+    offered nowhere. On a real case that export was 31 MB, publicly
+    downloadable, and held the account the intruder had added: the exact
+    file the Database view exists for, and the guided flow never named it.
+    """
+
+    def _webroot(self, *files):
+        import shutil
+        from server.engines import detect
+        root = Path(tempfile.mkdtemp(prefix="shellhound-detect-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "administrator").mkdir()
+        (root / "templates").mkdir()
+        (root / "media" / "system").mkdir(parents=True)
+        (root / "configuration.php").write_text("<?php\n", encoding="utf-8")
+        for name in files:
+            (root / name).write_text(
+                "-- MySQL dump 10.13\n"
+                "CREATE TABLE `x` (`a` int);\nINSERT INTO `x` VALUES (1);\n",
+                encoding="utf-8")
+        return root, detect.scan(str(root))
+
+    def test_a_dump_inside_a_recognised_webroot_is_offered(self):
+        root, out = self._webroot("export.sql")
+        self.assertEqual([str(root)],
+                         [c["path"] for c in out["candidates"]["webroot"]])
+        self.assertEqual([str(root / "export.sql")],
+                         [c["path"] for c in out["candidates"]["sql_dump"]])
+
+    def test_the_walk_still_stops_at_the_webroot(self):
+        """The reason the branch existed is still honoured: a CMS has
+        thousands of directories and none of them is a second webroot."""
+        root, _ = self._webroot()
+        inner = root / "administrator" / "components"
+        inner.mkdir(parents=True)
+        (inner / "configuration.php").write_text("<?php\n", encoding="utf-8")
+        for name in ("administrator", "templates", "media"):
+            (inner / name).mkdir()
+        from server.engines import detect
+        out = detect.scan(str(root))
+        self.assertEqual([str(root)],
+                         [c["path"] for c in out["candidates"]["webroot"]])
+
+
 if __name__ == "__main__":
     unittest.main()
