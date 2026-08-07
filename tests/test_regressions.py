@@ -179,6 +179,65 @@ class ExportPathTests(unittest.TestCase):
         self.assertEqual("203.0.113.9", out["chain"]["events"][0]["artifact"])
 
 
+class ExportedFrameTests(unittest.TestCase):
+    """What frame the exported timestamps are in.
+
+    Every time in the export is a bare integer, so the note beside them is
+    the only thing that makes them mean anything -- and it was one fixed
+    sentence: "naive local times of the respective source (log server resp.
+    database server)". Exported in UTC, the file said that about times that
+    were UTC, and nothing else in the file contradicted it. A number carrying
+    the wrong frame is worse than no number, because it is quotable.
+    """
+
+    BASE = {
+        "span": {"first": 1780000000, "last": 1780003600},
+        "events": [], "gaps": [], "undated": [],
+        "offsets": {"logs": 0, "dump": 0},
+    }
+
+    def _note(self, **chain):
+        merged = dict(self.BASE, **chain)
+        out = json.loads(ioclib.to_json([], case_name="c", chain=merged))
+        return out["chain"]
+
+    def test_a_utc_export_does_not_claim_local_times(self):
+        note = self._note(tz_mode="utc", zone="UTC",
+                          tz_offsets=["UTC+02:00"])["note"]
+        self.assertIn("UTC", note)
+        self.assertNotIn("local", note)
+
+    def test_a_log_time_export_names_the_offset_it_is_in(self):
+        note = self._note(tz_mode="log", zone="UTC+02:00",
+                          tz_offsets=["UTC+02:00"])["note"]
+        self.assertIn("local", note)
+        self.assertIn("UTC+02:00", note)
+
+    def test_several_offsets_are_named_rather_than_reduced(self):
+        """No single one labels the period, so the file lists what it has and
+        says which export can be compared instead."""
+        note = self._note(tz_mode="log", zone="",
+                          tz_offsets=["UTC+01:00", "UTC+02:00"])["note"]
+        self.assertIn("UTC+01:00", note)
+        self.assertIn("UTC+02:00", note)
+        self.assertIn("more than one", note)
+
+    def test_the_frame_travels_as_data_not_only_as_prose(self):
+        """A sentence is for the human reader. Anything reading this file
+        needs the same fact in a field it can branch on."""
+        block = self._note(tz_mode="utc", zone="UTC", tz_offsets=["UTC+02:00"])
+        self.assertEqual("utc", block["tz_mode"])
+        self.assertEqual("UTC", block["zone"])
+        self.assertEqual(["UTC+02:00"], block["tz_offsets"])
+
+    def test_a_chain_without_the_fields_still_exports(self):
+        """`to_json` is called from more than one place and the chain dict
+        has grown twice. A missing key must not take the export down."""
+        block = self._note()
+        self.assertEqual("log", block["tz_mode"])
+        self.assertTrue(block["note"])
+
+
 class ChainRelativePathTests(unittest.TestCase):
     """The other half of the export fix: `case_chain` has to PRODUCE the
     relative path. The export test above hands the key in by construction and

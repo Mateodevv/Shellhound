@@ -139,6 +139,31 @@ def to_csv(iocs, links=()):
     return buf.getvalue()
 
 
+_TAIL = (", encoded as Unix seconds; clock_offsets names corrections set by "
+         "the analyst.")
+
+
+def _chain_note(chain):
+    """One sentence naming the frame the exported timestamps are in.
+
+    English and measured, like everything else that is stored or exported:
+    the reader of this file may not be the analyst who made it."""
+    if (chain.get("tz_mode") or "log") == "utc":
+        return "Times are UTC" + _TAIL
+    source = ("Times are naive local times of the respective source "
+              "(log server resp. database server)")
+    zone = chain.get("zone") or ""
+    if zone:
+        return f"{source} at {zone}{_TAIL}"
+    # More than one offset in the logs. Naming any of them would be wrong for
+    # the rest by the difference, so the file says what it has instead.
+    offsets = ", ".join(chain.get("tz_offsets") or [])
+    return (f"{source}; the logs carry more than one UTC offset"
+            + (f" ({offsets})" if offsets else "")
+            + ", so none of them labels the whole period -- export in UTC "
+              "for a reading that can be compared" + _TAIL)
+
+
 def to_json(iocs, case_name="", links=(), chain=None):
     by_ioc = _by_ioc(links)
     out = {
@@ -176,10 +201,18 @@ def to_json(iocs, case_name="", links=(), chain=None):
             "gaps": chain["gaps"],
             "undated": [outward(u) for u in chain["undated"]],
             "clock_offsets": chain.get("offsets", {}),
-            "note": "Times are naive local times of the respective source "
-                    "(log server resp. database server), encoded as Unix "
-                    "seconds; clock_offsets names corrections set by the "
-                    "analyst.",
+            # WHAT FRAME THE NUMBERS ABOVE ARE IN, said out loud. Every
+            # timestamp here is a bare integer, so this sentence is the only
+            # thing that makes them mean anything -- and it used to be a
+            # fixed string describing log mode. Exported in UTC, the file
+            # asserted its times were "naive local times of the respective
+            # source", which they were not, and nothing in the file
+            # contradicted it. A number with the wrong frame is worse than
+            # no number: it is quotable.
+            "tz_mode": chain.get("tz_mode") or "log",
+            "zone": chain.get("zone") or "",
+            "tz_offsets": chain.get("tz_offsets") or [],
+            "note": _chain_note(chain),
         }
     return json.dumps(out, indent=2, ensure_ascii=False)
 
