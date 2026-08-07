@@ -31,13 +31,28 @@ rule Htaccess_Maps_Extension_To_PHP
             documents, archives, plain text -- are a short list.
         */
         $exec = /(AddHandler|AddType|SetHandler)[^\n]*(php|x-httpd)[^\n]*\.(jpe?g|png|gif|bmp|webp|svg|ico|txt|html?|css|js|json|xml|pdf|zip|gz|log|bak|old|ini|conf)\b/ nocase
-        /* `SetHandler` needs no extension: it applies to whatever the
-           <Files>/<FilesMatch> block around it selects, and a block naming an
-           image is the same trick by another route. */
-        $set_all = /SetHandler[^\n]*(php|x-httpd)/ nocase
-        $files_image = /<Files(Match)?[^>\n]*(jpe?g|png|gif|bmp|webp|ico|txt|pdf|zip)/ nocase
+        /*
+            `SetHandler` needs no extension: it applies to whatever the
+            <Files>/<FilesMatch> block AROUND IT selects, and a block naming
+            an image is the same trick by another route.
+
+            AROUND IT is the whole claim, and two separate strings joined by
+            `and` do not make it. YARA's `and` means only that both appear
+            somewhere in the file. So an .htaccess with an ordinary
+            `<Files "robots.txt">` block in one place and an ordinary
+            `SetHandler ... php` for .php files in another scored HIGH under
+            a sentence -- "maps non-PHP extension to PHP handler" -- that
+            was true of neither block. `txt` in the list made this the
+            common case rather than the rare one.
+
+            One string instead of two. `[^<]` crosses newlines, so the
+            directive may sit on its own line, and stops at the closing
+            `</Files>`, so the match cannot walk out of the block it
+            started in.
+        */
+        $set_in_block = /<Files(Match)?[^>\n]*(jpe?g|png|gif|bmp|webp|ico|txt|pdf|zip)[^<]{0,300}SetHandler[^\n]*(php|x-httpd)/ nocase
     condition:
-        $exec or ($set_all and $files_image)
+        $exec or $set_in_block
 }
 
 rule Htaccess_Auto_Prepend_Append

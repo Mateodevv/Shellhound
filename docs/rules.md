@@ -139,7 +139,7 @@ is reported, not passed over in silence.
 | Webshell | Variable function called on request input | HIGH |
 | Webshell | Command execution on request input | HIGH |
 | Webshell | preg_replace with /e modifier | HIGH |
-| Webshell | create_function / callback on request input | HIGH |
+| Webshell | Callback taken straight from the request | HIGH |
 | Webshell | File dropper writing request input to disk | HIGH |
 | Webshell | .htaccess maps non-PHP extension to PHP handler | HIGH |
 | Webshell | .htaccess auto_prepend/append_file backdoor | HIGH |
@@ -148,6 +148,8 @@ is reported, not passed over in silence.
 | Webshell | chr() concatenation obfuscation | MEDIUM |
 | Webshell | goto-based control-flow obfuscation | MEDIUM |
 | Webshell | Standalone command-execution shell | MEDIUM |
+| Webshell | Code assembled at runtime with create_function | MEDIUM |
+| Webshell | Upload destination taken from the request | MEDIUM |
 | Database | PHP open tag in database value | HIGH |
 | Database | eval/assert on decoded or request input | HIGH |
 | Database | Obfuscation decode chain | HIGH |
@@ -298,25 +300,54 @@ text as **code**.
 **Why it counts:** removed since PHP 7 — in current code there is no
 legitimate reason for it.
 
-### create_function / callback on request input — HIGH
+### Callback taken straight from the request — HIGH
 
-**Trigger:** `create_function('...` or `call_user_func(_array)($_...)`.
+**Trigger:** `call_user_func(_array)($_...)`.
 
-**What it states:** code is generated from text at runtime, or the call comes
-from the request.
+**What it states:** which function is called is decided by the request.
 
-**Why it counts:** long deprecated; common in web shells to hide the actual
-payload.
+**Why it counts:** whatever the browser can spell, it can call. Legitimate
+code names its own callbacks.
+
+**Was one rule with the next-but-one entry** until the shared name --
+"create_function / callback on request input" -- turned out to be false of
+half of what it matched: `create_function` names no superglobal.
+
+### Code assembled at runtime with create_function — MEDIUM
+
+**Trigger:** `create_function('...`.
+
+**What it states:** a function body is built from a string at runtime.
+
+**Why it counts:** in a shell it stands in for `eval`. In a library older
+than PHP 7.2 it is ordinary, which is why this alone is not HIGH.
 
 ### File dropper writing request input to disk — HIGH
 
-**Trigger:** `move_uploaded_file`, `file_put_contents` or `fwrite` with
+**Trigger:** `file_put_contents` or `fwrite` with
 `$_POST`/`$_GET`/`$_REQUEST`/`$_FILES` within 80 characters.
+
+**Not `move_uploaded_file`.** It is the one correct way to accept an upload
+in PHP -- the function exists to refuse a path that was not uploaded -- so
+every CMS with an upload form contains it, and each was answered with HIGH
+and "this is how further shells are pulled in". The narrow case worth
+keeping is the entry below.
 
 **What it states:** the file writes incoming data to disk.
 
 **Why it counts:** this is how further shells are pulled in. Check what else
 is new in the surroundings.
+
+### Upload destination taken from the request — MEDIUM
+
+**Trigger:** `move_uploaded_file(..., ...$_POST/$_GET/$_REQUEST...)` -- request
+input in the DESTINATION argument, after the comma.
+
+**What it states:** an upload is moved to a path the request chose.
+
+**Why it counts:** whoever picks the path picks the extension. MEDIUM and not
+HIGH because a form that keeps the filename the browser sent looks the same
+from here; what to check is whether the extension is restricted.
 
 ### Obfuscation decode chain — MEDIUM
 
