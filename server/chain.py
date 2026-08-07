@@ -182,6 +182,13 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         events.append({"at": at, "kind": kind, "title": title,
                        "detail": detail, "source": source,
                        "artifact": artifact, "artifact_kind": artifact_kind,
+                       # The SAME artifact, webroot-relative. `artifact` is
+                       # the absolute path on this machine and is the identity
+                       # the interface opens windows with; anything that
+                       # LEAVES the machine has to use this one instead, or
+                       # the report carries the analyst's directory layout.
+                       # For clients and tables the two are identical.
+                       "artifact_rel": files.get(artifact, artifact),
                        "ip": ip, "severity": severity})
 
     # --- confirmed files: when was it there, when was it used ----------
@@ -280,6 +287,7 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
                else "chain.undated.other")
         undated.append({
             "artifact": row["artifact"], "artifact_kind": kind,
+            "artifact_rel": files.get(row["artifact"], row["artifact"]),
             "why": t(lang, key)})
 
     events.sort(key=lambda e: e["at"])

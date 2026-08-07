@@ -11,7 +11,7 @@
 // SHARED between Findings and Actors: the same artifact looks the same
 // everywhere, and a decision is the same decision everywhere.
 import { plural, useT } from '../i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
@@ -97,7 +97,6 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
 }) {
   const tr = useT()
   const [note, setNote] = useState('')
-  useEffect(() => { setNote(artifact?.triage_note ?? '') }, [artifact])
 
   const { data: ctx } = useQuery({
     queryKey: ['artifact', slug, artifact?.artifact],
@@ -105,6 +104,30 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       `/api/cases/${slug}/artifact?artifact=${encodeURIComponent(artifact!.artifact)}`),
     enabled: !!artifact,
   })
+
+  // THE NOTE COMES FROM THE SERVER, NOT FROM THE STUB. Most places that open
+  // this window build the stub by hand and cannot know the note -- seven of
+  // them hard-code `triage_note: ''`. Seeding the box from the stub therefore
+  // showed an empty note next to an artifact that had one, and the next click
+  // on a triage button wrote that emptiness back over it. `noteFor` records
+  // which artifact the box was filled for, so a refetch never overwrites what
+  // the analyst is in the middle of typing.
+  const noteFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!artifact) {
+      noteFor.current = null
+      return
+    }
+    if (noteFor.current === artifact.artifact) return
+    // Show what the stub knows immediately, and correct it from the server
+    // the moment the context for THIS artifact has arrived.
+    if (ctx?.artifact === artifact.artifact) {
+      noteFor.current = artifact.artifact
+      setNote(ctx.triage_note ?? '')
+    } else {
+      setNote(artifact.triage_note ?? '')
+    }
+  }, [artifact, ctx])
 
   if (!artifact) return null
   const kind = artifact.artifact_kind

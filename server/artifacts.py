@@ -75,6 +75,19 @@ def art_sql(muted=()):
 # does not change because a rule was later muted.
 ART_SQL = art_sql()
 
+# What a muted rule is allowed to hide, as a WHERE fragment: an artifact left
+# without a single live finding disappears -- but only while it is still
+# UNDECIDED, because a decision belongs to the analyst and muting a rule is
+# not a retraction of it.
+#
+# THE BRACKETS ARE PART OF THE VALUE. This fragment is AND-ed onto the chip
+# filters, and SQL binds AND tighter than OR: unbracketed it reads
+# `(chips AND active > 0) OR triage != 'new'`, which lets every decided
+# artifact past every chip. It lives here, next to the SQL it belongs to,
+# rather than as a literal at the call site, so the guard in the test suite
+# is testing the string the server actually uses.
+MUTED_CLAUSE = "(active > 0 OR triage != 'new')"
+
 
 def counts(conn):
     """The chip counts -- artifacts, not findings, in every dimension."""

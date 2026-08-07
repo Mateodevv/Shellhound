@@ -262,7 +262,15 @@ def _safe_member(name):
     if name.endswith("/"):
         return None                      # directory entry: created implicitly
     normalized = name.replace("\\", "/")
-    if normalized.startswith("/") or ":" in normalized.split("/")[0]:
+    # EVERY segment, not just the first. `sub/C:/evil.txt` passed the
+    # first-segment check, and `Path(*parts)` then collapsed it to
+    # `C:evil.txt` -- a drive-relative path that lands OUTSIDE the workspace
+    # entirely. `notes.txt:hidden` is the other half: on NTFS that writes an
+    # alternate data stream, whose content no directory listing shows.
+    # A ':' in a member name is legal on Linux and unwritable on Windows, so
+    # refusing costs an exotic filename and buys back the guarantee this
+    # function exists for.
+    if normalized.startswith("/") or any(":" in p for p in normalized.split("/")):
         raise ImportError_(f"archive contains an absolute path: {name}")
     parts = [p for p in normalized.split("/") if p not in ("", ".")]
     if any(p == ".." for p in parts):
