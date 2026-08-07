@@ -184,7 +184,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
     log_db = db.log_db_path(case_dir)
     if log_db.exists():
         log_db.unlink()
-    stats = {"files": 0, "lines": 0, "unparsed": 0, "skipped": 0,
+    stats = {"files": 0, "lines": 0, "unparsed": 0, "undated": 0,
+             "partial": False,
+             "skipped": 0,
              "clients": 0, "alerts": 0, "bytes": 0}
 
     files = []
@@ -256,16 +258,29 @@ def build(case_dir, targets, ctx=None, workspace=None):
             return got
 
         done_size = 0
+        # A CANCELLED BUILD IS A FRAGMENT AND HAS TO SAY SO. Everything below
+        # still runs after the break -- the batch is flushed, the interning
+        # tables and actors are written, the index commits -- so what comes out
+        # looks exactly like a complete index and `overview()` reported its
+        # numbers as the whole truth. The dashboard counts, the chronology's
+        # span and the coverage windows were then all computed from a
+        # fraction of the evidence, with nothing on screen saying so.
+        cancelled = False
         for file_path, file_size in sized:
             if ctx is not None and ctx.cancelled():
+                cancelled = True
                 break
             name = os.path.basename(file_path)
             abs_path = os.path.abspath(file_path)
+            try:
+                file_mtime = int(os.stat(file_path).st_mtime)
+            except OSError:
+                file_mtime = 0
             if not is_scannable_text(file_path):
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",
-                    (abs_path, file_size, 0, "binary/unreadable file"))
+                    (abs_path, file_size, file_mtime, "binary/unreadable file"))
                 stats["skipped"] += 1
                 done_size += file_size
                 continue
@@ -273,13 +288,14 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",
-                    (abs_path, file_size, 0, accesslog.ERROR_LOG_SKIP_REASON))
+                    (abs_path, file_size, file_mtime,
+                     accesslog.ERROR_LOG_SKIP_REASON))
                 stats["skipped"] += 1
                 done_size += file_size
                 continue
 
             src_id = intern(name)
-            file_lines = file_unparsed = 0
+            file_lines = file_unparsed = file_undated = 0
             chars = 0
             # Compressed logs decompress to roughly 3-10x; the per-file
             # progress fraction is an estimate and is clamped to the file's
@@ -294,7 +310,18 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 file_unparsed += 1
                             continue
                         te = fast_epoch(data["time"])
-                        epoch, tz = te if te else (0, 0)
+                        # A line whose TIMESTAMP cannot be read is still a
+                        # request: it has a client, a method and a target, and
+                        # throwing it away would understate what the server
+                        # was asked for. It is kept at epoch 0 -- but it is
+                        # counted, because a request the case cannot place in
+                        # time is a limitation and has to be sayable. It used
+                        # to be silently filed under 1970 and counted nowhere.
+                        if te:
+                            epoch, tz = te
+                        else:
+                            epoch, tz = 0, None
+                            file_undated += 1
                         ip = data["ip"]
                         ip_id = ips.get(ip)
                         if ip_id is None:
@@ -388,22 +415,20 @@ def build(case_dir, targets, ctx=None, workspace=None):
             except (OSError, EOFError) as e:
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
-                    " VALUES (?,?,?,?)", (abs_path, file_size, 0, f"read error: {e}"))
+                    " VALUES (?,?,?,?)",
+                    (abs_path, file_size, file_mtime, f"read error: {e}"))
                 stats["skipped"] += 1
                 done_size += file_size
                 continue
 
-            try:
-                mtime = int(os.stat(file_path).st_mtime)
-            except OSError:
-                mtime = 0
             conn.execute(
                 "INSERT OR REPLACE INTO sources (path, size, mtime, lines, unparsed)"
                 " VALUES (?,?,?,?,?)",
-                (abs_path, file_size, mtime, file_lines, file_unparsed))
+                (abs_path, file_size, file_mtime, file_lines, file_unparsed))
             stats["files"] += 1
             stats["lines"] += file_lines
             stats["unparsed"] += file_unparsed
+            stats["undated"] += file_undated
             stats["bytes"] += file_size
             done_size += file_size
 
@@ -493,6 +518,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             "VALUES (?,?,?,?,?)", alert_rows)
         stats["alerts"] = len(alert_rows)
         stats["clients"] = len(actors)
+        stats["partial"] = cancelled
 
         if ctx is not None:
             ctx.progress(0.92, "Building indexes…")
@@ -505,6 +531,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
             ("lines", str(stats["lines"])),
             ("clients", str(stats["clients"])),
             ("unparsed", str(stats["unparsed"])),
+            ("undated", str(stats["undated"])),
+            ("partial", "1" if cancelled else ""),
             # Which UTC offsets appear in these logs. Usually one, but a
             # server that ran through a DST change writes two -- an Austrian
             # log crosses +0100/+0200 twice a year -- and several servers in
@@ -595,7 +623,8 @@ def _open_ro(case_dir):
 def status(case_dir, targets=None, lang="en"):
     """Whether the index exists and can be trusted for these targets."""
     out = {"exists": False, "fresh": False, "reason": t(lang, "index.none"),
-           "lines": 0, "clients": 0, "unparsed": 0, "size": 0}
+           "lines": 0, "clients": 0, "unparsed": 0, "undated": 0,
+           "size": 0}
     conn = _open_ro(case_dir)
     if conn is None:
         return out
@@ -608,8 +637,14 @@ def status(case_dir, targets=None, lang="en"):
             return out
         for k in ("lines", "clients", "unparsed"):
             out[k] = int(meta.get(k, 0) or 0)
+        # EVERY source, skipped ones included. The fingerprint on the other
+        # side of this comparison is built from the files on disk, and a file
+        # the engine deliberately skipped -- an error log lying in the
+        # access-log directory -- is still on disk. Leaving it out of `stored`
+        # made the two sets differ permanently, so the index reported itself
+        # stale forever and no rebuild could ever satisfy it.
         stored = {(r[0], r[1], r[2]) for r in conn.execute(
-            "SELECT path, size, mtime FROM sources WHERE skipped_reason = ''")}
+            "SELECT path, size, mtime FROM sources")}
     except sqlite3.Error as e:
         out["reason"] = f"index not readable: {e}"
         return out
@@ -974,8 +1009,13 @@ def _like_from_pattern(pattern):
     return "%" + esc.replace("*", "%") + "%"
 
 
-def match_pattern(case_dir, pattern, limit=200):
+def match_pattern(case_dir, pattern, limit=200, only_ips=None):
     """Who requested URIs that this pattern matches?
+
+    `only_ips` narrows every figure to those clients. The AND-combination in
+    `match_patterns` needs it: after dropping the clients that hit only some
+    of the paths, the URIs of the dropped ones must not stay in the result --
+    they would show the rule matching things it did not report.
 
     Returns the URIs hit (so that it is visible whether the pattern reaches
     too far), per client the hit count, of those the 2xx, plus first/last
@@ -1013,8 +1053,33 @@ def match_pattern(case_dir, pattern, limit=200):
                 f"INSERT OR IGNORE INTO want_leaf "
                 f"SELECT id FROM strings WHERE text IN ({marks})", chunk)
 
+        ip_params = sorted(only_ips) if only_ips else []
+        ip_filter = (f"WHERE i.ip IN ({','.join('?' * len(ip_params))})"
+                     if ip_params else "")
+
+        # THE FIGURES ARE COUNTED OVER EVERYTHING, THE LIST IS CAPPED.
+        # `clients_total` used to be len() of the capped list, so a hunt that
+        # found 3,000 addresses reported 200 -- and `truncated` tracked only
+        # the URI cap, so nothing on screen said otherwise. For a pattern
+        # matching a mass-exploitation campaign, which is what this feature is
+        # for, that is the number that goes into the report.
+        totals = conn.execute(
+            f"""SELECT count(*) AS clients, sum(ok) AS ok_clients,
+                      sum(hits) AS hits, sum(ok_hits) AS ok_hits
+               FROM (SELECT count(*) AS hits,
+                            sum(CASE WHEN r.status BETWEEN 200 AND 299
+                                THEN 1 ELSE 0 END) AS ok_hits,
+                            CASE WHEN sum(CASE WHEN r.status BETWEEN 200
+                                 AND 299 THEN 1 ELSE 0 END) > 0
+                                 THEN 1 ELSE 0 END AS ok
+                     FROM requests r
+                     JOIN want_leaf wl ON wl.id = r.leaf
+                     JOIN want_uri wu ON wu.id = r.uri
+                     JOIN ips i ON i.id = r.ip
+                     {ip_filter}
+                     GROUP BY r.ip)""", ip_params).fetchone()
         clients = [dict(r) for r in conn.execute(
-            """SELECT i.ip AS ip, count(*) AS hits,
+            f"""SELECT i.ip AS ip, count(*) AS hits,
                       sum(CASE WHEN r.status BETWEEN 200 AND 299
                           THEN 1 ELSE 0 END) AS ok_hits,
                       min(r.epoch) AS first_epoch, max(r.epoch) AS last_epoch,
@@ -1023,37 +1088,45 @@ def match_pattern(case_dir, pattern, limit=200):
                JOIN want_leaf wl ON wl.id = r.leaf
                JOIN want_uri wu ON wu.id = r.uri
                JOIN ips i ON i.id = r.ip
+               {ip_filter}
                GROUP BY i.ip
-               ORDER BY ok_hits DESC, hits DESC LIMIT ?""", (limit,))]
+               ORDER BY ok_hits DESC, hits DESC LIMIT ?""",
+            ip_params + [limit])]
         uris = [dict(r) for r in conn.execute(
-            """SELECT s.text AS uri, count(*) AS hits,
+            f"""SELECT s.text AS uri, count(*) AS hits,
                       sum(CASE WHEN r.status BETWEEN 200 AND 299
                           THEN 1 ELSE 0 END) AS ok_hits
                FROM requests r
                JOIN want_leaf wl ON wl.id = r.leaf
                JOIN want_uri wu ON wu.id = r.uri
                JOIN strings s ON s.id = r.uri
+               JOIN ips i ON i.id = r.ip
+               {ip_filter}
                GROUP BY s.text ORDER BY hits DESC LIMIT ?""",
-            (_PATTERN_URI_SHOWN,))]
+            ip_params + [_PATTERN_URI_SHOWN])]
         # How many there REALLY are. The list above is capped, and "50 URLs
         # hit" is a false statement when there were 3,000 -- that number of
         # all things is supposed to reveal that the pattern reaches too
         # far.
         uri_total = conn.execute(
-            """SELECT count(DISTINCT r.uri) FROM requests r
+            f"""SELECT count(DISTINCT r.uri) FROM requests r
                JOIN want_leaf wl ON wl.id = r.leaf
-               JOIN want_uri wu ON wu.id = r.uri""").fetchone()[0]
+               JOIN want_uri wu ON wu.id = r.uri
+               JOIN ips i ON i.id = r.ip
+               {ip_filter}""", ip_params).fetchone()[0]
         firsts = [c["first_epoch"] for c in clients if c["first_epoch"]]
         lasts = [c["last_epoch"] for c in clients if c["last_epoch"]]
         tzs = [c["tz"] for c in clients if c["tz"] is not None]
         return {"pattern": pattern, "uris": uris, "clients": clients,
-                "hits": sum(c["hits"] for c in clients),
-                "ok_hits": sum(c["ok_hits"] for c in clients),
+                "hits": int(totals["hits"] or 0),
+                "ok_hits": int(totals["ok_hits"] or 0),
                 # The key figures of the search. `ok_clients` is the number
                 # that goes into the report: not how often someone knocked,
-                # but how many got through.
-                "clients_total": len(clients),
-                "ok_clients": sum(1 for c in clients if c["ok_hits"] > 0),
+                # but how many got through. Counted over the whole result,
+                # not over the sample above it.
+                "clients_total": int(totals["clients"] or 0),
+                "ok_clients": int(totals["ok_clients"] or 0),
+                "clients_truncated": len(clients) < int(totals["clients"] or 0),
                 "uri_total": uri_total,
                 "first_epoch": min(firsts) if firsts else None,
                 "last_epoch": max(lasts) if lasts else None,
@@ -1093,6 +1166,14 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
     per_path = [{c["ip"] for c in part["clients"]} for part in parts]
     if mode == "all":
         keep = set.intersection(*per_path) if per_path else set()
+        # The AND-combination DROPS clients, and everything the dropped ones
+        # requested has to go with them: their URIs and the URI count would
+        # otherwise show the rule matching things it did not report. The
+        # per-path results are recomputed against the survivors -- a second
+        # pass, but only for AND patterns and only when it changes anything.
+        if keep and any(keep != found for found in per_path):
+            parts = [match_pattern(case_dir, p, limit, only_ips=keep)
+                     for p in paths]
     else:
         keep = set.union(*per_path) if per_path else set()
 
@@ -1323,8 +1404,15 @@ def overview(case_dir):
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         first, last = conn.execute(
             "SELECT min(first_epoch), max(last_epoch) FROM actors").fetchone()
+        # Informational sightings are NOT alerts about this system -- a
+        # scanner announcing itself says something about the internet, not
+        # about this server. The Actors view has excluded them from its
+        # `alerted` filter all along; counting them here gave the dashboard a
+        # different number for the same question.
+        marks = ",".join("?" * len(INFO_ALERT_KINDS))
         alerted = conn.execute(
-            "SELECT count(DISTINCT ip_id) FROM alerts").fetchone()[0]
+            f"SELECT count(DISTINCT ip_id) FROM alerts "
+            f"WHERE kind NOT IN ({marks})", INFO_ALERT_KINDS).fetchone()[0]
         try:
             offsets = sorted(set(_json.loads(meta.get("tz_offsets") or "[]")))
         except ValueError:
@@ -1332,6 +1420,10 @@ def overview(case_dir):
         return {"lines": int(meta.get("lines", 0) or 0),
                 "clients": int(meta.get("clients", 0) or 0),
                 "unparsed": int(meta.get("unparsed", 0) or 0),
+                "undated": int(meta.get("undated", 0) or 0),
+                # Built from a run somebody stopped: the
+                # numbers above describe part of the evidence.
+                "partial": bool(meta.get("partial")),
                 "alerted_clients": alerted,
                 # Every UTC offset the logs carry. A case is only unambiguous
                 # in log time when there is exactly one.

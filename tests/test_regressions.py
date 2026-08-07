@@ -231,6 +231,174 @@ class ChainRelativePathTests(unittest.TestCase):
         self.assertNotIn(str(self.ev.root).replace("\\", "\\\\"), text)
 
 
+class UriAttributionTests(unittest.TestCase):
+    """Which requests belong to which file.
+
+    Matching the tail of the URI is right for a site served out of a
+    subdirectory. For a file sitting directly in the webroot the tail is a
+    single segment -- a NAME -- and `endswith` then accepted every index.php
+    on the site. Customers browsing /shop/index.php were reported as clients
+    that had touched a confirmed webshell.
+    """
+
+    def test_a_root_level_file_matches_only_its_own_path(self):
+        from server.artifacts import uri_targets
+        self.assertTrue(uri_targets("/index.php", "index.php"))
+        for other in ("/shop/index.php", "/wp-admin/index.php",
+                      "/a/b/index.php"):
+            self.assertFalse(uri_targets(other, "index.php"), other)
+
+    def test_a_nested_file_still_matches_by_tail(self):
+        """A site served from /shop/ turns wp-content/x.php into
+        /shop/wp-content/x.php, and that has to keep working."""
+        rel = "wp-content/uploads/2026/01/kb-media.php"
+        self.assertTrue(uri_targets_helper("/" + rel, rel))
+        self.assertTrue(uri_targets_helper("/shop/" + rel, rel))
+
+    def test_a_nested_file_does_not_match_a_different_directory(self):
+        rel = "wp-content/uploads/2026/01/kb-media.php"
+        self.assertFalse(uri_targets_helper("/other/kb-media.php", rel))
+
+    def test_the_query_string_is_ignored(self):
+        self.assertTrue(uri_targets_helper("/index.php?cmd=id", "index.php"))
+
+    def test_case_does_not_decide_it(self):
+        """A URL is not the file system: /Images/Shell.php and
+        /images/shell.php are the same request."""
+        self.assertTrue(uri_targets_helper("/Images/Shell.php",
+                                           "images/shell.php"))
+
+
+def uri_targets_helper(uri, rel):
+    from server.artifacts import uri_targets
+    return uri_targets(uri, rel)
+
+
+class LogIndexHonestyTests(unittest.TestCase):
+    """Numbers the log index reports about itself."""
+
+    BASE = 1780000000
+
+    @staticmethod
+    def _line(epoch, ip="203.0.113.5", uri="/a.php"):
+        import time
+        stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0200", time.gmtime(epoch))
+        return (f'{ip} - - [{stamp}] "GET {uri} HTTP/1.1" 200 12 "-" "curl"\n')
+
+    def _case(self, text, extra=None):
+        root = Path(tempfile.mkdtemp(prefix="shellhound-lix-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(root,
+                                                            ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        (logs / "access.log").write_text(text, encoding="utf-8")
+        for name, body in (extra or {}).items():
+            (logs / name).write_text(body, encoding="utf-8")
+        db.connect(case).close()
+        return case, logs
+
+    def test_a_line_without_a_readable_time_is_counted(self):
+        """It used to be filed under 1970 and counted nowhere -- neither as a
+        request the case can place nor as one it cannot."""
+        from server.engines import logindex
+        bad = ('203.0.113.9 - - [06/Xxx/2026:08:00:00 +0200] '
+               '"GET /a.php HTTP/1.1" 200 5 "-" "curl"\n')
+        case, logs = self._case(bad + "".join(
+            self._line(self.BASE + i * 5) for i in range(20)))
+        stats = logindex.build(case, [str(logs)])
+        self.assertEqual(1, stats["undated"])
+        self.assertEqual(1, logindex.overview(case)["undated"])
+
+    def test_one_unreadable_line_does_not_invent_a_second_time_zone(self):
+        """It used to store offset 0 for such a line, so a log with exactly
+        one offset made the chronology announce mixed time zones."""
+        from server.engines import logindex
+        bad = ('203.0.113.9 - - [06/Xxx/2026:08:00:00 +0200] '
+               '"GET /a.php HTTP/1.1" 200 5 "-" "curl"\n')
+        case, logs = self._case(bad + "".join(
+            self._line(self.BASE + i * 5) for i in range(20)))
+        logindex.build(case, [str(logs)])
+        self.assertEqual([7200], logindex.overview(case)["tz_offsets"])
+
+    def test_a_skipped_file_does_not_make_the_index_stale_forever(self):
+        """An Apache error log lying in the access-log directory is skipped
+        on purpose -- and was then missing from the freshness fingerprint, so
+        no rebuild could ever satisfy the comparison."""
+        from server.engines import logindex
+        case, logs = self._case(
+            "".join(self._line(self.BASE + i * 5) for i in range(50)),
+            {"error.log": "[Mon Jan 06 08:00:00 2026] [php:error] [pid 1] "
+                          "PHP Fatal error:  x in /var/www/a.php on line 3\n"
+                          * 40})
+        logindex.build(case, [str(logs)])
+        for run in (1, 2):
+            self.assertTrue(logindex.status(case, [str(logs)])["fresh"],
+                            f"reported stale on run {run} with nothing changed")
+
+    def test_a_cancelled_build_says_it_is_a_fragment(self):
+        """Everything after the break still runs and commits, so the index
+        looked complete and the dashboard read its numbers as the whole
+        truth."""
+        from server.engines import logindex
+
+        class Ctx:
+            def __init__(self):
+                self.seen = 0
+
+            def cancelled(self):
+                self.seen += 1
+                return self.seen > 1
+
+            def progress(self, *a, **k):
+                pass
+
+        body = "".join(self._line(self.BASE + i * 5) for i in range(50))
+        case, logs = self._case(body, {"b.log": body, "c.log": body})
+        self.assertTrue(logindex.build(case, [str(logs)], ctx=Ctx())["partial"])
+        self.assertTrue(logindex.overview(case)["partial"])
+
+    def test_a_complete_build_is_not_marked_partial(self):
+        from server.engines import logindex
+        case, logs = self._case(
+            "".join(self._line(self.BASE + i * 5) for i in range(20)))
+        self.assertFalse(logindex.build(case, [str(logs)])["partial"])
+        self.assertFalse(logindex.overview(case)["partial"])
+
+    def test_the_hunt_counts_every_client_not_just_the_listed_ones(self):
+        """`clients_total` was len() of the capped list, so a pattern that
+        matched a mass-exploitation campaign reported the cap."""
+        from server.engines import logindex
+        rows = []
+        for i in range(250):
+            rows.append(self._line(self.BASE, ip=f"198.51.{i // 254}."
+                                                 f"{i % 254 + 1}",
+                                   uri="/index.php?option=com_jce"))
+        case, logs = self._case("".join(rows))
+        logindex.build(case, [str(logs)])
+        out = logindex.match_pattern(case, "*com_jce*")
+        self.assertEqual(250, out["clients_total"])
+        self.assertEqual(250, out["ok_clients"])
+        self.assertEqual(250, out["hits"])
+        self.assertTrue(out["clients_truncated"],
+                        "the list was capped and did not say so")
+
+    def test_an_informational_sighting_is_not_an_alerted_client(self):
+        """A scanner announcing itself says something about the internet, not
+        about this server -- and the Actors filter has always excluded it."""
+        from server.engines import logindex
+        rows = []
+        for i in range(4):
+            rows.append('198.51.100.9 - - [06/Jan/2026:03:0%d:00 +0200] '
+                        '"GET /wp-admin/x.php HTTP/1.1" 404 5 "-" '
+                        '"Nikto/2.5.0"\n' % i)
+        rows += [self._line(self.BASE + i * 5) for i in range(20)]
+        case, logs = self._case("".join(rows))
+        logindex.build(case, [str(logs)])
+        self.assertEqual(0, logindex.overview(case)["alerted_clients"])
+
+
 class ChainTimeTests(unittest.TestCase):
     """The chronology on a log that is NOT in UTC.
 
