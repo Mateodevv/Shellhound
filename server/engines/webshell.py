@@ -66,6 +66,22 @@ MAX_CONTENT_SCAN_BYTES = 5 * 1024 * 1024
 GUARD_SNIFF_BYTES = 4096
 
 
+def _site_path(abs_path, root):
+    """The file as the SERVER sees it: `/` plus its path below the webroot.
+
+    Without a root the absolute path is all there is -- that is the old
+    behaviour and it stays for callers that scan a loose file, but everything
+    above the webroot is the analyst's business and must not decide anything.
+    """
+    if not root:
+        return abs_path
+    target = str(abs_path).replace("\\", "/")
+    base = os.path.abspath(str(root)).replace("\\", "/").rstrip("/")
+    if base and target.lower().startswith(base.lower() + "/"):
+        return "/" + target[len(base) + 1:]
+    return abs_path
+
+
 def in_upload_dir(path_str):
     return bool(UPLOAD_SEG_RE.search(path_str)) and not EXCLUDE_PATH_RE.search(path_str)
 
@@ -137,14 +153,22 @@ def _yara_findings(raw, kind):
     yield from out
 
 
-def scan_file(file_path):
+def scan_file(file_path, root=None):
     """Scan one file. Returns (findings, skip_reason, inert) where findings is
     [(rule_id, severity, rule, line, evidence)].
+
+    `root` is the registered webroot. WITHOUT IT THE LOCATION RULES READ THE
+    ANALYST'S OWN DISK: `in_upload_dir` walked the absolute path, so evidence
+    unpacked below a folder called `files`, `uploads` or `media` turned every
+    unguarded PHP file on the site into a HIGH finding about a "writable
+    upload directory" that exists on no server. What decides has to be the
+    path INSIDE the webroot, which is the only part that describes the site.
 
     Every finding carries the id of the rule that produced it, so `scan` can
     drop the ones this workspace has switched off in one place instead of
     each rule having to remember to ask."""
     abs_path = os.path.abspath(file_path)
+    site_path = _site_path(abs_path, root)
     base_name = os.path.basename(file_path).lower()
     ext = os.path.splitext(base_name)[1]
     findings = []
@@ -164,14 +188,14 @@ def scan_file(file_path):
     try:
         size = os.path.getsize(file_path)
     except OSError as e:
-        if is_php and in_upload_dir(abs_path):
+        if is_php and in_upload_dir(site_path):
             findings.append(("webshell.unreadable", 0,
                              "Unguarded-location PHP could not be read",
                              None, base_name))
         return findings, f"read error: {e}", None
 
     if size > MAX_CONTENT_SCAN_BYTES:
-        if is_php and in_upload_dir(abs_path):
+        if is_php and in_upload_dir(site_path):
             findings.append(("webshell.too_large", 0,
                              "PHP in writable upload directory (too large to inspect)",
                              None, base_name))
@@ -181,7 +205,7 @@ def scan_file(file_path):
         with open(file_path, "rb") as f:
             raw = f.read()
     except OSError as e:
-        if is_php and in_upload_dir(abs_path):
+        if is_php and in_upload_dir(site_path):
             findings.append(("webshell.unreadable", 0,
                              "Unguarded-location PHP could not be read",
                              None, base_name))
@@ -205,7 +229,7 @@ def scan_file(file_path):
 
     findings.extend(_yara_findings(raw, "content"))
 
-    if in_upload_dir(abs_path) and not CMS_GUARD_RE.search(raw[:GUARD_SNIFF_BYTES]):
+    if in_upload_dir(site_path) and not CMS_GUARD_RE.search(raw[:GUARD_SNIFF_BYTES]):
         if EXEC_SURFACE_RE.search(raw):
             findings.append(("webshell.upload_php", 0,
                              "Unguarded PHP in writable upload directory "
@@ -228,12 +252,14 @@ def scan(case_dir, targets, ctx=None, workspace=None):
     # Read ONCE. The answer cannot change mid-run, and a settings read per
     # line of every file in a webroot is a different kind of tool.
     off = ruleswitch.disabled_ids(workspace) if workspace else set()
+    # Each file remembers WHICH TARGET it came out of: the location rules
+    # need the path below that root, not the one on this machine.
     files = []
     for target in targets:
         if os.path.isfile(target):
-            files.append(target)
+            files.append((target, os.path.dirname(target)))
         else:
-            files.extend(get_files_recursive(target))
+            files.extend((f, target) for f in get_files_recursive(target))
     total = len(files) or 1
 
     conn = db.connect(case_dir)
@@ -241,7 +267,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
         conn.execute("DELETE FROM inert_php")
         conn.execute("DELETE FROM skipped WHERE source = 'webshell'")
         flagged = set()
-        for i, file_path in enumerate(files):
+        for i, (file_path, root) in enumerate(files):
             if ctx is not None and i % 200 == 0:
                 if ctx.cancelled():
                     break
@@ -249,7 +275,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                              f"{i:,}/{total:,} files — "
                              f"{stats['findings']} findings")
             stats["scanned"] += 1
-            findings, skip_reason, inert = scan_file(file_path)
+            findings, skip_reason, inert = scan_file(file_path, root)
             abs_path = os.path.abspath(file_path)
             for rule_id, severity, rule, line, evidence in findings:
                 if rule_id in off:

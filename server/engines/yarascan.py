@@ -297,6 +297,20 @@ def scan(case_dir, targets, workspace=None, ctx=None):
     if broken:
         stats["broken"] = [b["file"] for b in broken]
     if compiled is None:
+        # NOT A CLEAN SCAN -- a scan that could not run. Without this the
+        # broken rules lived only in the job stats, so a workspace whose rule
+        # files all fail to compile looked, in the case itself, exactly like a
+        # workspace where YARA found nothing.
+        conn = db.connect(case_dir)
+        try:
+            for entry in broken:
+                conn.execute(
+                    "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
+                    ("yara", entry["file"],
+                     f"rule file does not compile: {entry.get('error', '')}"[:400]))
+            conn.commit()
+        finally:
+            conn.close()
         return stats
 
     files = []

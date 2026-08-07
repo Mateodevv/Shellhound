@@ -162,6 +162,16 @@ def paths_in(message):
     return out
 
 
+def _real_path(candidate):
+    """The path as the FILESYSTEM spells it.
+
+    The lookup is done in lower case because a log line and a copied webroot
+    need not agree on capitalisation; what is stored afterwards has to be the
+    real name, or nothing else in the case will match it."""
+    resolved = os.path.realpath(candidate)
+    return os.path.abspath(resolved if os.path.isfile(resolved) else candidate)
+
+
 def _norm(path):
     return str(path or "").replace("\\", "/").rstrip("/").lower()
 
@@ -192,8 +202,16 @@ def _resolver(conn):
                 if not tail:
                     continue
                 candidate = f"{root_low}/{tail}"
-                if os.path.isfile(candidate):
-                    return os.path.abspath(f"{root_raw}/{tail}")
+                if not os.path.isfile(candidate):
+                    continue
+                # THE ARTIFACT MUST BE SPELLED AS THE FILE IS. `tail` comes
+                # out of the lower-cased path, so returning it built a second,
+                # lower-cased identity for a file the webshell scanner had
+                # already recorded in its real spelling -- two artifacts for
+                # one file, and a triage decision on one covering neither the
+                # other nor the export. On a case-sensitive filesystem the
+                # lookup above fails outright and the finding is lost.
+                return _real_path(candidate)
         return None
     return resolve
 

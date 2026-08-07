@@ -132,7 +132,11 @@ class DuplicateTests(unittest.TestCase):
 
     def test_a_copy_of_a_bundled_pattern_is_refused(self):
         with self.assertRaises(patterns.PatternError) as caught:
-            patterns.add(self.ws, self.entry["patterns"], "my copy")
+            # A COPY, match mode included. The signature covers how the
+            # paths combine, because "either of these" and "both of these"
+            # are different rules -- so a faithful copy has to carry it.
+            patterns.add(self.ws, self.entry["patterns"], "my copy",
+                         match=self.entry["match"])
         self.assertEqual("err.patternKnown", caught.exception.key)
 
     def test_it_is_refused_even_while_switched_off(self):
@@ -140,7 +144,8 @@ class DuplicateTests(unittest.TestCase):
         duplicate every hit it produces."""
         patterns.set_enabled(self.ws, self.entry["id"], False)
         with self.assertRaises(patterns.PatternError):
-            patterns.add(self.ws, self.entry["patterns"], "my copy")
+            patterns.add(self.ws, self.entry["patterns"], "my copy",
+                         match=self.entry["match"])
 
 
 class ExchangeTests(unittest.TestCase):
@@ -163,9 +168,23 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual({"added": 2, "skipped": 0, "invalid": 0}, got)
 
     def test_an_import_that_repeats_a_bundled_pattern_skips_it(self):
-        text = patterns.bundled()[0]["patterns"][0] + " | copy"
+        # The WHOLE entry, paths and combination mode: the signature covers
+        # both, so importing one path of a two-path rule is importing a
+        # different rule and belongs in the library.
+        entry = patterns.bundled()[0]
+        text = json.dumps({"patterns": [{"patterns": entry["patterns"],
+                                         "match": entry["match"],
+                                         "name": "copy"}]})
         self.assertEqual({"added": 0, "skipped": 1, "invalid": 0},
                          patterns.import_text(self.ws, text))
+
+    def test_importing_part_of_a_bundled_rule_is_a_new_rule(self):
+        """One path out of a two-path AND-rule is a different statement --
+        "requested this" rather than "requested both" -- and the library has
+        no reason to refuse it."""
+        one = patterns.bundled()[0]["patterns"][0]
+        self.assertEqual({"added": 1, "skipped": 0, "invalid": 0},
+                         patterns.import_text(self.ws, one + " | part"))
 
 
 class DescriptionTests(unittest.TestCase):

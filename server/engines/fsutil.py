@@ -2,11 +2,15 @@
 """Shared filesystem helpers (ported from legacy core/utils.py)."""
 import bz2
 import gzip
+import lzma
 import hashlib
 import os
 from pathlib import Path
 
-COMPRESSED_OPENERS = {".gz": gzip.open, ".bz2": bz2.open}
+# `.xz` is listed in DUMP_SUFFIXES, so a dump named that way was offered to
+# the detector and then read as raw compressed bytes: it found no SQL and
+# the file was silently never proposed, while a .sql.gz beside it was.
+COMPRESSED_OPENERS = {".gz": gzip.open, ".bz2": bz2.open, ".xz": lzma.open}
 _CHUNK = 65536
 
 

@@ -386,6 +386,110 @@ class EngineHonestyTests(unittest.TestCase):
                              if f[0] == "webshell.php_in_image"],
                             f"{tag!r} was not recognised as PHP")
 
+    def _htaccess(self, body):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-ht-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        path = root / ".htaccess"
+        path.write_bytes(body)
+        findings, _skip, _inert = webshell.scan_file(str(path))
+        return [f[0] for f in findings]
+
+    def test_an_ordinary_php_version_handler_is_not_a_finding(self):
+        """cPanel and Plesk write this into the default .htaccess of every
+        account. The rule fired on it and called `.php .php8 .phtml`
+        "non-PHP extensions" -- the opposite of what stands in the line."""
+        self.assertEqual([], self._htaccess(
+            b"<IfModule mime_module>\n"
+            b"  AddHandler application/x-httpd-ea-php81 .php .php8 .phtml\n"
+            b"</IfModule>\n"))
+
+    def test_an_image_extension_mapped_to_php_is_still_a_finding(self):
+        """The guard against narrowing the rule into uselessness."""
+        for body in (b"AddType application/x-httpd-php .jpg\n",
+                     b"AddHandler application/x-httpd-php .png\n",
+                     b"<FilesMatch \"\\.(jpg|png)$\">\n"
+                     b"  SetHandler application/x-httpd-php\n"
+                     b"</FilesMatch>\n"):
+            self.assertIn("webshell.htaccess_handler", self._htaccess(body),
+                          body.decode())
+
+    def test_a_reordered_query_string_still_matches_the_bundled_pattern(self):
+        """HTTP query order carries no meaning, so a hunt pattern must not
+        depend on it. The shipped JCE rule was one literal string and missed
+        `?task=...&option=...`."""
+        import shutil
+        from server import patterns
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-jce-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        uris = ["/index.php?option=com_jce&task=profiles.import",
+                "/index.php?task=profiles.import&option=com_jce",
+                "/index.php?option=com_jce&view=x&task=profiles.import"]
+        (logs / "a.log").write_text("".join(
+            f'203.0.113.{i + 1} - - [06/Jan/2026:08:00:00 +0000] '
+            f'"GET {u} HTTP/1.1" 200 5 "-" "c"\n'
+            for i, u in enumerate(uris)), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        entry = patterns.bundled()[0]
+        out = logindex.match_patterns(case, entry["patterns"], entry["match"])
+        self.assertEqual(3, len({c["ip"] for c in out["clients"]}),
+                         "a reordered query string was missed")
+
+    def test_a_different_jce_task_is_not_a_hit(self):
+        """The guard against widening it into a rule about com_jce alone."""
+        import shutil
+        from server import patterns
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-jce2-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        (logs / "a.log").write_text(
+            '203.0.113.1 - - [06/Jan/2026:08:00:00 +0000] '
+            '"GET /index.php?option=com_jce&task=something.else HTTP/1.1" '
+            '200 5 "-" "c"\n', encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        entry = patterns.bundled()[0]
+        out = logindex.match_patterns(case, entry["patterns"], entry["match"])
+        self.assertEqual([], out["clients"])
+
+    def test_every_attacker_controlled_csv_field_is_escaped(self):
+        """The export exists to be opened in a spreadsheet, and a user agent
+        of `=cmd|'/c calc'!A1` executed when it was. Only the URI was
+        guarded."""
+        from server.app import _csv_safe
+        for payload in ("=cmd|'/c calc'!A1", "+1+1", "-2+3", "@SUM(A1)"):
+            self.assertTrue(_csv_safe(payload).startswith("'"), payload)
+        self.assertEqual("Mozilla/5.0", _csv_safe("Mozilla/5.0"))
+        self.assertEqual("", _csv_safe(None))
+
+    def test_the_phpmyadmin_export_date_is_readable(self):
+        """phpMyAdmin is the most common export on shared hosting and none of
+        its date forms parsed, so the reference date was simply missing."""
+        from datetime import datetime
+        from server.app import _find_web_dist          # noqa: F401 (import app)
+        import server.app as appmod
+        import inspect
+        source = inspect.getsource(appmod.create_app)
+        start = source.index("_STAMP_FORMATS = (")
+        formats = eval(source[source.index("(", start):
+                              source.index(")", source.index("(", start)) + 1])
+        for raw in ("Jan 06, 2026 at 08:00 AM", "06. Jan 2026 um 08:00",
+                    "2026-01-06 08:00:00"):
+            self.assertTrue(
+                any(_parses(raw, f) for f in formats),
+                f"no format reads {raw!r}")
+
     def test_editing_a_pattern_into_a_duplicate_is_refused(self):
         """add() refuses a copy because it would run twice and be reported
         twice; editing an entry INTO that copy has the same effect."""
@@ -500,6 +604,15 @@ class UriAttributionTests(unittest.TestCase):
 def uri_targets_helper(uri, rel):
     from server.artifacts import uri_targets
     return uri_targets(uri, rel)
+
+
+def _parses(raw, fmt):
+    from datetime import datetime
+    try:
+        datetime.strptime(raw, fmt)
+        return True
+    except ValueError:
+        return False
 
 
 class LogIndexHonestyTests(unittest.TestCase):
