@@ -110,9 +110,15 @@ export function formatSpan(from?: number | null, to?: number | null): string {
   const de = activeLang() === 'de'
   const unit = (n: number, one: string, many: string) =>
     `${n} ${n === 1 ? one : many}`
+  // THE UNIT IS CHOSEN FROM THE ROUNDED VALUE, not from the raw one. Picking
+  // it first and rounding afterwards produced "60 minutes" for 3599 seconds
+  // and "24 hours" for 86399 -- the very readings the next branch exists to
+  // express, and a gap reported as 24 hours reads as a day nobody looked at.
   if (s < 60) return unit(s, de ? 'Sekunde' : 'second', de ? 'Sekunden' : 'seconds')
-  if (s < 3600) return unit(Math.round(s / 60), de ? 'Minute' : 'minute', de ? 'Minuten' : 'minutes')
-  if (s < 86400) return unit(Math.round(s / 3600), de ? 'Stunde' : 'hour', de ? 'Stunden' : 'hours')
+  const minutes = Math.round(s / 60)
+  if (minutes < 60) return unit(minutes, de ? 'Minute' : 'minute', de ? 'Minuten' : 'minutes')
+  const hours = Math.round(s / 3600)
+  if (hours < 24) return unit(hours, de ? 'Stunde' : 'hour', de ? 'Stunden' : 'hours')
   return unit(Math.round(s / 86400), de ? 'Tag' : 'day', de ? 'Tage' : 'days')
 }
 

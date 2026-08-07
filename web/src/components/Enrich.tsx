@@ -9,7 +9,7 @@
 // NOTHING HAPPENS WITHOUT A CLICK. There is no lookup on mount, no sweep, no
 // background refresh: the request leaves the machine when the analyst asks
 // for it, and the button says beforehand what will be sent.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, RefreshCw, Search, ShieldQuestion } from 'lucide-react'
 import clsx from 'clsx'
@@ -32,20 +32,35 @@ export function EnrichPanel({ slug, kind, value }: {
   const tr = useT()
   const service = SERVICE_FOR[kind]
   const [result, setResult] = useState<Enrichment | null>(null)
-  // THE VERDICT BELONGS TO ONE VALUE. The panel is re-rendered with a new
-  // hash or address while staying mounted, and the previous artifact's
-  // VirusTotal/AbuseIPDB answer stayed on screen next to it -- a third
-  // party's opinion shown against the wrong thing.
-  useEffect(() => { setResult(null) }, [kind, value])
+
+  // THE VERDICT BELONGS TO ONE VALUE, and so does the error and so does the
+  // answer still on its way. The panel is re-rendered with a new hash or
+  // address while staying mounted, so all three have to be tied to what is
+  // on screen NOW -- a third party's opinion shown against the wrong
+  // indicator is worse than none, and it looks exactly like a real one.
+  const askedFor = useRef(`${kind}:${value}`)
+  useEffect(() => {
+    askedFor.current = `${kind}:${value}`
+    setResult(null)
+    lookup.reset()
+  }, [kind, value])          // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: conf } = useQuery({
     queryKey: ['settings'],
     queryFn: () => api<SettingsInfo>('/api/settings'),
   })
   const lookup = useMutation({
-    mutationFn: (refresh: boolean) =>
-      post<Enrichment>(`/api/cases/${slug}/enrich`, { service, value, refresh }),
-    onSuccess: setResult,
+    mutationFn: (refresh: boolean) => {
+      // Captured at the moment the request goes out, so a slow answer can be
+      // told apart from the one belonging to what is on screen.
+      const asked = `${kind}:${value}`
+      return post<Enrichment>(`/api/cases/${slug}/enrich`,
+                              { service, value, refresh })
+        .then((answer) => ({ asked, answer }))
+    },
+    onSuccess: ({ asked, answer }) => {
+      if (asked === askedFor.current) setResult(answer)
+    },
   })
 
   if (!service || !value) return null

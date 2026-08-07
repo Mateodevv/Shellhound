@@ -68,9 +68,15 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
       // What was decided along and what is suggested are a MESSAGE, not a
       // question: the analyst has just decided and should learn what
       // followed from it without being torn out of their flow.
-      if (result.linked?.length || result.suggested?.length) {
-        setNotice({ linked: result.linked ?? [], suggested: result.suggested ?? [] })
-      }
+      // SET OR CLEARED, never only set. Left standing, the previous
+      // decision's message survives the next one -- and its undo button
+      // reverts the artifacts THAT decision pulled along, which are not the
+      // ones the analyst has just decided. An undo that takes back something
+      // else is worse than no undo.
+      setNotice(
+        (result.linked?.length || result.suggested?.length)
+          ? { linked: result.linked ?? [], suggested: result.suggested ?? [] }
+          : null)
       refresh()
       onDecided?.()
     },

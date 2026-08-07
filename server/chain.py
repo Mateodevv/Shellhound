@@ -221,7 +221,17 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
                 if uri_targets(h["uri"], rel)]
         if not hits:
             continue
-        tz = max((h["tz"] or 0) for h in hits)
+        # THE OFFSET OF A REQUEST THAT HAS ONE. `max()` over all of them let a
+        # line whose timestamp could not be read -- offset stored as NULL and
+        # coerced to 0 -- outrank a real NEGATIVE offset, so this file's events
+        # were dated in UTC while the client events beside them in the same
+        # chronology were dated in log time. Two frames in one sequence, hours
+        # apart, with nothing on screen saying so: a chronology is read as an
+        # ORDER, and that order was then wrong. Invisible at offset zero, and
+        # invisible above it too, because with a positive offset max() happens
+        # to pick the real one.
+        seen_tz = [h["tz"] for h in hits if h["tz"] is not None]
+        tz = max(seen_tz, key=abs) if seen_tz else 0
         oks = [h["first_ok"] for h in hits if h["first_ok"]]
         # A file can be requested by lines whose TIMESTAMP could not be read.
         # The index keeps those at epoch 0 rather than throwing the request
@@ -309,6 +319,23 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         add(at, "konto", title, detail, "dump",
             severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
 
+    events.sort(key=lambda e: e["at"])
+    truncated = len(events) > EVENT_CAP
+    if truncated:
+        # WHAT THE CAP CUTS OFF STILL HAS TO BE ACCOUNTED FOR. `dated` was
+        # filled while the events were being built, so an artifact whose only
+        # events fall past the cap counted as dated and then vanished with
+        # them -- present in neither list. A hundred accounts registered
+        # during the log period is enough to push a confirmed shell over the
+        # edge, and that is what a mass registration through a compromised
+        # form looks like. Anything cut goes back to being undated, which is
+        # the honest answer: this chronology does not show it.
+        events, cut = events[:EVENT_CAP], events[EVENT_CAP:]
+        still_shown = {e["artifact"] for e in events}
+        for event in cut:
+            if event["artifact"] and event["artifact"] not in still_shown:
+                dated.discard(event["artifact"])
+
     # EVERY CONFIRMED ARTIFACT MUST SHOW UP -- in the chain or here. A
     # chronology from which a decision of the analyst quietly disappears is
     # the more dangerous half of a lie: it looks complete.
@@ -323,11 +350,6 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
             "artifact": row["artifact"], "artifact_kind": kind,
             "artifact_rel": files.get(row["artifact"], row["artifact"]),
             "why": t(lang, key)})
-
-    events.sort(key=lambda e: e["at"])
-    truncated = len(events) > EVENT_CAP
-    if truncated:
-        events = events[:EVENT_CAP]
 
     # --- what the case does NOT prove ----------------------------------
     if not confirmed:

@@ -70,23 +70,32 @@ def quiet_windows(case_dir):
 
     Runs over the epoch column in order. One pass, and the index is already
     sorted by it -- this is cheap even on a ten-million-line log."""
+    # THE SAME KEYS WHETHER OR NOT ANYTHING WAS MEASURED. The short answers
+    # below used to carry three keys where the full one carries five, so a
+    # reader had to know which of the two it was holding before it could ask
+    # a question -- and in the browser the missing ones read as undefined
+    # rather than as an error.
+    def unmeasured():
+        return {"windows": [], "median_gap": 0, "threshold": 0,
+                "checked": False, "total": 0}
+
     conn = logindex._open_ro(case_dir)
     if conn is None:
-        return {"windows": [], "median_gap": 0, "checked": False}
+        return unmeasured()
     try:
         rows = conn.execute(
             "SELECT DISTINCT epoch FROM requests "
             "WHERE epoch IS NOT NULL AND epoch > 0 ORDER BY epoch").fetchall()
     except sqlite3.Error:
-        return {"windows": [], "median_gap": 0, "checked": False}
+        return unmeasured()
     finally:
         conn.close()
 
     stamps = [r[0] for r in rows]
     if len(stamps) < 50:
         # Too little to have a rhythm. Saying "no holes" here would be a
-        # statement the data cannot support.
-        return {"windows": [], "median_gap": 0, "checked": False}
+        # statement the data cannot support -- which is what `checked` says.
+        return unmeasured()
 
     gaps = [b - a for a, b in zip(stamps, stamps[1:])]
     median = _median([g for g in gaps if g > 0]) or 1

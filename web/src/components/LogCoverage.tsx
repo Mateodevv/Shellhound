@@ -35,7 +35,22 @@ interface FileAnomaly {
 }
 
 interface Coverage {
-  quiet: { windows: QuietWindow[]; checked: boolean; median?: number }
+  quiet: {
+    /** Capped -- `total` says how many there really were. */
+    windows: QuietWindow[]
+    /** False when there was too little data to say anything, which is not
+     *  the same as "no holes". */
+    checked: boolean
+    /** The log's own rhythm in seconds, and the yardstick the threshold is
+     *  derived from: a server answering every two seconds and one answering
+     *  three times a day cannot share a cutoff. The interface used to call
+     *  this `median`, a name no endpoint has ever sent. */
+    median_gap?: number
+    /** How long a silence has to be before it counts, in seconds. */
+    threshold?: number
+    /** Quiet windows found in total, before `windows` was capped. */
+    total?: number
+  }
   files: FileAnomaly[]
   notes: string[]
   /** The log's own UTC offset, so these times can be shown on the same clock

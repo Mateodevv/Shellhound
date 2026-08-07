@@ -1,0 +1,197 @@
+# Mutation testing — the check on the checkers.
+#
+# CI answers "does the suite pass". This answers the question that actually
+# matters: does the suite FAIL when the code is wrong. Each mutant is one
+# small, deliberate defect introduced into server/ — an operator flipped, a
+# constant nudged, a condition negated — and the suite is run against it. A
+# mutant the suite does not notice is a survivor, and a survivor is a piece of
+# behaviour that nothing defends. Fifty-five real bugs got past a green suite
+# of 303 tests; survivors are where the next fifty-five are hiding.
+#
+# NIGHTLY, AND DELIBERATELY NOT ON PUSH. Every mutant costs a full run of the
+# suite. Ten and a half thousand mutants over server/ is somewhere north of
+# eleven hours of test runs — sharded here so the wall clock is bearable, but
+# still nothing a human waits for. A check nobody can wait for gets marked
+# "required", then blocks a release at four in the afternoon, and is then
+# switched off for good. Running it while everyone is asleep is what keeps it
+# alive.
+#
+# It gates no merge and blocks no release: nothing waits on it. Surviving
+# mutants do not turn it red either -- they are a report, and reading a report
+# is a person's job. Only two things turn it red, and both mean the run itself
+# was worthless: a module that no shard covers, and a suite that was already
+# failing before a single mutant was made.
+name: Mutation
+
+on:
+  schedule:
+    # 03:17 UTC. Not on the hour: every scheduled workflow on GitHub asks for
+    # the hour, and the queue at :00 is where scheduled runs go to be an hour
+    # late.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second night's run while the first is still going would be two full
+# mutation passes competing for runners to say the same thing.
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+jobs:
+  # Fourteen of the fifty-five bugs were on layers with NO tests at all -- not
+  # weakly tested, untested. A hand-written shard list rots into exactly that:
+  # somebody adds server/whatever.py, nobody adds it to a shard, and it is
+  # never mutated, silently, forever. This job is the ten seconds that stops it.
+  shards:
+    name: Every module is in a shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Explicitly, so that `python` means the same interpreter here as it does
+      # in the test command the mutants are judged by.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install PyYAML
+      - run: |
+          python - <<'PY'
+          import pathlib, sys, yaml
+          workflow = yaml.safe_load(open(".github/workflows/mutation.yml"))
+          shards = workflow["jobs"]["mutate"]["strategy"]["matrix"]["include"]
+          listed = {m for shard in shards for m in shard["modules"].split()}
+          found = {p.as_posix() for p in pathlib.Path("server").rglob("*.py")}
+          missing = sorted(found - listed)
+          stale = sorted(listed - found)
+          for path in missing:
+              print(f"not in any mutation shard: {path}")
+          for path in stale:
+              print(f"shard names a file that is gone: {path}")
+          sys.exit(1 if missing or stale else 0)
+          PY
+
+  mutate:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    # The budget below stops cosmic-ray; this is the outer fuse in case the
+    # process ignores it. It must be the larger of the two or the job dies
+    # before the report is written.
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      # The shards exist because a single sequential pass does not fit in a
+      # night, and they are cut by mutant count rather than by subject: the
+      # three big engines carry a quarter of the package each and get a shard
+      # to themselves, the small modules share one. Rebalance when a module
+      # grows — `cosmic-ray init` prints what it found.
+      matrix:
+        include:
+          - name: app
+            modules: server/app.py
+          - name: logindex
+            modules: server/engines/logindex.py
+          - name: sqldump
+            modules: server/engines/sqldump.py
+          - name: cms
+            modules: server/engines/cmsinventory.py server/engines/detect.py
+          - name: chain-and-patterns
+            modules: server/chain.py server/engines/webshell.py server/patterns.py server/sigma.py
+          - name: workspace-and-scanning
+            modules: server/engines/yarascan.py server/workspace.py server/engines/webrootdiff.py server/coverage.py server/enrich.py
+          - name: logs-and-storage
+            modules: server/engines/errorlog.py server/db.py server/iocs.py server/engines/accesslog.py server/geoip.py server/engines/sigmascan.py
+          - name: small-modules
+            modules: server/jobs.py server/artifacts.py server/bundled_rules.py server/settings.py server/engines/fsutil.py server/i18n.py server/rules.py server/config.py server/main.py server/events.py server/ruleswitch.py server/__init__.py server/engines/__init__.py
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install cosmic-ray
+
+      # Cosmic-ray, not mutmut: mutmut 3 refuses to start on Windows and this
+      # repository is developed there. The reasoning is written out next to
+      # the configuration in pyproject.toml.
+      #
+      # The configuration lives in pyproject.toml and nowhere else. This step
+      # copies that table verbatim and overrides one key, so a shard can never
+      # quietly run a different test command from the one a developer runs at
+      # their desk.
+      - name: Shard configuration
+        env:
+          MODULES: ${{ matrix.modules }}
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from cosmic_ray.config import serialize_config
+          with open("pyproject.toml", "rb") as handle:
+              cfg = tomllib.load(handle)["cosmic-ray"]
+          cfg["module-path"] = os.environ["MODULES"].split()
+          with open("shard.toml", "w") as handle:
+              handle.write(serialize_config(cfg))
+          print(open("shard.toml").read())
+          PY
+
+      # Before mutating anything, prove the test command works unmutated. If
+      # the suite is red for its own reasons then every mutant is "killed" and
+      # the whole run reports a perfect score it has not earned.
+      - name: Baseline
+        run: cosmic-ray baseline shard.toml
+
+      - name: Plan the mutants
+        run: cosmic-ray init shard.toml session.sqlite
+
+      # A wall-clock budget, not a completeness guarantee. Cosmic-ray writes
+      # each verdict to the session as it goes, so an interrupted shard still
+      # reports every mutant it reached — a partial answer read tomorrow beats
+      # a complete one that timed out into nothing. `|| true` because being cut
+      # off is the expected ending, not a failure.
+      - name: Run the mutants
+        run: timeout --signal=INT 300m cosmic-ray exec shard.toml session.sqlite || true
+
+      # `if: always()` throughout: the survivors are the entire point of the
+      # run, and they are worth having even when the step before them was cut
+      # short or fell over.
+      #
+      # The survivors go in their own file WITH THE DIFF, because that file is
+      # the only thing anybody actually reads. "Mutant 4711 survived" is not
+      # actionable; four lines of diff showing that `>` became `>=` and no test
+      # minded is a test somebody can go and write before lunch.
+      - name: Report
+        if: always()
+        run: |
+          cr-report --surviving-only --show-diff session.sqlite \
+            > survivors-${{ matrix.name }}.txt || true
+          cr-report session.sqlite > mutation-${{ matrix.name }}.txt || true
+          cr-html session.sqlite > mutation-${{ matrix.name }}.html || true
+          {
+            echo "### Mutation: ${{ matrix.name }}"
+            echo
+            echo '```'
+            tail -n 3 mutation-${{ matrix.name }}.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ matrix.name }}
+          # The session database as well as the reports: `cosmic-ray exec`
+          # against a downloaded session picks up exactly where a shard that ran
+          # out of budget stopped, and every verdict in it can be re-read
+          # without running anything again.
+          path: |
+            survivors-${{ matrix.name }}.txt
+            mutation-${{ matrix.name }}.txt
+            mutation-${{ matrix.name }}.html
+            session.sqlite
+          retention-days: 30
