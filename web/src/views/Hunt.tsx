@@ -624,7 +624,7 @@ function ResultCard({ slug, result, onTrace }: {
   const collect = useMutation({
     mutationFn: (ips: string[]) => post<{ added: number }>(
       `/api/cases/${slug}/actors/collect`,
-      { ips, origin: `pattern hit: ${result.label || result.pattern}` }),
+      { ips, origin: `pattern hit: ${result.name || result.pattern}` }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['iocs'] })
       qc.invalidateQueries({ queryKey: ['actors'] })
@@ -639,7 +639,7 @@ function ResultCard({ slug, result, onTrace }: {
         <SeverityBadge severity={result.ok_hits ? 0 : 2} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13.5px] font-semibold">
-            {result.label || result.pattern}
+            {result.name || result.pattern}
           </div>
           <div className="mono truncate text-[11px] text-[var(--muted)]">{result.pattern}</div>
         </div>
@@ -661,7 +661,7 @@ function ResultCard({ slug, result, onTrace }: {
       {collect.data && (
         <div className="border-b border-[var(--line)] bg-[rgba(12,163,12,0.08)] px-4 py-1.5 text-[12px] text-[var(--ok)] animate-fade-up">
           {tr('hunt.collected', { n: formatCount(collect.data.added) })}{' '}
-          &ldquo;pattern hit: {result.label || result.pattern}&rdquo;
+          &ldquo;pattern hit: {result.name || result.pattern}&rdquo;
         </div>
       )}
 
@@ -844,5 +844,5 @@ function MatchPicker({ value, onChange }: {
 
 /** What the row shows for the paths: the combination made readable. */
 function joinPaths(p: HuntPattern): string {
-  return p.patterns.join(p.match === 'all' ? '  AND  ' : '  OR  ')
+  return p.patterns.join(p.match === 'all' ? ' AND ' : ' OR ')
 }

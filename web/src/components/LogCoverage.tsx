@@ -38,6 +38,9 @@ interface Coverage {
   quiet: { windows: QuietWindow[]; checked: boolean; median?: number }
   files: FileAnomaly[]
   notes: string[]
+  /** The log's own UTC offset, so these times can be shown on the same clock
+   *  as the chronology below instead of silently in UTC. */
+  tz: number
 }
 
 export function LogCoverage({ slug }: { slug: string }) {
@@ -67,12 +70,17 @@ export function LogCoverage({ slug }: { slug: string }) {
           {windows.map((w, i) => (
             <div key={i} className="flex items-center gap-2 text-[12.5px]">
               <Clock3 size={12} className="shrink-0 text-[var(--sev-low)]" />
+              {/* WITH THE ZONE, AND THE SAME ONE THE CHRONOLOGY USES. These
+                  were rendered at offset 0 regardless of the switcher while
+                  the chronology under them showed log-local time and labelled
+                  it -- the same instant, hours apart, on one screen, and this
+                  block named no zone at all. */}
               <span className="mono tabular shrink-0 text-[var(--muted)]">
-                {formatLogTime(w.from, 0)}
+                {formatLogTime(w.from, data.tz)}
               </span>
               <span className="shrink-0 text-[var(--muted)]">→</span>
               <span className="mono tabular shrink-0 text-[var(--muted)]">
-                {formatLogTime(w.to, 0)}
+                {formatLogTime(w.to, data.tz, { withZone: true })}
               </span>
               <span className="min-w-0 flex-1 truncate">
                 {tr('coverage.window', { span: formatSpan(w.from, w.to) })}

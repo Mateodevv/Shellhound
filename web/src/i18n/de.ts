@@ -887,6 +887,12 @@ export const de: Record<string, string> = {
   'database.csvAll': 'Alle',
   'findings.search': 'Artefakte, Pfade, Adressen durchsuchen...',
   'findings.empty.title': 'Nichts mehr zu entscheiden',
+  'findings.selected': '{n} Artefakt(e) markiert',
+  'findings.capped': 'zeigt die ersten {n}',
+  'palette.requests': '{n} Anfrage(n)',
+  'palette.alerts': '{n} Alarm(e)',
+  'triage.nothingRecorded': 'Nichts festgehalten: zu diesem Artefakt gibt es keine Funde, über die zu entscheiden wäre.',
+  'triage.nothingRecorded.title': 'Nichts festgehalten',
   'findings.hidden': '{n} Artefakt(e) ausgeblendet',
   'files.empty.title': 'Keine Webroot registriert',
   // Zwischen zwei Beobachtungen liegt eine Strecke, fuer die der Fall nichts

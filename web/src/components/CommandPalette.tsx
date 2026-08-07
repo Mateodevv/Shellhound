@@ -57,7 +57,13 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
     queryFn: () => api<SearchData>(
       `/api/cases/${slug}/search?q=${encodeURIComponent(q)}`),
     enabled: open && q.trim().length >= 2,
-    placeholderData: (prev) => prev,
+    // NO PLACEHOLDER ACROSS A NEW KEY. `placeholderData: prev => prev`
+    // hands the previous query's data to the next one -- including to the
+    // empty query the palette resets to when it opens, so it listed the last
+    // search's results under an empty box and Enter opened one of them.
+    // Keeping it only while the box has content preserves what it is for:
+    // no flicker between keystrokes.
+    placeholderData: (prev) => (q.trim().length >= 2 ? prev : undefined),
   })
 
   const items = useMemo<Item[]>(() => {
@@ -93,8 +99,9 @@ export function CommandPalette({ slug, open, onClose, gotoView, onOpenArtifact }
             <Users size={14} className="shrink-0 text-[var(--muted)]" />
             <span className="mono min-w-0 flex-1 truncate">{a.ip}</span>
             <span className="shrink-0 text-[11px] tabular text-[var(--muted)]">
-              {formatCount(a.requests)} Requests
-              {a.alerts > 0 && ` · ${a.alerts} Alarm(e)`}
+              {tr('palette.requests', { n: formatCount(a.requests) })}
+              {a.alerts > 0
+                && ` · ${tr('palette.alerts', { n: formatCount(a.alerts) })}`}
             </span>
           </>
         ),

@@ -43,6 +43,24 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
         }}
       />
 
+      {/* A decision the server did not record. It answers 200 with
+          `updated: 0` when the artifact carries no findings -- an actor
+          picked out of the search exists in the log index but not in the
+          work list -- and reporting that as success let the analyst walk
+          away believing it was filed. */}
+      <Toast
+        open={t.nothingToDecide}
+        onClose={t.dismissNothingToDecide}
+        tone="info"
+        title={tr('triage.nothingRecorded.title')}
+        actions={
+          <Button variant="ghost" onClick={t.dismissNothingToDecide}>
+            {tr('common.close')}
+          </Button>
+        }>
+        {tr('triage.nothingRecorded')}
+      </Toast>
+
       <Toast
         open={!!n}
         onClose={t.dismissNotice}

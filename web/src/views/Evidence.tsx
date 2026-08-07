@@ -235,7 +235,14 @@ function EvidenceCard({ item, onRename, onRemove }: {
             defaultValue={displayName}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') { onRename(name); setEditing(false) }
+              // The same guard the blur handler has. `name` starts empty
+              // and only fills on the first keystroke, so Enter without
+              // typing renamed the evidence to nothing -- while clicking
+              // away left it alone.
+              if (e.key === 'Enter') {
+                if (name.trim()) onRename(name)
+                setEditing(false)
+              }
               if (e.key === 'Escape') setEditing(false)
             }}
             onBlur={() => { if (name.trim()) onRename(name); setEditing(false) }}

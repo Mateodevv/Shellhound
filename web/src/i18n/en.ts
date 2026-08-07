@@ -892,6 +892,12 @@ export const en: Record<string, string> = {
   'database.csvAll': 'All',
   'findings.search': 'Search artifacts, paths, addresses...',
   'findings.empty.title': 'Nothing left to decide',
+  'findings.selected': '{n} artifact(s) selected',
+  'findings.capped': 'showing the first {n}',
+  'palette.requests': '{n} request(s)',
+  'palette.alerts': '{n} alert(s)',
+  'triage.nothingRecorded': 'Nothing was recorded: this artifact has no findings to decide about.',
+  'triage.nothingRecorded.title': 'Nothing recorded',
   'findings.hidden': '{n} artifact(s) hidden',
   'files.empty.title': 'No webroot registered',
   // Between two observations lies a stretch the case cannot account for.
