@@ -106,6 +106,30 @@ def classify(value):
 
 # --- exports ----------------------------------------------------------------
 
+def actor_tags(actor, brute_threshold):
+    """What a client's own measurements say about it, as tags.
+
+    ITS OWN FUNCTION BECAUSE TWO PLACES DECIDED THIS AND DRIFTED APART. The
+    engine gates its "possible successful brute-force" alert on `admin_ok` --
+    a 2xx on the CMS backend, which an unauthenticated session does not get.
+    It used to gate on `login_redirects` and stopped, because Joomla answers
+    EVERY login POST with a redirect, right credentials or wrong: a plain
+    POST-Redirect-GET that proves nothing. The collector kept the old gate,
+    so a client the case no longer accused still went into the box tagged
+    "successful" -- and a tag on an indicator leaves the machine with it.
+
+    Takes a mapping, so it can be asked about a shape rather than a case.
+    """
+    tags = [TAG_ACTOR]
+    if (actor.get("scanner_uas") or "[]") != "[]":
+        tags.append(TAG_SCANNER)
+    if int(actor.get("login_posts") or 0) >= brute_threshold:
+        tags.append(TAG_BRUTE)
+    if int(actor.get("admin_ok") or 0) > 0:
+        tags.append(TAG_SUCCESS)
+    return tags
+
+
 def _by_ioc(links):
     """Edges by indicator id, both ends, each in the fitting reading
     direction.

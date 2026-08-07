@@ -1546,6 +1546,130 @@ class SigmaTranslationTests(unittest.TestCase):
                 self.sigma.compile_rule(self._rule(detection))
 
 
+class CmsDirPhpTests(unittest.TestCase):
+    """A PHP file lying DIRECTLY in a directory the CMS owns.
+
+    Joomla puts nothing there: a template is `templates/<name>/...`, a module
+    `modules/mod_<name>/...`, a plugin `plugins/<group>/<name>/...`. A bare
+    `.php` one level in is not a shape the CMS ships.
+
+    Nothing reported it. On a compromised Joomla the log held
+    `/templates/4044.php` answered 2xx five times -- the post-compromise
+    phase of the intrusion, and every view of the case was silent about it.
+    Widening the upload-directory rule to cover these four folders was the
+    obvious move and the wrong one: measured on that webroot it would have
+    added 29 findings about vendor autoloaders and CHANGELOG.php against the
+    one real hit. THE DEPTH is what carries the claim -- 615 PHP files under
+    those four directories, not one of them directly inside.
+    """
+
+    def _alerts(self, *uris):
+        import shutil
+        from datetime import datetime, timedelta, timezone
+        from server.engines import logindex
+        case = Path(tempfile.mkdtemp(prefix="shellhound-cmsdir-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-cmsdirlogs-"))
+        self.addCleanup(shutil.rmtree, case, True)
+        self.addCleanup(shutil.rmtree, logs, True)
+        db.connect(case).close()
+        when = datetime(2026, 1, 5, 8, 0, tzinfo=timezone.utc)
+        rows = []
+        for i, (uri, status) in enumerate(uris):
+            stamp = (when + timedelta(seconds=i * 5)).strftime(
+                "%d/%b/%Y:%H:%M:%S +0000")
+            rows.append(f'192.0.2.7 - - [{stamp}] "GET {uri} HTTP/1.1" '
+                        f'{status} 512 "-" "Mozilla/5.0"\n')
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        logindex.build(case, [str(logs)])
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            return {row[0] for row in conn.execute(
+                "SELECT kind FROM alerts")}
+        finally:
+            conn.close()
+
+    def test_a_bare_php_in_templates_answered_2xx_is_reported(self):
+        self.assertIn("cms_dir_php",
+                      self._alerts(("/templates/4044.php", 200)))
+
+    def test_the_shape_the_cms_actually_ships_is_not(self):
+        """One directory deeper is where every legitimate template, module
+        and plugin file lives. A rule that fired here would bury itself."""
+        self.assertNotIn("cms_dir_php", self._alerts(
+            ("/templates/cassiopeia/index.php", 200),
+            ("/modules/mod_menu/mod_menu.php", 200),
+            ("/plugins/system/cache/cache.php", 200),
+            ("/components/com_content/content.php", 200),
+            ("/administrator/components/com_akeeba/restore.php", 200)))
+
+    def test_a_probe_that_found_nothing_is_not_an_incident(self):
+        """The outcome gate the whole engine works by: a 404 means the file
+        was not there, and a scanner asking for it proves nothing."""
+        self.assertNotIn("cms_dir_php",
+                         self._alerts(("/plugins/shell.php", 404)))
+
+    def test_a_query_string_does_not_hide_the_path(self):
+        self.assertIn("cms_dir_php",
+                      self._alerts(("/templates/4044.php?cmd=id", 200)))
+
+
+class ActorTagTests(unittest.TestCase):
+    """The tags a collected client carries out of the tool.
+
+    `login_redirects` proves NOTHING. Joomla answers every login POST with a
+    303 -- right credentials or wrong, it is a plain POST-Redirect-GET. The
+    engine used to read that as a break-in, stopped, and gates on `admin_ok`
+    instead: a 2xx on the backend itself, which an unauthenticated session
+    does not get.
+
+    The collector did not follow, and went on tagging clients "successful"
+    that the case no longer accused. A tag on an indicator LEAVES THE
+    MACHINE: it travels into the CSV, the JSON and the STIX bundle, where
+    nobody can see which gate produced it.
+
+    The real defect was that two places decided one thing. It is one function
+    now, and this asks it about shapes rather than about a case -- the
+    fixture that would have caught this has no login traffic at all, so an
+    end-to-end test of it passed while saying nothing.
+    """
+
+    THRESHOLD = 30
+
+    def _tags(self, **actor):
+        base = {"scanner_uas": "[]", "login_posts": 0, "login_redirects": 0,
+                "admin_ok": 0}
+        return set(ioclib.actor_tags({**base, **actor}, self.THRESHOLD))
+
+    def test_a_redirect_alone_is_not_a_successful_login(self):
+        """The site's own administrator: signs in every day, gets a redirect
+        every time, and never once broke in."""
+        self.assertNotIn(ioclib.TAG_SUCCESS,
+                         self._tags(login_posts=200, login_redirects=200))
+
+    def test_a_2xx_on_the_backend_is(self):
+        self.assertIn(ioclib.TAG_SUCCESS,
+                      self._tags(login_posts=200, login_redirects=200,
+                                 admin_ok=3))
+
+    def test_the_flood_is_counted_separately_from_the_success(self):
+        """Two different statements. A flood that got nowhere is still a
+        flood, and it must not imply the other."""
+        flood = self._tags(login_posts=self.THRESHOLD)
+        self.assertIn(ioclib.TAG_BRUTE, flood)
+        self.assertNotIn(ioclib.TAG_SUCCESS, flood)
+
+    def test_the_threshold_includes_its_own_value(self):
+        self.assertNotIn(ioclib.TAG_BRUTE,
+                         self._tags(login_posts=self.THRESHOLD - 1))
+
+    def test_a_scanner_sighting_says_scanner_and_nothing_else(self):
+        tags = self._tags(scanner_uas='["Nikto/2.5.0"]')
+        self.assertEqual({ioclib.TAG_ACTOR, ioclib.TAG_SCANNER}, tags)
+
+    def test_an_ordinary_visitor_carries_only_that_it_is_one(self):
+        self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
+
+
 class DetectOfferTests(unittest.TestCase):
     """The guided scan proposes what is in the folder -- or used to skip it.
 

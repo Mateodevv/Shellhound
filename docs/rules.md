@@ -160,6 +160,7 @@ is reported, not passed over in silence.
 | Database | document.write (script injection) | MEDIUM |
 | Logs | Possible successful brute-force | HIGH |
 | Logs | Requested PHP in upload/cache directory answered 2xx | HIGH |
+| Logs | Requested PHP directly in a CMS extension directory answered 2xx | HIGH |
 | Logs | CMS login POST flood | MEDIUM |
 | Logs | SQL injection patterns in URIs answered 2xx | MEDIUM |
 | Logs | Path traversal patterns answered 2xx | MEDIUM |
@@ -532,6 +533,27 @@ server answered successfully.
 
 **Why it counts:** this is not a scan into the void: something executable was
 there and was delivered. The strongest log trace of a shell in use.
+
+### Requested PHP directly in a CMS extension directory answered 2xx — HIGH
+
+**Trigger:** a URI for a `.php` lying DIRECTLY in `templates/`,
+`modules/`, `plugins/` or `components/` (with or without the
+`administrator/` prefix) **and** at least one 2xx response.
+
+**What it states:** a PHP file at a depth the CMS does not use was
+requested — and served.
+
+**Why it counts:** a template is `templates/<name>/…`, a module
+`modules/mod_<name>/…`, a plugin `plugins/<group>/<name>/…`. Nothing the
+CMS ships sits one level in, so a bare `.php` there was put there.
+
+**Why the DEPTH and not the directory.** Widening the upload rule to
+cover these four folders is the obvious move and the wrong one: they are
+full of legitimate PHP. Measured on a compromised Joomla — 615 PHP files
+under those four directories, 29 of them without a `_JEXEC` guard
+(vendor autoloaders, `CHANGELOG.php`, an Akeeba restore script), and not
+one directly inside. The log held three at that depth, one of them
+answered 2xx five times, and no rule said a word about any of them.
 
 ### CMS login POST flood — MEDIUM
 

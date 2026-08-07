@@ -44,7 +44,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -92,6 +92,27 @@ UPLOAD_PHP_RE = re.compile(
     r"(?i)/(images|tmp|cache|media|files|assets|upload|uploads|"
     r"wp-content/uploads|wp-content/cache)/[^?\s]*\.ph(p\d?|tml|ar)\b")
 
+# A PHP file lying DIRECTLY in a directory the CMS owns. Joomla puts
+# nothing there: a template is `templates/<name>/...`, a module
+# `modules/mod_<name>/...`, a plugin `plugins/<group>/<name>/...`. So a
+# bare `.php` one level in is not a shape the CMS ships -- it is
+# something that was put there.
+#
+# NOT PART OF THE UPLOAD RULE, which is about directories the WEB SERVER
+# may write into and which therefore hold thousands of legitimate files.
+# These directories are the opposite: full of legitimate PHP, none of it
+# at this depth. Measured on a compromised Joomla with 1744 files -- 615
+# PHP files under these four directories, and not ONE of them directly
+# inside. The log held three: /templates/4044.php answered 2xx five
+# times, /plugins/function.php and /plugins/shell.php. No rule said a
+# word about any of them.
+#
+# The depth is the whole rule, so the regex has to anchor at the start
+# of the path and refuse a second slash.
+CMS_DIR_PHP_RE = re.compile(
+    r"(?i)^/?(?:administrator/)?(?:templates|modules|plugins|components)"
+    r"/[^/?\s]+\.ph(?:p\d?|tml|ar)(?=[?\s]|$)")
+
 BF_THRESHOLD = 30            # login POSTs per client before it is a flood
 
 # Alert kinds that are CONTEXT rather than a statement about this system.
@@ -108,6 +129,7 @@ F_UPLOAD_PHP = 8
 # The backend itself, named with a component: what a login has
 # to have succeeded for.
 F_ADMIN_AREA = 16
+F_CMS_DIR_PHP = 32
 
 _LOG_SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -136,6 +158,8 @@ CREATE TABLE actors (
     sqli_attempts INTEGER, sqli_ok INTEGER,
     traversal_attempts INTEGER, traversal_ok INTEGER,
     upload_php_attempts INTEGER, upload_php_ok INTEGER,
+    cms_dir_php_attempts INTEGER DEFAULT 0,
+    cms_dir_php_ok INTEGER DEFAULT 0,
     agents INTEGER
 );
 CREATE TABLE actor_hours (
@@ -183,7 +207,8 @@ class _Actor:
                  "posts", "login_posts", "login_statuses", "login_redirects",
                  "admin_ok",
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
-                 "uphp", "uphp_ok", "agents", "examples")
+                 "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
+                 "agents", "examples")
 
     def __init__(self):
         self.requests = 0
@@ -205,6 +230,8 @@ class _Actor:
         self.trav_ok = 0
         self.uphp = 0
         self.uphp_ok = 0
+        self.cmsphp = 0
+        self.cmsphp_ok = 0
         self.agents = set()
         self.examples = {}          # kind -> first matching uri
 
@@ -280,6 +307,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     flags |= F_SQLI
                 if TRAVERSAL_URI_RE.search(text):
                     flags |= F_TRAVERSAL
+                if CMS_DIR_PHP_RE.match(text):
+                    flags |= F_CMS_DIR_PHP
                 if UPLOAD_PHP_RE.search(text):
                     flags |= F_UPLOAD_PHP
                 if AUTHENTICATED_AREA_RE.search(text):
@@ -434,6 +463,11 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 if ok:
                                     a.uphp_ok += 1
                                 a.examples.setdefault("upload_php", uri)
+                            if flags & F_CMS_DIR_PHP:
+                                a.cmsphp += 1
+                                if ok:
+                                    a.cmsphp_ok += 1
+                                a.examples.setdefault("cms_dir_php", uri)
                         if is_scanner:
                             a.scanner_uas.add(data.get("user_agent") or "")
                         a.agents.add(agent_id)
@@ -510,9 +544,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 _json.dumps({str(k): v for k, v in a.login_statuses.items()}),
                 _json.dumps(sorted(a.scanner_uas)[:5]),
                 a.sqli, a.sqli_ok, a.trav, a.trav_ok, a.uphp, a.uphp_ok,
+                a.cmsphp, a.cmsphp_ok,
                 len(a.agents)))
         conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             actor_rows)
         conn.executemany(
             "INSERT INTO actor_hours VALUES (?,?,?)",
@@ -562,6 +597,13 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     f"{a.uphp_ok} of {a.uphp} request(s) for PHP in upload/"
                     f"cache directories were answered 2xx — access to a "
                     f"dropped shell?", a.examples.get("upload_php", "")))
+            if a.cmsphp_ok:
+                alert_rows.append((
+                    ip_id, "cms_dir_php", 0,
+                    f"{a.cmsphp_ok} of {a.cmsphp} request(s) for a PHP file "
+                    f"lying directly in templates/, modules/, plugins/ or "
+                    f"components/ were answered 2xx — the CMS ships nothing "
+                    f"at that depth", a.examples.get("cms_dir_php", "")))
             if a.sqli_ok:
                 alert_rows.append((
                     ip_id, "sqli", 1,
@@ -627,6 +669,7 @@ _ALERT_FINDING = {
     # kind -> (severity, rule text)
     "login_success": (0, "Possible successful brute-force (redirect after login flood)"),
     "upload_php": (0, "Requested PHP in upload/cache directory answered 2xx"),
+    "cms_dir_php": (0, "Requested PHP directly in a CMS extension directory answered 2xx"),
     "login_flood": (1, "CMS login POST flood"),
     "sqli": (1, "SQL injection patterns in URIs answered 2xx"),
     "traversal": (1, "Path traversal patterns answered 2xx"),
