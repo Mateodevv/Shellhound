@@ -563,6 +563,77 @@ class EngineHonestyTests(unittest.TestCase):
         self.assertEqual(4, out["modified"])
 
 
+class CoverageClockTests(unittest.TestCase):
+    """The coverage block and the chronology stand one above the other and
+    have to be on the same clock.
+
+    The quiet windows are stored as UTC epochs and were rendered at offset 0
+    whatever the switcher said, while the chronology below them rendered
+    log-local time and labelled it. The same instant, hours apart, on one
+    screen -- and the coverage block named no zone at all.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import time
+        from server.engines import logindex
+        base = 1780000000
+        root = Path(tempfile.mkdtemp(prefix="shellhound-covclock-"))
+        cls.root = root
+        cls.case = root / "case"
+        cls.case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+
+        def line(epoch):
+            stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0200", time.gmtime(epoch))
+            return (f'203.0.113.5 - - [{stamp}] "GET /a HTTP/1.1" 200 12 '
+                    f'"-" "curl"\n')
+
+        rows = [line(base + i * 5) for i in range(100)]
+        rows += [line(base + 4 * 3600 + i * 5) for i in range(100)]
+        (logs / "a.log").write_text("".join(rows), encoding="utf-8")
+        db.connect(cls.case).close()
+        logindex.build(cls.case, [str(logs)])
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def _note(self, mode):
+        from server import coverage
+        notes = coverage.report(self.case, "en", mode)["notes"]
+        self.assertTrue(notes, "the fixture produced no quiet window")
+        return notes[0]
+
+    def test_the_log_offset_travels_to_the_interface(self):
+        """The block draws the windows itself and needs the same offset the
+        chronology uses."""
+        from server import coverage
+        self.assertEqual(7200, coverage.report(self.case, "en", "log")["tz"])
+
+    def test_log_mode_names_the_offset(self):
+        self.assertIn("UTC+02:00", self._note("log"))
+
+    def test_utc_mode_says_utc(self):
+        note = self._note("utc")
+        self.assertIn("UTC", note)
+        self.assertNotIn("UTC+", note)
+
+    def test_the_two_modes_are_exactly_the_offset_apart(self):
+        import re
+        stamps = {}
+        for mode in ("log", "utc"):
+            found = re.findall(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})",
+                               self._note(mode))
+            stamps[mode] = found[0]
+        from datetime import datetime
+        delta = (datetime.strptime(stamps["log"], "%Y-%m-%d %H:%M:%S")
+                 - datetime.strptime(stamps["utc"], "%Y-%m-%d %H:%M:%S"))
+        self.assertEqual(7200, delta.total_seconds())
+
+
 class UriAttributionTests(unittest.TestCase):
     """Which requests belong to which file.
 

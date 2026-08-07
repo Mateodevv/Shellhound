@@ -596,8 +596,11 @@ export interface HuntClient {
 export interface HuntResult {
   id: string
   pattern: string
-  label: string
-  note: string
+  /** What the analyst called it. The server sends `name` and `cve`; the type
+   *  used to declare `label` and `note`, which no endpoint ever produced, so
+   *  the headline silently fell back to the raw pattern. */
+  name: string
+  cve: string
   hits: number
   ok_hits: number
   /** The URIs actually hit -- so that it is visible whether the pattern

@@ -100,6 +100,10 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
   return next
 }
 
+/** How many artifacts one request fetches. The count in the header
+ *  describes the whole set, so anything above this has to be stated. */
+const LIST_CAP = 2000
+
 export function Findings({ slug, gotoView }: {
   slug: string
   gotoView: (v: ViewId) => void
@@ -140,7 +144,7 @@ export function Findings({ slug, gotoView }: {
     if (hiddenTriage.size) p.set('hide_triage', [...hiddenTriage].join(','))
     if (hiddenSource.size) p.set('hide_source', [...hiddenSource].join(','))
     if (search) p.set('search', search)
-    p.set('limit', '2000')
+    p.set('limit', String(LIST_CAP))
     return p.toString()
   }, [hiddenSeverity, hiddenTriage, hiddenSource, search])
 
@@ -332,7 +336,12 @@ export function Findings({ slug, gotoView }: {
           </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {['webshell', 'sqldb', 'logs', 'yara', 'errorlog'].map((key) => {
+        {/* THE SOURCES THAT EXIST. `errorlog` is not one -- those findings
+            are written as `logs` -- and `yara` is, but the server's whitelist
+            never included it, so both chips looked active and filtered
+            nothing. A dead switch in a filter is worse than a missing one:
+            it reads as "I have excluded these". */}
+        {['webshell', 'sqldb', 'logs', 'yara'].map((key) => {
           const label = tr(`source.${key}`)
           return (
           <Tooltip key={key}
@@ -392,7 +401,7 @@ export function Findings({ slug, gotoView }: {
       {checked.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">
-            {checked.size} Artefakt{checked.size > 1 ? 'e' : ''} markiert
+            {tr('findings.selected', { n: formatCount(checked.size) })}
           </span>
           <Button variant="primary" onClick={() => bulkTriage('confirmed')}>
             <Check size={14} /> {tr('artifact.truePositiveCollect')}
@@ -420,6 +429,16 @@ export function Findings({ slug, gotoView }: {
               categories: formatCount(categories.length),
             })}
           </span>
+          {/* A LIST THAT QUIETLY SHRINKS IS A LIST NOBODY CAN TRUST. The
+              request is capped at 2000 while the count beside it describes
+              the whole set, so above that the header stated a number the
+              list did not contain and said nothing about it. */}
+          {data && data.total > LIST_CAP && (
+            <span className="rounded-md bg-[var(--sev-low)]/15 px-1.5 py-0.5
+                             text-[var(--sev-low)]">
+              {tr('findings.capped', { n: formatCount(LIST_CAP) })}
+            </span>
+          )}
           <button
             className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
             onClick={() => {

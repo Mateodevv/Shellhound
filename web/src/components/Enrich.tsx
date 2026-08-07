@@ -9,7 +9,7 @@
 // NOTHING HAPPENS WITHOUT A CLICK. There is no lookup on mount, no sweep, no
 // background refresh: the request leaves the machine when the analyst asks
 // for it, and the button says beforehand what will be sent.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, RefreshCw, Search, ShieldQuestion } from 'lucide-react'
 import clsx from 'clsx'
@@ -32,6 +32,11 @@ export function EnrichPanel({ slug, kind, value }: {
   const tr = useT()
   const service = SERVICE_FOR[kind]
   const [result, setResult] = useState<Enrichment | null>(null)
+  // THE VERDICT BELONGS TO ONE VALUE. The panel is re-rendered with a new
+  // hash or address while staying mounted, and the previous artifact's
+  // VirusTotal/AbuseIPDB answer stayed on screen next to it -- a third
+  // party's opinion shown against the wrong thing.
+  useEffect(() => { setResult(null) }, [kind, value])
 
   const { data: conf } = useQuery({
     queryKey: ['settings'],

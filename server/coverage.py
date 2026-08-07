@@ -167,18 +167,31 @@ def report(case_dir, lang="en", tz_mode="log"):
     notes = []
 
     from server.chain import iso, local
+    from server.engines import logindex
+
+    # THE SAME CLOCK AS THE CHRONOLOGY. The windows are stored as UTC epochs
+    # and used to be rendered with offset 0 whatever the mode, while the
+    # chronology directly below them rendered log-local time and said so.
+    # Two readings of one moment, hours apart, on one screen -- and this
+    # block did not even name its zone.
+    offsets = [int(o) for o in (logindex.overview(case_dir) or {})
+               .get("tz_offsets") or []]
+    tz = offsets[0] if len(offsets) == 1 else 0
+    shift = 0 if tz_mode == "utc" else tz
 
     for w in quiet["windows"]:
         notes.append(t(lang, "coverage.quiet",
                        hours=f"{w['seconds'] / 3600:.1f}",
-                       start=iso(local(w["from"]), 0, tz_mode),
-                       end=iso(local(w["to"]), 0, tz_mode)))
+                       start=iso(local(w["from"], shift), tz, tz_mode),
+                       end=iso(local(w["to"], shift), tz, tz_mode)))
     for a in anomalies:
         if a["truncated"]:
             notes.append(t(lang, "coverage.truncated", file=a["name"]))
         if a["stale_mtime"]:
             notes.append(t(lang, "coverage.staleMtime", file=a["name"]))
-    return {"quiet": quiet, "files": anomalies, "notes": notes}
+    # `tz` travels so the interface can render the same instants the same way
+    # -- it draws the windows itself rather than reusing these sentences.
+    return {"quiet": quiet, "files": anomalies, "notes": notes, "tz": tz}
 
 
 def evidence_note(case_dir, lang="en", tz_mode="log"):

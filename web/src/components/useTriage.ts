@@ -27,17 +27,28 @@ export interface TriageController {
   dismissNotice: () => void
   reviewing: TriageLink[] | null
   review: (links: TriageLink[] | null) => void
+  /** The last decision changed nothing, because the artifact carries no
+   *  findings. The server answers 200 for that, so somebody has to say it. */
+  nothingToDecide: boolean
+  dismissNothingToDecide: () => void
 }
 
 export function useTriage(slug: string, onDecided?: () => void): TriageController {
   const qc = useQueryClient()
   const [collected, setCollected] = useState<TriageResult['collected']>([])
+  const [nothingToDecide, setNothingToDecide] = useState(false)
   const [notice, setNotice] = useState<
     { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
   const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
 
   const refresh = () => {
-    for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors', 'chain']) {
+    // EVERY view that shows a triage state. The file browser, the database
+    // and the CMS inventory all draw the badge and were never invalidated,
+    // so they kept showing the state from before the decision until
+    // something else happened to refetch them.
+    for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors',
+                       'chain', 'browse', 'database', 'cms', 'file',
+                       'search']) {
       qc.invalidateQueries({ queryKey: [key] })
     }
   }
@@ -47,6 +58,12 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
       artifacts: string[]; state: string; note?: string; propagate?: boolean
     }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
     onSuccess: (result) => {
+      // A DECISION THAT RECORDED NOTHING IS NOT A DECISION. The server
+      // answers 200 with `updated: 0` when the artifact has no findings --
+      // an actor picked out of the search, say, which exists in the log
+      // index but not in the work list. The interface reported that as
+      // success and the analyst walked away believing it was filed.
+      setNothingToDecide(result.updated === 0)
       setCollected(result.collected)
       // What was decided along and what is suggested are a MESSAGE, not a
       // question: the analyst has just decided and should learn what
@@ -60,6 +77,8 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
   })
 
   return {
+    nothingToDecide,
+    dismissNothingToDecide: () => setNothingToDecide(false),
     decide: (artifacts, state, note, propagate) =>
       mutation.mutate({ artifacts, state, note, propagate }),
     // Grouped by state so that it stays one call per group.

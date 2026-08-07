@@ -70,10 +70,19 @@ function ClockEditor({ slug, offsets, onClose }: {
     setLogs(String(offsets.logs / 3600))
     setDump(String(offsets.dump / 3600))
   }, [offsets])
+  // `parseFloat('abc')` is NaN, `JSON.stringify` writes that as null and the
+  // server rejects the request -- so typing something unreadable silently
+  // did nothing at all. The `|| '0'` only ever caught the empty string.
+  const hours = (text: string) => {
+    const n = parseFloat(text.replace(',', '.'))
+    return Number.isFinite(n) ? Math.round(n * 3600) : null
+  }
+  const badInput = hours(logs) === null || hours(dump) === null
+
   const save = useMutation({
     mutationFn: () => post(`/api/cases/${slug}/clock`, {
-      logs: Math.round(parseFloat(logs.replace(',', '.') || '0') * 3600),
-      dump: Math.round(parseFloat(dump.replace(',', '.') || '0') * 3600),
+      logs: hours(logs) ?? 0,
+      dump: hours(dump) ?? 0,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['chain'] })
@@ -98,7 +107,8 @@ function ClockEditor({ slug, offsets, onClose }: {
         {tr('chain.clock.sign')}
       </span>
       <div className="ml-auto flex gap-1.5">
-        <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>
+        <Button variant="primary" disabled={save.isPending || badInput}
+          onClick={() => save.mutate()}>
           {tr('common.apply')}
         </Button>
         <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
