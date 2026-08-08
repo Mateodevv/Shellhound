@@ -44,7 +44,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -209,7 +209,7 @@ CREATE TABLE actors (
     ip_id INTEGER PRIMARY KEY,
     ip TEXT,
     requests INTEGER, first_epoch INTEGER, last_epoch INTEGER, tz INTEGER,
-    err4 INTEGER, err5 INTEGER, bytes INTEGER,
+    err4 INTEGER, err5 INTEGER, bytes INTEGER, bytes_unknown INTEGER,
     posts INTEGER, login_posts INTEGER, login_redirects INTEGER,
     admin_ok INTEGER DEFAULT 0,
     login_statuses TEXT DEFAULT '{}',
@@ -264,7 +264,9 @@ class _Actor:
     """Per-client accumulator for the single parsing pass. __slots__ because
     a big log can carry six figures of distinct clients."""
     __slots__ = ("requests", "first", "last", "tz", "err4", "err5", "bytes",
-                 "posts", "login_posts", "login_statuses", "login_redirects",
+                 "bytes_unknown",
+                 "posts", "login_posts", "login_statuses",
+                 "login_redirects",
                  "admin_ok",
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
@@ -279,6 +281,7 @@ class _Actor:
         self.err4 = 0
         self.err5 = 0
         self.bytes = 0
+        self.bytes_unknown = 0
         self.posts = 0
         self.login_posts = 0
         self.login_statuses = Counter()
@@ -480,8 +483,22 @@ def build(case_dir, targets, ctx=None, workspace=None):
                             status = int(data["status"])
                         except (ValueError, TypeError):
                             status = 0
+                        # "-" IS NOT ZERO. A dash in the size field means
+                        # the server did not record how much it sent, and
+                        # it is NOT rare: measured on two real logs from
+                        # different hosters, 2.0 % and 18.9 % of parsed
+                        # lines carry one -- on ONE of them including 200s,
+                        # where a body certainly went out.
+                        #
+                        # Coerced to 0 it became a measured number, and
+                        # the trace export wrote "Size 0" for tens of
+                        # thousands of lines: a statement that nothing came
+                        # back, which is the opposite of what a dash means.
+                        # NULL says "unknown", and an export that has
+                        # nothing to say says nothing.
                         size_raw = data.get("size")
-                        size = int(size_raw) if size_raw and size_raw.isdigit() else 0
+                        size = (int(size_raw) if size_raw and size_raw.isdigit()
+                                else None)
                         method = data["method"]
 
                         batch.append((ip_id, epoch, tz, method, uri_id,
@@ -495,7 +512,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         if a is None:
                             a = actors[ip_id] = _Actor()
                         a.requests += 1
-                        a.bytes += size
+                        if size is None:
+                            a.bytes_unknown += 1
+                        else:
+                            a.bytes += size
                         if epoch:
                             a.tz = tz
                             if a.first is None or epoch < a.first:
@@ -621,7 +641,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     days[day][2] += 1
             actor_rows.append((
                 ip_id, ip_by_id.get(ip_id, "?"), a.requests, a.first, a.last,
-                a.tz, a.err4, a.err5, a.bytes, a.posts, a.login_posts,
+                a.tz, a.err4, a.err5, a.bytes, a.bytes_unknown,
+                a.posts, a.login_posts,
                 a.login_redirects, a.admin_ok,
                 _json.dumps({str(k): v for k, v in a.login_statuses.items()}),
                 _json.dumps(sorted(a.scanner_uas)[:5]),
@@ -630,7 +651,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 _busiest_window(a.login_epochs),
                 len(a.agents)))
         conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             actor_rows)
         conn.executemany(
             "INSERT INTO actor_hours VALUES (?,?,?)",

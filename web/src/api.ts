@@ -211,6 +211,12 @@ export interface ActorProfile {
   err4: number
   err5: number
   bytes: number
+  /** Requests whose response size the log did not record -- a `-` in
+   *  the size field, which is not the same as zero and is not rare:
+   *  measured at 2.0 % and 18.9 % of parsed lines on two real logs,
+   *  on one of them including 200s. `bytes` above sums only the
+   *  answers that HAVE a size, so this is how many it could not. */
+  bytes_unknown: number
   posts: number
   login_posts: number
   login_redirects: number
