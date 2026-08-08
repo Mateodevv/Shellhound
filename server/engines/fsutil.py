@@ -31,7 +31,27 @@ def is_compressed(file_path):
     return Path(file_path).suffix.lower() in COMPRESSED_OPENERS
 
 
-def open_text_auto(file_path, encoding="utf-8", errors="replace"):
+def open_text_auto(file_path, encoding="utf-8-sig", errors="replace"):
+    """Every text file the engines read comes through here.
+
+    `utf-8-sig`, NOT `utf-8`. A byte-order mark is what a file gets from being
+    opened and saved in a Windows editor, which is an ordinary thing to happen
+    to evidence between the server and the analysis machine. Decoded as plain
+    utf-8 the mark survives as U+FEFF at the head of the first line, and it is
+    not whitespace -- so `^(?P<ip>\\S+)` ate it into the client address and the
+    actor list gained a client that never existed, while a real visitor lost
+    its earliest request.
+
+    That was the visible half. The quiet half was worse: an error log carrying
+    a mark stopped being recognised as one, so every finding it would have
+    produced was lost without a word, and it then entered the access-log index
+    instead -- where coverage reported it as truncated, which is a statement
+    about a file that is not true of the file.
+
+    `utf-8-sig` is a superset: it strips a mark if present and behaves exactly
+    as `utf-8` otherwise. A mark in the MIDDLE of a stream -- what `cat`-ing
+    rotated logs together produces -- is NOT covered here and still invents a
+    client; closing that means stripping U+FEFF in the line parsers."""
     opener = COMPRESSED_OPENERS.get(Path(file_path).suffix.lower(), open)
     return opener(file_path, mode="rt", encoding=encoding, errors=errors)
 
