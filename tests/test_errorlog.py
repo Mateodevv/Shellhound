@@ -6,6 +6,7 @@ does not sit under a registered webroot is NOT written (an error log mentions
 every file on the server), and one file named four hundred times becomes one
 finding with a count rather than four hundred rows.
 """
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -159,6 +160,66 @@ class ScanTests(unittest.TestCase):
         hit = next(f for f in self._findings()
                    if Path(f["artifact"]).name == "kb-media.php")
         self.assertIn("/var/www/html/images/kb-media.php", hit["evidence"])
+
+
+class DocumentedRestraintTests(unittest.TestCase):
+    """The reference and the engine must not promise different things.
+
+    `docs/rules.md` advertised the deleted-file case as this engine's
+    strongest -- "the log is the only remaining evidence that the path
+    existed at all" -- while the paragraph a few lines below said a path is
+    only written when it RESOLVES. Both cannot hold, and the code implements
+    the second: `_resolver` requires `os.path.isfile`.
+
+    So a reader reached for the error log to answer exactly that question,
+    found nothing, and had no way to tell whether the shell was never there
+    or the engine had declined to say.
+    """
+
+    FATAL = ("[Mon Jan 05 08:00:0{n}.000000 2026] [php:error] [pid 1] "
+             "[client 192.0.2.10:52000] PHP Fatal error:  x in "
+             "/var/www/html/{name} on line 1\n")
+
+    def test_a_deleted_file_produces_no_finding_and_is_counted(self):
+        case = Path(tempfile.mkdtemp(prefix="shellhound-gone-"))
+        root = Path(tempfile.mkdtemp(prefix="shellhound-goneroot-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-gonelogs-"))
+        for d in (case, root, logs):
+            self.addCleanup(shutil.rmtree, d, True)
+        # The present file is the CONTROL: it proves the engine ran and
+        # resolved paths in this case, so the ghost's silence is a property
+        # of the ghost and not of a job that never started.
+        (root / "here.php").write_text("<?php\n", encoding="utf-8")
+        (logs / "error.log").write_text(
+            self.FATAL.format(n=0, name="here.php")
+            + self.FATAL.format(n=1, name="gone.php"), encoding="utf-8")
+        conn = db.connect(case)
+        try:
+            conn.execute("INSERT INTO evidence (kind, path, added) "
+                         "VALUES ('webroot', ?, ?)", (str(root), db.now()))
+            conn.commit()
+        finally:
+            conn.close()
+        stats = errorlog.scan(case, [str(logs)])
+        self.assertEqual(1, stats["findings"], "the control did not fire")
+        self.assertEqual(1, stats["unresolved"],
+                         "the absent path was dropped instead of counted")
+
+    def test_the_reference_no_longer_promises_it(self):
+        """The documentation half. If the sentence is ever restored, this
+        says so before an analyst believes it."""
+        docs = (Path(__file__).resolve().parent.parent
+                / "docs" / "rules.md").read_text(encoding="utf-8")
+        section = docs.split("# Error log", 1)[-1].split("\n# ", 1)[0]
+        self.assertIn("produces no finding", section,
+                      "the reference does not say what becomes of a path "
+                      "whose file is gone")
+        self.assertNotIn("only remaining evidence", section)
+
+    def test_the_engine_says_the_same_as_the_reference(self):
+        """Fixing only the reference would leave the contradiction in the
+        source, where the next person to read it starts."""
+        self.assertIn("produces NOTHING", errorlog.__doc__)
 
 
 if __name__ == "__main__":

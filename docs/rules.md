@@ -676,19 +676,38 @@ more.
 
 **Why it counts:** it catches what the access log structurally cannot — a shell
 run from cron or the CLI that produced no request line, a file pulled in by an
-`include` rather than requested, a shell that crashed on its own broken payload,
-and a file deleted before the copy was taken. For that last one the log is the
-only remaining evidence that the path existed at all.
+`include` rather than requested, and a shell that crashed on its own broken
+payload.
 
 **Limits:** an error naming a file is NOT evidence that the file is malicious —
 legitimate code throws warnings all day. That is why it is LOW on its own; it
 earns its weight by landing on the same artifact as something else, which is
 what artifact-level triage is for.
 
-**Restraint:** a path is only written when it resolves to a file under a
-registered webroot. An error log mentions every file on the server, and a case
-must not fill up with findings about paths nobody can open. Unresolvable paths
-are counted in the job stats rather than dropped in silence.
+**Restraint:** a path is only written when it resolves to a file that is
+PRESENT under a registered webroot. An error log mentions every file on the
+server, and a case must not fill up with findings about paths nobody can open.
+Unresolvable paths are counted in the job's statistics rather than dropped in
+silence.
+
+**A file deleted before the copy was taken produces no finding**, and this
+paragraph used to promise the opposite. The claim was attractive — "this path
+executed and is no longer here" is the strongest sentence an error log can
+offer, and nothing else in the toolkit makes it: the webroot diff only sees
+files a reference CMS release contains, so a dropped-and-then-deleted shell in
+an upload directory is invisible to it too. But the restraint above and that
+promise cannot both hold, and it is the restraint the engine implements.
+
+Reporting the absent path needs a rule that can place it without being able to
+open it, and every cheap way of doing that is wrong: accepting a path because
+its parent directory happens to exist in the copy was measured at 99 false
+resolutions out of 102 against neighbouring sites on the same host — each one
+carrying the sentence "this path was executed and is not in the copy" about a
+file belonging to somebody else. A rule that learns the server-side webroot
+prefix from the paths that DID resolve scores 0 of those 102, but its noise
+floor on a real, month-long error log from a site that was updated between the
+incident and the copy has not been measured, because no such log has been
+available. Until it has, the tool says less rather than more.
 
 ---
 
