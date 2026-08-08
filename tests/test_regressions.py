@@ -1670,6 +1670,92 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class Helix3PatternTests(unittest.TestCase):
+    """The second pattern the toolkit ships, and the trap beside it.
+
+    A bundled pattern runs on EVERY installation, so a false positive here
+    does not cost one analyst a look -- it costs all of them a filled work
+    list. Measured on a real site that has the Helix3 template installed,
+    1.19 million log lines:
+
+        plugin=helix3        1 URI          3 clients
+        helix3              11 URIs    11,183 clients   <- every visitor
+        option=com_ajax       8 URIs        29 clients   <- Joomla core
+
+    The gap between the right token and the obvious wrong one is three
+    against eleven thousand, and it is the whole reason the entry is one
+    token and not the template's name.
+    """
+
+    ENTRY = "joomla-helix3-comajax"
+
+    def _entry(self):
+        from server import patterns
+        for row in patterns.bundled():
+            if row["id"] == self.ENTRY:
+                return row
+        self.fail(f"{self.ENTRY} does not ship")
+
+    def _clients(self, *uris):
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-helix-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case, logs = root / "case", root / "logs"
+        case.mkdir()
+        logs.mkdir()
+        (logs / "a.log").write_text("".join(
+            f'203.0.113.{i + 1} - - [06/Jan/2026:08:00:00 +0000] '
+            f'"GET {u} HTTP/1.1" 200 5 "-" "c"\n'
+            for i, u in enumerate(uris)), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        entry = self._entry()
+        out = logindex.match_patterns(case, entry["patterns"], entry["match"])
+        return {c["ip"] for c in out["clients"]}
+
+    def test_the_query_order_does_not_decide(self):
+        """HTTP query order carries no meaning. The JCE entry was one literal
+        string and missed `?task=...&option=...`; this one must not repeat
+        it, which is why it is a single token rather than two paths joined."""
+        self.assertEqual(4, len(self._clients(
+            "/index.php?option=com_ajax&plugin=helix3&format=json",
+            "/index.php?plugin=helix3&option=com_ajax&format=json",
+            "/index.php?format=json&option=com_ajax&plugin=helix3",
+            "/index.php?plugin=helix3&format=raw&option=com_ajax")))
+
+    def test_the_templates_own_assets_are_not_a_hit(self):
+        """The 11,183-client trap: every visitor loads these."""
+        self.assertEqual(set(), self._clients(
+            "/templates/shaper_helix3/css/template.css",
+            "/templates/shaper_helix3/js/main.js",
+            "/media/templates/site/shaper_helix3/images/logo.png"))
+
+    def test_the_ajax_frame_alone_is_not_a_hit(self):
+        """`com_ajax` is Joomla core and is requested in normal operation."""
+        self.assertEqual(set(), self._clients(
+            "/index.php?option=com_ajax&module=login&format=json",
+            "/index.php?option=com_ajax&plugin=privacy&format=json"))
+
+    def test_it_says_what_a_hit_does_not_prove(self):
+        """This endpoint answers 200 whether the handler accepted the input
+        or refused it, so the outcome gate the hunt applies is meaningless
+        here. The description is the only place that can say so."""
+        text = self._entry()["description"].lower()
+        self.assertIn("200", text)
+        self.assertTrue("does not prove" in text or "settles nothing" in text,
+                        "the entry does not disclaim its own status code")
+
+    def test_the_name_claims_no_upload(self):
+        """It was proposed as "Arbitrary JSON-File Upload". There is no
+        upload: the suffix is appended by the template, and one variant
+        writes no file at all. The name is inside the finding's rule string
+        and therefore inside the fingerprint -- the first release is the only
+        cheap moment to get it right."""
+        name = self._entry()["name"].lower()
+        self.assertNotIn("upload", name)
+
+
 class ExecutableExtensionNotLastTests(unittest.TestCase):
     """`up.php.json` -- and three engines say nothing, each for its own reason.
 
