@@ -14,10 +14,7 @@ access log structurally cannot:
   * an include chain -- the error names the file that was pulled in, not the
     one that was requested;
   * a shell that crashed on its own broken payload, which is how half of
-    them announce themselves;
-  * a file deleted before the copy was taken: the log still names it, and
-    "this path existed and ran" is a statement the webroot can no longer
-    make.
+    them announce themselves.
 
 WHAT IS AND IS NOT CLAIMED: an error naming a file is not evidence that the
 file is malicious -- legitimate code throws warnings all day. It is evidence
@@ -26,10 +23,31 @@ therefore LOW on their own; they earn their weight by landing on the same
 artifact as something else. That is exactly what artifact-level triage is
 for.
 
-Paths are matched against the registered evidence before anything is
-written: an error log mentions every file on the server, and a case must not
-fill up with findings about paths that have nothing to do with the webroot at
-hand.
+A LOGGED PATH IS WRITTEN ONLY WHEN THE FILE IS PRESENT in the copy. `_resolver`
+matches the server-side path against the registered webroot by TAIL and then
+requires `os.path.isfile`. An error log mentions every file on the server, and
+a case must not fill up with findings about paths that have nothing to do with
+the webroot at hand. What cannot be placed is counted, not dropped.
+
+THE PRICE OF THAT, SAID OUT LOUD: a file deleted before the copy was taken
+produces NOTHING. The docstring and docs/rules.md both used to advertise that
+case as the engine's strongest -- "the log still names it, and the webroot can
+no longer make that statement" -- and it was never implemented; `isfile` says
+no and the path lands in `unresolved`. The restraint above and that promise
+cannot both hold.
+
+It is worth wanting. Nothing else in the toolkit makes that statement: the
+webroot diff only sees files a reference CMS release contains, so a dropped
+and then deleted shell in an upload directory is invisible to it as well. What
+it needs is a way to PLACE a path without being able to open it, and the cheap
+version is wrong -- accepting a path because its parent directory exists in
+the copy was measured at 99 false resolutions out of 102 against neighbouring
+sites on the same host, each one asserting that somebody else's file had run
+here. Learning the server-side prefix from the paths that did resolve scores 0
+of those 102, but its noise floor on a real month-long error log from a site
+that was updated between the incident and the copy is unmeasured, because no
+such log has been available. Until it is, this engine says less rather than
+more.
 """
 import os
 import re
