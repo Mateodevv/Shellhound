@@ -6,6 +6,36 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — a hunt pattern for the Helix3 ajax handler (CVE-2026-49049)
+
+The second pattern the toolkit ships. A bundled pattern runs on every
+installation, so a false positive here does not cost one analyst a look — it
+costs all of them a filled work list, and the entry was measured against that
+bar on 1.19 million lines from a site that actually has the template
+installed:
+
+| token | URIs | clients |
+|---|---|---|
+| `plugin=helix3` | 1 | **3** |
+| `helix3` | 11 | **11,183** — every visitor |
+| `option=com_ajax` | 8 | 29 — Joomla core, ordinary traffic |
+
+One token, not two paths joined: `plugin=helix3` appears nowhere else, so
+adding `option=com_ajax` selects exactly the same requests while making the
+entry depend on the order of the query string — the defect the JCE entry
+already had once.
+
+**A hit does not prove the call succeeded.** `com_ajax` answers 200 with a
+JSON body whether the handler accepted the input or refused it, so the
+outcome gate the hunt applies is meaningless at this endpoint. The entry's
+description says so, because it is the only place that can.
+
+The name is **not** the one the proposal carried. There is no upload: the
+`.json` suffix is appended by the template itself, and one of the two
+in-the-wild variants writes no file at all. A pattern's name travels inside
+the finding's rule string and therefore inside the triage fingerprint, so the
+first release is the only cheap moment to get it right.
+
 ### Fixed — a file the server runs as PHP was read by nobody
 
 `mod_mime` dispatches on ANY extension present in a name, which is why an

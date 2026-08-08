@@ -35,6 +35,16 @@
    "name": "Joomla JCE editor RCE",
    "cve": "CVE-2026-48907",
    "description": "CVE-2026-48907 is a critical Remote Code Execution (RCE) vulnerability affecting the Joomla Content Editor (JCE) extension. Due to improper access control, unauthenticated attackers can upload and execute malicious PHP files, potentially leading to full compromise of the affected web server."
+  },
+  {
+   "id": "joomla-helix3-comajax",
+   "patterns": [
+    "*plugin=helix3*"
+   ],
+   "match": "any",
+   "name": "Joomla Helix3 unauthenticated ajax handler",
+   "cve": "CVE-2026-49049",
+   "description": "The Helix3 template framework registers an ajax handler that Joomla routes to without checking a session. A request that names it reached that handler. WHAT A HIT DOES NOT PROVE: that the call succeeded. com_ajax answers 200 with a JSON body whether the handler accepted the input or rejected it, so the status code settles nothing here and a hit on its own is a lead rather than a finding. Corroborate against the Helix3 version in the CMS inventory, a file in the webroot whose .php is not its last extension, or template settings that changed. ONE TOKEN, DELIBERATELY. Matching `helix3` alone selects the template's static assets -- measured on a real site that has it installed: 11,183 clients, i.e. every visitor. `plugin=helix3` selects 3. Adding `option=com_ajax` as a second path buys nothing, because `plugin=helix3` appears nowhere else, and costs robustness against reordered query strings."
   }
  ]
 }
