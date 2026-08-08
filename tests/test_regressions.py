@@ -1670,6 +1670,128 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class ByteOrderMarkTests(unittest.TestCase):
+    """Three bytes at the head of a file, and four things go wrong.
+
+    A byte-order mark is what a file gets from being opened and saved in a
+    Windows editor -- an ordinary thing to happen to evidence between the
+    server and the analysis machine. `open_text_auto` decoded as plain
+    `utf-8`, so the mark survived as U+FEFF at the head of the first line.
+
+    It is not whitespace. `^(?P<ip>\\S+)` ate it into the client address, so
+    the actor list gained a client that never existed and a real visitor lost
+    its earliest request -- the earliest one, which is what a chronology reads
+    first.
+
+    The quiet consequences were worse than the visible one, which is why
+    there is a test per consequence rather than one on the client count: an
+    error log carrying a mark stopped being RECOGNISED as an error log, so
+    every finding it would have produced disappeared without a word, and it
+    then entered the access-log index instead -- where the coverage report
+    called it truncated, a statement about a file that is not true of it.
+    """
+
+    BOM = b"\xef\xbb\xbf"
+
+    def _logs(self, *lines, mark=False, name="access.log"):
+        import shutil
+        root = Path(tempfile.mkdtemp(prefix="shellhound-bom-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        body = "".join(lines).encode("utf-8")
+        (root / name).write_bytes((self.BOM if mark else b"") + body)
+        return root
+
+    ACCESS = (
+        '192.0.2.10 - - [05/Jan/2026:08:00:00 +0000] "GET / HTTP/1.1" 200 512 "-" "M"\n',
+        '192.0.2.10 - - [05/Jan/2026:08:00:05 +0000] "GET /a HTTP/1.1" 200 512 "-" "M"\n',
+        '192.0.2.11 - - [05/Jan/2026:08:00:10 +0000] "GET /b HTTP/1.1" 200 512 "-" "M"\n',
+    )
+
+    def _clients(self, root):
+        from server.engines import logindex
+        case = Path(tempfile.mkdtemp(prefix="shellhound-bomcase-"))
+        import shutil
+        self.addCleanup(shutil.rmtree, case, True)
+        db.connect(case).close()
+        logindex.build(case, [str(root)])
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            return case, [r[0] for r in conn.execute(
+                "SELECT ip FROM ips ORDER BY ip")]
+        finally:
+            conn.close()
+
+    def test_the_mark_does_not_invent_a_client(self):
+        _c, plain = self._clients(self._logs(*self.ACCESS))
+        _c, marked = self._clients(self._logs(*self.ACCESS, mark=True))
+        self.assertEqual(plain, marked)
+        self.assertFalse([ip for ip in marked if ip.startswith("﻿")],
+                         "a client address begins with the byte-order mark")
+
+    def test_the_first_visitor_keeps_its_earliest_request(self):
+        """The half that is easy to miss: the phantom does not only appear,
+        it TAKES a request -- the first one, from the client that made it."""
+        from server.engines import logindex
+        case, _ips = self._clients(self._logs(*self.ACCESS, mark=True))
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            got = dict(conn.execute(
+                "SELECT i.ip, a.requests FROM actors a JOIN ips i "
+                "ON i.id = a.ip_id"))
+        finally:
+            conn.close()
+        self.assertEqual(2, got.get("192.0.2.10"),
+                         "the first client lost a request to the mark")
+
+    def test_a_compressed_log_is_read_the_same_way(self):
+        """The compressed path is a different opener and deserves its own
+        assertion -- one default serves both, and only one was measured."""
+        import gzip
+        import shutil
+        root = Path(tempfile.mkdtemp(prefix="shellhound-bomgz-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        body = self.BOM + "".join(self.ACCESS).encode("utf-8")
+        with gzip.open(root / "access.log.gz", "wb") as fh:
+            fh.write(body)
+        _case, ips = self._clients(root)
+        self.assertEqual(["192.0.2.10", "192.0.2.11"], ips)
+
+    ERROR_LINES = {
+        "apache": "[Mon Jan 05 08:00:00.000000 2026] [php:error] [pid 1] "
+                  "[client 192.0.2.10:52000] PHP Fatal error:  Uncaught "
+                  "Error in /var/www/html/x.php:3\n",
+        "nginx": "2026/01/05 08:00:00 [error] 1#1: *1 FastCGI sent in stderr: "
+                 "\"PHP message: PHP Fatal error:  x in /var/www/html/x.php "
+                 "on line 3\" while reading, client: 192.0.2.10\n",
+    }
+
+    def test_a_marked_error_log_is_still_an_error_log(self):
+        """The finding-losing half. `looks_like_error_log` matches on the
+        FIRST line, and the mark sits in front of it."""
+        from server.engines import errorlog
+        for flavour, line in self.ERROR_LINES.items():
+            root = self._logs(line, mark=True, name="error.log")
+            self.assertTrue(errorlog.looks_like_error_log(str(root / "error.log")),
+                            f"{flavour}: a marked error log is not recognised")
+
+    def test_a_marked_error_log_is_kept_out_of_the_access_log_index(self):
+        """And the consequence of the previous one. Unrecognised, the file
+        was indexed AS AN ACCESS LOG, where not one line parses -- and the
+        coverage report then described it as a log whose head was cut off."""
+        from server.engines import accesslog
+        from server.engines.fsutil import open_text_auto
+        root = self._logs(self.ERROR_LINES["apache"], mark=True, name="error.log")
+        self.assertTrue(
+            accesslog.sniff_error_log(str(root / "error.log"), open_text_auto),
+            "a marked error log would be indexed as an access log")
+
+    def test_an_ordinary_log_is_unchanged(self):
+        """utf-8-sig is a superset, and the overwhelmingly common case must
+        not move a byte."""
+        _c, ips = self._clients(self._logs(*self.ACCESS))
+        self.assertEqual(["192.0.2.10", "192.0.2.11"], ips)
+
+
 class LoginRateTests(unittest.TestCase):
     """A count of login POSTs without the window it ran in.
 

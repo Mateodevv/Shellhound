@@ -6,6 +6,38 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — a byte-order mark invented a client and silenced an error log
+
+A UTF-8 byte-order mark is what a file gets from being opened and saved in a
+Windows editor, which is an ordinary thing to happen to evidence between the
+server and the analysis machine. Every text file the engines read comes
+through one opener, and it decoded as plain `utf-8`, so the mark survived as
+`U+FEFF` at the head of the first line.
+
+It is not whitespace. The Combined pattern reads the client address with
+`^(?P<ip>\S+)`, so the mark was eaten into it: the actor list gained a client
+that never existed, and a real visitor lost its earliest request — the
+earliest one, which is what a chronology reads first.
+
+The quiet consequences were worse. An error log carrying a mark stopped being
+RECOGNISED as an error log, so every finding it would have produced
+disappeared without a word; and, unrecognised, it was then indexed as an
+access log, where the coverage report described it as a log whose head had
+been cut off. That is the tool making a statement about a file that is not
+true of the file.
+
+`utf-8-sig` is a superset — it strips a mark if present and behaves as `utf-8`
+otherwise — so nothing changes for the overwhelmingly common case.
+
+**On re-scan this can produce findings that were not there before.** A case
+whose error log carried a mark previously produced none at all from it; after
+this fix it produces its real ones, and they arrive undecided. That is
+correct, and it is better read here than discovered.
+
+A mark in the MIDDLE of a stream — what `cat`-ing rotated logs together
+produces — is not covered by this and still invents a client. Closing that
+means stripping `U+FEFF` in the line parsers rather than in the opener.
+
 ### Fixed — the artifact filters returned what they were told to hide
 
 The muted-rule condition was AND-ed onto the chip filters **without
