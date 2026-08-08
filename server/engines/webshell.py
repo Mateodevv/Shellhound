@@ -62,6 +62,19 @@ INERT_STUB_BYTES = 4096
 DOUBLE_EXT_RE = re.compile(
     r"(?i)\.(jpe?g|png|gif|bmp|ico|pdf|txt|zip|xml)\.(php\d?|phtml|phar|inc)$")
 
+# AN EXECUTABLE EXTENSION THAT IS NOT THE LAST ONE. `mod_mime` dispatches
+# on ANY extension present in a name, so `up.php.json` is served as PHP --
+# which is exactly why an exploit that appends its own suffix writes it in
+# that shape. The content rules never saw such a file, because whether to
+# open it at all was decided on the SUFFIX alone.
+#
+# Only the gate, not a finding. Measured on a compromised Joomla webroot:
+# 3 of 1744 files carry an executable extension anywhere but at the end,
+# all three are 32-byte checksum sidecars, and opening them produced zero
+# new findings and no measurable runtime. What it buys is that a file the
+# server runs as PHP is read as PHP.
+EXEC_EXT_ANYWHERE_RE = re.compile(r"(?i)\.(php\d?|phtml|phar|inc)(\.|$)")
+
 MAX_CONTENT_SCAN_BYTES = 5 * 1024 * 1024
 GUARD_SNIFF_BYTES = 4096
 
@@ -201,7 +214,7 @@ def scan_file(file_path, root=None):
     ext = os.path.splitext(base_name)[1]
     findings = []
 
-    is_php = ext in PHP_EXTS
+    is_php = ext in PHP_EXTS or bool(EXEC_EXT_ANYWHERE_RE.search(base_name))
     is_image = ext in IMAGE_EXTS
     is_htaccess = base_name == ".htaccess"
 

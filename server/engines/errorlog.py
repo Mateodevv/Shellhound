@@ -57,8 +57,24 @@ _NGINX_RE = re.compile(
 # Deliberately anchored on `in `: matching a bare path would pick up every
 # quoted filename in a message, and a finding on the wrong file is worse
 # than a missed one.
+# THE PATH DOES NOT END AT THE EXECUTABLE EXTENSION. It used to: the capture
+# stopped at `.php`, so a fatal naming `/var/www/up.php.json` was read as
+# `/var/www/up.php`.
+#
+# That is not a miss, it is a false statement, and the ordinary case is the
+# bad one. An exploit that appends its own suffix picks a plausible stem, so
+# `up.php` frequently EXISTS beside `up.php.json` -- and then the resolver
+# finds it and the engine writes a finding onto an innocent file, whose
+# evidence names a path the log never contained, printed next to the quoted
+# log line that contradicts it. The line number was dropped too, because the
+# `:3` no longer followed the capture, so the finding pointed at no line.
+#
+# `(?:\.[A-Za-z0-9_-]+)*` takes whatever follows. The class deliberately
+# excludes `:` and whitespace, so `up.php.json:3` still yields its line and
+# `x.php, referer: ...` still stops at the comma.
 _PATH_RE = re.compile(
-    r"\bin\s+(?P<path>(?:[A-Za-z]:)?[/\\][^\s:,()]+\.(?:php|phtml|inc|phar))"
+    r"\bin\s+(?P<path>(?:[A-Za-z]:)?[/\\][^\s:,()]+\.(?:php|phtml|inc|phar)"
+    r"(?:\.[A-Za-z0-9_-]+)*)"
     r"(?:\s+on line\s+(?P<line1>\d+)|:(?P<line2>\d+))?",
     re.IGNORECASE)
 

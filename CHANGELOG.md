@@ -6,6 +6,31 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — a file the server runs as PHP was read by nobody
+
+`mod_mime` dispatches on ANY extension present in a name, which is why an
+exploit whose target appends its own suffix writes the shell as
+`up.php.json`. The server executes it. The tool did not look at it: whether
+to open a file for the content rules was decided on its SUFFIX alone.
+
+The error log was worse than a miss. The path capture stopped at `.php`, so a
+fatal naming `.../up.php.json` was read as `.../up.php` — and because the stem
+an attacker picks is meant to look plausible, that file frequently exists.
+The resolver found it, and the tool wrote a MEDIUM finding onto an innocent
+file whose evidence named a path the log never contained, printed beside the
+log line that contradicts it. The line number was lost with it, so the
+finding pointed at no line.
+
+**This moves an artifact, and that orphans a triage decision.** Where such an
+error previously produced a finding on the truncated `.php` file, it now
+produces one on the file the log actually named. The old decision does not
+follow, because it was a decision about a different file.
+
+`DOUBLE_EXT_RE` is deliberately left one-directional. Making it symmetric was
+measured on a real webroot at three new HIGH findings, all of them 32-byte
+checksum sidecars — and whether "Double extension disguise" is a true thing to
+say about a hex digest is a judgement, not a measurement.
+
 ### Fixed — a byte-order mark invented a client and silenced an error log
 
 A UTF-8 byte-order mark is what a file gets from being opened and saved in a
