@@ -1670,6 +1670,131 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class ExecutableExtensionNotLastTests(unittest.TestCase):
+    """`up.php.json` -- and three engines say nothing, each for its own reason.
+
+    `mod_mime` dispatches on ANY extension present in a name, which is exactly
+    why an exploit whose target appends its own suffix writes the file in that
+    shape. The server runs it as PHP. The tool did not:
+
+      * the content rules never opened it, because whether to open a file was
+        decided on its SUFFIX;
+      * the error-log path capture stopped at `.php`, so a fatal naming
+        `.../up.php.json` was read as `.../up.php`.
+
+    The second is the worse one and it is not a miss. The stem an attacker
+    picks is meant to look plausible, so `up.php` frequently exists beside
+    `up.php.json` -- and then the resolver finds it and the tool writes a
+    finding onto an innocent file, with evidence naming a path the log never
+    contained, printed next to the log line that contradicts it.
+
+    NOT COVERED HERE, deliberately: `DOUBLE_EXT_RE` stays one-directional.
+    Making it symmetric costs three HIGH findings on 32-byte checksum
+    sidecars in a real webroot, and whether "Double extension disguise" is a
+    true thing to say about a hex digest is a judgement, not a measurement.
+    """
+
+    def _scan(self, name, body=b"<?php @system($_GET['c']);"):
+        import shutil
+        from server.engines import webshell
+        root = Path(tempfile.mkdtemp(prefix="shellhound-extany-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / name).write_bytes(body)
+        found, skip, _inert = webshell.scan_file(str(root / name),
+                                                 root=str(root))
+        return [f[0] for f in found], skip
+
+    def test_a_file_the_server_runs_as_php_is_read_as_php(self):
+        rules, skip = self._scan("up.php.json")
+        self.assertIsNone(skip)
+        self.assertIn("webshell.cmd_input", rules)
+
+    def test_the_same_body_under_the_plain_name_is_found_as_before(self):
+        """The control: "nothing was found" must not be confusable with "the
+        engine never ran"."""
+        self.assertIn("webshell.cmd_input", self._scan("up.php")[0])
+
+    def test_the_double_extension_rule_is_left_alone(self):
+        """It stays one-directional. Changing its wording to cover both
+        directions would orphan every decision made on it."""
+        self.assertNotIn("webshell.double_ext", self._scan("up.php.json")[0])
+        self.assertIn("webshell.double_ext",
+                      self._scan("logo.jpg.php")[0])
+
+    def test_a_name_that_merely_contains_php_is_not_opened(self):
+        """`.phpfoo` is not an extension the server dispatches on."""
+        rules, skip = self._scan("notes.phpfoo", body=b"<?php @system($_GET['c']);")
+        self.assertEqual([], rules)
+        self.assertIsNone(skip)
+
+    # --- the error log ---------------------------------------------------
+
+    def _paths(self, message):
+        from server.engines import errorlog
+        return errorlog.paths_in(message)
+
+    def test_the_whole_name_is_captured_with_its_line(self):
+        self.assertEqual(
+            [("/var/www/html/up.php.json", 3)],
+            self._paths("PHP Fatal error: x in /var/www/html/up.php.json:3"))
+        self.assertEqual(
+            [("/var/www/html/up.php.json", 3)],
+            self._paths("PHP Fatal error: x in /var/www/html/up.php.json "
+                        "on line 3"))
+
+    def test_an_ordinary_path_is_unchanged(self):
+        self.assertEqual(
+            [("/var/www/html/up.php", 3)],
+            self._paths("PHP Fatal error: x in /var/www/html/up.php on line 3"))
+        self.assertEqual(
+            [("/var/www/a.php.b.php", 9)],
+            self._paths("PHP Warning: x in /var/www/a.php.b.php on line 9"))
+
+    def test_the_capture_still_stops_at_the_punctuation_around_it(self):
+        """A trailing `, referer: ...` is not part of the path, and neither
+        is the line number that follows a colon."""
+        self.assertEqual(
+            [("/var/www/x.php", None)],
+            self._paths("PHP Fatal error: x in /var/www/x.php, referer: http://a/"))
+        self.assertEqual(
+            [("/var/www/x.php", None)],
+            self._paths("PHP Fatal error: x in /var/www/x.php (deprecated)"))
+
+    def test_the_finding_lands_on_the_file_the_log_named(self):
+        """The sharp one. With `up.php` present beside `up.php.json`, the
+        truncated capture resolved to the innocent neighbour and the tool
+        made a MEDIUM statement about a file nothing had happened to."""
+        import shutil
+        from server.engines import errorlog
+        case = Path(tempfile.mkdtemp(prefix="shellhound-ghost-"))
+        root = Path(tempfile.mkdtemp(prefix="shellhound-ghostroot-"))
+        logs = Path(tempfile.mkdtemp(prefix="shellhound-ghostlogs-"))
+        for d in (case, root, logs):
+            self.addCleanup(shutil.rmtree, d, True)
+        (root / "up.php").write_text("<?php\n", encoding="utf-8")
+        (root / "up.php.json").write_text("<?php\n", encoding="utf-8")
+        (logs / "error.log").write_text(
+            "[Mon Jan 05 08:00:00.000000 2026] [php:error] [pid 1] "
+            "[client 192.0.2.10:52000] PHP Fatal error:  Uncaught Error in "
+            "/var/www/html/up.php.json:3\n", encoding="utf-8")
+        conn = db.connect(case)
+        try:
+            conn.execute("INSERT INTO evidence (kind, path, added) "
+                         "VALUES ('webroot', ?, ?)", (str(root), db.now()))
+            conn.commit()
+        finally:
+            conn.close()
+        errorlog.scan(case, [str(logs)])
+        conn = db.connect(case)
+        try:
+            names = {Path(r["artifact"]).name for r in db.rows(
+                conn, "SELECT artifact FROM findings WHERE source = 'errorlog'")}
+        finally:
+            conn.close()
+        self.assertEqual({"up.php.json"}, names,
+                         "the finding names a file the log never mentioned")
+
+
 class ByteOrderMarkTests(unittest.TestCase):
     """Three bytes at the head of a file, and four things go wrong.
 
