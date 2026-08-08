@@ -1685,6 +1685,76 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class UnknownResponseSizeTests(unittest.TestCase):
+    """A dash in the size field is not a zero, and the export said it was.
+
+    `-` means the server did not record how much it sent. It is not rare:
+    measured on a real log, 23,859 of 1,188,820 requests carry one — 2.0 % —
+    and 1,079 of those were answered 2xx, where a body certainly went out.
+    The same log contains NOT ONE genuine zero, so every `0` the trace export
+    printed in that column was false.
+
+    Coerced at parse time the dash became a measured number, and a measured
+    number in an exhibit is quotable. "This request returned nothing" is the
+    opposite of what the log said, which was "I did not write it down".
+    """
+
+    def _index(self, *sizes):
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-size-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case, logs = root / "case", root / "logs"
+        case.mkdir()
+        logs.mkdir()
+        (logs / "a.log").write_text("".join(
+            f'192.0.2.{i + 1} - - [05/Jan/2026:08:00:0{i} +0000] '
+            f'"GET /x HTTP/1.1" 200 {s} "-" "M"\n'
+            for i, s in enumerate(sizes)), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        return case
+
+    def _rows(self, case):
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            return [r[0] for r in conn.execute(
+                "SELECT size FROM requests ORDER BY epoch")]
+        finally:
+            conn.close()
+
+    def test_a_dash_is_unknown_and_not_zero(self):
+        self.assertEqual([None], self._rows(self._index("-")))
+
+    def test_a_real_zero_survives_as_a_zero(self):
+        """The other half. A server that genuinely wrote 0 said something,
+        and turning THAT into unknown would lose a measurement."""
+        self.assertEqual([0], self._rows(self._index("0")))
+
+    def test_the_byte_total_counts_only_what_was_recorded(self):
+        case = self._index("100", "-", "200", "-")
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            got = list(conn.execute(
+                "SELECT SUM(bytes), SUM(bytes_unknown) FROM actors"))[0]
+        finally:
+            conn.close()
+        self.assertEqual((300, 2), got,
+                         "an unrecorded size was averaged in as zero")
+
+    def test_the_trace_hands_the_export_an_unknown_and_not_a_zero(self):
+        """The whole point, at the seam the export reads from. `trace` is
+        what the CSV writer iterates, so if a dash arrives here as 0 the
+        exhibit asserts that nothing came back -- and no formatting fix
+        downstream can recover what the parser already threw away."""
+        from server.engines import logindex
+        case = self._index("-", "4096")
+        rows = logindex.trace(case, ["192.0.2.1", "192.0.2.2"])["rows"]
+        by_client = {r["client"]: r["size"] for r in rows}
+        self.assertIsNone(by_client["192.0.2.1"])
+        self.assertEqual(4096, by_client["192.0.2.2"])
+
+
 class WordPressAuthenticatedAreaTests(unittest.TestCase):
     """The only HIGH log rule about a break-in could not fire on WordPress.
 

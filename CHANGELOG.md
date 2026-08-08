@@ -6,6 +6,31 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — "the response was empty" said about answers nobody measured
+
+A `-` in the size field of an access log means the server did not record how
+much it sent. It was read as zero, and zero is a measurement.
+
+On one real log: 23,859 of 1,188,820 requests carry a dash — 2.0 % — and
+1,079 of those were answered `2xx`, where a body certainly went out. That same
+log contains **not one genuine zero**, so every `0` the trace export printed in
+that column was false. An exhibit that says "this request returned nothing" is
+quotable, and it says the opposite of what the log said, which was "I did not
+write it down".
+
+Unknown is now its own state: `NULL` in the index, an empty cell in the export.
+`bytes` per client sums only the answers that HAVE a size, and a second counter
+says how many it could not.
+
+This is the part of the response-size question that could be settled. The rest
+— using the size to tell an exfiltration from a probe at an endpoint that
+answers 200 either way — was investigated and **not** built: comparing a
+request against its own URI's size distribution fails on the very scenario it
+was proposed for, because the attacker's successes and failures are both modes
+of that distribution and there is no uncontaminated centre to compare against.
+
+Log index schema 9 → 10.
+
 ### Fixed — the site's own administrator was reported as a break-in
 
 Thirty login POSTs with no time window is a threshold on how long somebody

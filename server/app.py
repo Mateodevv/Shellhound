@@ -2040,8 +2040,13 @@ def create_app(config: Config) -> FastAPI:
             # and this file exists to be opened in a spreadsheet: a user agent
             # of `=cmd|'/c calc'!A1` executed when the analyst double-clicked
             # the export. Only the URI was guarded.
+            # AN EMPTY CELL, NOT A ZERO. The log wrote "-" and the index
+            # keeps that as NULL; a 0 here would be a measured number
+            # asserting that nothing came back, which is the opposite of
+            # what a dash means.
             w.writerow([_csv_safe(r["client"]), stamp, _csv_safe(r["method"]),
-                        _csv_safe(r["uri"]), r["status"], r["size"],
+                        _csv_safe(r["uri"]), r["status"],
+                        "" if r["size"] is None else r["size"],
                         _csv_safe(r["referrer"]), _csv_safe(r["agent"]),
                         _csv_safe(r["source"])])
         csv_bytes = buf.getvalue().encode("utf-8")
