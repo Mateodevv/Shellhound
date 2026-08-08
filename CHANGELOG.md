@@ -6,6 +6,58 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — the site's own administrator was reported as a break-in
+
+Thirty login POSTs with no time window is a threshold on how long somebody
+kept their logs, not on how anybody behaved. One operator, one office address,
+one sign-in every working morning, each answered on the first try:
+
+| the log covers | sign-ins | reported |
+|---|---|---|
+| 6 days | ~4 | nothing, correctly |
+| 6 weeks | ~30 | a login flood, MEDIUM |
+| 9 weeks | ~46 | **plus a possible break-in, HIGH** |
+
+Nothing about the site changed. The finding appeared because the case covered
+a longer period.
+
+This is the residue after the redirect correction, not a repeat of it. That
+one was right: a redirect proves nothing, because the CMS sends one whether
+the credentials were right or wrong, and `admin_ok` — a 2xx on the
+authenticated backend — really does say somebody got in. What it cannot say is
+*who*, and the administrator matches it precisely **because** they are the
+administrator.
+
+What the two do not share is the shape of the attempts before the success. The
+HIGH is now gated on the busiest 24 hours as well: measured on a generated
+corpus, two site administrators peaked at 8 and 10 login POSTs in their
+busiest day across nine weeks, while an intruder reached 70 inside one hour.
+On the real logs available, both flood clients burst at 40 and 32 — so no
+existing finding is lost.
+
+**The MEDIUM flood keeps its plain count on purpose.** Removing it from the
+administrator was measured at ten of thirteen real flood findings, because
+slow credential stuffing looks exactly like a long-running operator when
+counted per window. Since the rate landed in its sentence, the flood no longer
+says anything untrue.
+
+**And the same accusation reached the analyst by two paths that were gated on
+less than the rule.** The exported "successful login" tag needed only
+`admin_ok` — no flood, no burst — so an operator who never produced a single
+finding still went into the IOC box tagged as a successful break-in, and a tag
+on an indicator travels out in the CSV, the JSON and the STIX bundle. The
+badge in the Actors list had the same hole. Both now ask the three questions
+the engine asks.
+
+The rule's own text still says "redirect after login flood", which has been
+wrong since the redirect gate was removed. Correcting it re-fingerprints every
+finding it ever produced and drops the triage decisions made on genuine
+brute-force cases, so it is left for a deliberate, announced change rather than
+smuggled in here.
+
+Log index schema 7 → 8: the busiest-window count is stored per client, so
+every existing index rebuilds once on the next open.
+
 ### Added — a hunt pattern for the Helix3 ajax handler (CVE-2026-49049)
 
 The second pattern the toolkit ships. A bundled pattern runs on every

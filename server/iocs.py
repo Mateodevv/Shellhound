@@ -125,7 +125,19 @@ def actor_tags(actor, brute_threshold):
         tags.append(TAG_SCANNER)
     if int(actor.get("login_posts") or 0) >= brute_threshold:
         tags.append(TAG_BRUTE)
-    if int(actor.get("admin_ok") or 0) > 0:
+    # THE SAME THREE CONDITIONS THE ENGINE USES, and it took two goes to get
+    # here. Pulling the decision out of the endpoint fixed the gate that had
+    # drifted (`login_redirects`) and left this one WIDER than the alert
+    # beside it: `admin_ok` alone, no flood. So an operator who never
+    # attracted a finding still went into the box tagged "successful" -- and
+    # a tag on an indicator leaves the machine in the CSV, the JSON and the
+    # STIX bundle, where nobody can see which gate produced it.
+    #
+    # The burst is the third: signing in every working morning for nine weeks
+    # crosses a plain count, and reaches nothing inside any one day.
+    if (int(actor.get("login_posts") or 0) >= brute_threshold
+            and int(actor.get("login_burst") or 0) >= brute_threshold
+            and int(actor.get("admin_ok") or 0) > 0):
         tags.append(TAG_SUCCESS)
     return tags
 

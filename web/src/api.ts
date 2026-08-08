@@ -240,6 +240,11 @@ export interface ActorProfile {
    *  readable time. */
   login_first: number | null
   login_last: number | null
+  /** The most login POSTs this client made inside any 24 h window. What
+   *  separates an intruder from the site's own operator: signing in every
+   *  working morning crosses a plain count over a long log and reaches
+   *  almost nothing inside one day. */
+  login_burst: number
   agents: number
 }
 

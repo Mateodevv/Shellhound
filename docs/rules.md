@@ -534,13 +534,38 @@ is why a ten-million-line log does not cost ten million times as much.
 
 ### Possible successful brute-force — HIGH
 
-**Trigger:** ≥ 30 POSTs against login endpoints **and** at least one
-301/302/303 response.
+**Trigger:** ≥ 30 POSTs against login endpoints, **≥ 30 of them inside any
+24 hours**, **and** at least one 2xx on the authenticated backend.
 
-**What it states:** after many login attempts a redirect came back.
+**What it states:** a burst of login attempts, and afterwards a page an
+unauthenticated session does not get.
 
-**Why it counts:** this is exactly what a **successful** login looks like.
-Check without fail: which account, and what happened afterwards?
+**Why it counts:** somebody got in, and they did not get in the way the site's
+own staff do.
+
+**Two corrections are baked into that trigger, and both were false HIGHs about
+the operator of the site.**
+
+The first was the redirect. Joomla answers *every* login POST with a 303 —
+plain POST-Redirect-GET — whether the credentials were right or wrong. So a
+client whose 121 attempts all failed was reported as a break-in, and the
+100 % redirect rate that proved the opposite was the very thing that triggered
+it. What an unauthenticated client cannot obtain is a 2xx on the backend.
+
+The second was the missing window. `admin_ok` says somebody got in; it cannot
+say *who*, and the administrator gets in every working morning — so on a log
+covering nine weeks the operator crossed a plain count of 30 by turning up for
+work, and the case reported a break-in on their own site. Nothing had changed
+except how much log there was. Measured on a generated corpus: two site
+administrators peaked at 8 and 10 login POSTs in their busiest 24 hours across
+nine weeks; an intruder reached 70 inside one hour.
+
+**The MEDIUM flood below keeps its plain count on purpose.** A rate in *that*
+trigger would silently drop findings on a case whose logs are thin, and slow
+credential stuffing looks exactly like a long-running operator when counted
+per window — removing it was measured at ten of thirteen real flood findings.
+The flood sentence carries the window and the rate instead, so a reader can
+tell `0.16/h` from `2,028/h` without the rule deciding for them.
 
 ### Requested PHP in upload/cache directory answered 2xx — HIGH
 
