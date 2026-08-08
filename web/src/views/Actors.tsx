@@ -61,11 +61,14 @@ const BF_FALLBACK = 30
 
 function actorBadges(a: Actor, tr: Translate, bfThreshold = BF_FALLBACK) {
   const badges: { key: string; label: string; tone: 'danger' | 'warn' | 'accent' | undefined }[] = []
-  // `admin_ok`, NOT `login_redirects`: Joomla answers every login POST
-  // with a redirect whether the credentials were right or wrong. The
-  // engine stopped raising the alert on that; this badge did not follow,
-  // so the screen went on accusing a client the case no longer does.
-  if (a.admin_ok > 0)
+  // THE SAME THREE CONDITIONS THE ENGINE USES. Joomla answers every login
+  // POST with a redirect whether the credentials were right or wrong, so
+  // `login_redirects` proved nothing and the engine stopped reading it --
+  // and this badge did not follow, then followed only half way. `admin_ok`
+  // says somebody got in; it cannot say who, and the site's own operator
+  // gets in every working morning. The burst is what they do not share.
+  if (a.admin_ok > 0 && a.login_posts >= bfThreshold
+      && a.login_burst >= bfThreshold)
     badges.push({ key: 'loginSuccess', label: tr('badge.loginSuccess'), tone: 'danger' })
   if (a.cms_dir_php_ok > 0)
     badges.push({ key: 'cmsDirPhp', label: tr('badge.cmsDirPhp'), tone: 'danger' })

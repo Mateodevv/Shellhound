@@ -1637,7 +1637,7 @@ class ActorTagTests(unittest.TestCase):
 
     def _tags(self, **actor):
         base = {"scanner_uas": "[]", "login_posts": 0, "login_redirects": 0,
-                "admin_ok": 0}
+                "admin_ok": 0, "login_burst": 0}
         return set(ioclib.actor_tags({**base, **actor}, self.THRESHOLD))
 
     def test_a_redirect_alone_is_not_a_successful_login(self):
@@ -1646,10 +1646,25 @@ class ActorTagTests(unittest.TestCase):
         self.assertNotIn(ioclib.TAG_SUCCESS,
                          self._tags(login_posts=200, login_redirects=200))
 
-    def test_a_2xx_on_the_backend_is(self):
+    def test_a_2xx_on_the_backend_after_a_burst_is(self):
         self.assertIn(ioclib.TAG_SUCCESS,
                       self._tags(login_posts=200, login_redirects=200,
-                                 admin_ok=3))
+                                 login_burst=70, admin_ok=3))
+
+    def test_a_2xx_on_the_backend_without_a_burst_is_not(self):
+        """The gap this class had and locked in. Pulling the decision out of
+        the endpoint fixed the gate that had drifted and left this one WIDER
+        than the alert beside it -- `admin_ok` alone, no flood, no burst. So
+        an operator who never attracted a single finding still went into the
+        box tagged "successful", and a tag on an indicator leaves the machine
+        in the CSV, the JSON and the STIX bundle.
+
+        Two hundred sign-ins over nine weeks, never more than a handful in
+        any one day, and the backend answered them all -- because they are
+        the administrator."""
+        self.assertNotIn(ioclib.TAG_SUCCESS,
+                         self._tags(login_posts=200, login_burst=6,
+                                    admin_ok=344))
 
     def test_the_flood_is_counted_separately_from_the_success(self):
         """Two different statements. A flood that got nowhere is still a
@@ -1668,6 +1683,109 @@ class ActorTagTests(unittest.TestCase):
 
     def test_an_ordinary_visitor_carries_only_that_it_is_one(self):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
+
+
+class LoginBurstTests(unittest.TestCase):
+    """The site's own administrator, reported at HIGH as a break-in.
+
+    Thirty login POSTs with no window is a threshold on how long somebody
+    kept their logs, not on how anybody behaved. One operator, one office
+    address, one sign-in every working morning, each answered on the first
+    try:
+
+        log covers 6 days   ~4 logins   nothing, correctly
+        log covers 6 weeks  ~30         a flood, MEDIUM
+        log covers 9 weeks  ~46         plus a possible break-in, HIGH
+
+    Nothing about the site changed. The finding appeared because the case
+    covers a longer period.
+
+    `admin_ok` was the previous correction and it was right: a redirect
+    proves nothing, a 2xx on the backend proves somebody got in. But it
+    cannot say WHO, and the operator matches it precisely BECAUSE they are
+    the operator. What the two do not share is the shape of the attempts
+    before the success -- a burst, or a working habit.
+
+    The MEDIUM flood is deliberately left alone. Removing it was measured at
+    ten of thirteen real flood findings, because slow credential stuffing
+    looks exactly like a long-running operator in count-per-window terms;
+    and since the rate landed in its sentence the flood no longer says
+    anything untrue.
+    """
+
+    def _case(self, *lines):
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-burst-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case, logs = root / "case", root / "logs"
+        case.mkdir()
+        logs.mkdir()
+        (logs / "a.log").write_text("".join(lines), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            kinds = {r[0] for r in conn.execute("SELECT kind FROM alerts")}
+            burst = conn.execute(
+                "SELECT MAX(login_burst) FROM actors").fetchone()[0]
+        finally:
+            conn.close()
+        return kinds, burst
+
+    def _line(self, when, uri="/administrator/index.php?option=com_login",
+              method="POST", status=303):
+        from datetime import datetime, timedelta, timezone
+        stamp = (datetime(2026, 1, 5, tzinfo=timezone.utc)
+                 + timedelta(seconds=when)).strftime("%d/%b/%Y:%H:%M:%S +0000")
+        return (f'192.0.2.7 - - [{stamp}] "{method} {uri} HTTP/1.1" '
+                f'{status} 512 "-" "Mozilla/5.0"\n')
+
+    BACKEND = "/administrator/index.php?option=com_content&view=articles"
+
+    def test_the_operator_of_the_site_is_not_a_break_in(self):
+        """Forty-six sign-ins over nine weeks, every one of them answered,
+        and the backend used afterwards -- because it is their backend."""
+        lines = []
+        for day in range(46):
+            at = day * 86400 + 8 * 3600
+            lines.append(self._line(at))
+            lines.append(self._line(at + 60, self.BACKEND, "GET", 200))
+        kinds, burst = self._case(*lines)
+        self.assertIn("login_flood", kinds, "the flood itself still holds")
+        self.assertNotIn("login_success", kinds,
+                         "the site's own operator was reported as a break-in")
+        self.assertEqual(1, burst, "a working habit is not a burst")
+
+    def test_a_burst_that_got_in_still_is(self):
+        """The case the rule exists for: seventy attempts inside an hour,
+        then the backend answers."""
+        lines = [self._line(i * 30) for i in range(70)]
+        lines += [self._line(70 * 30 + 60, self.BACKEND, "GET", 200)]
+        kinds, burst = self._case(*lines)
+        self.assertIn("login_flood", kinds)
+        self.assertIn("login_success", kinds, "a real break-in went unreported")
+        self.assertEqual(70, burst)
+
+    def test_a_burst_that_never_got_in_is_only_a_flood(self):
+        """The previous correction, still holding: without a 2xx on the
+        backend there is nothing to say a password was guessed."""
+        kinds, _burst = self._case(*[self._line(i * 30) for i in range(70)])
+        self.assertIn("login_flood", kinds)
+        self.assertNotIn("login_success", kinds)
+
+    def test_the_window_does_not_move_with_the_length_of_the_log(self):
+        """The whole complaint in one assertion: the same behaviour, twice
+        as much of it, must not change what the case concludes."""
+        def habit(days):
+            lines = []
+            for day in range(days):
+                at = day * 86400 + 8 * 3600
+                lines.append(self._line(at))
+                lines.append(self._line(at + 60, self.BACKEND, "GET", 200))
+            return self._case(*lines)[0]
+        self.assertNotIn("login_success", habit(31))
+        self.assertNotIn("login_success", habit(62))
 
 
 class Helix3PatternTests(unittest.TestCase):

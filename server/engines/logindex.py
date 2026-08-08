@@ -44,7 +44,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -114,6 +114,22 @@ CMS_DIR_PHP_RE = re.compile(
     r"/[^/?\s]+\.ph(?:p\d?|tml|ar)(?=[?\s]|$)")
 
 BF_THRESHOLD = 30            # login POSTs per client before it is a flood
+# THE WINDOW THE HIGH IS GATED ON. `login_posts >= BF_THRESHOLD` stays a plain
+# count, deliberately: a rate in the FLOOD condition would silently drop
+# findings on a case whose logs are thin, and a count is what an analyst can
+# check by hand.
+#
+# The HIGH is different. `admin_ok` separates "somebody got in" from "somebody
+# kept failing"; it does not separate an intruder who got in from the operator
+# who got in, and it never could -- the operator matches it BECAUSE they are
+# the operator. What separates those two is the SHAPE of the attempts before
+# the success. Measured, generated corpus: two site administrators reached 8
+# and 10 login POSTs in their busiest 24 hours across nine weeks of daily
+# work, while an intruder reached 70 inside a single hour.
+#
+# 24 h and not the whole span, because the span collapses the moment one late
+# login arrives weeks after a burst.
+BF_WINDOW = 86400            # seconds the burst is measured over
 # THE THRESHOLD KNOWS NO TIME, and deliberately keeps not knowing it. Adding
 # a rate to the CONDITION would silently drop findings on a case whose logs
 # are thin, and the count is what an analyst can check by hand.
@@ -171,7 +187,7 @@ CREATE TABLE actors (
     upload_php_attempts INTEGER, upload_php_ok INTEGER,
     cms_dir_php_attempts INTEGER DEFAULT 0,
     cms_dir_php_ok INTEGER DEFAULT 0,
-    login_first INTEGER, login_last INTEGER,
+    login_first INTEGER, login_last INTEGER, login_burst INTEGER,
     agents INTEGER
 );
 CREATE TABLE actor_hours (
@@ -220,7 +236,7 @@ class _Actor:
                  "admin_ok",
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
-                 "login_first", "login_last",
+                 "login_first", "login_last", "login_epochs",
                  "agents", "examples")
 
     def __init__(self):
@@ -247,6 +263,13 @@ class _Actor:
         self.cmsphp_ok = 0
         self.login_first = None
         self.login_last = None
+        # Every login-POST timestamp, for the busiest-window count at
+        # flush. A LIST rather than a sliding deque: sources are read in
+        # file order, which is not time order across rotated logs, and a
+        # window that assumes sorted input silently under-counts. Login
+        # POSTs are a small subset of requests -- the largest single
+        # actor measured on a real corpus carried 714.
+        self.login_epochs = []
         self.agents = set()
         self.examples = {}          # kind -> first matching uri
 
@@ -470,6 +493,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                         a.login_first = epoch
                                     if a.login_last is None or epoch > a.login_last:
                                         a.login_last = epoch
+                                    a.login_epochs.append(epoch)
                             # Any method: reaching the backend is a GET.
                             if flags & F_ADMIN_AREA and ok:
                                 a.admin_ok += 1
@@ -570,9 +594,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 _json.dumps(sorted(a.scanner_uas)[:5]),
                 a.sqli, a.sqli_ok, a.trav, a.trav_ok, a.uphp, a.uphp_ok,
                 a.cmsphp, a.cmsphp_ok, a.login_first, a.login_last,
+                _busiest_window(a.login_epochs),
                 len(a.agents)))
         conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             actor_rows)
         conn.executemany(
             "INSERT INTO actor_hours VALUES (?,?,?)",
@@ -604,13 +629,26 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 # What an unauthenticated client cannot obtain is a 2xx on the
                 # backend with a component named. The flood plus that is a
                 # statement worth making; the flood plus a redirect is not.
-                if a.admin_ok:
+                #
+                # AND `admin_ok` IS STILL NOT ENOUGH. It says somebody got in.
+                # It cannot say WHO, and the site's own administrator gets in
+                # every working morning -- so on a log covering nine weeks the
+                # operator crossed the flood threshold by turning up for work
+                # and was then reported, at HIGH, as a break-in on their own
+                # site. Nothing about the site had changed; the case simply
+                # covered a longer period.
+                #
+                # The burst is what the two do not share. Measured: the
+                # operators peaked at 8 and 10 login POSTs in their busiest
+                # 24 hours; the intruder reached 70 inside one hour.
+                burst = _busiest_window(a.login_epochs)
+                if a.admin_ok and burst >= BF_THRESHOLD:
                     alert_rows.append((
                         ip_id, "login_success", 0,
-                        f"{a.login_posts} login POSTs, then {a.admin_ok} "
-                        f"request(s) to the admin backend answered 2xx — a "
-                        f"page an unauthenticated session does not get. "
-                        f"Verify!", ""))
+                        f"{a.login_posts} login POSTs, {burst} of them inside "
+                        f"24 h, then {a.admin_ok} request(s) to the admin "
+                        f"backend answered 2xx — a page an unauthenticated "
+                        f"session does not get. Verify!", ""))
             for ua in sorted(a.scanner_uas):
                 # INFORMATIONAL (severity 3): every host on the internet is
                 # scanned around the clock, so "a scanner said hello" is
@@ -691,6 +729,23 @@ def _day_iso(epoch_day):
 # The alert KIND is the rule id, prefixed. It was already a stable string
 # stored in the log index, so inventing a second identifier beside it would
 # only create something to keep in sync.
+def _busiest_window(epochs):
+    """The most login POSTs that fall inside any BF_WINDOW seconds.
+
+    Two pointers over the sorted times: for each end, advance the start past
+    everything older than the window and take the largest span. O(n log n) for
+    the sort and O(n) for the walk, on a list that holds login POSTs only."""
+    if not epochs:
+        return 0
+    times = sorted(epochs)
+    best = start = 0
+    for end, t in enumerate(times):
+        while t - times[start] >= BF_WINDOW:
+            start += 1
+        best = max(best, end - start + 1)
+    return best
+
+
 def _span_words(seconds):
     """`3 s`, `47 min`, `8 h`, `23 d` -- one unit, the biggest that fits.
 
