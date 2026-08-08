@@ -44,7 +44,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -78,6 +78,38 @@ LOGIN_POST_ENDPOINTS = re.compile(
 # an unauthenticated client cannot obtain is a 2xx on the backend itself.
 AUTHENTICATED_AREA_RE = re.compile(
     r"(?i)/administrator/index\.php\?[^\s]*option=com_(?!login|users\b)")
+
+# THE SAME STATEMENT FOR WORDPRESS, and without it the HIGH above could not
+# fire there AT ALL. `wp-login.php` is a recognised login endpoint, so the
+# flood half worked and the success half was spelled in one CMS's URL grammar
+# -- which made the only HIGH log rule about a break-in unreachable on the
+# most widely deployed CMS there is.
+#
+# `wp-admin/admin.php` calls `auth_redirect()`, so every page routed through
+# it answers an unauthenticated request with a 302 to wp-login.php, never a
+# 2xx. That redirect is the discriminator, and it holds for the PAGES ONLY.
+#
+# WHAT IS EXCLUDED IS THE WHOLE RULE:
+#   admin-ajax.php, admin-post.php   run `*_nopriv_*` handlers for clients
+#                                    that never logged in -- contact forms,
+#                                    WooCommerce, page builders
+#   load-scripts.php, load-styles.php  do not load WordPress at all
+#   install.php, upgrade.php,        reachable by design
+#     setup-config.php, async-upload.php
+#   /wp-admin/css/, /js/, /images/   files on disk, never touched by PHP
+#
+# The last group is the one that would hurt most: wp-login.php itself pulls
+# `/wp-admin/css/login.min.css`, so a rule that accepted any 2xx under
+# /wp-admin/ would read the login page's own stylesheet as proof that the
+# password had been guessed. Requiring a `.php` DIRECTLY under wp-admin/
+# (or network/, user/) is what keeps all of them out -- `[a-z0-9_-]+` crosses
+# neither a slash nor a dot, so anything one directory deeper is excluded
+# structurally rather than by name.
+WP_AUTHENTICATED_AREA_RE = re.compile(
+    r"(?i)/wp-admin/(?:network/|user/)?(?:"
+    r"(?!(?:admin-ajax|admin-post|load-scripts|load-styles|install|upgrade|"
+    r"setup-config|async-upload)\.php)"
+    r"[a-z0-9_-]+\.php|)(?=[?\s]|$)")
 
 SQLI_URI_RE = re.compile(
     r"(?i)(union[+%20\s]+select|information_schema|concat\s*\(|"
@@ -349,7 +381,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     flags |= F_CMS_DIR_PHP
                 if UPLOAD_PHP_RE.search(text):
                     flags |= F_UPLOAD_PHP
-                if AUTHENTICATED_AREA_RE.search(text):
+                if (AUTHENTICATED_AREA_RE.search(text)
+                        or WP_AUTHENTICATED_AREA_RE.search(text)):
                     flags |= F_ADMIN_AREA
                 got = uri_cache[text] = (uri_id, leaf_id, flags)
             return got

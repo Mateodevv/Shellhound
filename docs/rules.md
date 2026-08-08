@@ -537,6 +537,22 @@ is why a ten-million-line log does not cost ten million times as much.
 **Trigger:** ≥ 30 POSTs against login endpoints, **≥ 30 of them inside any
 24 hours**, **and** at least one 2xx on the authenticated backend.
 
+The backend is recognised for **Joomla** (`/administrator/index.php?option=com_…`,
+excluding the login and user components) and for **WordPress** (a `.php`
+directly under `/wp-admin/`, `/wp-admin/network/` or `/wp-admin/user/`). Both
+answer an unauthenticated request with a redirect rather than a 2xx, which is
+what makes the 2xx the discriminator. The WordPress side **excludes**
+`admin-ajax.php`, `admin-post.php`, `load-scripts.php`, `load-styles.php`,
+`install.php`, `upgrade.php`, `setup-config.php` and `async-upload.php`, all of
+which serve clients that never signed in — and, structurally, everything one
+directory deeper, because `/wp-admin/css/login.min.css` is fetched by every
+visitor to the login page and a rule that counted it would read the login
+page's own stylesheet as a guessed password.
+
+The other four CMSes the toolkit recognises have no backend expression, so
+this rule cannot fire on them. That is a gap, and it is stated here rather
+than left to be discovered.
+
 **What it states:** a burst of login attempts, and afterwards a page an
 unauthenticated session does not get.
 

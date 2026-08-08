@@ -1685,6 +1685,131 @@ class ActorTagTests(unittest.TestCase):
         self.assertEqual({ioclib.TAG_ACTOR}, self._tags())
 
 
+class WordPressAuthenticatedAreaTests(unittest.TestCase):
+    """The only HIGH log rule about a break-in could not fire on WordPress.
+
+    `wp-login.php` is a recognised login endpoint, so the flood half worked
+    normally. The success half was spelled in Joomla's URL grammar alone --
+    `/administrator/index.php?option=com_...` -- and no WordPress admin URL
+    matches it. On the most widely deployed CMS there is, the case reported a
+    login flood at MEDIUM and stopped.
+
+    THE EXCLUSIONS ARE THE RULE. `wp-admin/admin.php` calls `auth_redirect()`,
+    so its pages answer an unauthenticated request with a 302 -- but a good
+    part of `wp-admin/` is reachable without a session by design, and one
+    piece of it is loaded by every single visitor to the login page:
+    `wp-login.php` pulls `/wp-admin/css/login.min.css`. A rule that took any
+    2xx under `/wp-admin/` as proof would have read that stylesheet as a
+    guessed password, which is the bug this rule was just fixed for.
+    """
+
+    SESSION_ONLY = (
+        "/wp-admin/",
+        "/wp-admin/index.php",
+        "/wp-admin/users.php",
+        "/wp-admin/user-new.php",
+        "/wp-admin/post.php?post=1&action=edit",
+        "/wp-admin/options.php",
+        "/wp-admin/network/sites.php",
+        "/wp-admin/user/profile.php",
+    )
+
+    NO_SESSION_NEEDED = (
+        "/wp-admin/admin-ajax.php?action=contact_form",
+        "/wp-admin/admin-post.php?action=x",
+        "/wp-admin/load-scripts.php?load=jquery",
+        "/wp-admin/load-styles.php?load=buttons",
+        "/wp-admin/install.php",
+        "/wp-admin/upgrade.php",
+        "/wp-admin/setup-config.php",
+        "/wp-admin/async-upload.php",
+        "/wp-admin/css/login.min.css",
+        "/wp-admin/js/common.min.js",
+        "/wp-admin/images/wordpress-logo.svg",
+        "/wp-admin/includes/file.php",
+        "/wp-admin/maint/repair.php",
+        "/wp-json/wp/v2/users",
+    )
+
+    def _line(self, when, uri, method="GET", status=200):
+        from datetime import datetime, timedelta, timezone
+        stamp = (datetime(2026, 1, 5, tzinfo=timezone.utc)
+                 + timedelta(seconds=when)).strftime("%d/%b/%Y:%H:%M:%S +0000")
+        return (f'192.0.2.7 - - [{stamp}] "{method} {uri} HTTP/1.1" '
+                f'{status} 512 "-" "Mozilla/5.0"\n')
+
+    def _after_a_flood(self, *tail):
+        """Seventy POSTs to wp-login.php in half an hour, then `tail`."""
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-wp-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case, logs = root / "case", root / "logs"
+        case.mkdir()
+        logs.mkdir()
+        lines = [self._line(i * 25, "/wp-login.php", "POST", 200)
+                 for i in range(70)]
+        lines += list(tail)
+        (logs / "a.log").write_text("".join(lines), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        conn = sqlite3.connect(db.log_db_path(case))
+        try:
+            kinds = {r[0] for r in conn.execute("SELECT kind FROM alerts")}
+            ok = conn.execute("SELECT MAX(admin_ok) FROM actors").fetchone()[0]
+        finally:
+            conn.close()
+        return kinds, ok
+
+    def test_a_wordpress_flood_that_reached_the_backend_is_a_break_in(self):
+        kinds, ok = self._after_a_flood(
+            self._line(2000, "/wp-admin/users.php"),
+            self._line(2010, "/wp-admin/user-new.php"))
+        self.assertEqual(2, ok)
+        self.assertIn("login_success", kinds,
+                      "a WordPress break-in went unreported")
+
+    def test_a_wordpress_flood_that_never_got_in_is_only_a_flood(self):
+        kinds, ok = self._after_a_flood()
+        self.assertEqual(0, ok)
+        self.assertIn("login_flood", kinds)
+        self.assertNotIn("login_success", kinds)
+
+    def test_the_pages_served_without_a_session_prove_nothing(self):
+        """The guard that stops this fix from re-creating the bug the
+        redirect version had. Each of these answers 2xx to a client that
+        never logged in."""
+        for uri in self.NO_SESSION_NEEDED:
+            with self.subTest(uri=uri):
+                kinds, ok = self._after_a_flood(
+                    *[self._line(2000 + i, uri) for i in range(6)])
+                self.assertEqual(0, ok, uri)
+                self.assertNotIn("login_success", kinds, uri)
+
+    def test_every_page_that_needs_one_counts(self):
+        for uri in self.SESSION_ONLY:
+            with self.subTest(uri=uri):
+                _kinds, ok = self._after_a_flood(self._line(2000, uri))
+                self.assertEqual(1, ok, uri)
+
+    def test_a_redirect_out_of_the_backend_is_not_a_2xx(self):
+        """The outcome gate, not the URL, is what decides. An anonymous
+        request to /wp-admin/ is answered with a 302 to the login page."""
+        kinds, ok = self._after_a_flood(
+            self._line(2000, "/wp-admin/", status=302))
+        self.assertEqual(0, ok)
+        self.assertNotIn("login_success", kinds)
+
+    def test_adding_a_second_cms_did_not_widen_the_first(self):
+        from server.engines import logindex
+        self.assertTrue(logindex.AUTHENTICATED_AREA_RE.search(
+            "/administrator/index.php?option=com_content&view=articles"))
+        self.assertFalse(logindex.AUTHENTICATED_AREA_RE.search(
+            "/administrator/index.php?option=com_login"))
+        self.assertFalse(logindex.WP_AUTHENTICATED_AREA_RE.search(
+            "/administrator/index.php?option=com_content"))
+
+
 class LoginBurstTests(unittest.TestCase):
     """The site's own administrator, reported at HIGH as a break-in.
 
