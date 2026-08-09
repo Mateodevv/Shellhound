@@ -2,6 +2,12 @@
   <img src="assets/brand/banner.svg" alt="SHELLHOUND" width="900">
 </p>
 
+<p align="center">
+  <a href="#installation">Installation</a>
+  ·
+  <a href="#security">Security</a>
+</p>
+
 **Local DFIR workbench for compromised web servers.**
 
 SHELLHOUND indexes a copy of the webroot, the access logs and a database
