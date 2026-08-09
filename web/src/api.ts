@@ -387,6 +387,35 @@ export interface Ioc {
   links: IocLink[]
 }
 
+export interface CrossCaseIocMatch {
+  slug: string
+  name: string
+  reference: string
+  id: number
+  value: string
+  type: string
+  note: string
+  tags: string[]
+  origin: string
+  added: string
+}
+
+export interface CrossCaseIocEntry {
+  id: number
+  value: string
+  type: string
+  matches: CrossCaseIocMatch[]
+}
+
+export interface CrossCaseIocResponse {
+  entries: CrossCaseIocEntry[]
+  matched_iocs: number
+  matches: number
+  matched_cases: number
+  cases_scanned: number
+  cases_skipped: number
+}
+
 /** A flagged artifact below an extension -- the inventory's tie to the case:
  *  THIS extension contains something the rules named. */
 export interface CmsArtifactHit {

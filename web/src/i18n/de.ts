@@ -1001,4 +1001,10 @@ export const de: Record<string, string> = {
   'coverage.file.truncated': 'die erste Zeile ist kein ganzer Eintrag — der Anfang fehlt',
   'coverage.file.stale': 'die Datei ist älter als ihr eigener letzter Eintrag',
   'coverage.disclaimer': '{n} Beobachtung(en). Keine davon beweist für sich etwas — sie sagen, wo zu fragen ist.',
+  'report.download': 'Fallbericht herunterladen',
+  'report.download.hint': 'Eine eigenständige, druckbare HTML-Datei. Sie enthält keine Pfade zu Beweiswurzeln und lädt keine externen Ressourcen.',
+  'cross.title': 'Auch in anderen Fällen gesehen',
+  'cross.summary': '{iocs} Indikator(en) kommen in {cases} anderen Fall/Fällen vor, mit {matches} Übereinstimmung(en).',
+  'cross.open': 'Fall öffnen',
+  'cross.skipped': '{n} Fall/Fälle konnten nicht gelesen werden und wurden übersprungen.',
 }

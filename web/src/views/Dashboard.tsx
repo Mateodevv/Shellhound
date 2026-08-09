@@ -3,8 +3,8 @@
 import { useT } from '../i18n'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Server } from 'lucide-react'
-import { api, type CaseDetail, type Dashboard as DashboardData } from '../api'
+import { ArrowRight, FileText, Server } from 'lucide-react'
+import { api, downloadUrl, type CaseDetail, type Dashboard as DashboardData } from '../api'
 import { formatCount, formatDay, type EvidenceRoot } from '../format'
 import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
@@ -50,6 +50,13 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex justify-end">
+        <a href={downloadUrl(`/api/cases/${slug}/report.html`)}
+          title={tr('report.download.hint')}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold transition-colors hover:border-[var(--accent)]/60">
+          <FileText size={14} /> {tr('report.download')}
+        </a>
+      </div>
       {noEvidence && (
         <Card className="flex items-center justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up">
           <div className="text-[13px]">

@@ -12,7 +12,7 @@ them, when a file was first present, what those clients did next.
 | | |
 |---|---|
 | **Input** | Copy of the webroot, access logs, database export of the CMS |
-| **Output** | Findings and triage state, chronology, IOC export as CSV, JSON or STIX 2.1 |
+| **Output** | Findings and triage state, chronology, a portable HTML case report, IOC export as CSV, JSON or STIX 2.1 |
 | **Operation** | Entirely on the analysis machine, on `127.0.0.1`. No service, no account, no telemetry |
 | **Interface** | English and German, switchable in the sidebar |
 
@@ -263,7 +263,12 @@ are recognised, and their accounts read generically.
 | **Actors** | Every client from the logs with its behaviour, country and duration of activity. Several can be selected for one combined trace |
 | **Database** | Accounts with named observations (created on the day of the export, never signed in, blocked), code injected into data fields, table inventory |
 | **Files** | Browse the evidence, take files into the IOC box by hand, compare against the reference copy |
-| **IOC box** | The collected indicators with their relationships, exportable as CSV, JSON or STIX 2.1 |
+| **IOC box** | The collected indicators with their relationships and exact matches from other open cases, exportable as CSV, JSON or STIX 2.1 |
+
+The dashboard exports one self-contained, printable HTML case report. It
+contains no evidence-root paths or remote resources and carries the SHA-256 of
+the exact response in its download header. Cross-case matching reads only the
+IOC boxes in the current workspace; it never searches raw findings or evidence.
 
 ### Third-party lookups
 
