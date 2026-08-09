@@ -77,32 +77,23 @@ Country attribution reads a local database and never queries a lookup service.
 <summary><b>Installation as a package</b> (provides a <code>shellhound</code> command)</summary>
 
 The built interface is bundled into the package, so an installed copy needs no
-Node toolchain. Building the wheel does, and the build output has to be copied
-into the package first.
+Node toolchain. Building a release artifact does: the PEP 517 backend runs the
+frontend build and stages its output in the wheel automatically.
 
 ```bash
-cd web && npm ci && npm run build && cd ..
+pip install build
+python -m build
 ```
 
-Copy the build output:
+Install the wheel from `dist/` on the analysis machine. That machine only
+needs Python; Node is a build-time dependency.
 
 ```bash
-cp -r web/dist server/static
-```
-
-```powershell
-Copy-Item -Recurse -Force web/dist server/static
-```
-
-Then:
-
-```bash
-pip install .
+pip install dist/shellhound-0.2.0-py3-none-any.whl
 shellhound
 ```
 
-Inside the repository the copy is unnecessary; there the server finds
-`web/dist` by itself.
+Inside the repository the server continues to find `web/dist` directly.
 
 </details>
 

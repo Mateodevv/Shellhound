@@ -23,6 +23,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+        working-directory: web
       - name: oxlint
         run: npx oxlint src --deny-warnings
         working-directory: web
@@ -47,7 +50,7 @@ jobs:
         # Linux and Windows: path handling is exactly the class of bug that
         # only the other operating system reveals.
         os: [ubuntu-latest, windows-latest]
-        python: ['3.10', '3.13']
+        python: ['3.10', '3.14']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,15 +68,32 @@ jobs:
         run: python -m unittest discover -s tests -t . -v
 
   package:
-    name: Package builds
+    name: Package builds and installs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
       - run: pip install build
-      - run: python -m build
+      # The PEP 517 backend runs npm and stages web/dist under server/static.
+      # Building successfully is not enough: the old pipeline also succeeded
+      # while producing a wheel whose entire interface was missing.
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Install and smoke-test the wheel
+        run: |
+          python -m venv .package-smoke
+          .package-smoke/bin/python -m pip install dist/*.whl
+          smoke_dir="$(mktemp -d)"
+          cd "$smoke_dir"
+          "$GITHUB_WORKSPACE/.package-smoke/bin/python" \
+            "$GITHUB_WORKSPACE/tools/package_smoke.py"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
