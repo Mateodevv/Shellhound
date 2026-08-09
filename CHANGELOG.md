@@ -8,6 +8,33 @@ All notable changes to SHELLHOUND. Format after
 
 ## [0.2.0] — 2026-08-09
 
+### Added — one portable case report
+
+The dashboard now downloads a self-contained, printable HTML report with the
+case summary, evidence inventory, confirmed findings, IOC relationships, hunt
+runs, chronology and coverage gaps. It embeds no external resources, omits
+evidence-root paths and returns a SHA-256 for the exact downloaded bytes.
+
+### Added — conservative IOC correlation between cases
+
+The IOC box shows exact matches from other open cases in the same workspace.
+Only indicators analysts explicitly collected are compared: findings and raw
+evidence are not searched, path matching remains case-sensitive and no central
+cross-case database is created.
+
+### Changed — mutation output is an actionable worklist
+
+Nightly mutation artifacts are now merged into a priority-ordered survivor
+report. Incomplete shards are marked as partial and survivor counts from them
+as lower bounds, so a timed-out run cannot look complete.
+
+### Changed — the interface ships less before it is needed
+
+Views and country flags load on demand, the duplicate square flag set is gone,
+and CI enforces budgets for the entry chunk, total JavaScript and complete
+frontend distribution. The measured entry chunk fell from about 1,021 KiB to
+645 KiB and the distribution from about 4.9 MiB to 3.0 MiB.
+
 ### Fixed — the wheel now contains the interface it claims to contain
 
 The package job built a valid Python wheel without first copying the Vite

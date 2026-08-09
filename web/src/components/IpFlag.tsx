@@ -13,6 +13,7 @@
 // flag emoji, and a forensic tool loads nothing from CDNs.
 import { useT } from '../i18n'
 import { useGeo } from '../geo'
+import { useFlagUrl } from '../flags'
 import { Tooltip } from './Tooltip'
 
 const SPECIAL_SHORT: [string, string][] = [
@@ -27,6 +28,7 @@ const SPECIAL_SHORT: [string, string][] = [
 export function IpFlag({ ip }: { ip?: string | null }) {
   const tr = useT()
   const info = useGeo(ip)
+  const src = useFlagUrl(info?.iso ?? undefined)
   if (!info) return null
 
   if (info.special) {
@@ -42,11 +44,12 @@ export function IpFlag({ ip }: { ip?: string | null }) {
   }
 
   if (!info.iso) return null
+  if (!src) return null
   return (
     <Tooltip title={`${info.name} (${info.iso.toUpperCase()})`}
       hint={tr('geo.flag.hint')}>
-      <span className={`fi fi-${info.iso} shrink-0 rounded-[2px] text-[13px] leading-none`}
-        aria-label={info.name} />
+      <img src={src} alt="" aria-label={info.name}
+        className="h-[13px] w-[17px] shrink-0 rounded-[2px] object-cover" />
     </Tooltip>
   )
 }

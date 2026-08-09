@@ -1003,4 +1003,10 @@ export const en: Record<string, string> = {
   'coverage.file.truncated': 'the first line is not a whole record — the beginning is missing',
   'coverage.file.stale': 'the file is older than its own last entry',
   'coverage.disclaimer': '{n} observation(s). None of them proves anything on its own — they say where to ask.',
+  'report.download': 'Download case report',
+  'report.download.hint': 'A self-contained, printable HTML file. It contains no evidence-root paths or external resources.',
+  'cross.title': 'Also seen in other cases',
+  'cross.summary': '{iocs} indicator(s) occur in {cases} other case(s), with {matches} match(es).',
+  'cross.open': 'Open case',
+  'cross.skipped': '{n} case(s) could not be read and were skipped.',
 }

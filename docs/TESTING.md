@@ -191,6 +191,13 @@ file under `server/` appears in some shard. A hand-written shard list rots into
 a file that is never mutated, silently, forever — which is the "whole layers
 with no tests" failure mode wearing a different hat.
 
+The matrix artifacts are merged into `mutation-triage.md` after every run.
+That file orders storage, HTTP and indexing modules first, counts survivors by
+module and marks an interrupted shard as **PARTIAL**. Its survivor count is a
+lower bound, never a flattering score. Triage each entry as a real test gap,
+an equivalent mutant or an invalid mutation; only the first category asks for
+a test, and the test must fail against that mutant before it is done.
+
 **Not every survivor is a gap.** Some mutants cannot change behaviour at all,
 and reading a report means separating those out by hand. `server/artifacts.py`
 has a real example: mutating `target[len(best) + 1:]` into `* 1`, `// 1`, `** 1`

@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: web
+      - name: Bundle budget
+        run: npm run check:bundle
+        working-directory: web
 
   backend:
     name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})

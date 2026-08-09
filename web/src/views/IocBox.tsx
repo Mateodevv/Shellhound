@@ -6,7 +6,9 @@ import {
   AtSign, Box, ChevronDown, ChevronRight, Download, FileDigit, Fingerprint,
   Globe, Link2, Plus, Share2, Trash2, User,
 } from 'lucide-react'
-import { api, del, downloadUrl, patch, post, type Ioc } from '../api'
+import {
+  api, del, downloadUrl, patch, post, type CrossCaseIocResponse, type Ioc,
+} from '../api'
 import { formatCount } from '../format'
 import {
   Button, Chip, Card, CopyButton, EmptyState, IocTag, SearchInput,
@@ -35,6 +37,10 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const { data: iocs } = useQuery({
     queryKey: ['iocs', slug],
     queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`),
+  })
+  const { data: crossCase } = useQuery({
+    queryKey: ['iocs', 'cross-case', slug],
+    queryFn: () => api<CrossCaseIocResponse>(`/api/cases/${slug}/iocs/cross-case`),
   })
   // Hide switches as everywhere: a click hides the type resp. the tag, the
   // next click brings it back, several of them stack.
@@ -107,6 +113,12 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     return out
   }, [iocs])
 
+  const caseHref = (otherSlug: string) => {
+    const url = new URL(location.href)
+    url.searchParams.set('case', otherSlug)
+    return url.toString()
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -175,6 +187,41 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             </Tooltip>
           ))}
         </div>
+      )}
+
+      {crossCase && (crossCase.matched_iocs > 0 || crossCase.cases_skipped > 0) && (
+        <Card className="border-[var(--accent)]/35 px-4 py-3">
+          <div className="mb-2 flex items-center gap-2">
+            <Share2 size={15} className="text-[var(--accent-text)]" />
+            <span className="text-[13px] font-semibold">{tr('cross.title')}</span>
+            <span className="text-[12px] text-[var(--muted)]">
+              {tr('cross.summary', {
+                iocs: formatCount(crossCase.matched_iocs),
+                cases: formatCount(crossCase.matched_cases),
+                matches: formatCount(crossCase.matches),
+              })}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {crossCase.entries.map((entry) => (
+              <div key={entry.id} className="flex flex-wrap items-center gap-2 text-[12px]">
+                <span className="mono max-w-[440px] truncate" title={entry.value}>{entry.value}</span>
+                {entry.matches.map((match) => (
+                  <a key={`${match.slug}-${match.id}`} href={caseHref(match.slug)}
+                    title={`${match.reference || match.slug}${match.note ? ` — ${match.note}` : ''}`}
+                    className="rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] hover:border-[var(--accent)]/60">
+                    {match.name || match.slug} · {tr('cross.open')}
+                  </a>
+                ))}
+              </div>
+            ))}
+          </div>
+          {crossCase.cases_skipped > 0 && (
+            <div className="mt-2 text-[11px] text-[var(--warn)]">
+              {tr('cross.skipped', { n: formatCount(crossCase.cases_skipped) })}
+            </div>
+          )}
+        </Card>
       )}
 
       <Card className="flex flex-wrap items-center gap-2 px-4 py-3">

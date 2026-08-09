@@ -21,6 +21,12 @@ a test strategy built from the shapes that exposed real defects.
 - **Safer exports.** Case archives cannot escape the workspace, host paths do
   not leak into exports and unknown response sizes remain unknown instead of
   becoming zero.
+- **Portable case report.** A self-contained printable HTML report gathers the
+  stated facts without leaking evidence-root paths or loading remote assets.
+- **Cross-case IOC matches.** Explicitly collected indicators are compared
+  conservatively with the other open cases in the workspace.
+- **Smaller initial interface.** Views and country flags load on demand, with
+  bundle budgets enforced in CI.
 
 The full list of changes and the reasoning behind each detection change are in
 [`CHANGELOG.md`](../CHANGELOG.md).
@@ -57,9 +63,10 @@ modified.
 ## Release verification
 
 - Backend suite on Linux and Windows, Python 3.10 and 3.14.
-- Frontend tests, type checking, lint and production build.
+- Frontend tests, type checking, lint, production build and bundle budgets.
 - Wheel installation and live HTTP smoke test from outside the repository.
-- Nightly mutation runs remain advisory and publish their surviving mutants.
+- Nightly mutation runs remain advisory and publish a prioritized survivor
+  worklist that distinguishes complete from partial shards.
 
 If the installed start page or an authenticated state request fails, do not
 publish the artifact. Reinstall `0.1.1` and retain the workspace unchanged;

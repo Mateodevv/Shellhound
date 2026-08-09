@@ -101,7 +101,7 @@ jobs:
           - name: workspace-and-scanning
             modules: server/engines/yarascan.py server/workspace.py server/engines/webrootdiff.py server/coverage.py server/enrich.py
           - name: logs-and-storage
-            modules: server/engines/errorlog.py server/db.py server/iocs.py server/engines/accesslog.py server/geoip.py server/engines/sigmascan.py
+            modules: server/engines/errorlog.py server/db.py server/iocs.py server/case_report.py server/correlation.py server/engines/accesslog.py server/geoip.py server/engines/sigmascan.py
           - name: small-modules
             modules: server/jobs.py server/artifacts.py server/bundled_rules.py server/settings.py server/engines/fsutil.py server/i18n.py server/rules.py server/config.py server/main.py server/events.py server/ruleswitch.py server/__init__.py server/engines/__init__.py
     steps:
@@ -194,4 +194,27 @@ jobs:
             mutation-${{ matrix.name }}.txt
             mutation-${{ matrix.name }}.html
             session.sqlite
+          retention-days: 30
+
+  triage:
+    name: Prioritized survivor worklist
+    if: always()
+    needs: mutate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mutation-*
+          path: mutation-artifacts
+          merge-multiple: true
+      - name: Merge and prioritize
+        run: |
+          python tools/mutation_summary.py mutation-artifacts \
+            --output mutation-triage.md
+          cat mutation-triage.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutation-triage
+          path: mutation-triage.md
           retention-days: 30
