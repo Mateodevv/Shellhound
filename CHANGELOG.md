@@ -6,6 +6,28 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-09
+
+### Fixed — the wheel now contains the interface it claims to contain
+
+The package job built a valid Python wheel without first copying the Vite
+output into `server/static`. Setuptools accepted that wheel, CI uploaded it,
+and an installed copy started successfully — but its only page said that the
+frontend build was missing.
+
+The PEP 517 backend now builds the interface before the source distribution
+or wheel is created. CI installs the resulting wheel in an isolated
+environment, starts it over a real socket and checks the start page, a bundled
+asset and the authenticated state endpoint. A build that omits the interface
+can no longer be green.
+
+### Changed — application startup uses FastAPI lifespan
+
+The event hub is attached to uvicorn's running loop through the supported
+lifespan API. This replaces the deprecated startup-event decorator and keeps
+the full suite warning-free on current FastAPI versions. CI now covers Python
+3.14 as well as the supported 3.10 floor.
+
 ### Fixed — "the response was empty" said about answers nobody measured
 
 A `-` in the size field of an access log means the server did not record how

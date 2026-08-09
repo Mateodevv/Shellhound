@@ -20,6 +20,7 @@ import json
 import os
 import time
 import zipfile
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,8 +83,16 @@ EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump", "reference")
 
 
 def create_app(config: Config) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_app):
+        # The event hub is shared by the HTTP routes and the WebSocket.  It
+        # needs the loop uvicorn actually runs, not whichever loop happened to
+        # exist while create_app assembled the routes.
+        hub.attach_loop(asyncio.get_running_loop())
+        yield
+
     app = FastAPI(title="SHELLHOUND", docs_url=None, redoc_url=None,
-                  openapi_url=None)
+                  openapi_url=None, lifespan=lifespan)
     app.state.config = config
     config.ensure_workspace()
 
@@ -134,10 +143,6 @@ def create_app(config: Config) -> FastAPI:
         if case_dir is None:
             raise HTTPException(404, f"unknown case: {slug}")
         return case_dir
-
-    @app.on_event("startup")
-    async def _attach_loop():
-        hub.attach_loop(asyncio.get_running_loop())
 
     # --- workspace / cases --------------------------------------------------
 
