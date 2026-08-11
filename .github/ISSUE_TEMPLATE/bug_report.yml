@@ -23,7 +23,7 @@ body:
     attributes:
       label: Version
       description: The release, or the commit if you run from a checkout.
-      placeholder: 0.1.1 — or main @ 1a2b3c4
+      placeholder: 0.2.0 — or main @ 1a2b3c4
     validations:
       required: true
 
