@@ -326,6 +326,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/jobs": "",
     "/api/cases/{slug}/dashboard": "",
     "/api/cases/{slug}/chain": "",
+    "/api/cases/{slug}/report.html": "",
     "/api/cases/{slug}/search": "q=203.0.113",
     "/api/cases/{slug}/findings": "",
     "/api/cases/{slug}/artifact": "artifact={artifact}",
@@ -336,6 +337,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/actors": "",
     "/api/cases/{slug}/trace.csv": f"ips={ATTACKER}",
     "/api/cases/{slug}/iocs": "",
+    "/api/cases/{slug}/iocs/cross-case": "",
     "/api/cases/{slug}/iocs/export": "",
     "/api/cases/{slug}/cms": "",
     "/api/cases/{slug}/database": "",
@@ -933,6 +935,39 @@ class ExportTests(unittest.TestCase):
         self.assertEqual("bundle", bundle.get("type"))
         self.assertTrue(bundle.get("objects"))
 
+    def test_the_html_report_is_self_contained_and_proves_its_bytes(self):
+        headers, body = self.fetch("/report.html?lang=en&tz=utc")
+        self.assertTrue(headers["content-type"].startswith("text/html"))
+        self.assertEqual(hashlib.sha256(body).hexdigest(),
+                         headers["x-content-sha256"])
+        text = body.decode("utf-8")
+        self.assertIn("<!doctype html>", text)
+        self.assertIn("SHELLHOUND", text)
+        self.assertNotIn(str(WORKSPACE), text)
+
+    def test_cross_case_iocs_only_return_explicit_box_entries(self):
+        other = workspace.create_case(WORKSPACE, "Earlier matching case",
+                                      reference="IR-previous")
+        try:
+            conn = db.connect(other)
+            try:
+                db.add_ioc(conn, ATTACKER, "ip", ["analyst"],
+                           origin="added in the earlier case")
+                db.upsert_finding(conn, "logs", db.SEV_HIGH, "raw only",
+                                  "client", EVIDENCE_IP)
+                conn.commit()
+            finally:
+                conn.close()
+            status, data = get_json(f"/api/cases/{CASE}/iocs/cross-case")
+            self.assertEqual(200, status)
+            self.assertEqual(1, data["matched_iocs"])
+            self.assertEqual("Earlier matching case",
+                             data["entries"][0]["matches"][0]["name"])
+            self.assertNotIn(EVIDENCE_IP, json.dumps(data))
+            self.assertNotIn(str(WORKSPACE), json.dumps(data))
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+
     def test_the_account_list_is_a_csv_and_admins_narrows_it(self):
         """The password reset list after an incident. `only=admins` has to
         actually narrow, and the hashes must not be in either."""
@@ -998,7 +1033,7 @@ class PathGuardTests(unittest.TestCase):
         ]
         for slug in escapes:
             for route in ("", "/summary", "/findings", "/dashboard",
-                          "/iocs/export"):
+                          "/report.html", "/iocs/cross-case", "/iocs/export"):
                 with self.subTest(slug=slug, route=route):
                     status, _headers, body = get(f"/api/cases/{slug}{route}")
                     self.assertNotEqual(200, status, body[:200])

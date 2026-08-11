@@ -20,6 +20,7 @@ import json
 import os
 import time
 import zipfile
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,7 +29,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from server import coverage, db, enrich, geoip, iocs as ioclib
+from server import case_report, correlation, coverage, db, enrich, geoip
+from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
@@ -82,8 +84,16 @@ EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump", "reference")
 
 
 def create_app(config: Config) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_app):
+        # The event hub is shared by the HTTP routes and the WebSocket.  It
+        # needs the loop uvicorn actually runs, not whichever loop happened to
+        # exist while create_app assembled the routes.
+        hub.attach_loop(asyncio.get_running_loop())
+        yield
+
     app = FastAPI(title="SHELLHOUND", docs_url=None, redoc_url=None,
-                  openapi_url=None)
+                  openapi_url=None, lifespan=lifespan)
     app.state.config = config
     config.ensure_workspace()
 
@@ -134,10 +144,6 @@ def create_app(config: Config) -> FastAPI:
         if case_dir is None:
             raise HTTPException(404, f"unknown case: {slug}")
         return case_dir
-
-    @app.on_event("startup")
-    async def _attach_loop():
-        hub.attach_loop(asyncio.get_running_loop())
 
     # --- workspace / cases --------------------------------------------------
 
@@ -789,6 +795,22 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
     def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep):
         return case_chain(case_dir_or_404(slug), lang, tz)
+
+    @app.get("/api/cases/{slug}/report.html", dependencies=[auth])
+    def report_download(slug: str, lang: str = lang_dep, tz: str = tz_dep):
+        """One offline, printable file containing the case's stated facts."""
+        case_dir = case_dir_or_404(slug)
+        cross_case = correlation.compare(config.workspace, slug)
+        body, digest = case_report.render_bytes(
+            case_dir, lang, tz, cross_case=cross_case)
+        return Response(
+            body, media_type="text/html",
+            headers={
+                "Content-Disposition":
+                    f"attachment; filename=report_{case_dir.name}_{tz}.html",
+                "X-Content-SHA256": digest,
+                "X-Content-Type-Options": "nosniff",
+            })
 
     class ClockBody(BaseModel):
         # Seconds, per source. 0 = the clocks hold as they stand.
@@ -2162,6 +2184,13 @@ def create_app(config: Config) -> FastAPI:
             return rows
         finally:
             conn.close()
+
+    @app.get("/api/cases/{slug}/iocs/cross-case", dependencies=[auth])
+    def iocs_cross_case(slug: str):
+        # Resolve first for the same 404 contract as every case endpoint;
+        # correlation opens all databases read-only after that.
+        case_dir_or_404(slug)
+        return correlation.compare(config.workspace, slug)
 
     class NewIoc(BaseModel):
         value: str

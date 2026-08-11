@@ -1,10 +1,11 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_backend"
+backend-path = ["."]
 
 [project]
 name = "shellhound"
-version = "0.1.1"
+version = "0.2.0"
 description = "Web-native DFIR workbench for webserver compromises (WordPress/Joomla)"
 readme = "README.md"
 license = "Apache-2.0"
@@ -60,13 +61,9 @@ include-package-data = true
 include = ["server*"]
 
 # The built interface belongs in the package so that an installation gets by
-# without a Node toolchain. For that it has to be copied to server/static
-# BEFORE building:
-#     cd web && npm ci && npm run build && cd ..
-#     cp -r web/dist server/static      # PowerShell: Copy-Item -Recurse
-#     pip install .
-# Inside the repository this is unnecessary -- there the server finds
-# web/dist.
+# without a Node toolchain. build_backend.py builds it and stages it under
+# server/static before setuptools creates either an sdist or a wheel. Inside
+# the repository the server can still use web/dist directly.
 [tool.setuptools.package-data]
 # The hunt patterns SHIPPED with the tool. They belong in the package rather
 # than in the workspace: they are the same on every installation of a given

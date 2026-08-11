@@ -1,6 +1,6 @@
 // App.tsx — shell: case selection + the left rail with the five views.
 import { useT } from './i18n'
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
@@ -21,18 +21,19 @@ import { FileViewer } from './components/FileViewer'
 import { TriageFollowUp } from './components/triage'
 import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
-import { Start } from './views/Start'
-import { Dashboard } from './views/Dashboard'
-import { Evidence } from './views/Evidence'
-import { Findings } from './views/Findings'
-import { Actors } from './views/Actors'
-import { Hunt } from './views/Hunt'
-import { Files } from './views/Files'
-import { IocBox } from './views/IocBox'
-import { Cms } from './views/Cms'
-import { DatabaseView } from './views/Database'
-import { Settings } from './views/Settings'
 import { queryClient } from './queryClient'
+
+const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
+const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
+const Evidence = lazy(() => import('./views/Evidence').then((m) => ({ default: m.Evidence })))
+const Findings = lazy(() => import('./views/Findings').then((m) => ({ default: m.Findings })))
+const Actors = lazy(() => import('./views/Actors').then((m) => ({ default: m.Actors })))
+const Hunt = lazy(() => import('./views/Hunt').then((m) => ({ default: m.Hunt })))
+const Files = lazy(() => import('./views/Files').then((m) => ({ default: m.Files })))
+const IocBox = lazy(() => import('./views/IocBox').then((m) => ({ default: m.IocBox })))
+const Cms = lazy(() => import('./views/Cms').then((m) => ({ default: m.Cms })))
+const DatabaseView = lazy(() => import('./views/Database').then((m) => ({ default: m.DatabaseView })))
+const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })))
 
 export type ViewId =
   | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
@@ -258,7 +259,13 @@ function Root() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Root />
+      <Suspense fallback={(
+        <div className="flex min-h-screen items-center justify-center text-[var(--muted)] animate-pulse-soft">
+          ShellHound…
+        </div>
+      )}>
+        <Root />
+      </Suspense>
     </QueryClientProvider>
   )
 }
