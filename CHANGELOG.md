@@ -6,6 +6,12 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — virtual-host access logs are indexed
+
+Access logs that prefix the client address with a virtual-host name are now
+accepted in both Combined and Common format. The client address remains the
+indexed actor, and hosting-panel trailer fields continue to be ignored.
+
 ## [0.2.0] — 2026-08-09
 
 ### Added — one portable case report
