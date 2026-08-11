@@ -10,9 +10,14 @@ import re
 from datetime import datetime
 
 _QF = r'(?:[^"\\]|\\.)*'   # content of one quoted log field
+# Apache's vhost_combined format and hosting panels such as Plesk may put the
+# virtual-host name before the client address. Keep it non-capturing: the
+# index is about the requesting client, while the source file already records
+# which log the request came from.
+_VHOST_PREFIX = r'(?:\S+ )?'
 
 LOG_PATTERN = re.compile(
-    r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
+    r'^' + _VHOST_PREFIX + r'(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
     r'"(?:(?P<method>[A-Z]+) (?P<uri>.*?)(?: HTTP/[\d\.]+)??|(?P<badreq>' + _QF + r'))" '
     r'(?P<status>\d{3}) (?P<size>\d+|-) '
     r'(?:[^"\s]\S* )?'
@@ -21,7 +26,7 @@ LOG_PATTERN = re.compile(
 )
 
 LOG_PATTERN_COMMON = re.compile(
-    r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
+    r'^' + _VHOST_PREFIX + r'(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
     r'"(?P<method>[A-Z]+) (?P<uri>.*?)(?: HTTP/[\d\.]+)??" '
     r'(?P<status>\d{3}) (?P<size>\d+|-)\s*$'
 )
