@@ -1074,6 +1074,48 @@ class ExportTests(unittest.TestCase):
 
 # --- paths from the client -------------------------------------------------
 
+class CaseDeleteTests(unittest.TestCase):
+    """The hard way out of a case, from the start page.
+
+    Archiving is the default exit and existed first; delete is for the test
+    case, the duplicate, the wrong start. What it must and must not touch
+    is the entire point: the WORKING COPY goes, and registered evidence --
+    somebody's original data elsewhere on disk -- stays exactly where it
+    is. A delete that reached over there would be the worst thing this
+    tool could do.
+    """
+
+    def test_deleting_removes_the_case_and_never_the_evidence(self):
+        import shutil
+        status, info = post_json("/api/cases", {"name": "Wrong start"})
+        self.assertEqual(200, status, info)
+        slug = info["slug"]
+        outside = Path(tempfile.mkdtemp(prefix="shellhound-ev-"))
+        self.addCleanup(lambda: shutil.rmtree(outside, ignore_errors=True))
+        evidence = outside / "access.log"
+        evidence.write_text(
+            '203.0.113.1 - - [10/Jun/2026:22:58:11 +0200] '
+            '"GET / HTTP/1.1" 200 512 "-" "Mozilla/5.0"\n',
+            encoding="utf-8")
+        status, _ = post_json(f"/api/cases/{slug}/evidence",
+                              {"kind": "access_logs", "path": str(evidence)})
+        self.assertEqual(200, status)
+
+        status, _headers, raw = request("DELETE", f"/api/cases/{slug}")
+        self.assertEqual(200, status, raw)
+        self.assertFalse((WORKSPACE / slug).exists(),
+                         "the working copy is still there")
+        self.assertTrue(evidence.is_file(),
+                        "the delete reached the registered evidence")
+        status, _ = get_json(f"/api/cases/{slug}/iocs")
+        self.assertEqual(404, status,
+                         "a deleted case still answers")
+
+    def test_deleting_a_case_that_is_not_there_is_a_404(self):
+        status, _headers, _raw = request("DELETE", "/api/cases/never-existed")
+        self.assertEqual(404, status)
+
+
 class PathGuardTests(unittest.TestCase):
     """A case slug and an evidence path both come from the client, and both
     address the file system. The tool runs on the analyst's own machine with

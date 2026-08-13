@@ -192,6 +192,34 @@ def archive_case(workspace, case_dir):
     return zip_path, summary
 
 
+def delete_case(case_dir):
+    """Remove a case for good -- no archive, no way back.
+
+    The WORKING COPY only: registered evidence is somebody's original data
+    elsewhere on disk and is never touched by this. Deliberately a separate
+    function from archive_case rather than a flag on it -- packing and
+    deleting must never sit one boolean apart. Returns the case's name so
+    the caller can say what is gone."""
+    case_dir = Path(case_dir)
+    name = case_dir.name
+    try:
+        name = case_summary(case_dir).get("name") or name
+    except Exception:
+        pass
+    # Checkpoint + close any WAL first, like the close path: an abandoned
+    # sidecar handle is the usual reason a Windows delete fails half-way.
+    try:
+        conn = db.connect(case_dir)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    _remove_case_dir(case_dir)
+    return name
+
+
 def _remove_case_dir(case_dir, attempts=10, delay=0.25):
     """Delete the working copy -- robust against Windows file locking.
 

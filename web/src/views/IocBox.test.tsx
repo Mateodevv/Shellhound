@@ -99,10 +99,12 @@ describe('cross-case IOC matches', () => {
   })
 })
 
-describe('a derived hash docks under its file', () => {
-  it('renders the hash after the file it belongs to, not by insertion order', async () => {
-    // Insertion order (added DESC) would put the hash FIRST -- the docking
-    // has to override that, or the pair reads as two unrelated entries.
+describe('a derived hash folds into its file card', () => {
+  it('is hidden by default and unfolds inside the file, not by insertion order', async () => {
+    // Insertion order (added DESC) would put the hash FIRST as a card of
+    // its own. Folded linking has to override that twice over: no hash on
+    // screen until the link bar is opened, and after opening it sits
+    // BELOW the file it belongs to.
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith('/iocs/cross-case')) return NO_CROSS
       if (path.endsWith('/iocs')) return [HASH_IOC, FILE_IOC]
@@ -112,6 +114,13 @@ describe('a derived hash docks under its file', () => {
     renderWithProviders(<IocBox slug="current-case" gotoView={() => {}} />)
 
     const file = await screen.findByText(FILE_IOC.value, { selector: '.mono span' })
+    expect(screen.queryByText(HASH_IOC.value, { selector: '.mono span' }))
+      .not.toBeInTheDocument()
+
+    const bar = screen.getByRole('button', { name: /1 linked indicator/ })
+    expect(bar).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(bar)
+
     const hash = await screen.findByText(HASH_IOC.value, { selector: '.mono span' })
     expect(
       file.compareDocumentPosition(hash) & Node.DOCUMENT_POSITION_FOLLOWING,

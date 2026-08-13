@@ -15,10 +15,14 @@ catches up:
   that unfolds on demand instead of a permanently open panel under every
   address and hash — half the pixels of the old list belonged to buttons
   nobody had pressed.
-- **Order.** A hash whose file sits in the box docks under that file's
-  card instead of standing somewhere in the list as a card whose entire
-  content is "sha-256 of X". Filter the file away and the hash stands on
-  its own again.
+- **Order.** Linking is a folded section at the foot of each card: a slim
+  bar names how many indicators are connected and previews the first;
+  opening it shows a small tree — derived hashes as full rows (note,
+  lookup, delete included) docked inside the file they belong to, every
+  other edge as a labelled line that jumps to its far end. A hash whose
+  file sits in the box therefore no longer stands somewhere in the list
+  as a card whose entire content is "sha-256 of X"; filter the file away
+  and the hash stands on its own again.
 - **Tags.** Provenance (confirmed, finding, hunt, derived …) repeats on
   almost every row and now reads as quiet text; what the case observed
   (successful, brute-force, scanner) and what kind of thing it is
@@ -49,6 +53,17 @@ catches up:
   and two spellings of one digest were two entries the exact cross-case
   comparison walked past. The add button is translated (it was hard-coded
   German).
+
+### Added — cases can be archived and deleted from the start page
+
+Closing a case always meant leaving it first; now both ways out sit on the
+case card itself. **Archive** is the default exit and reuses the existing
+close path — running jobs are cancelled, everything goes into a zip under
+"Closed cases", restorable from right there. **Delete** is new and exists
+for the test case, the duplicate, the wrong start: no archive, no way
+back, armed on the first click and executed on the second. Both touch the
+WORKING COPY only — registered evidence is somebody's original data
+elsewhere on disk, and the test that guards the delete asserts as much.
 
 ### Added — the evidence of outcome-gated log rules states the answer sizes
 
