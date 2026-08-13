@@ -23,6 +23,7 @@ LOG = """\
 203.0.113.7 - - [10/Jun/2026:22:58:12 +0200] "GET /admin HTTP/1.1" 404 120 "-" "sqlmap/1.7"
 198.51.100.4 - - [10/Jun/2026:23:01:00 +0200] "GET /shop?id=1 HTTP/1.1" 200 900 "-" "Mozilla/5.0"
 198.51.100.4 - - [10/Jun/2026:23:01:05 +0200] "POST /wp-login.php HTTP/1.1" 302 0 "-" "Mozilla/5.0"
+203.0.113.7 - - [10/Jun/2026:23:02:00 +0200] "GET /export.dat HTTP/1.1" 200 - "-" "Mozilla/5.0"
 """
 
 
@@ -215,6 +216,22 @@ class EngineTests(unittest.TestCase):
             detection="  sel:\n    cs-method: POST\n"
                       "  redirect:\n    sc-status: 302\n"
                       "  condition: sel and redirect"))
+        sigmascan.scan(self.case, workspace=self.ws)
+        self.assertEqual(["198.51.100.4"],
+                         [f["artifact"] for f in self._findings()])
+
+    def test_a_size_rule_never_reads_a_dash_as_zero(self):
+        """`sc-bytes` exists so an analyst can write the rule the status
+        cannot carry -- an endpoint answering 200 either way (issue #10).
+        The sharp edge is the dash: the log fixture holds one answer whose
+        size is literally 0 and one whose size the log never recorded.
+        Stored as NULL, the dash satisfies no comparison; coerced to 0 --
+        the defect the trace export had -- this rule would name both
+        clients, and the finding would assert a measured 0 bytes about an
+        answer that certainly had a body."""
+        self._write("zero.yml", rule(
+            title="Answer of zero bytes", id="own.zero",
+            detection="  sel:\n    sc-bytes: 0\n  condition: sel"))
         sigmascan.scan(self.case, workspace=self.ws)
         self.assertEqual(["198.51.100.4"],
                          [f["artifact"] for f in self._findings()])

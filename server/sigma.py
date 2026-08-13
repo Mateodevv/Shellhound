@@ -58,6 +58,12 @@ FIELDS = {
     "c-useragent": "agent.text",
     "cs-method": "req.method",
     "sc-status": "req.status",
+    # The response size, so an analyst can write their own size rule where
+    # the status settles nothing (an endpoint answering 200 either way).
+    # NULL when the log wrote `-`: SQL's NULL never satisfies a comparison,
+    # so a rule about sizes is silent about answers whose size the log
+    # never recorded -- which is the true statement.
+    "sc-bytes": "req.size",
     "c-ip": "ip.ip",
     "src_ip": "ip.ip",
 }

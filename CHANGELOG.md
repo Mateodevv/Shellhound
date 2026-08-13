@@ -6,6 +6,35 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — the evidence of outcome-gated log rules states the answer sizes
+
+On an endpoint that answers 200 unconditionally (WordPress's
+`admin-ajax.php` is the classic case) the outcome gate separates nothing: a
+read that returned `wp-config.php` and a probe that returned a few dozen
+bytes were reported identically. The findings of the traversal, SQL
+injection, upload-PHP and CMS-directory-PHP rules now state the response
+sizes the log recorded for the matching 2xx answers — a range
+(`responses 1,531-4,830 bytes`), a single number, or the note that the log
+recorded no size, in which case nothing can be said about what came back.
+
+Reported, never gated on: the honest threshold does not exist, because an
+attacker's own successes and failures both shape any per-endpoint
+distribution — measured on the very scenario the issue was filed for, a
+100× and a 10× rule each fired on nothing. Rule texts and severities are
+untouched, so no fingerprint moves and no triage decision is orphaned.
+Analysts who want a size condition of their own get `sc-bytes` in SIGMA;
+an answer whose size the log never recorded is NULL there and satisfies no
+comparison.
+
+### Added — plugins bundled inside a theme appear in the CMS inventory
+
+Slider Revolution spread inside commercial themes, and an inventory that
+read `wp-content/plugins/` flat and each theme's `style.css` only answered
+"not installed" about the thing the case was about. A bounded walk (three
+levels below each theme, vendor trees skipped) now lists such copies under
+their own type, `Plugin (bundled in theme <slug>)`, so the reader sees
+they were inferred rather than found in the canonical place.
+
 ### Fixed — a completed re-scan retires the findings it did not reproduce
 
 A file edited above its payload moved every content finding down; the

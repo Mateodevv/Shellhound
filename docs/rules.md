@@ -29,6 +29,14 @@ Every version carries with it the file it was read from (manifest,
 `style.css`, plugin header, `version.php`) and can be corrected by hand in
 the inventory; the measured value stays visible next to it.
 
+It looks in the canonical places — `wp-content/plugins/` one level deep,
+each theme's `style.css`, Joomla's manifest locations — plus one inference:
+plugins **bundled inside a theme** (the channel that spread Slider
+Revolution) are found by a bounded walk three levels below each theme and
+listed under their own type, `Plugin (bundled in theme <slug>)`, so the
+reader sees they were inferred rather than found in the usual place. A
+plugin nested anywhere else does not appear.
+
 ## Where a rule lives
 
 | Kind of rule | Written as | Where |
@@ -111,6 +119,20 @@ for PHP in upload directories only become a finding when at least one of
 those requests was answered with **2xx**. Repelled attempts stay visible as a
 counter on the actor — a blocked wave of attacks should not redden the work
 list.
+
+The gate has a known blind spot: some endpoints answer **2xx
+unconditionally** (WordPress's `admin-ajax.php` is the classic case), and
+there the status separates nothing — a read that returned `wp-config.php`
+and a probe that returned a few dozen bytes are both "answered 2xx". For
+that reason the finding's evidence states the **response sizes** the log
+recorded for the matching answers (a range, or the note that the log
+recorded none) — reported, never gated on: the honest threshold does not
+exist, because an attacker's own successes and failures both shape any
+per-endpoint distribution. Two addresses sending identical requests then
+read `responses 41 bytes` against `responses 1,531–5,148 bytes`, and the
+analyst — not the tool — says which one exfiltrated. On a hoster that logs
+no sizes this class stays undetectable from the log, and the evidence says
+so. Analysts can write their own size rules in SIGMA via `sc-bytes`.
 
 **What could not be assessed does not disappear.** An unreadable or oversized
 file in the wrong place becomes a finding itself. Inert PHP stubs and skipped

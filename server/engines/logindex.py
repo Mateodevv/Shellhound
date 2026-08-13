@@ -271,7 +271,7 @@ class _Actor:
                  "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
                  "login_first", "login_last", "login_epochs",
-                 "agents", "examples")
+                 "agents", "examples", "answer_sizes")
 
     def __init__(self):
         self.requests = 0
@@ -307,6 +307,29 @@ class _Actor:
         self.login_epochs = []
         self.agents = set()
         self.examples = {}          # kind -> first matching uri
+        # kind -> [min, max, sized, unsized] over the 2xx answers to this
+        # outcome-gated kind. Four integers, never the full list: a big log
+        # carries six figures of actors. The span is the second axis the
+        # status code cannot carry -- on an endpoint that answers 200 to
+        # everything, `wp-config.php` leaving the server and a probe that
+        # found nothing are both "answered 2xx", and the only column that
+        # separates them is the size the log already stores (issue #10).
+        self.answer_sizes = {}
+
+    def note_size(self, kind, size):
+        """Record what a 2xx answer to this kind carried. `size` is None
+        when the log wrote `-` -- counted apart, never coerced to 0."""
+        entry = self.answer_sizes.get(kind)
+        if entry is None:
+            entry = self.answer_sizes[kind] = [None, None, 0, 0]
+        if size is None:
+            entry[3] += 1
+            return
+        entry[2] += 1
+        if entry[0] is None or size < entry[0]:
+            entry[0] = size
+        if entry[1] is None or size > entry[1]:
+            entry[1] = size
 
 
 def build(case_dir, targets, ctx=None, workspace=None):
@@ -554,21 +577,25 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 a.sqli += 1
                                 if ok:
                                     a.sqli_ok += 1
+                                    a.note_size("sqli", size)
                                 a.examples.setdefault("sqli", uri)
                             if flags & F_TRAVERSAL:
                                 a.trav += 1
                                 if ok:
                                     a.trav_ok += 1
+                                    a.note_size("traversal", size)
                                 a.examples.setdefault("traversal", uri)
                             if flags & F_UPLOAD_PHP:
                                 a.uphp += 1
                                 if ok:
                                     a.uphp_ok += 1
+                                    a.note_size("upload_php", size)
                                 a.examples.setdefault("upload_php", uri)
                             if flags & F_CMS_DIR_PHP:
                                 a.cmsphp += 1
                                 if ok:
                                     a.cmsphp_ok += 1
+                                    a.note_size("cms_dir_php", size)
                                 a.examples.setdefault("cms_dir_php", uri)
                         if is_scanner:
                             a.scanner_uas.add(data.get("user_agent") or "")
@@ -664,6 +691,36 @@ def build(case_dir, targets, ctx=None, workspace=None):
         # --- alerts (outcome-gated, see module docstring) ----------------
         if ctx is not None:
             ctx.progress(0.90, "Deriving alerts…")
+
+        def _answer_span(a, kind):
+            """', responses 41 bytes' -- what the 2xx answers carried.
+
+            IN THE EVIDENCE, NOT IN THE TRIGGER OR THE SEVERITY. On an
+            endpoint that answers 200 unconditionally the status settles
+            nothing, and the honest statistic does not exist: the attacker's
+            own successes and failures are both modes of any per-URI
+            distribution, so a threshold would be contaminated by the thing
+            it should detect (measured on the very scenario issue #10 was
+            filed for). What the log genuinely supports is stating each
+            actor's own sized answers and letting the analyst compare two
+            addresses -- 41 bytes against 1,531-5,148 separates the probe
+            from the exfiltration without the tool asserting which is
+            which. Descriptive on purpose: sizes, no adjective, no
+            comparison the tool cannot back. The rule TEXT is untouched --
+            it is in the fingerprint, and rewording it would orphan every
+            decision made on these rules."""
+            entry = a.answer_sizes.get(kind)
+            if entry is None:
+                return ""
+            lo, hi, sized, unsized = entry
+            if sized == 0:
+                return (", the log records no response size for any of "
+                        "them, so nothing can be said about what came back")
+            span = f"{lo:,} bytes" if lo == hi else f"{lo:,}-{hi:,} bytes"
+            tail = (f"; {unsized} further answer(s) logged no size"
+                    if unsized else "")
+            return f", responses {span}{tail}"
+
         alert_rows = []
         for ip_id, a in actors.items():
             if a.login_posts >= BF_THRESHOLD:
@@ -713,25 +770,29 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 alert_rows.append((
                     ip_id, "upload_php", 0,
                     f"{a.uphp_ok} of {a.uphp} request(s) for PHP in upload/"
-                    f"cache directories were answered 2xx — access to a "
+                    f"cache directories were answered 2xx"
+                    f"{_answer_span(a, 'upload_php')} — access to a "
                     f"dropped shell?", a.examples.get("upload_php", "")))
             if a.cmsphp_ok:
                 alert_rows.append((
                     ip_id, "cms_dir_php", 0,
                     f"{a.cmsphp_ok} of {a.cmsphp} request(s) for a PHP file "
                     f"lying directly in templates/, modules/, plugins/ or "
-                    f"components/ were answered 2xx — the CMS ships nothing "
-                    f"at that depth", a.examples.get("cms_dir_php", "")))
+                    f"components/ were answered 2xx"
+                    f"{_answer_span(a, 'cms_dir_php')} — the CMS ships "
+                    f"nothing at that depth", a.examples.get("cms_dir_php", "")))
             if a.sqli_ok:
                 alert_rows.append((
                     ip_id, "sqli", 1,
                     f"{a.sqli_ok} of {a.sqli} SQL injection patterns in URIs "
-                    f"were answered 2xx", a.examples.get("sqli", "")))
+                    f"were answered 2xx{_answer_span(a, 'sqli')}",
+                    a.examples.get("sqli", "")))
             if a.trav_ok:
                 alert_rows.append((
                     ip_id, "traversal", 1,
                     f"{a.trav_ok} of {a.trav} path traversal patterns were "
-                    f"answered 2xx", a.examples.get("traversal", "")))
+                    f"answered 2xx{_answer_span(a, 'traversal')}",
+                    a.examples.get("traversal", "")))
         conn.executemany(
             "INSERT INTO alerts (ip_id, kind, severity, detail, example) "
             "VALUES (?,?,?,?,?)", alert_rows)
