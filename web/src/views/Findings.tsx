@@ -117,6 +117,10 @@ export function Findings({ slug, gotoView }: {
   const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(new Set(['3']))
   const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(new Set(['dismissed']))
   const [hiddenSource, setHiddenSource] = useState<Set<string>>(new Set())
+  // "Say AND show": the banner names how many artifacts the last completed
+  // scan no longer reported -- this switch lets the analyst look at them,
+  // greyed, instead of taking a number on faith.
+  const [showRetired, setShowRetired] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
@@ -145,10 +149,11 @@ export function Findings({ slug, gotoView }: {
     if (hiddenSeverity.size) p.set('hide_severity', [...hiddenSeverity].join(','))
     if (hiddenTriage.size) p.set('hide_triage', [...hiddenTriage].join(','))
     if (hiddenSource.size) p.set('hide_source', [...hiddenSource].join(','))
+    if (showRetired) p.set('show_retired', '1')
     if (search) p.set('search', search)
     p.set('limit', String(LIST_CAP))
     return p.toString()
-  }, [hiddenSeverity, hiddenTriage, hiddenSource, search])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search])
 
   const { data } = useQuery({
     queryKey: ['findings', slug, query],
@@ -413,8 +418,15 @@ export function Findings({ slug, gotoView }: {
         <Card className="flex items-center gap-2.5 border-[var(--sev-low)]/40 bg-[var(--panel-2)] px-4 py-2.5 text-[12.5px]">
           <CircleDashed size={14} className="shrink-0 text-[var(--muted)]" />
           <span className="min-w-0 flex-1">
-            {tr('findings.retiredHidden', { n: formatCount(data.retired_hidden) })}
+            {showRetired
+              ? tr('findings.retiredShown', { n: formatCount(data.retired_hidden) })
+              : tr('findings.retiredHidden', { n: formatCount(data.retired_hidden) })}
           </span>
+          <button
+            className="shrink-0 cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
+            onClick={() => setShowRetired((v) => !v)}>
+            {showRetired ? tr('findings.retired.hide') : tr('findings.retired.show')}
+          </button>
         </Card>
       )}
 
@@ -618,7 +630,10 @@ export function Findings({ slug, gotoView }: {
                     // Dimmed means DONE, not unimportant: a confirmed
                     // artifact stays but recedes visually, so that what is
                     // still open leads the list.
-                    a.triage === 'confirmed' && 'opacity-45')}
+                    a.triage === 'confirmed' && 'opacity-45',
+                    // Greyer still: nothing here was seen again by the last
+                    // completed scan. The row is a record, not work.
+                    a.findings === 0 && a.retired > 0 && 'opacity-35')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
                   <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
