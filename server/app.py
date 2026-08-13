@@ -2173,12 +2173,26 @@ def create_app(config: Config) -> FastAPI:
 
     # --- IOC box ------------------------------------------------------------
 
+    def _ioc_spans(case_dir, rows):
+        """Attach first_seen/last_seen (log-local dates) to address IOCs.
+
+        Always both keys, null when the index has nothing: a field that
+        appears and disappears per row is a contract nobody can type."""
+        spans = logindex.actor_spans(
+            case_dir, [r["value"] for r in rows if r["type"] == "ip"])
+        for r in rows:
+            span = spans.get(r["value"]) if r["type"] == "ip" else None
+            r["first_seen"] = span[0] if span else None
+            r["last_seen"] = span[1] if span else None
+        return rows
+
     @app.get("/api/cases/{slug}/iocs", dependencies=[auth])
     def iocs_list(slug: str):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn, "SELECT * FROM iocs ORDER BY added DESC, id DESC")
+            _ioc_spans(case_dir, rows)
             for r in rows:
                 r["tags"] = json.loads(r["tags"] or "[]")
                 r["links"] = []
@@ -2224,6 +2238,13 @@ def create_app(config: Config) -> FastAPI:
         if not value:
             raise HTTPException(400, "empty value")
         ioc_type = body.type if body.type in ioclib.IOC_TYPES else ioclib.classify(value)
+        # Hex has no case. The collectors write hexdigest() and are already
+        # lower-case; only the analyst pastes `4323…C`, and without this the
+        # same digest lives twice and the cross-case comparison -- exact by
+        # design -- walks past itself. Paths stay untouched: their case is
+        # part of the value.
+        if ioc_type == "hash":
+            value = value.lower()
         conn = db.connect(case_dir)
         try:
             db.add_ioc(conn, value, ioc_type, [ioclib.TAG_ANALYST],
@@ -2274,7 +2295,15 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/iocs/export", dependencies=[auth])
     def export_iocs(slug: str, format: str = "csv", lang: str = lang_dep,
-                    tz: str = tz_dep):
+                    tz: str = tz_dep, hide_types: str = "",
+                    hide_tags: str = "", search: str = ""):
+        """Export the box -- or exactly what the analyst is looking at.
+
+        The filter parameters carry the SAME semantics as the view: a type
+        chip hides its type, a tag chip hides entries whose tags are ALL
+        hidden, the search matches value, note or origin. Handing the
+        hoster 'the twelve addresses' must not require editing a CSV by
+        hand -- and must not silently ship the rest either."""
         case_dir = case_dir_or_404(slug)
         info = workspace.case_info(case_dir)
         conn = db.connect(case_dir)
@@ -2283,6 +2312,28 @@ def create_app(config: Config) -> FastAPI:
             links = db.ioc_links(conn)
         finally:
             conn.close()
+        _ioc_spans(case_dir, rows)
+        hidden_types = {t for t in hide_types.split(",") if t}
+        hidden_tags = {t for t in hide_tags.split(",") if t}
+        needle = search.strip().lower()
+        if hidden_types or hidden_tags or needle:
+            def visible(r):
+                if r["type"] in hidden_types:
+                    return False
+                tags = json.loads(r["tags"] or "[]")
+                if tags and all(t in hidden_tags for t in tags):
+                    return False
+                if needle and not any(
+                        needle in str(r[k] or "").lower()
+                        for k in ("value", "note", "origin")):
+                    return False
+                return True
+            rows = [r for r in rows if visible(r)]
+            kept = {r["id"] for r in rows}
+            # An edge whose far end was filtered away would name an
+            # indicator the file does not carry.
+            links = [l for l in links
+                     if l["src_id"] in kept and l["dst_id"] in kept]
         stem = f"iocs_{info['slug']}"
         if format == "json":
             return Response(ioclib.to_json(rows, info["name"], links,

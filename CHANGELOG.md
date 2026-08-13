@@ -6,6 +6,50 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — the IOC box shows a case, not a card stack
+
+The box's data model was always richer than its screen. Now the screen
+catches up:
+
+- **Density.** The reputation lookup (VirusTotal/AbuseIPDB) is a button
+  that unfolds on demand instead of a permanently open panel under every
+  address and hash — half the pixels of the old list belonged to buttons
+  nobody had pressed.
+- **Order.** A hash whose file sits in the box docks under that file's
+  card instead of standing somewhere in the list as a card whose entire
+  content is "sha-256 of X". Filter the file away and the hash stands on
+  its own again.
+- **Tags.** Provenance (confirmed, finding, hunt, derived …) repeats on
+  almost every row and now reads as quiet text; what the case observed
+  (successful, brute-force, scanner) and what kind of thing it is
+  (webshell, injected-code) keep the colour and the front seat.
+- **Origin** — the field that is worth something six months later — gets
+  its own line under the value instead of living as the note's
+  placeholder and vanishing behind the first sentence anybody writes. The
+  search reads it too.
+- **Activity span.** Address IOCs show the first and last day they appear
+  in the case's access logs (log-local dates, straight from the actors
+  table), in the list and in all three exports — in STIX as prose in the
+  description, deliberately not as `valid_from`, which is a UTC timestamp
+  the log never stated. `added` only ever said when the indicator entered
+  the box, not when it acted.
+- **Exports follow the filter.** The buttons export what the analyst is
+  looking at — same chip and search semantics as the view, stated beside
+  the buttons ("Export follows the filter: 12 of 41"), with edges whose
+  far end was filtered away removed rather than naming absent indicators.
+- **Defanged copying.** A second copy action delivers `hxxps://evil[.]test`
+  and `203[.]0[.]113[.]9` for tickets and mails. Exports stay real:
+  a defanged STIX pattern would be a broken indicator.
+- **A bridge back into the case.** Addresses open their trace directly
+  from the box instead of a copy-and-search through another view.
+- Deleting an entry now takes two clicks — the first arms, the second
+  deletes. An entry takes its note, its provenance and its edges with it,
+  and there is no restore.
+- Pasted hashes are folded to lower case before storing: hex has no case,
+  and two spellings of one digest were two entries the exact cross-case
+  comparison walked past. The add button is translated (it was hard-coded
+  German).
+
 ### Added — the evidence of outcome-gated log rules states the answer sizes
 
 On an endpoint that answers 200 unconditionally (WordPress's

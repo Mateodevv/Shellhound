@@ -961,6 +961,38 @@ def open_readonly(case_dir):
     return _open_ro(case_dir)
 
 
+def actor_spans(case_dir, ips):
+    """ip -> (first day, last day) of its traffic, as ISO dates.
+
+    For the IOC box and its exports: an address without a time frame is
+    half an indicator -- the recipient's first question is "when". DATES,
+    not timestamps, in the log's own local time (epoch + the actor's tz,
+    the same arithmetic the `days` table uses): a date dodges the frame
+    question a bare timestamp would raise, and the export note says whose
+    local time it is. Addresses the index has no dated requests for are
+    simply absent."""
+    values = [str(ip) for ip in ips if str(ip)]
+    if not values:
+        return {}
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {}
+    try:
+        marks = ",".join("?" * len(values))
+        out = {}
+        for r in conn.execute(
+                f"SELECT ip, first_epoch, last_epoch, tz FROM actors "
+                f"WHERE ip IN ({marks})", values):
+            if r["first_epoch"] is None or r["last_epoch"] is None:
+                continue
+            tz = r["tz"] or 0
+            out[r["ip"]] = (_day_iso((r["first_epoch"] + tz) // 86400),
+                            _day_iso((r["last_epoch"] + tz) // 86400))
+        return out
+    finally:
+        conn.close()
+
+
 def _open_ro(case_dir):
     path = db.log_db_path(case_dir)
     if not path.is_file():

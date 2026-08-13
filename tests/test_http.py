@@ -935,6 +935,74 @@ class ExportTests(unittest.TestCase):
         self.assertEqual("bundle", bundle.get("type"))
         self.assertTrue(bundle.get("objects"))
 
+    def test_the_export_follows_the_filter(self):
+        """The buttons export what the analyst is LOOKING at, with the same
+        semantics as the view's chips and search. Handing the hoster 'just
+        the addresses' must not require editing a CSV by hand -- and an edge
+        whose far end was filtered away must go with it, or the file names
+        an indicator it does not carry."""
+        _h, body = self.fetch(f"/iocs/export?format=csv&search={ATTACKER}")
+        text = body.decode("utf-8")
+        self.assertIn(ATTACKER, text)
+        self.assertNotIn("malware.example.test", text)
+
+        _h, body = self.fetch("/iocs/export?format=csv&hide_types=ip")
+        self.assertNotIn(ATTACKER, body.decode("utf-8"))
+
+        _h, body = self.fetch("/iocs/export?format=csv"
+                              "&search=matches-nothing-at-all")
+        self.assertEqual(1, len(body.decode("utf-8").strip().splitlines()),
+                         "an empty filter result is a header and nothing "
+                         "else, not the whole box")
+
+    def test_the_box_and_the_exports_carry_the_activity_span(self):
+        """An address without a time frame is half an indicator: `added` is
+        when it entered the box, first/last_seen is when it ACTED. The log
+        index has known the answer all along (actors.first/last); dates in
+        the log's own local time, said so in the CSV header and the STIX
+        description rather than smuggled into valid_from with the wrong
+        frame."""
+        status, box = get_json(f"/api/cases/{CASE}/iocs")
+        self.assertEqual(200, status, box)
+        attacker = next(i for i in box if i["value"] == ATTACKER)
+        self.assertRegex(attacker["first_seen"] or "",
+                         r"^\d{4}-\d{2}-\d{2}$",
+                         "the seeded address appears in the case's logs, so "
+                         "the box must say when")
+        self.assertRegex(attacker["last_seen"] or "", r"^\d{4}-\d{2}-\d{2}$")
+        domain = next(i for i in box if i["value"] == "malware.example.test")
+        self.assertIsNone(domain["first_seen"],
+                          "a domain has no traffic in the access logs and "
+                          "must not invent a span")
+
+        _h, body = self.fetch("/iocs/export?format=csv")
+        text = body.decode("utf-8")
+        self.assertIn("First seen (log date)", text)
+        self.assertIn(attacker["first_seen"], text)
+
+        _h, body = self.fetch("/iocs/export?format=stix")
+        descriptions = [o.get("description", "")
+                        for o in json.loads(body)["objects"]
+                        if o.get("type") == "indicator"]
+        self.assertTrue(
+            any("Active in the case's logs" in d for d in descriptions),
+            "the STIX indicator for the address says when it was active")
+
+    def test_a_pasted_hash_is_stored_lowercase(self):
+        """Hex has no case. The collectors write hexdigest() and are already
+        lower-case; the analyst pastes from wherever. Unfolded, the same
+        digest lives twice and the cross-case comparison -- exact by design
+        -- walks past itself."""
+        digest = "AB" * 32
+        status, _ = post_json(f"/api/cases/{CASE}/iocs", {"value": digest})
+        self.assertEqual(200, status)
+        post_json(f"/api/cases/{CASE}/iocs", {"value": digest.lower()})
+        status, box = get_json(f"/api/cases/{CASE}/iocs")
+        values = [i["value"] for i in box]
+        self.assertNotIn(digest, values)
+        self.assertEqual(1, values.count(digest.lower()),
+                         "two spellings of one digest became two entries")
+
     def test_the_html_report_is_self_contained_and_proves_its_bytes(self):
         headers, body = self.fetch("/report.html?lang=en&tz=utc")
         self.assertTrue(headers["content-type"].startswith("text/html"))

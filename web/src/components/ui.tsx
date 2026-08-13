@@ -193,8 +193,12 @@ export function Button({ children, onClick, variant = 'default', disabled, class
  *  whether the click arrived -- and one clicks a second time, which changes
  *  nothing but leaves doubt. A FAILURE is shown just as clearly: silently
  *  doing nothing is the worst of the three possibilities. */
-export function CopyButton({ value, label = 'Kopieren', className }: {
+export function CopyButton({ value, label = 'Kopieren', className, icon }: {
   value: string; label?: string; className?: string
+  /** Replaces the copy glyph in the idle state -- for a SECOND copy action
+   *  beside the plain one (e.g. defanged), which would otherwise be an
+   *  identical twin nobody can tell apart. Receipt states stay the same. */
+  icon?: ReactNode
 }) {
   const tr = useT()
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
@@ -219,7 +223,7 @@ export function CopyButton({ value, label = 'Kopieren', className }: {
               : 'text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]',
           className)}>
         {state === 'ok' ? <Check size={13} />
-          : state === 'fail' ? <X size={13} /> : <Copy size={13} />}
+          : state === 'fail' ? <X size={13} /> : (icon ?? <Copy size={13} />)}
       </button>
     </Tooltip>
   )
