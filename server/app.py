@@ -924,6 +924,7 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
                       hide_source: str = "", kind: str = "", search: str = "",
+                      show_retired: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
 
@@ -986,7 +987,13 @@ def create_app(config: Config) -> FastAPI:
         # The muted-rule filter, applied on top of the chip filters. Defined
         # in artifacts.py, brackets included -- see the note there on what
         # SQL's AND/OR precedence does to it without them.
+        # `show_retired` widens it: the banner's toggle lets the analyst SEE
+        # the undecided artifacts the last completed scan did not reproduce,
+        # instead of only being told their number.
         muted_clause = MUTED_CLAUSE
+        if show_retired:
+            muted_clause = (f"({MUTED_CLAUSE} "
+                            f"OR (findings = 0 AND retired > 0))")
         where.append(muted_clause)
         clause = "WHERE " + " AND ".join(where)
         conn = db.connect(case_dir)
@@ -1004,13 +1011,17 @@ def create_app(config: Config) -> FastAPI:
             hidden = conn.execute(
                 f"WITH art AS ({art}) SELECT count(*) FROM art "
                 f"{silent_clause}", params).fetchone()[0] - total
+            # Counted against the UNWIDENED clause on purpose: with the
+            # toggle on, the retired ones sit in the list and `hidden` no
+            # longer contains them -- but the banner they are toggled from
+            # still has to say how many they are.
             retired_where = " AND ".join(
-                without + [f"NOT {muted_clause}", "findings = 0",
+                without + [f"NOT {MUTED_CLAUSE}", "findings = 0",
                            "retired > 0"])
             retired_hidden = conn.execute(
                 f"WITH art AS ({art}) SELECT count(*) FROM art "
                 f"WHERE {retired_where}", params).fetchone()[0]
-            muted_hidden = hidden - retired_hidden
+            muted_hidden = hidden - (0 if show_retired else retired_hidden)
             artifacts = db.rows(
                 conn,
                 f"WITH art AS ({art}) SELECT * FROM art {clause} "
