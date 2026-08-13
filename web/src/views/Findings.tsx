@@ -456,7 +456,7 @@ export function Findings({ slug, gotoView }: {
             <Check size={14} /> {tr('artifact.truePositiveCollect')}
           </Button>
           <Button onClick={() => bulkTriage('reviewed')}>
-            <Eye size={14} /> Gesichtet
+            <Eye size={14} /> {tr('triage.reviewed')}
           </Button>
           <Button variant="danger" onClick={() => bulkTriage('dismissed')}>
             <X size={14} /> False Positive

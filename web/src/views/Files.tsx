@@ -154,10 +154,12 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       {flag.data && (
         <div className="rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 text-[12px] animate-fade-up">
           <span className="font-semibold text-[var(--ok)]">
-            {formatCount(flag.data.added.length)} Indikator(en) aufgenommen
+            {tr('files.flagged.count', { n: formatCount(flag.data.added.length) })}
           </span>
           <span className="ml-2 text-[var(--muted)]">
-            {flag.data.added.filter((a) => a.type === 'hash').length} davon Hashes
+            {tr('files.flagged.hashes', {
+              n: flag.data.added.filter((a) => a.type === 'hash').length,
+            })}
           </span>
         </div>
       )}

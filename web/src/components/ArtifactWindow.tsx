@@ -409,7 +409,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 </Block>
                 {actor.top_agents.length > 0 && (
                   <div className="text-[11px] text-[var(--muted)]">
-                    User agents: {actor.top_agents.map((a) => `${a.agent || tr('artifact.emptyAgent')} (${a.n}×)`).join(' · ')}
+                    {tr('artifact.userAgents')} {actor.top_agents.map((a) => `${a.agent || tr('artifact.emptyAgent')} (${a.n}×)`).join(' · ')}
                   </div>
                 )}
               </div>
