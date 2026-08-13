@@ -261,5 +261,41 @@ class RelativePathTests(unittest.TestCase):
             conn.close()
 
 
+class AbsoluteFromEvidenceTests(unittest.TestCase):
+    """The way back: from the indicator's spelling to the file in the
+    registered copy. Only a file that EXISTS is an answer -- the caller
+    wants to open it, and the copy in the evidence may be partial."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="shellhound-abspath-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        (self.root / "images").mkdir()
+        (self.root / "images" / "x.phtml").write_text("<?php ?>")
+
+    def test_the_forward_direction_round_trips(self):
+        roots = [str(self.root).replace("\\", "/")]
+        absolute = str(self.root / "images" / "x.phtml")
+        rel = db.relative_to_evidence(roots, absolute)
+        self.assertEqual("images/x.phtml", rel)
+        self.assertEqual(absolute, db.absolute_from_evidence(roots, rel))
+
+    def test_a_file_the_copy_does_not_hold_is_none(self):
+        self.assertIsNone(
+            db.absolute_from_evidence([str(self.root)], "images/gone.php"))
+
+    def test_a_relative_value_never_resolves_against_the_cwd(self):
+        """`tests/__init__.py` exists relative to the working directory the
+        suite runs from -- and is exactly the kind of file the resolver must
+        not answer with."""
+        self.assertIsNone(db.absolute_from_evidence([], "tests/__init__.py"))
+
+    def test_an_absolute_value_no_root_matched_is_honoured(self):
+        """The forward direction hands a path below no root back unchanged,
+        so the box can carry absolute values -- the way back reads them."""
+        absolute = str(self.root / "images" / "x.phtml")
+        self.assertIsNone(db.absolute_from_evidence([], "images/x.phtml"))
+        self.assertEqual(absolute, db.absolute_from_evidence([], absolute))
+
+
 if __name__ == "__main__":
     unittest.main()

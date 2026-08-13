@@ -322,6 +322,7 @@ export const en: Record<string, string> = {
   'iocbox.copy.defanged': 'Copy defanged (hxxp, [.])',
   'iocbox.trace': 'Open the trace',
   'iocbox.trace.hint': 'Opens this address\'s requests from the log index — without carrying the value somewhere else first.',
+  'iocbox.view.hint': 'Opens the file from the registered evidence copy — raw or as a hex dump, without hunting the path down in the file browser first.',
   'iocbox.enrich': 'Look up reputation',
   'iocbox.enrich.hint': 'Unfolds the reputation lookup (VirusTotal resp. AbuseIPDB). Nothing is sent there without the click.',
   'iocbox.delete.sure': 'Sure?',

@@ -317,6 +317,7 @@ export const de: Record<string, string> = {
   'iocbox.copy.defanged': 'Entschärft kopieren (hxxp, [.])',
   'iocbox.trace': 'Trace öffnen',
   'iocbox.trace.hint': 'Öffnet die Anfragen dieser Adresse aus dem Log-Index — ohne den Wert erst woanders hinzutragen.',
+  'iocbox.view.hint': 'Öffnet die Datei aus der registrierten Evidence-Kopie — roh oder als Hex-Dump, ohne den Pfad erst im Datei-Browser zu suchen.',
   'iocbox.enrich': 'Reputation nachschlagen',
   'iocbox.enrich.hint': 'Klappt die Reputationsabfrage auf (VirusTotal bzw. AbuseIPDB). Nichts wird ohne den Klick dort gesendet.',
   'iocbox.delete.sure': 'Sicher?',

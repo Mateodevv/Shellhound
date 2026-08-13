@@ -2223,9 +2223,17 @@ def create_app(config: Config) -> FastAPI:
         try:
             rows = db.rows(conn, "SELECT * FROM iocs ORDER BY added DESC, id DESC")
             _ioc_spans(case_dir, rows)
+            # Path indicators are stored webroot-relative (what the other
+            # side can look for), but the file viewer wants the file where
+            # it LIES. Resolved here, once per listing, so the interface
+            # offers "view" exactly on the entries the evidence can answer.
+            roots_abs = db.evidence_roots(conn)
             for r in rows:
                 r["tags"] = json.loads(r["tags"] or "[]")
                 r["links"] = []
+                if r["type"] == "path":
+                    r["resolved"] = db.absolute_from_evidence(
+                        roots_abs, r["value"])
             # Every edge hangs on BOTH ends, each in its own reading
             # direction. Otherwise the analyst would have to know at which of
             # the two indicators the relationship is "stored" -- a question
