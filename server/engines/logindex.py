@@ -766,7 +766,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
         conn.close()
 
     # --- alert findings into the case DB (one truth, two views) -----------
-    _write_alert_findings(case_dir, workspace)
+    _write_alert_findings(case_dir, workspace, completed=not cancelled)
     try:
         stats["index_size"] = log_db.stat().st_size
     except OSError:
@@ -855,9 +855,14 @@ _ALERT_FINDING = {
 }
 
 
-def _write_alert_findings(case_dir, workspace=None):
+def _write_alert_findings(case_dir, workspace=None, completed=True):
     """Restate the index's alerts as findings (artifact = the client IP), so
-    the Findings view is the one list of everything the case knows."""
+    the Findings view is the one list of everything the case knows.
+
+    `completed` says whether the build that produced these alerts ran to the
+    end. Only then may the run retire the alert findings it did not
+    reproduce -- a cancelled build carries a PARTIAL alert set, and marking
+    it complete would grey out every real finding the cut-off half held."""
     log_db = db.log_db_path(case_dir)
     if not log_db.is_file():
         return
@@ -870,14 +875,18 @@ def _write_alert_findings(case_dir, workspace=None):
         lconn.close()
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "logindex")
         off = ruleswitch.disabled_ids(workspace) if workspace else set()
         for kind, detail, ip in alert_rows:
             if f"logs.{kind}" in off:
                 continue
             sev, rule = _ALERT_FINDING.get(kind, (2, kind))
             db.upsert_finding(conn, "logs", sev, rule, "client", ip,
-                              evidence=detail, rule_id=f"logs.{kind}")
+                              evidence=detail, rule_id=f"logs.{kind}",
+                              engine="logindex", run=run)
         conn.commit()
+        if completed:
+            db.complete_run(conn, "logindex", run)
     finally:
         conn.close()
 

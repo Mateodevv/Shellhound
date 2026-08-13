@@ -724,9 +724,12 @@ def scan(case_dir, targets, ctx=None, workspace=None):
 
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "sqldump")
+        cancelled = False
         done = 0
         for path in files:
             if ctx is not None and ctx.cancelled():
+                cancelled = True
                 break
             abs_path = os.path.abspath(path)
             try:
@@ -801,7 +804,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                                   evidence=_with_source(
                                       conn, rule, table, row_no, evidence,
                                       os.path.basename(abs_path)),
-                                  rule_id=rid)
+                                  rule_id=rid, engine="sqldump", run=run)
                 stats["findings"] += 1
             if result["kind"] == "schema":
                 stats["schema_files"] += 1
@@ -809,6 +812,10 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 stats["dumps"] += 1
             conn.commit()
         conn.commit()
+        # Only a run that read every dump may retire what it did not
+        # reproduce; a cancelled one has no opinion about the rest.
+        if not cancelled:
+            db.complete_run(conn, "sqldump", run)
     finally:
         conn.close()
     return stats

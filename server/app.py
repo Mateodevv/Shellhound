@@ -975,14 +975,23 @@ def create_app(config: Config) -> FastAPI:
             total = conn.execute(
                 f"WITH art AS ({art}) SELECT count(*) FROM art {clause}",
                 params).fetchone()[0]
-            # How many the muted rules took out, as a number the interface
-            # can state. Same filters otherwise -- so it answers "and how
-            # many did the switches cost me", not "how many exist".
+            # How many left the list without the analyst hiding them, split
+            # by WHY -- "the switches cost me N" and "M were not seen again"
+            # are different sentences, and charging a retirement to the
+            # switches would send somebody hunting through rule toggles for
+            # a file that is simply gone. Same chip filters otherwise.
             without = [w for w in where if w is not muted_clause]
             silent_clause = ("WHERE " + " AND ".join(without)) if without else ""
-            muted_hidden = conn.execute(
+            hidden = conn.execute(
                 f"WITH art AS ({art}) SELECT count(*) FROM art "
                 f"{silent_clause}", params).fetchone()[0] - total
+            retired_where = " AND ".join(
+                without + [f"NOT {muted_clause}", "findings = 0",
+                           "retired > 0"])
+            retired_hidden = conn.execute(
+                f"WITH art AS ({art}) SELECT count(*) FROM art "
+                f"WHERE {retired_where}", params).fetchone()[0]
+            muted_hidden = hidden - retired_hidden
             artifacts = db.rows(
                 conn,
                 f"WITH art AS ({art}) SELECT * FROM art {clause} "
@@ -992,9 +1001,17 @@ def create_app(config: Config) -> FastAPI:
             if artifacts:
                 names = [a["artifact"] for a in artifacts]
                 marks = ",".join("?" * len(names))
+                # Retired rows travel too, marked: the interface shows them
+                # greyed with the date they were last seen, because a row
+                # that silently vanished from under a decision is exactly
+                # what this column exists to prevent.
                 rows = db.rows(conn,
-                               f"SELECT * FROM findings WHERE artifact IN ({marks}) "
-                               f"ORDER BY severity, artifact, line", names)
+                               f"SELECT f.*, CASE WHEN {db.LIVE_PREDICATE} "
+                               f"THEN 0 ELSE 1 END AS retired "
+                               f"FROM findings f {db.RETIRE_JOIN} "
+                               f"WHERE f.artifact IN ({marks}) "
+                               f"ORDER BY retired, f.severity, f.artifact, "
+                               f"f.line", names)
             counts = artifact_counts(conn)
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
@@ -1007,6 +1024,9 @@ def create_app(config: Config) -> FastAPI:
                     # Stated, not silent: a list that shrinks without saying
                     # so is a list nobody can trust.
                     "muted_hidden": muted_hidden,
+                    # Undecided artifacts none of whose findings the last
+                    # completed scans reproduced. Stated for the same reason.
+                    "retired_hidden": retired_hidden,
                     "muted_rules": len(muted),
                     "counts": counts, "roots": roots}
         finally:

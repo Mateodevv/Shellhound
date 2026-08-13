@@ -260,6 +260,13 @@ class ScanIdempotenceLaw(unittest.TestCase):
                 "WHERE d.id IS NULL").fetchone()[0]
             return {
                 "findings": fetch("SELECT fingerprint FROM findings"),
+                # Re-running the same evidence re-produces every fingerprint,
+                # so nothing may come out of it RETIRED -- if the run counter
+                # drifted, identical scans would start greying out real
+                # findings and this set would fill up silently.
+                "retired": fetch(
+                    f"SELECT fingerprint FROM findings f {db.RETIRE_JOIN} "
+                    f"WHERE NOT {db.LIVE_PREDICATE}"),
                 "accounts": fetch(
                     "SELECT cms, tbl, user_id, login, email, registered, "
                     "hash_type, admin, last_login FROM db_accounts"),
@@ -309,6 +316,10 @@ class ScanIdempotenceLaw(unittest.TestCase):
                             0, state["orphan_tables"],
                             f"run {number} left tables behind whose dump is "
                             f"gone")
+                        self.assertEqual(
+                            [], state["retired"],
+                            f"run {number} retired findings although the "
+                            f"evidence never changed")
                     # Idempotence over an empty case is not idempotence.
                     self.assertTrue(first["findings"])
                     self.assertTrue(first["accounts"])

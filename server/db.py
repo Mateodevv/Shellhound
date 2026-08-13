@@ -82,7 +82,18 @@ CREATE TABLE IF NOT EXISTS findings (
     -- note why. The fingerprint keeps decisions stable across re-scans.
     triage TEXT NOT NULL DEFAULT 'new',    -- new|reviewed|confirmed|dismissed
     triage_note TEXT NOT NULL DEFAULT '',
-    triaged_at TEXT
+    triaged_at TEXT,
+    -- WHICH ENGINE produced this row, and in WHICH run it was last seen.
+    -- Together they answer the question the fingerprint cannot: is this
+    -- observation still current? A row whose seen_run is older than its
+    -- engine's last COMPLETED run was not reproduced by a scan that saw
+    -- everything -- the payload moved, the file is gone, or the rule was
+    -- switched off. Such a row is RETIRED: it keeps its triage and its
+    -- note, stays in the table and stays fetchable, but no longer counts
+    -- as a statement about the case. Neither column is in the fingerprint;
+    -- widening that would orphan every decision already made.
+    engine TEXT NOT NULL DEFAULT '',       -- '' = unmanaged (hunts, legacy)
+    seen_run INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity, artifact);
 CREATE TABLE IF NOT EXISTS iocs (
@@ -297,7 +308,11 @@ _ADDED_COLUMNS = {
         ("meta_at", "TEXT DEFAULT ''"),
         ("meta_partial", "INTEGER DEFAULT 0"),
     ],
-    "findings": [("rule_id", "TEXT NOT NULL DEFAULT ''")],
+    "findings": [
+        ("rule_id", "TEXT NOT NULL DEFAULT ''"),
+        ("engine", "TEXT NOT NULL DEFAULT ''"),
+        ("seen_run", "INTEGER NOT NULL DEFAULT 0"),
+    ],
     "cms_installs": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "cms_items": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "db_accounts": [
@@ -321,7 +336,13 @@ _ADDED_COLUMNS = {
 # case database recognises that it has to be touched once.
 # 4: path indicators lose the evidence root's own folder name, so a
 #    collected `webroot/images/x.php` becomes `images/x.php`.
-CASE_SCHEMA_VERSION = 4
+# 5: findings learn engine + seen_run so a completed re-scan can RETIRE the
+#    rows it did not reproduce (a payload that moved, a file that is gone)
+#    instead of leaving them standing as current facts beside their
+#    replacements. Existing rows get their engine mapped from source (and
+#    rule_id where source alone is ambiguous) so they become retirable;
+#    rows nothing can claim stay engine='' and are never retired.
+CASE_SCHEMA_VERSION = 5
 
 
 def _stored_version(conn):
@@ -362,6 +383,29 @@ def _upgrade(conn):
         "UPDATE findings SET severity = ? "
         "WHERE source = 'logs' AND rule LIKE 'Scanner tool User-Agent%' "
         "AND severity != ?", (SEV_INFO, SEV_INFO))
+    # Rows from before the engine column get their owner mapped from what is
+    # already on them, so the FIRST completed re-scan after the upgrade can
+    # retire the ones it does not reproduce. Idempotent (only empty engines
+    # are touched), and deliberately incomplete: `logs` with an empty rule_id
+    # is either a hunt finding or older than the rule_id column, and a row
+    # nothing can claim must stay unmanaged rather than be retired by the
+    # wrong engine's run. Nothing is retired BY this upgrade itself: no
+    # `engine_done:` marks exist yet, so every row stays live until an
+    # engine completes a run.
+    conn.execute("UPDATE findings SET engine = 'webshell' "
+                 "WHERE engine = '' AND source = 'webshell'")
+    conn.execute("UPDATE findings SET engine = 'yarascan' "
+                 "WHERE engine = '' AND source = 'yara'")
+    conn.execute("UPDATE findings SET engine = 'sqldump' "
+                 "WHERE engine = '' AND source = 'sqldb'")
+    conn.execute("UPDATE findings SET engine = 'errorlog' "
+                 "WHERE engine = '' AND source = 'errorlog'")
+    conn.execute("UPDATE findings SET engine = 'logindex' "
+                 "WHERE engine = '' AND source = 'logs' "
+                 "AND rule_id LIKE 'logs.%'")
+    conn.execute("UPDATE findings SET engine = 'sigmascan' "
+                 "WHERE engine = '' AND source = 'logs' "
+                 "AND rule_id != '' AND rule_id NOT LIKE 'logs.%'")
     _relativize_ioc_paths(conn)
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
@@ -465,24 +509,72 @@ def fingerprint(source, rule, artifact, line):
     return hashlib.sha1(parts.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+# A findings row is LIVE while its engine's last COMPLETED run reproduced it
+# (or while no run of its engine has completed at all -- an engine that has
+# not looked cannot retire anything). The predicate binds to the alias `f`
+# and needs RETIRE_JOIN beside it; both live here so every reader of the
+# findings table applies the same definition of "current", or the dashboard
+# and the work list quietly count different things.
+RETIRE_JOIN = ("LEFT JOIN meta done ON done.key = 'engine_done:' || f.engine")
+LIVE_PREDICATE = ("(done.value IS NULL "
+                  "OR f.seen_run >= CAST(done.value AS INTEGER))")
+
+
+def begin_run(conn, engine):
+    """Hand out this scan's run number -- one global monotonic counter.
+
+    A COUNTER, NOT THE CLOCK. now() is second-resolution and a small re-scan
+    finishes inside one second, so a timestamp comparison marks nothing and
+    a test against the broken behaviour could not fail. The counter is
+    global across engines, which makes every run number unique to the one
+    engine that drew it; committed immediately so a later rollback in the
+    engine cannot hand the same number out twice."""
+    row = conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('scan_seq', '1') "
+        "ON CONFLICT(key) DO UPDATE SET "
+        "value = CAST(value AS INTEGER) + 1 "
+        "RETURNING CAST(value AS INTEGER)").fetchone()
+    conn.commit()
+    return int(row[0])
+
+
+def complete_run(conn, engine, run):
+    """Record that this engine's run saw everything it was going to see.
+
+    Retirement is nothing but this mark: rows of the engine whose seen_run
+    is older stop counting as current. A CANCELLED run must never call this
+    -- half a webroot's real findings would grey out. The engines therefore
+    call it only on the path where their loop ran to the end."""
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (f"engine_done:{engine}", str(int(run))))
+    conn.commit()
+
+
 def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
-                   line=None, evidence="", rule_id=""):
+                   line=None, evidence="", rule_id="", engine="", run=0):
     """Insert a finding or refresh last_seen -- triage state is never reset.
 
-    `rule_id` is stored but NOT fingerprinted. The fingerprint is what keeps
-    a decision attached to a finding across re-scans, so a new field in it
-    would silently orphan every decision an analyst has already made."""
+    `rule_id`, `engine` and `seen_run` are stored but NOT fingerprinted. The
+    fingerprint is what keeps a decision attached to a finding across
+    re-scans, so a new field in it would silently orphan every decision an
+    analyst has already made. `engine`/`run` tie the row to the scan that
+    saw it (see begin_run); callers without a managed run -- hunts -- leave
+    them at their defaults and their rows are never retired."""
     fp = fingerprint(source, rule, artifact, line)
     ts = now()
     conn.execute(
         """INSERT INTO findings (fingerprint, source, severity, rule, rule_id,
-               artifact_kind, artifact, line, evidence, created, last_seen)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               artifact_kind, artifact, line, evidence, created, last_seen,
+               engine, seen_run)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(fingerprint) DO UPDATE SET
                severity=excluded.severity, evidence=excluded.evidence,
-               rule_id=excluded.rule_id, last_seen=excluded.last_seen""",
+               rule_id=excluded.rule_id, last_seen=excluded.last_seen,
+               engine=excluded.engine, seen_run=excluded.seen_run""",
         (fp, source, int(severity), rule, str(rule_id or ""), artifact_kind,
-         artifact, line, evidence, ts, ts))
+         artifact, line, evidence, ts, ts, str(engine or ""), int(run or 0)))
     return fp
 
 

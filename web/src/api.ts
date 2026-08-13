@@ -142,6 +142,12 @@ export interface Finding {
   triage: 'new' | 'reviewed' | 'confirmed' | 'dismissed'
   triage_note: string
   triaged_at?: string
+  /** 1 when the engine's last completed scan did not reproduce this row --
+   *  the payload moved, the file is gone, or the rule no longer runs. The
+   *  row keeps its triage and stays fetchable; it just stopped being a
+   *  current statement, and the interface says so instead of pointing a
+   *  clickable line number at text that is no longer there. */
+  retired: 0 | 1
 }
 
 export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
@@ -154,7 +160,14 @@ export interface ArtifactRow {
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
   worst: 0 | 1 | 2 | 3
   source: 'webshell' | 'sqldb' | 'logs'
+  /** Findings the last completed scans still reproduce. Retired rows are
+   *  not in this number -- counting them made one moved payload read as
+   *  two problems. */
   findings: number
+  /** Findings the last completed scans did NOT reproduce. 0 on a freshly
+   *  scanned artifact; `findings === 0 && retired > 0` is a thing that was
+   *  decided about and then not seen again -- shown, never dropped. */
+  retired: number
   triage: TriageState
   triage_note: string
   triaged_at: string | null
@@ -173,6 +186,11 @@ export interface FindingsResponse {
    *  than silent: a list that shrinks without saying so is a list nobody
    *  can trust. */
   muted_hidden: number
+  /** Undecided artifacts none of whose findings the last completed scans
+   *  reproduced. Stated for the same reason as muted_hidden -- and apart
+   *  from it, because "a switch hides it" and "it was not seen again" send
+   *  the analyst to different places. */
+  retired_hidden: number
   /** How many rules are switched off in this workspace. */
   muted_rules: number
   counts: {

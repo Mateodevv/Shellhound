@@ -323,6 +323,8 @@ def scan(case_dir, targets, workspace=None, ctx=None):
 
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "yarascan")
+        cancelled = False
         conn.execute("DELETE FROM skipped WHERE source = 'yara'")
         # One line per broken rule file, in the same place every other
         # unchecked thing goes: a rule that did not run is not a rule that
@@ -335,6 +337,7 @@ def scan(case_dir, targets, workspace=None, ctx=None):
         for i, file_path in enumerate(files):
             if ctx is not None and i % 200 == 0:
                 if ctx.cancelled():
+                    cancelled = True
                     break
                 ctx.progress(0.02 + (i / total) * 0.95,
                              f"{i:,}/{total:,} files — {stats['findings']} findings")
@@ -361,13 +364,20 @@ def scan(case_dir, targets, workspace=None, ctx=None):
                 # from the rule switch", and that is exactly right.
                 db.upsert_finding(conn, "yara", _severity_of(match),
                                   f"YARA: {match.rule}", "file", abs_path,
-                                  evidence=_evidence(match))
+                                  evidence=_evidence(match),
+                                  engine="yarascan", run=run)
                 stats["findings"] += 1
                 flagged.add(abs_path)
             if i % 500 == 0:
                 conn.commit()
         stats["flagged_files"] = len(flagged)
         conn.commit()
+        # A cancelled run has no opinion about the files it never reached,
+        # so only a completed one may retire the rows it did not reproduce.
+        # The compile-failure path above never gets here -- a scan that
+        # could not run is not a scan that found nothing.
+        if not cancelled:
+            db.complete_run(conn, "yarascan", run)
     finally:
         conn.close()
     return stats
