@@ -309,6 +309,7 @@ export const de: Record<string, string> = {
   'iocbox.links.title': 'Verknüpfte Indikatoren',
   'iocbox.links.hint': 'Entstehen beim Einsammeln — Klick springt zum verknüpften Eintrag.',
   'iocbox.links.n': '{n} Verknüpfung(en)',
+  'cross.badge.hint': 'Klick klappt die Treffer oben auf und springt zur Zeile dieses Indikators.',
   'iocbox.note.short': 'Notiz…',
   'iocbox.origin': 'Herkunft',
   'iocbox.span.title': 'Wann die Adresse aktiv war',

@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AtSign, Box, ChevronDown, ChevronRight, CornerDownRight, Crosshair,
   Download, FileDigit, Fingerprint, Globe, Link2, Plus, Radar, Share2,
-  ShieldOff, Trash2, User,
+  ShieldOff, Trash2, TriangleAlert, User,
 } from 'lucide-react'
 import {
-  api, del, downloadUrl, patch, post, type CrossCaseIocResponse, type Ioc,
+  api, del, downloadUrl, patch, post, type CrossCaseIocMatch,
+  type CrossCaseIocResponse, type Ioc,
 } from '../api'
 import { formatCount } from '../format'
 import {
@@ -89,6 +90,11 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [flash, setFlash] = useState<number | null>(null)
   const [armed, setArmed] = useState<number | null>(null)
   const [traceIp, setTraceIp] = useState<string | null>(null)
+  // The cross-case section: folded by default -- another case is context,
+  // not this case's work list -- and unfolded either from its bar or from
+  // the badge on the matching entry, which flashes its line up here.
+  const [crossOpen, setCrossOpen] = useState(false)
+  const [crossFlash, setCrossFlash] = useState<number | null>(null)
 
   const toggleIn = (setter: typeof setOpened) => (id: number) =>
     setter((prev) => {
@@ -187,6 +193,25 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     return url.toString()
   }
 
+  // Which of THIS case's entries other cases also carry -- so the badge can
+  // sit on the entry itself, where the analyst is looking, instead of only
+  // in a summary block they have to cross-reference by value.
+  const crossByIoc = useMemo(() => {
+    const out = new Map<number, CrossCaseIocMatch[]>()
+    for (const entry of crossCase?.entries ?? []) out.set(entry.id, entry.matches)
+    return out
+  }, [crossCase])
+
+  const jumpToCross = (id: number) => {
+    setCrossOpen(true)
+    setCrossFlash(id)
+    window.setTimeout(() => {
+      document.getElementById(`cross-${id}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 80)
+    window.setTimeout(() => setCrossFlash((cur) => (cur === id ? null : cur)), 1800)
+  }
+
   // The export ships what the analyst is LOOKING at, with the same filter
   // semantics the view applies -- and says so beside the buttons, because a
   // file that silently carries less (or more) than the screen is a file
@@ -231,6 +256,23 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                 ? ioc.first_seen
                 : `${ioc.first_seen} – ${ioc.last_seen}`}
             </span>
+          </Tooltip>
+        )}
+        {/* Other cases carry this very value. Said on the entry itself,
+            where the analyst is looking -- the summary bar above is the
+            overview, this is the pointer into it. */}
+        {crossByIoc.has(ioc.id) && (
+          <Tooltip title={tr('cross.title')}
+            body={crossByIoc.get(ioc.id)!
+              .map((m) => m.name || m.slug).join(' · ')}
+            hint={tr('cross.badge.hint')}>
+            <button
+              onClick={() => jumpToCross(ioc.id)}
+              aria-label={tr('cross.title')}
+              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-[var(--accent)]/40 px-1.5 py-0.5 text-[11px] text-[var(--accent-text)] transition-colors hover:border-[var(--accent)]">
+              <Share2 size={11} />
+              {crossByIoc.get(ioc.id)!.length}
+            </button>
           </Tooltip>
         )}
         {/* The value travels from here into a ticket, a firewall rule or a
@@ -392,36 +434,72 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       )}
 
+      {/* ---- what OTHER cases carry too --------------------------------
+          Folded by default: another case is context, not this case's work
+          list. The bar keeps the whole statement readable while closed --
+          how many indicators, how many cases, and the warning when cases
+          could not be read at all -- because a fold must never hide the
+          part that says what was NOT checked. */}
       {crossCase && (crossCase.matched_iocs > 0 || crossCase.cases_skipped > 0) && (
-        <Card className="border-[var(--accent)]/35 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2">
-            <Share2 size={15} className="text-[var(--accent-text)]" />
-            <span className="text-[13px] font-semibold">{tr('cross.title')}</span>
-            <span className="text-[12px] text-[var(--muted)]">
+        <Card className="border-[var(--accent)]/35">
+          <button
+            onClick={() => setCrossOpen((v) => !v)}
+            aria-expanded={crossOpen}
+            className="flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-[var(--panel-2)]"
+          >
+            {crossOpen ? <ChevronDown size={13} className="shrink-0 text-[var(--muted)]" />
+                       : <ChevronRight size={13} className="shrink-0 text-[var(--muted)]" />}
+            <Share2 size={14} className="shrink-0 text-[var(--accent-text)]" />
+            <span className="shrink-0 text-[13px] font-semibold">{tr('cross.title')}</span>
+            <span className="min-w-0 truncate text-[12px] text-[var(--muted)]">
               {tr('cross.summary', {
                 iocs: formatCount(crossCase.matched_iocs),
                 cases: formatCount(crossCase.matched_cases),
                 matches: formatCount(crossCase.matches),
               })}
             </span>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            {crossCase.entries.map((entry) => (
-              <div key={entry.id} className="flex flex-wrap items-center gap-2 text-[12px]">
-                <span className="mono max-w-[440px] truncate" title={entry.value}>{entry.value}</span>
-                {entry.matches.map((match) => (
-                  <a key={`${match.slug}-${match.id}`} href={caseHref(match.slug)}
-                    title={`${match.reference || match.slug}${match.note ? ` — ${match.note}` : ''}`}
-                    className="rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] hover:border-[var(--accent)]/60">
-                    {match.name || match.slug} · {tr('cross.open')}
-                  </a>
-                ))}
-              </div>
-            ))}
-          </div>
-          {crossCase.cases_skipped > 0 && (
-            <div className="mt-2 text-[11px] text-[var(--warn)]">
-              {tr('cross.skipped', { n: formatCount(crossCase.cases_skipped) })}
+            {crossCase.cases_skipped > 0 && (
+              <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-[var(--warn)]"
+                title={tr('cross.skipped', { n: formatCount(crossCase.cases_skipped) })}>
+                <TriangleAlert size={12} />
+                {formatCount(crossCase.cases_skipped)}
+              </span>
+            )}
+          </button>
+          {crossOpen && (
+            <div className="flex flex-col gap-0.5 border-t border-[var(--line)] px-3 py-2">
+              {crossCase.entries.map((entry) => {
+                const EntryIcon = TYPE_ICON[entry.type] ?? Box
+                return (
+                  <div key={entry.id} id={`cross-${entry.id}`}
+                    className={`flex flex-wrap items-center gap-2 rounded-md px-2 py-1 text-[12px] transition-shadow ${
+                      crossFlash === entry.id ? 'ring-2 ring-[var(--accent)]' : ''}`}>
+                    <EntryIcon size={12} className="shrink-0 text-[var(--muted)]" />
+                    <span className="mono min-w-0 max-w-[380px] truncate" title={entry.value}>
+                      {entry.value}
+                    </span>
+                    {entry.matches.map((match) => (
+                      <a key={`${match.slug}-${match.id}`} href={caseHref(match.slug)}
+                        title={`${match.reference || match.slug}${match.note ? ` — ${match.note}` : ''}`}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] transition-colors hover:border-[var(--accent)]/60">
+                        <span className="max-w-[200px] truncate">{match.name || match.slug}</span>
+                        {match.reference && (
+                          <span className="rounded bg-[var(--panel)] px-1 text-[10px] text-[var(--muted)]">
+                            {match.reference}
+                          </span>
+                        )}
+                        <span className="text-[var(--accent-text)]">{tr('cross.open')}</span>
+                      </a>
+                    ))}
+                  </div>
+                )
+              })}
+              {crossCase.cases_skipped > 0 && (
+                <div className="mt-1 flex items-center gap-1.5 px-2 text-[11px] text-[var(--warn)]">
+                  <TriangleAlert size={12} className="shrink-0" />
+                  {tr('cross.skipped', { n: formatCount(crossCase.cases_skipped) })}
+                </div>
+              )}
             </div>
           )}
         </Card>

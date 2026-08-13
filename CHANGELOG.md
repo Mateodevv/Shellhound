@@ -23,6 +23,14 @@ catches up:
   file sits in the box therefore no longer stands somewhere in the list
   as a card whose entire content is "sha-256 of X"; filter the file away
   and the hash stands on its own again.
+- **Cross-case matches fold too.** "Also seen in other cases" is a bar,
+  closed by default — another case is context, not this case's work list.
+  Closed, it still states the whole fact (how many indicators, how many
+  cases, and the warning count when cases could not be read: a fold must
+  never hide what was NOT checked). Each matching entry additionally
+  carries a small badge right on its own row that unfolds the section and
+  flashes its line — the analyst no longer cross-references a summary
+  block by value.
 - **Tags.** Provenance (confirmed, finding, hunt, derived …) repeats on
   almost every row and now reads as quiet text; what the case observed
   (successful, brute-force, scanner) and what kind of thing it is
