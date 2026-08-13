@@ -4,8 +4,8 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AtSign, Box, ChevronDown, ChevronRight, CornerDownRight, Crosshair,
-  Download, FileDigit, Fingerprint, Globe, Link2, Plus, Radar, Share2,
-  ShieldOff, Trash2, TriangleAlert, User,
+  Download, FileDigit, FileSearch, Fingerprint, Globe, Link2, Plus, Radar,
+  Share2, ShieldOff, Trash2, TriangleAlert, User,
 } from 'lucide-react'
 import {
   api, del, downloadUrl, patch, post, type CrossCaseIocMatch,
@@ -18,6 +18,7 @@ import {
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
 import { EnrichPanel } from '../components/Enrich'
+import { FileViewer } from '../components/FileViewer'
 import { TraceWindow } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 
@@ -90,6 +91,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [flash, setFlash] = useState<number | null>(null)
   const [armed, setArmed] = useState<number | null>(null)
   const [traceIp, setTraceIp] = useState<string | null>(null)
+  // The file behind a path indicator, open in the viewer -- the counterpart
+  // to the trace on an address.
+  const [viewingPath, setViewingPath] = useState<string | null>(null)
   // The cross-case section: folded by default -- another case is context,
   // not this case's work list -- and unfolded either from its bar or from
   // the badge on the matching entry, which flashes its line up here.
@@ -295,6 +299,20 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               className="shrink-0 cursor-pointer rounded-md border border-transparent p-1 text-[var(--muted)] transition-colors hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
               aria-label={tr('iocbox.trace')}>
               <Crosshair size={13} />
+            </button>
+          </Tooltip>
+        )}
+        {/* A path indicator's file, one click away -- what the trace is for
+            an address. Only offered when a registered evidence copy holds
+            the file: the value is webroot-relative and the server resolved
+            it; an entry without a copy simply has nothing to show. */}
+        {ioc.type === 'path' && ioc.resolved && (
+          <Tooltip hint={tr('iocbox.view.hint')}>
+            <button
+              onClick={() => setViewingPath(ioc.resolved!)}
+              className="shrink-0 cursor-pointer rounded-md border border-transparent p-1 text-[var(--muted)] transition-colors hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+              aria-label={tr('common.view')}>
+              <FileSearch size={13} />
             </button>
           </Tooltip>
         )}
@@ -651,6 +669,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       {traceIp && (
         <TraceWindow slug={slug} ips={[traceIp]} onClose={() => setTraceIp(null)} />
       )}
+
+      <FileViewer slug={slug} path={viewingPath} layer={1}
+        onClose={() => setViewingPath(null)} />
     </div>
   )
 }

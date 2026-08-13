@@ -408,6 +408,11 @@ export interface Ioc {
    *  the indicator entered the box; these two are when it was ACTIVE. */
   first_seen: string | null
   last_seen: string | null
+  /** For `path` entries: the absolute path under an evidence root where the
+   *  file actually lies, or null when no registered copy holds it. The
+   *  value itself stays webroot-relative -- what leaves the machine must be
+   *  what the other side can look for. */
+  resolved?: string | null
   links: IocLink[]
 }
 

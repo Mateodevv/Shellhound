@@ -627,6 +627,33 @@ def case_relative_path(conn, path):
     return relative_to_evidence(evidence_roots(conn), path)
 
 
+def absolute_from_evidence(roots, value):
+    """The inverse of `relative_to_evidence`: where does `images/shell.php`
+    actually lie? Tries every root, longest first -- the same precedence the
+    forward direction uses -- and answers only with a file that EXISTS,
+    because the caller wants to open it, not to guess.
+
+    Returns None when no root holds the file. That is a real answer: an
+    indicator names what stood on the compromised server, and the copy in
+    the evidence may be partial."""
+    rel = _norm(value).lstrip("/")
+    if not rel:
+        return None
+    for root in roots:
+        candidate = Path(root) / rel
+        if candidate.is_file():
+            return str(candidate)
+    # A value no root ever matched went into the box as the absolute path
+    # it was (see relative_to_evidence's last line) -- honour that reading
+    # too before giving up. ONLY the absolute reading: a relative value
+    # resolved against the server's working directory would answer with a
+    # file that has nothing to do with the case.
+    as_is = Path(str(value))
+    if as_is.is_absolute() and as_is.is_file():
+        return str(as_is)
+    return None
+
+
 def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
     """Insert an IOC or merge tags into the existing entry. Existing type and
     note win -- the analyst's correction must never be overwritten by a sync.
