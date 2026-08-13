@@ -246,12 +246,11 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         return workspace.case_summary(case_dir)
 
-    @app.post("/api/cases/{slug}/archive", dependencies=[auth])
-    def archive(slug: str, lang: str = lang_dep):
-        """Close the case: everything into one zip, working copy removed.
-        Running jobs are cancelled first -- an engine still writing into a
-        database that is being packed would archive a half-written case."""
-        case_dir = case_dir_or_404(slug)
+    def _drain_jobs(case_dir, lang):
+        """Cancel running jobs and wait for them out. An engine that is
+        still running holds an open handle on case.db -- on Windows the
+        removal of the working copy would fail with WinError 32, so both
+        ways out of a case (archive and delete) refuse cleanly instead."""
         conn = db.connect(case_dir)
         try:
             live = [r["id"] for r in db.rows(
@@ -263,14 +262,34 @@ def create_app(config: Config) -> FastAPI:
         if live:
             still_running = manager.wait_for(case_dir, live, timeout=20)
             if still_running:
-                # An engine that is still running holds an open handle on
-                # case.db -- on Windows the delete of the working copy would
-                # fail with WinError 32. Refuse cleanly instead.
                 raise HTTPException(409, _t(lang, "err.jobsRunning"))
+        return len(live)
+
+    @app.post("/api/cases/{slug}/archive", dependencies=[auth])
+    def archive(slug: str, lang: str = lang_dep):
+        """Close the case: everything into one zip, working copy removed.
+        Running jobs are cancelled first -- an engine still writing into a
+        database that is being packed would archive a half-written case."""
+        case_dir = case_dir_or_404(slug)
+        cancelled = _drain_jobs(case_dir, lang)
         zip_path, summary = workspace.archive_case(config.workspace, case_dir)
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"archive": str(zip_path), "file": zip_path.name,
-                "summary": summary, "cancelled_jobs": len(live)}
+                "summary": summary, "cancelled_jobs": cancelled}
+
+    @app.delete("/api/cases/{slug}", dependencies=[auth])
+    def delete_case(slug: str, lang: str = lang_dep):
+        """Remove the case for good -- no archive, no way back.
+
+        Deliberately NOT the default way out of a case (that is /archive):
+        this exists for the test case, the duplicate, the wrong start.
+        Working copy only -- registered evidence on disk is somebody's
+        original data and is never touched."""
+        case_dir = case_dir_or_404(slug)
+        _drain_jobs(case_dir, lang)
+        name = workspace.delete_case(case_dir)
+        hub.publish({"type": "invalidate", "scope": "workspace"})
+        return {"ok": True, "name": name}
 
     @app.get("/api/archives", dependencies=[auth])
     def archives():

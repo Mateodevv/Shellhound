@@ -5,13 +5,14 @@ import { Mark } from '../components/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, ArchiveRestore, FolderSearch, Package, Plus, TriangleAlert,
+  Archive, ArchiveRestore, FolderSearch, Package, Plus, Trash2, TriangleAlert,
 } from 'lucide-react'
 import {
-  api, post, type ArchivesResponse, type CaseInfo, type ImportResult,
+  api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
 } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, Card, EmptyState, Tag } from '../components/ui'
+import { Tooltip } from '../components/Tooltip'
 import { ThemeSwitcher } from '../components/ThemeSwitcher'
 
 interface State { workspace: string; cases: CaseInfo[] }
@@ -51,6 +52,28 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
     },
   })
 
+  // Both ways out of a case, from the same screen the case is entered
+  // from. Archiving is the default exit (everything into a zip below,
+  // restorable); deleting exists for the test case, the duplicate, the
+  // wrong start -- and is armed on the first click like every other
+  // destructive button here.
+  const [armed, setArmed] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const archiveCase = useMutation({
+    mutationFn: (slug: string) => post(`/api/cases/${slug}/archive`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['state'] })
+      qc.invalidateQueries({ queryKey: ['archives'] })
+    },
+    onSettled: () => setBusy(null),
+  })
+  const deleteCase = useMutation({
+    mutationFn: (slug: string) => del(`/api/cases/${slug}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+    onSettled: () => setBusy(null),
+  })
+  const exitError = archiveCase.error ?? deleteCase.error
+
   const archiveList = archives?.archives ?? []
 
   return (
@@ -81,26 +104,75 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         {data?.cases.map((c, i) => (
           <Card
             key={c.slug}
-            className="animate-fade-up cursor-pointer px-4 py-3 transition-colors hover:border-[var(--accent)]/60 hover:bg-[var(--panel-2)]"
+            className="group animate-fade-up px-4 py-3 transition-colors hover:border-[var(--accent)]/60"
             style={{ animationDelay: `${i * 40}ms` }}
           >
-            <button className="flex w-full items-center justify-between text-left cursor-pointer"
-              onClick={() => onOpen(c.slug)}>
-              <div className="min-w-0">
-                <div className="font-semibold">{c.name}</div>
-                <div className="mt-0.5 text-xs text-[var(--muted)]">
-                  {c.reference && <span className="mr-3">{c.reference}</span>}
-                  {tr('start.created')} {c.created?.slice(0, 10)}
+            <div className="flex w-full items-center gap-3">
+              <button className="flex min-w-0 flex-1 cursor-pointer items-center justify-between rounded-md text-left"
+                onClick={() => onOpen(c.slug)}>
+                <div className="min-w-0">
+                  <div className="font-semibold">{c.name}</div>
+                  <div className="mt-0.5 text-xs text-[var(--muted)]">
+                    {c.reference && <span className="mr-3">{c.reference}</span>}
+                    {tr('start.created')} {c.created?.slice(0, 10)}
+                  </div>
                 </div>
+                <div className="flex shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular">
+                  <span>{tr('start.artifacts', { n: c.artifacts ?? 0 })}</span>
+                  <span className="text-[var(--danger-text)]">{tr('start.confirmed', { n: c.confirmed ?? 0 })}</span>
+                  <span>{c.iocs ?? 0} IOCs</span>
+                </div>
+              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {/* The default exit: everything into a zip in the archive
+                    below, restorable from right there. */}
+                <Tooltip hint={tr('start.archive.hint')}>
+                  <Button variant="ghost" title={tr('start.archive')}
+                    className="opacity-0 transition-opacity group-hover:opacity-100"
+                    disabled={busy === c.slug}
+                    onClick={() => {
+                      setArmed(null)
+                      setBusy(c.slug)
+                      archiveCase.mutate(c.slug)
+                    }}>
+                    {busy === c.slug && archiveCase.isPending
+                      ? <span className="text-[11px]">{tr('start.archiving')}</span>
+                      : <Archive size={14} />}
+                  </Button>
+                </Tooltip>
+                {/* Armed on the first click, gone on the second -- and it
+                    says so in red before anything happens. Only the working
+                    copy: evidence on disk is never touched. */}
+                <Tooltip hint={tr('start.delete.hint')}>
+                  <Button variant={armed === c.slug ? 'danger' : 'ghost'}
+                    title={tr('common.remove')}
+                    className={armed === c.slug
+                      ? undefined
+                      : 'opacity-0 transition-opacity group-hover:opacity-100'}
+                    disabled={busy === c.slug}
+                    onClick={() => {
+                      if (armed === c.slug) {
+                        setArmed(null)
+                        setBusy(c.slug)
+                        deleteCase.mutate(c.slug)
+                      } else setArmed(c.slug)
+                    }}
+                    onMouseLeave={() => { if (armed === c.slug) setArmed(null) }}>
+                    {armed === c.slug
+                      ? <span className="text-[11px] font-semibold">{tr('start.delete.sure')}</span>
+                      : <Trash2 size={14} />}
+                  </Button>
+                </Tooltip>
               </div>
-              <div className="flex shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular">
-                <span>{tr('start.artifacts', { n: c.artifacts ?? 0 })}</span>
-                <span className="text-[var(--danger-text)]">{tr('start.confirmed', { n: c.confirmed ?? 0 })}</span>
-                <span>{c.iocs ?? 0} IOCs</span>
-              </div>
-            </button>
+            </div>
           </Card>
         ))}
+
+        {exitError != null && (
+          <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)] animate-fade-up">
+            {String((exitError as Error)?.message ?? exitError)}
+          </div>
+        )}
 
         {data && data.cases.length === 0 && !creating && (
           <EmptyState

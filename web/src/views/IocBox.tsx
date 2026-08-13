@@ -57,6 +57,12 @@ export function defang(value: string, type: string): string {
 
 const DEFANGABLE = new Set(['ip', 'url', 'domain', 'email'])
 
+/** The tail that still identifies a long value at a glance: hashes keep
+ *  head and tail, paths keep their file name end. */
+function shortValue(value: string): string {
+  return value.length > 26 ? `${value.slice(0, 10)}…${value.slice(-10)}` : value
+}
+
 export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
   const qc = useQueryClient()
@@ -75,7 +81,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [search, setSearch] = useState('')
   const [newValue, setNewValue] = useState('')
   const [newNote, setNewNote] = useState('')
-  // Expanded neighbourhoods and reputation panels, the briefly highlighted
+  // Expanded link sections and reputation panels, the briefly highlighted
   // entry that was just jumped to, the armed delete button, and the address
   // whose trace is open.
   const [opened, setOpened] = useState<Set<number>>(new Set())
@@ -83,16 +89,6 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [flash, setFlash] = useState<number | null>(null)
   const [armed, setArmed] = useState<number | null>(null)
   const [traceIp, setTraceIp] = useState<string | null>(null)
-
-  // A jump is only a jump when one notices at the destination that one has
-  // arrived: in a list of 40 identical-looking rows a silent scroll would be
-  // the same as nothing at all.
-  const jumpTo = (id: number) => {
-    setFlash(id)
-    document.getElementById(`ioc-${id}`)
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    window.setTimeout(() => setFlash((cur) => (cur === id ? null : cur)), 1800)
-  }
 
   const toggleIn = (setter: typeof setOpened) => (id: number) =>
     setter((prev) => {
@@ -138,31 +134,40 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     [iocs, hiddenTypes, hiddenTags, search])
 
   // A hash whose file sits right here is an ATTRIBUTE of that file, not a
-  // neighbour somewhere in the list -- so it docks under its file card. Only
-  // under a VISIBLE file: filter the file away and the hash stands on its
-  // own feet again rather than vanishing with it.
-  const ordered = useMemo(() => {
+  // neighbour somewhere in the list -- it lives inside the file card's
+  // linked section, folded by default. Only under a VISIBLE file: filter
+  // the file away and the hash stands on its own feet again rather than
+  // vanishing with it.
+  const { roots, docked, dockParent } = useMemo(() => {
     const visible = new Set(filtered.map((i) => i.id))
+    const byId = new Map(filtered.map((i) => [i.id, i]))
     const docked = new Map<number, Ioc[]>()
-    const dockedIds = new Set<number>()
+    const dockParent = new Map<number, number>()
     for (const i of filtered) {
       if (i.type !== 'hash') continue
       const file = (i.links ?? []).find(
         (l) => l.kind === 'hash-of' && l.type === 'path' && visible.has(l.id))
-      if (file) {
+      if (file && byId.has(file.id)) {
         docked.set(file.id, [...(docked.get(file.id) ?? []), i])
-        dockedIds.add(i.id)
+        dockParent.set(i.id, file.id)
       }
     }
-    const out: { ioc: Ioc; dockedTo: number | null }[] = []
-    for (const i of filtered) {
-      if (dockedIds.has(i.id)) continue
-      out.push({ ioc: i, dockedTo: null })
-      for (const child of docked.get(i.id) ?? [])
-        out.push({ ioc: child, dockedTo: i.id })
-    }
-    return out
+    return { roots: filtered.filter((i) => !dockParent.has(i.id)), docked, dockParent }
   }, [filtered])
+
+  // A jump is only a jump when one notices at the destination that one has
+  // arrived. A docked target sits folded inside its file's card, so the
+  // jump unfolds that card first and scrolls after the browser painted it.
+  const jumpTo = (id: number) => {
+    const parent = dockParent.get(id)
+    if (parent != null) setOpened((prev) => new Set(prev).add(parent))
+    setFlash(id)
+    window.setTimeout(() => {
+      document.getElementById(`ioc-${id}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, parent != null ? 80 : 0)
+    window.setTimeout(() => setFlash((cur) => (cur === id ? null : cur)), 1800)
+  }
 
   const typeCounts = useMemo(() => {
     const out: Record<string, number> = {}
@@ -194,6 +199,119 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     if (search.trim()) p.set('search', search.trim())
     const q = p.toString()
     return q ? `&${q}` : ''
+  }
+
+  /** One indicator's interactive row -- the same anatomy whether it stands
+   *  as a card of its own or docked inside its file's linked section. */
+  const iocRow = (ioc: Ioc, docked: boolean) => {
+    const Icon = TYPE_ICON[ioc.type] ?? Box
+    return (
+      <div className="flex items-center gap-3">
+        <Icon size={docked ? 13 : 15} className="shrink-0 text-[var(--muted)]" />
+        <select
+          value={ioc.type}
+          onChange={(e) => saveType.mutate({ id: ioc.id, type: e.target.value })}
+          className="shrink-0 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-[11px] uppercase text-[var(--muted)] outline-none transition-colors hover:border-[var(--line)] cursor-pointer"
+        >
+          {['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other'].map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <span className="mono flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px]" title={ioc.value}>
+          {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
+          <span className="min-w-0 truncate">{ioc.value}</span>
+        </span>
+        {/* When the address was ACTIVE -- the recipient's first question
+            about an indicator, and the log index has known the answer all
+            along. Dates in the log's own local time. */}
+        {ioc.first_seen && (
+          <Tooltip title={tr('iocbox.span.title')} body={tr('iocbox.span.body')}>
+            <span className="shrink-0 text-[11px] text-[var(--muted)]">
+              {ioc.first_seen === ioc.last_seen
+                ? ioc.first_seen
+                : `${ioc.first_seen} – ${ioc.last_seen}`}
+            </span>
+          </Tooltip>
+        )}
+        {/* The value travels from here into a ticket, a firewall rule or a
+            search box. Typing it out would be a source of errors for a
+            SHA-256, and selecting it fails on the truncate. */}
+        <CopyButton value={ioc.value} label={tr('iocbox.copy')}
+          className="shrink-0" />
+        {/* The same value with nothing clickable in it, for mails and
+            tickets: hxxps://evil[.]test cannot be visited by accident. */}
+        {DEFANGABLE.has(ioc.type) && (
+          <CopyButton value={defang(ioc.value, ioc.type)}
+            label={tr('iocbox.copy.defanged')}
+            icon={<ShieldOff size={13} />}
+            className="shrink-0" />
+        )}
+        {ioc.type === 'ip' && (
+          <Tooltip hint={tr('iocbox.trace.hint')}>
+            <button
+              onClick={() => setTraceIp(ioc.value)}
+              className="shrink-0 cursor-pointer rounded-md border border-transparent p-1 text-[var(--muted)] transition-colors hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+              aria-label={tr('iocbox.trace')}>
+              <Crosshair size={13} />
+            </button>
+          </Tooltip>
+        )}
+        {/* Reputation is a lookup, not wallpaper: the panel used to stand
+            open under every address and hash and halved how much of the
+            case fits on a screen. */}
+        {(ioc.type === 'hash' || ioc.type === 'ip') && (
+          <Tooltip hint={tr('iocbox.enrich.hint')}>
+            <button
+              onClick={() => toggleEnrich(ioc.id)}
+              aria-label={tr('iocbox.enrich')}
+              className={`shrink-0 cursor-pointer rounded-md border p-1 transition-colors ${
+                enrichOpen.has(ioc.id)
+                  ? 'border-[var(--accent)]/60 text-[var(--fg)]'
+                  : 'border-transparent text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]'}`}>
+              <Radar size={13} />
+            </button>
+          </Tooltip>
+        )}
+        <div className="flex max-w-[280px] flex-wrap items-center justify-end gap-1">
+          {ioc.tags.filter((t) => !PROVENANCE_TAGS.has(t)).map((t) => (
+            <IocTag key={t} tag={t} tone={TAG_TONE[t]} />
+          ))}
+          {ioc.tags.filter((t) => PROVENANCE_TAGS.has(t)).map((t) => (
+            <span key={t}
+              className="rounded px-1 py-0.5 text-[10px] text-[var(--muted)] opacity-80">
+              {t}
+            </span>
+          ))}
+        </div>
+        <input
+          defaultValue={ioc.note}
+          key={`${ioc.id}-${ioc.note}`}
+          placeholder={tr('iocbox.note.short')}
+          onBlur={(e) => {
+            if (e.target.value !== ioc.note)
+              saveNote.mutate({ id: ioc.id, note: e.target.value })
+          }}
+          className={`${docked ? 'w-40' : 'w-56'} shrink-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-[12px] text-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/60 focus:bg-[var(--panel-2)] focus:text-[var(--fg)]`}
+        />
+        {/* Armed on the first click, gone on the second: deleting an entry
+            takes its note and its provenance with it, and there is no
+            restore that could bring the edges back. */}
+        <Button variant={armed === ioc.id ? 'danger' : 'ghost'}
+          title={tr('common.remove')}
+          className={armed === ioc.id
+            ? 'shrink-0'
+            : 'shrink-0 opacity-0 transition-opacity group-hover:opacity-100'}
+          onClick={() => {
+            if (armed === ioc.id) { remove.mutate(ioc.id); setArmed(null) }
+            else setArmed(ioc.id)
+          }}
+          onMouseLeave={() => { if (armed === ioc.id) setArmed(null) }}>
+          {armed === ioc.id
+            ? <span className="text-[11px] font-semibold">{tr('iocbox.delete.sure')}</span>
+            : <Trash2 size={13} />}
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -331,185 +449,113 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
       </Card>
 
       <div className="flex flex-col gap-1.5">
-        {ordered.map(({ ioc, dockedTo }) => {
-          const Icon = TYPE_ICON[ioc.type] ?? Box
-          const links = ioc.links ?? []
+        {roots.map((ioc) => {
+          const children = docked.get(ioc.id) ?? []
+          const childIds = new Set(children.map((c) => c.id))
+          // The hash-of edge to a docked child would appear twice -- once
+          // as the child's own row, once as a link line. The row wins.
+          const linkRows = (ioc.links ?? []).filter((l) => !childIds.has(l.id))
+          const linkCount = children.length + linkRows.length
           const open = opened.has(ioc.id)
-          const enrich = enrichOpen.has(ioc.id)
-          // Quiet provenance behind, loud observation in front.
-          const loudTags = ioc.tags.filter((t) => !PROVENANCE_TAGS.has(t))
-          const quietTags = ioc.tags.filter((t) => PROVENANCE_TAGS.has(t))
+          const preview = children.length
+            ? `${children[0].type} ${shortValue(children[0].value)}`
+            : linkRows.length
+              ? `${linkRows[0].label} ${shortValue(linkRows[0].value)}`
+              : ''
           return (
-            <div key={ioc.id} className={dockedTo != null ? 'flex items-stretch gap-1.5 pl-7' : undefined}>
-              {dockedTo != null && (
-                <CornerDownRight size={14}
-                  className="mt-3 shrink-0 text-[var(--muted)]" />
-              )}
-            <Card id={`ioc-${ioc.id}`}
-              className={`group flex min-w-0 flex-1 flex-col animate-fade-in transition-shadow ${
+            <Card key={ioc.id} id={`ioc-${ioc.id}`}
+              className={`group flex flex-col animate-fade-in transition-shadow ${
                 flash === ioc.id ? 'ring-2 ring-[var(--accent)]' : ''}`}>
-            <div className="flex items-center gap-3 px-4 py-2.5">
-              <Icon size={15} className="shrink-0 text-[var(--muted)]" />
-              <select
-                value={ioc.type}
-                onChange={(e) => saveType.mutate({ id: ioc.id, type: e.target.value })}
-                className="shrink-0 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-[11px] uppercase text-[var(--muted)] outline-none transition-colors hover:border-[var(--line)] cursor-pointer"
-              >
-                {['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other'].map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-              <span className="mono flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px]" title={ioc.value}>
-                {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
-                <span className="min-w-0 truncate">{ioc.value}</span>
-              </span>
-              {/* When the address was ACTIVE -- the recipient's first
-                  question about an indicator, and the log index has known
-                  the answer all along. Dates in the log's own local time. */}
-              {ioc.first_seen && (
-                <Tooltip title={tr('iocbox.span.title')} body={tr('iocbox.span.body')}>
-                  <span className="shrink-0 text-[11px] text-[var(--muted)]">
-                    {ioc.first_seen === ioc.last_seen
-                      ? ioc.first_seen
-                      : `${ioc.first_seen} – ${ioc.last_seen}`}
+              <div className="px-4 py-2.5">{iocRow(ioc, false)}</div>
+              {/* Where it came from -- "the field that is worth something
+                  six months later". It used to live as the note's
+                  placeholder and vanished behind the first sentence anybody
+                  wrote. */}
+              {ioc.origin && (
+                <div className="-mt-1.5 flex items-baseline gap-2 px-4 pb-2 pl-11 text-[11px] text-[var(--muted)]">
+                  <span className="shrink-0 text-[10px] uppercase tracking-wider opacity-70">
+                    {tr('iocbox.origin')}
                   </span>
-                </Tooltip>
+                  <span className="min-w-0 truncate" title={ioc.origin}>{ioc.origin}</span>
+                </div>
               )}
-              {/* The value travels from here into a ticket, a firewall rule
-                  or a search box. Typing it out would be a source of errors
-                  for a SHA-256, and selecting it fails on the truncate. */}
-              <CopyButton value={ioc.value} label={tr('iocbox.copy')}
-                className="shrink-0" />
-              {/* The same value with nothing clickable in it, for mails and
-                  tickets: hxxps://evil[.]test cannot be visited by accident. */}
-              {DEFANGABLE.has(ioc.type) && (
-                <CopyButton value={defang(ioc.value, ioc.type)}
-                  label={tr('iocbox.copy.defanged')}
-                  icon={<ShieldOff size={13} />}
-                  className="shrink-0" />
+              {/* Only hashes and addresses can be asked about outside. A
+                  path would name the server, a login would name a person --
+                  neither belongs in someone else's database. */}
+              {enrichOpen.has(ioc.id) && (ioc.type === 'hash' || ioc.type === 'ip') && (
+                <div className="border-t border-[var(--line)] px-4 py-2">
+                  <EnrichPanel slug={slug} kind={ioc.type} value={ioc.value} />
+                </div>
               )}
-              {ioc.type === 'ip' && (
-                <Tooltip hint={tr('iocbox.trace.hint')}>
-                  <button
-                    onClick={() => setTraceIp(ioc.value)}
-                    className="shrink-0 cursor-pointer rounded-md border border-transparent p-1 text-[var(--muted)] transition-colors hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
-                    aria-label={tr('iocbox.trace')}>
-                    <Crosshair size={13} />
-                  </button>
-                </Tooltip>
-              )}
-              {/* Reputation is a lookup, not wallpaper: the panel used to
-                  stand open under every address and hash and halved how much
-                  of the case fits on a screen. */}
-              {(ioc.type === 'hash' || ioc.type === 'ip') && (
-                <Tooltip hint={tr('iocbox.enrich.hint')}>
-                  <button
-                    onClick={() => toggleEnrich(ioc.id)}
-                    aria-label={tr('iocbox.enrich')}
-                    className={`shrink-0 cursor-pointer rounded-md border p-1 transition-colors ${
-                      enrich ? 'border-[var(--accent)]/60 text-[var(--fg)]'
-                             : 'border-transparent text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]'}`}>
-                    <Radar size={13} />
-                  </button>
-                </Tooltip>
-              )}
-              {links.length > 0 && (
-                <Tooltip title={tr('iocbox.links.title')}
-                  body={links.map((l) => `${l.label} ${l.value}`).join(' · ')}
-                  hint={tr('iocbox.links.hint')}>
-                  <button
-                    onClick={() => toggleOpen(ioc.id)}
-                    className={`flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors ${
-                      open ? 'border-[var(--accent)]/60 text-[var(--fg)]'
-                           : 'border-[var(--line)] text-[var(--muted)] hover:border-[var(--accent)]/60'}`}
-                  >
-                    {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                    <Share2 size={11} /> {links.length}
-                  </button>
-                </Tooltip>
-              )}
-              <div className="flex max-w-[280px] flex-wrap items-center justify-end gap-1">
-                {loudTags.map((t) => <IocTag key={t} tag={t} tone={TAG_TONE[t]} />)}
-                {quietTags.map((t) => (
-                  <span key={t}
-                    className="rounded px-1 py-0.5 text-[10px] text-[var(--muted)] opacity-80">
-                    {t}
+              {/* ---- what this indicator is CONNECTED to ---------------
+                  Folded by default: the edges are reference material, not
+                  the work list. The bar names how many and previews the
+                  first, so a folded card still says what it is holding. */}
+              {linkCount > 0 && (
+                <button
+                  onClick={() => toggleOpen(ioc.id)}
+                  aria-expanded={open}
+                  className="flex w-full cursor-pointer items-center gap-2 border-t border-[var(--line)] px-4 py-1.5 text-left text-[11px] text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
+                >
+                  {open ? <ChevronDown size={12} className="shrink-0" />
+                        : <ChevronRight size={12} className="shrink-0" />}
+                  <Link2 size={11} className="shrink-0" />
+                  <span className="shrink-0 font-medium">
+                    {tr('iocbox.links.n', { n: formatCount(linkCount) })}
                   </span>
-                ))}
-              </div>
-              <input
-                defaultValue={ioc.note}
-                key={`${ioc.id}-${ioc.note}`}
-                placeholder={tr('iocbox.note.short')}
-                onBlur={(e) => {
-                  if (e.target.value !== ioc.note)
-                    saveNote.mutate({ id: ioc.id, note: e.target.value })
-                }}
-                className="w-56 shrink-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-[12px] text-[var(--muted)] outline-none transition-colors focus:border-[var(--accent)]/60 focus:bg-[var(--panel-2)] focus:text-[var(--fg)]"
-              />
-              {/* Armed on the first click, gone on the second: deleting an
-                  entry takes its note and its provenance with it, and there
-                  is no restore that could bring the edges back. */}
-              <Button variant={armed === ioc.id ? 'danger' : 'ghost'}
-                title={tr('common.remove')}
-                className={armed === ioc.id
-                  ? 'shrink-0'
-                  : 'shrink-0 opacity-0 transition-opacity group-hover:opacity-100'}
-                onClick={() => {
-                  if (armed === ioc.id) { remove.mutate(ioc.id); setArmed(null) }
-                  else setArmed(ioc.id)
-                }}
-                onMouseLeave={() => { if (armed === ioc.id) setArmed(null) }}>
-                {armed === ioc.id
-                  ? <span className="text-[11px] font-semibold">{tr('iocbox.delete.sure')}</span>
-                  : <Trash2 size={13} />}
-              </Button>
-            </div>
-            {/* Where it came from -- "the field that is worth something six
-                months later". It used to live as the note's placeholder and
-                vanished behind the first sentence anybody wrote. */}
-            {ioc.origin && (
-              <div className="-mt-1.5 flex items-baseline gap-2 px-4 pb-2 pl-11 text-[11px] text-[var(--muted)]">
-                <span className="shrink-0 text-[10px] uppercase tracking-wider opacity-70">
-                  {tr('iocbox.origin')}
-                </span>
-                <span className="min-w-0 truncate" title={ioc.origin}>{ioc.origin}</span>
-              </div>
-            )}
-            {/* Only hashes and addresses can be asked about outside. A path
-                would name the server, a login would name a person -- neither
-                belongs in someone else's database. */}
-            {enrich && (ioc.type === 'hash' || ioc.type === 'ip') && (
-              <div className="border-t border-[var(--line)] px-4 py-2">
-                <EnrichPanel slug={slug} kind={ioc.type} value={ioc.value} />
-              </div>
-            )}
-            {open && (
-              <div className="flex flex-col gap-1 border-t border-[var(--line)] px-4 py-2">
-                {links.map((l) => {
-                  const LinkIcon = TYPE_ICON[l.type] ?? Box
-                  return (
-                    <button key={`${l.kind}-${l.id}`} onClick={() => jumpTo(l.id)}
-                      className="flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[var(--panel-2)]">
-                      <LinkIcon size={12} className="shrink-0 text-[var(--muted)]" />
-                      <span className="shrink-0 text-[12px] text-[var(--muted)]">
-                        {l.label}
-                      </span>
-                      <span className="mono min-w-0 truncate text-[12px]" title={l.value}>
-                        {l.value}
-                      </span>
-                      {l.note && (
-                        <span className="shrink-0 text-[11px] text-[var(--muted)]">
-                          — {l.note}
+                  {!open && preview && (
+                    <span className="mono min-w-0 truncate opacity-70">{preview}</span>
+                  )}
+                </button>
+              )}
+              {open && linkCount > 0 && (
+                <div className="flex flex-col border-t border-[var(--line)] bg-[var(--panel-2)]/40 py-1 pr-3 pl-6">
+                  {/* Derived indicators live HERE, as full rows: a hash is
+                      an attribute of its file, not a neighbour in the list
+                      -- and folded away it still keeps its note, its
+                      lookup and its delete. */}
+                  {children.map((child) => (
+                    <div key={child.id} id={`ioc-${child.id}`}
+                      className={`group flex items-stretch gap-2 rounded-md px-2 py-1 transition-shadow ${
+                        flash === child.id ? 'ring-2 ring-[var(--accent)]' : ''}`}>
+                      <CornerDownRight size={13}
+                        className="mt-2 shrink-0 text-[var(--muted)] opacity-60" />
+                      <div className="min-w-0 flex-1">
+                        {iocRow(child, true)}
+                        {enrichOpen.has(child.id) && child.type === 'hash' && (
+                          <div className="mt-1 border-t border-[var(--line)] pt-1.5">
+                            <EnrichPanel slug={slug} kind="hash" value={child.value} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {linkRows.map((l) => {
+                    const LinkIcon = TYPE_ICON[l.type] ?? Box
+                    return (
+                      <button key={`${l.kind}-${l.id}`} onClick={() => jumpTo(l.id)}
+                        title={tr('iocbox.links.hint')}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-[var(--panel-2)]">
+                        <CornerDownRight size={13}
+                          className="shrink-0 text-[var(--muted)] opacity-60" />
+                        <span className="shrink-0 text-[11px] italic text-[var(--muted)]">
+                          {l.label}
                         </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+                        <LinkIcon size={12} className="shrink-0 text-[var(--muted)]" />
+                        <span className="mono min-w-0 truncate text-[12px]" title={l.value}>
+                          {l.value}
+                        </span>
+                        {l.note && (
+                          <span className="min-w-0 shrink-0 truncate text-[11px] text-[var(--muted)]">
+                            — {l.note}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </Card>
-            </div>
           )
         })}
       </div>
