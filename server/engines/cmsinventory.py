@@ -148,6 +148,50 @@ def inventory_wordpress(root):
                    version.group(1) if version else "(unknown)",
                    entry,
                    style if version else None)
+            yield from _theme_bundled_plugins(entry)
+
+
+def _theme_bundled_plugins(theme_dir, max_depth=3):
+    """Plugins shipped INSIDE a theme -- found by inference, said so.
+
+    A plugin bundled below wp-content/themes/<slug>/ is invisible to the
+    flat plugins/ listing, and that is precisely the distribution channel
+    that spread Slider Revolution (CVE-2015-1579): the vulnerable version
+    sat in commercial themes long after the plugin itself was fixed, so an
+    inventory that cannot see it answers "not installed" about the thing
+    the case is about.
+
+    BOUNDED, AND UNDER ITS OWN TYPE. Real themes ship TGM-Plugin-Activation
+    stubs, demo installers and vendor trees that carry `Plugin Name:`
+    headers legitimately -- so the walk stops three levels below the theme,
+    prunes node_modules/vendor before descending (an unbounded walk reads
+    thousands of files there), and every hit is typed "Plugin (bundled in
+    theme <slug>)" rather than posing as a canonically installed plugin:
+    the reader sees these were inferred, not found in the usual place. One
+    entry per directory, like the plugins/ listing above."""
+    base_depth = len(theme_dir.parts)
+    for dirpath, dirnames, filenames in os.walk(theme_dir):
+        here = Path(dirpath)
+        if len(here.parts) - base_depth >= max_depth:
+            # Neither descend NOR read here -- the bound is on what gets
+            # opened, not only on how far the walk lists.
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in ("node_modules", "vendor"))
+        if here == theme_dir:
+            # style.css and functions.php live here; a `Plugin Name:` at
+            # the theme's own top level would be the theme mislabelling
+            # itself, not a bundled plugin.
+            continue
+        for fname in sorted(filenames):
+            if not fname.endswith(".php"):
+                continue
+            header = _wp_plugin_header(here / fname)
+            if header:
+                yield (f"Plugin (bundled in theme {theme_dir.name})",
+                       header[0], here.name, header[1], here, here / fname)
+                break
 
 
 # --- Joomla -----------------------------------------------------------------

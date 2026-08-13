@@ -2484,6 +2484,160 @@ class DetectOfferTests(unittest.TestCase):
                          [c["path"] for c in out["candidates"]["webroot"]])
 
 
+class AnswerSizeEvidenceTests(unittest.TestCase):
+    """Issue #10: on an endpoint that answers 200 unconditionally the
+    outcome gate separates nothing.
+
+    Measured on the scenario the issue was filed for (Slider Revolution,
+    CVE-2015-1579): two addresses sent byte-identical traversal requests to
+    admin-ajax.php, both were answered 200 -- one received wp-config.php
+    (kilobytes), the other a few dozen bytes of nothing. Both findings were
+    identical, and the report could not tell the exfiltration from the
+    probe that failed.
+
+    The size goes into the EVIDENCE, never the trigger and never the
+    severity: the honest threshold does not exist (the attacker's own
+    successes and failures both shape any per-endpoint distribution --
+    measured, a 100x and a 10x rule each fired on nothing, including the
+    filed scenario), and the rule TEXT is in the fingerprint, so rewording
+    it would orphan every decision made on these rules. Verified by taking
+    the note_size calls back out: the evidence strings collapse to equal
+    and the assertions below fail.
+    """
+
+    TRAVERSAL = "/wp-admin/admin-ajax.php?action=show&img=../../wp-config.php"
+
+    @staticmethod
+    def _line(ip, when, status, size):
+        import time
+        stamp = time.strftime("%d/%b/%Y:%H:%M:%S +0200", time.gmtime(when))
+        return (f'{ip} - - [{stamp}] "GET '
+                f'{AnswerSizeEvidenceTests.TRAVERSAL} HTTP/1.1" '
+                f'{status} {size} "-" "Mozilla/5.0"\n')
+
+    def _findings(self, rows):
+        import shutil
+        from server.engines import logindex
+        root = Path(tempfile.mkdtemp(prefix="shellhound-size-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        case = root / "case"
+        case.mkdir()
+        logs = root / "logs"
+        logs.mkdir()
+        (logs / "access.log").write_text("".join(rows), encoding="utf-8")
+        db.connect(case).close()
+        logindex.build(case, [str(logs)])
+        conn = db.connect(case)
+        try:
+            return {r["artifact"]: dict(r) for r in db.rows(
+                conn, "SELECT artifact, rule, severity, evidence "
+                      "FROM findings WHERE rule_id = 'logs.traversal'")}
+        finally:
+            conn.close()
+
+    def test_the_evidence_carries_what_came_back_the_rule_does_not(self):
+        t = 1780000000
+        rows = (
+            # The exfiltration shape: sized answers spanning kilobytes,
+            # plus one answer whose size the log did not record.
+            [self._line("203.0.113.10", t + i, 200, s)
+             for i, s in enumerate((1531, 4830, "-"))]
+            # The probe-that-failed shape: every answer 41 bytes.
+            + [self._line("203.0.113.20", t + 10 + i, 200, 41)
+               for i in range(2)]
+            # A hoster that logs no sizes at all.
+            + [self._line("203.0.113.30", t + 20 + i, 200, "-")
+               for i in range(2)])
+        found = self._findings(rows)
+        self.assertEqual(3, len(found))
+
+        spanned = found["203.0.113.10"]
+        flat = found["203.0.113.20"]
+        blind = found["203.0.113.30"]
+
+        # Same rule text, same severity -- the fingerprint holds and the
+        # weight does not move. Only the evidence differs.
+        self.assertEqual({spanned["rule"]}, {f["rule"] for f in found.values()})
+        self.assertEqual({spanned["severity"]},
+                         {f["severity"] for f in found.values()})
+
+        self.assertIn("responses 1,531-4,830 bytes", spanned["evidence"])
+        self.assertIn("1 further answer(s) logged no size",
+                      spanned["evidence"])
+        self.assertIn("responses 41 bytes", flat["evidence"])
+        self.assertNotIn("-", flat["evidence"].split("answered 2xx")[1][:30],
+                         "a single size must read as one number, not a range")
+        self.assertIn("nothing can be said about what came back",
+                      blind["evidence"])
+        self.assertNotIn("bytes;", blind["evidence"])
+        self.assertNotEqual(spanned["evidence"], flat["evidence"])
+
+
+class ThemeBundledPluginTests(unittest.TestCase):
+    """Issue #10, second half: the inventory read wp-content/plugins/ flat
+    and each theme's style.css only, so a plugin BUNDLED INSIDE A THEME was
+    invisible -- precisely the distribution channel that made Slider
+    Revolution spread (the vulnerable version sat in commercial themes long
+    after the plugin itself was fixed). The generated revslider webroot
+    carried `<theme>/includes/revslider/revslider.php` with `Plugin Name:
+    Slider Revolution` / `Version: 3.0.95`, and the inventory reported six
+    plugins, one theme and no slider.
+
+    The walk is BOUNDED and its hits carry their own type: real themes
+    ship TGM stubs and demo installers that carry `Plugin Name:` headers
+    legitimately, so an entry found this way must say it was inferred.
+    Verified by taking the walk back out: the bundled plugin vanishes from
+    the inventory and the first assertion fails.
+    """
+
+    def _theme(self):
+        import shutil
+        root = Path(tempfile.mkdtemp(prefix="shellhound-theme-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        theme = root / "wp-content" / "themes" / "flashy"
+        theme.mkdir(parents=True)
+        (theme / "style.css").write_text(
+            "/*\nTheme Name: Flashy\nVersion: 2.1\n*/\n", encoding="utf-8")
+        (theme / "functions.php").write_text("<?php\n", encoding="utf-8")
+        return root, theme
+
+    def test_a_plugin_bundled_in_a_theme_appears_under_its_own_type(self):
+        from server.engines import cmsinventory
+        root, theme = self._theme()
+        slider = theme / "includes" / "revslider"
+        slider.mkdir(parents=True)
+        (slider / "revslider.php").write_text(
+            "<?php\n/*\nPlugin Name: Slider Revolution\nVersion: 3.0.95\n*/\n",
+            encoding="utf-8")
+        items = list(cmsinventory.inventory_wordpress(root))
+        bundled = [(t, n, v) for t, n, _s, v, _p, _src in items
+                   if t.startswith("Plugin (bundled")]
+        self.assertEqual(
+            [("Plugin (bundled in theme flashy)", "Slider Revolution",
+              "3.0.95")], bundled)
+        # The theme itself is still the theme -- the inference sits beside
+        # it, it does not replace it.
+        self.assertIn("Theme", {t for t, *_ in items})
+
+    def test_the_walk_is_bounded_and_skips_vendor_trees(self):
+        from server.engines import cmsinventory
+        root, theme = self._theme()
+        vendor = theme / "vendor" / "demo-pack"
+        vendor.mkdir(parents=True)
+        (vendor / "installer.php").write_text(
+            "<?php\n/*\nPlugin Name: Demo Pack\n*/\n", encoding="utf-8")
+        deep = theme / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / "x.php").write_text(
+            "<?php\n/*\nPlugin Name: Too Deep\n*/\n", encoding="utf-8")
+        names = {n for _t, n, *_ in cmsinventory.inventory_wordpress(root)}
+        self.assertNotIn("Demo Pack", names,
+                         "vendor trees legitimately carry Plugin Name: "
+                         "headers and must not be read")
+        self.assertNotIn("Too Deep", names,
+                         "the walk must stop three levels below the theme")
+
+
 class RetirementTests(unittest.TestCase):
     """A COMPLETED re-scan retires the rows it did not reproduce.
 
