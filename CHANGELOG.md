@@ -6,75 +6,27 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
-### Added — four usability fixes for the daily triage
+### Added — usability for the daily triage
 
 - **Keyboard triage.** After c/d/r the cursor jumps to the next open
   artifact; `?` shows the bindings.
-- **Retired banner.** "N artifacts are not shown" carries a switch now:
-  show them greyed in place, hide them again.
 - **Path IOCs open their file.** The box resolves each webroot-relative
   path back into the registered evidence copy and offers "view" where
   the copy holds the file — the counterpart to the trace on an address.
-- **No prose outside tr().** Four hardcoded interface literals went
-  through the catalogue, a new guard test keeps it that way, and the
-  special-range IP badge (priv/doc/res) now knows the English range
-  names instead of falling back to a cryptic "spez".
 
 ### Changed — the IOC box shows a case, not a card stack
 
-The box's data model was always richer than its screen. Now the screen
-catches up:
-
-- **Density.** The reputation lookup (VirusTotal/AbuseIPDB) is a button
-  that unfolds on demand instead of a permanently open panel under every
-  address and hash — half the pixels of the old list belonged to buttons
-  nobody had pressed.
-- **Order.** Linking is a folded section at the foot of each card: a slim
-  bar names how many indicators are connected and previews the first;
-  opening it shows a small tree — derived hashes as full rows (note,
-  lookup, delete included) docked inside the file they belong to, every
-  other edge as a labelled line that jumps to its far end. A hash whose
-  file sits in the box therefore no longer stands somewhere in the list
-  as a card whose entire content is "sha-256 of X"; filter the file away
-  and the hash stands on its own again.
-- **Cross-case matches fold too.** "Also seen in other cases" is a bar,
-  closed by default — another case is context, not this case's work list.
-  Closed, it still states the whole fact (how many indicators, how many
-  cases, and the warning count when cases could not be read: a fold must
-  never hide what was NOT checked). Each matching entry additionally
-  carries a small badge right on its own row that unfolds the section and
-  flashes its line — the analyst no longer cross-references a summary
-  block by value.
-- **Tags.** Provenance (confirmed, finding, hunt, derived …) repeats on
-  almost every row and now reads as quiet text; what the case observed
-  (successful, brute-force, scanner) and what kind of thing it is
-  (webshell, injected-code) keep the colour and the front seat.
-- **Origin** — the field that is worth something six months later — gets
-  its own line under the value instead of living as the note's
-  placeholder and vanishing behind the first sentence anybody writes. The
-  search reads it too.
-- **Activity span.** Address IOCs show the first and last day they appear
-  in the case's access logs (log-local dates, straight from the actors
-  table), in the list and in all three exports — in STIX as prose in the
-  description, deliberately not as `valid_from`, which is a UTC timestamp
-  the log never stated. `added` only ever said when the indicator entered
-  the box, not when it acted.
-- **Exports follow the filter.** The buttons export what the analyst is
-  looking at — same chip and search semantics as the view, stated beside
-  the buttons ("Export follows the filter: 12 of 41"), with edges whose
-  far end was filtered away removed rather than naming absent indicators.
-- **Defanged copying.** A second copy action delivers `hxxps://evil[.]test`
-  and `203[.]0[.]113[.]9` for tickets and mails. Exports stay real:
-  a defanged STIX pattern would be a broken indicator.
-- **A bridge back into the case.** Addresses open their trace directly
-  from the box instead of a copy-and-search through another view.
-- Deleting an entry now takes two clicks — the first arms, the second
-  deletes. An entry takes its note, its provenance and its edges with it,
-  and there is no restore.
-- Pasted hashes are folded to lower case before storing: hex has no case,
-  and two spellings of one digest were two entries the exact cross-case
-  comparison walked past. The add button is translated (it was hard-coded
-  German).
+- **Folded by default.** Reputation lookups, the link tree of each card
+  and the cross-case matches unfold on demand; derived hashes dock
+  inside their file's card, cross-case entries carry a jump badge on
+  their own row.
+- **The row says more.** Origin gets its own line, address IOCs show
+  their first/last day from the access logs, provenance tags read as
+  quiet text so the observed behaviour keeps the colour.
+- **Exports follow the filter** — stated beside the buttons — and a
+  second copy action delivers defanged values for tickets and mails.
+- **Fewer accidents.** Addresses open their trace directly, deleting
+  takes two clicks, pasted hashes are folded to lower case.
 
 ### Added — cases can be archived and deleted from the start page
 
