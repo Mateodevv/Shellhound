@@ -39,34 +39,58 @@ def art_sql(muted=()):
     it is either older than the column or from the analyst's own YARA files,
     which are switched off as FILES and not through this.
 
-    Nothing is filtered here. The column is offered and the WORK LIST decides
-    -- because a confirmed artifact must not vanish just because the rule
-    that first pointed at it was later muted. That decision is the analyst's,
-    and a switch is not a retraction."""
+    RETIRED ROWS DO NOT COUNT. A row an engine's last completed run did not
+    reproduce (see db.LIVE_PREDICATE) describes a payload that moved, a file
+    that is gone or a rule that no longer runs -- adding it to `worst`,
+    `findings` or the triage fold makes the case assert something a scan no
+    longer supports, which is exactly the split issue #7 measured. The rows
+    stay in the table and travel out as `retired`, so nothing is deleted and
+    the interface can say "no longer reported" instead of silently shrinking.
+    An artifact with NO live row keeps its last known aggregate -- a deleted
+    shell the analyst confirmed must not fall out of the list, it must stand
+    there saying it was not seen again.
+
+    Nothing else is filtered here. The columns are offered and the WORK LIST
+    decides -- because a confirmed artifact must not vanish just because the
+    rule that first pointed at it was later muted. That decision is the
+    analyst's, and a switch is not a retraction."""
+    live = db.LIVE_PREDICATE
     ids = sorted({i for i in muted if _SAFE_ID.match(str(i))})
     if ids:
         values = ", ".join("'" + i + "'" for i in ids)
-        active = (f"SUM(CASE WHEN rule_id = '' OR rule_id NOT IN ({values}) "
-                  f"THEN 1 ELSE 0 END)")
+        active = (f"SUM(CASE WHEN {live} AND (rule_id = '' "
+                  f"OR rule_id NOT IN ({values})) THEN 1 ELSE 0 END)")
     else:
-        active = "COUNT(*)"
+        active = f"SUM(CASE WHEN {live} THEN 1 ELSE 0 END)"
     return f"""
     SELECT artifact,
            MIN(artifact_kind) AS artifact_kind,
-           MIN(severity)      AS worst,
+           COALESCE(MIN(CASE WHEN {live} THEN severity END),
+                    MIN(severity)) AS worst,
            MIN(source)        AS source,
-           COUNT(*)           AS findings,
+           SUM(CASE WHEN {live} THEN 1 ELSE 0 END) AS findings,
+           SUM(CASE WHEN {live} THEN 0 ELSE 1 END) AS retired,
            {active}           AS active,
            MAX(triaged_at)    AS triaged_at,
            MAX(triage_note)   AS triage_note,
            MAX(last_seen)     AS last_seen,
            CASE
+             WHEN SUM(CASE WHEN {live} AND triage = 'confirmed'
+                      THEN 1 ELSE 0 END) > 0 THEN 'confirmed'
+             WHEN SUM(CASE WHEN {live} THEN 1 ELSE 0 END) > 0
+                  AND SUM(CASE WHEN {live} AND triage = 'dismissed'
+                          THEN 1 ELSE 0 END)
+                      = SUM(CASE WHEN {live} THEN 1 ELSE 0 END)
+                  THEN 'dismissed'
+             WHEN SUM(CASE WHEN {live} AND triage = 'reviewed'
+                      THEN 1 ELSE 0 END) > 0 THEN 'reviewed'
+             WHEN SUM(CASE WHEN {live} THEN 1 ELSE 0 END) > 0 THEN 'new'
              WHEN SUM(triage = 'confirmed') > 0 THEN 'confirmed'
              WHEN SUM(triage = 'dismissed') = COUNT(*) THEN 'dismissed'
              WHEN SUM(triage = 'reviewed') > 0 THEN 'reviewed'
              ELSE 'new'
            END AS triage
-    FROM findings GROUP BY artifact
+    FROM findings f {db.RETIRE_JOIN} GROUP BY artifact
 """
 
 

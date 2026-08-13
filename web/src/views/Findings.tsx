@@ -381,6 +381,20 @@ export function Findings({ slug, gotoView }: {
         </Card>
       )}
 
+      {/* The same duty for the other way an artifact leaves this list: the
+          last completed scan did not reproduce any of its findings and
+          nobody had decided about it. Different sentence than the muted one
+          on purpose -- a switch and a disappearance send the analyst to
+          different places. */}
+      {data && data.retired_hidden > 0 && (
+        <Card className="flex items-center gap-2.5 border-[var(--sev-low)]/40 bg-[var(--panel-2)] px-4 py-2.5 text-[12.5px]">
+          <CircleDashed size={14} className="shrink-0 text-[var(--muted)]" />
+          <span className="min-w-0 flex-1">
+            {tr('findings.retiredHidden', { n: formatCount(data.retired_hidden) })}
+          </span>
+        </Card>
+      )}
+
       {!search && data && counts != null && counts.total > data.total && (
         <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">
           <span className="opacity-70">
@@ -618,6 +632,15 @@ export function Findings({ slug, gotoView }: {
                       <div className="flex min-w-0 items-center gap-2">
                         <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
                         <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
+                        {/* A decided thing that was then not seen again must
+                            say so right here -- a confirmed shell that is no
+                            longer on disk looking identical to one that is
+                            was the measured hole. */}
+                        {a.findings === 0 && a.retired > 0 && (
+                          <span className="shrink-0 rounded border border-[var(--border)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
+                            {tr('findings.retiredBadge')}
+                          </span>
+                        )}
                       </div>
                       <RuleChips items={a.items} />
                     </div>

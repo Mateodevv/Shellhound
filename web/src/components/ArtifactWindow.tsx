@@ -296,17 +296,29 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                   const e = explainRule(tr, f.rule)
                   return (
                     <div key={f.fingerprint}
-                      className="rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2"
+                      className={clsx(
+                        'rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2',
+                        f.retired === 1 && 'opacity-60',
+                      )}
                       style={{ borderLeftColor: SEVERITY_VAR[f.severity] }}>
                       <div className="flex flex-wrap items-center gap-2">
                         <SeverityBadge severity={f.severity} />
                         <span className="text-[12.5px] font-semibold">{f.rule}</span>
-                        {f.line != null && f.line !== 0 && (
+                        {/* A retired row's line number points at text that
+                            is no longer there -- a jump to it would land the
+                            preview on a comment. The row says when it was
+                            last real instead. */}
+                        {f.retired !== 1 && f.line != null && f.line !== 0 && (
                           <button
                             className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
                             onClick={() => onView(artifact.artifact, f.line)}>
                             {tr('artifact.line')} {f.line}
                           </button>
+                        )}
+                        {f.retired === 1 && (
+                          <span className="text-[11px] text-[var(--muted)]">
+                            {tr('artifact.retired', { date: f.last_seen })}
+                          </span>
                         )}
                       </div>
                       {e && (

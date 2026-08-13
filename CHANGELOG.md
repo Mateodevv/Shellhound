@@ -6,6 +6,36 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — a completed re-scan retires the findings it did not reproduce
+
+A file edited above its payload moved every content finding down; the
+re-scan inserted fresh rows at the new lines and left the decided ones
+standing at lines that now hold nothing. A dismissed artifact walked back
+into the default work list, because dismissal needs unanimity and the fresh
+undecided row broke it. The same hole with no line numbers involved: a file
+deleted between two scans kept its findings and its `confirmed`,
+indistinguishable from the shells still on disk.
+
+Findings now carry the run that last reproduced them (case schema 4 → 5,
+keyed on a counter — the clock is second-resolution and a small case is
+re-scanned inside one second). A row an engine's last **completed** run did
+not reproduce is retired: it keeps its triage and its note, stays in the
+table, and stops counting — in the artifact's finding count, its worst
+severity and its triage fold. The interface shows retired rows greyed with
+the date they were last seen instead of a clickable line number pointing at
+text that is no longer there; an artifact that was decided about and then
+never seen again stays in the work list saying so. Cancelled runs retire
+nothing. The fingerprint is untouched — no decision is orphaned.
+
+Two consequences worth knowing. Counts can drop on the first re-scan after
+the upgrade: that is the correction, not a regression — the case stops
+asserting stale rows as current facts. And retirement does not stop the
+analyst being asked again: a moved payload still arrives as a new finding
+on an artifact that folds back to undecided. What changed is that the
+question became honest — "the row you dismissed was not seen again; here is
+a new one where the payload is" is a true sentence, where before the tool
+showed a decided finding pointing at a comment.
+
 ### Fixed — virtual-host access logs are indexed
 
 Access logs that prefix the client address with a virtual-host name are now

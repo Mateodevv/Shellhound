@@ -265,15 +265,24 @@ def scan(case_dir, targets, ctx=None, workspace=None):
             files.extend(get_files_recursive(target))
     logs = [f for f in files
             if is_scannable_text(f) and looks_like_error_log(f)]
-    if not logs:
-        return stats
 
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "errorlog")
+        cancelled = False
+        if not logs:
+            # A COMPLETE run that found no error log among the targets. It
+            # completes so its verdict counts: findings from an error log
+            # that has since left the evidence stop being current instead of
+            # promising files no log names any more.
+            db.complete_run(conn, "errorlog", run)
+            return stats
         resolve = _resolver(conn)
         if resolve is None:
             # No webroot registered: every path would be unresolvable, and a
             # case full of findings about paths nobody can open helps no one.
+            # NOT completed -- this run skipped its work rather than doing
+            # it, so it has no opinion about the rows of earlier runs.
             stats["skipped"] = len(logs)
             return stats
 
@@ -282,6 +291,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
         seen = {}
         for n, path in enumerate(logs):
             if ctx is not None and ctx.cancelled():
+                cancelled = True
                 break
             if ctx is not None:
                 ctx.progress(0.05 + 0.85 * (n / max(1, len(logs))),
@@ -347,9 +357,11 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                 line=agg["line"],
                 evidence=(f"{agg['n']}× in the error log as {agg['logged']}"
                           f" · {agg['example']}")[:400],
-                rule_id=rule_id)
+                rule_id=rule_id, engine="errorlog", run=run)
             stats["findings"] += 1
         conn.commit()
+        if not cancelled:
+            db.complete_run(conn, "errorlog", run)
     finally:
         conn.close()
     return stats

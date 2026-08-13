@@ -2484,5 +2484,230 @@ class DetectOfferTests(unittest.TestCase):
                          [c["path"] for c in out["candidates"]["webroot"]])
 
 
+class RetirementTests(unittest.TestCase):
+    """A COMPLETED re-scan retires the rows it did not reproduce.
+
+    Issue #7, measured on this repository. Two comment lines prepended to a
+    shell moved every content finding down; the re-scan inserted fresh rows
+    at the new lines and left the decided ones standing at lines that now
+    hold nothing. A dismissed artifact walked back into the default work
+    list, because dismissal needs unanimity and the fresh undecided row
+    broke it. The same hole with no line numbers involved: a file deleted
+    between two scans kept its findings and its `confirmed`, and was
+    indistinguishable from the shells still on disk.
+
+    Retirement is keyed on a RUN COUNTER, not on the clock. db.now() is
+    second-resolution and a small case is scanned twice inside one second --
+    a `last_seen`-based staleness rule was measured to catch 0 of 23 stale
+    rows, so a test against it could never have failed.
+
+    THE NAMED TRADEOFF, asserted below rather than hidden: retirement does
+    not stop the analyst being asked again. The moved payload arrives as a
+    NEW finding and the artifact folds back to `new` -- what changed is
+    that the question became honest, because the case no longer asserts the
+    old row as a current fact beside its replacement.
+
+    Each test was verified by putting its defect back: the live predicate
+    removed from art_sql fails the moved-payload test on the finding count,
+    `complete_run` on the cancelled path fails the cancel test.
+    """
+
+    # The shape from the measured case: line 1 `<?php`, the decode chain on
+    # line 2, and the attacker's edit lands ABOVE it.
+    PAYLOAD = "$x = gzinflate(base64_decode($p));\n"
+
+    def _case(self):
+        import shutil
+        root = Path(tempfile.mkdtemp(prefix="shellhound-retire-"))
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        case = root / "case"
+        case.mkdir()
+        db.connect(case).close()
+        webroot = root / "webroot"
+        webroot.mkdir()
+        return case, webroot
+
+    def _rows(self, case):
+        conn = db.connect(case)
+        try:
+            return db.rows(
+                conn,
+                f"SELECT f.artifact, f.rule, f.line, f.triage, f.triage_note, "
+                f"CASE WHEN {db.LIVE_PREDICATE} THEN 0 ELSE 1 END AS retired "
+                f"FROM findings f {db.RETIRE_JOIN}")
+        finally:
+            conn.close()
+
+    def _artifact(self, case, artifact):
+        conn = db.connect(case)
+        try:
+            return db.one(conn, f"WITH art AS ({art_sql(())}) "
+                                f"SELECT * FROM art WHERE artifact = ?",
+                          (artifact,))
+        finally:
+            conn.close()
+
+    def _decide(self, case, state, note=None, artifacts=None):
+        conn = db.connect(case)
+        try:
+            where, params = "", []
+            if artifacts:
+                where = (" WHERE artifact IN ("
+                         + ",".join("?" * len(artifacts)) + ")")
+                params = list(artifacts)
+            if note is None:
+                conn.execute(f"UPDATE findings SET triage = ?{where}",
+                             [state] + params)
+            else:
+                conn.execute(
+                    f"UPDATE findings SET triage = ?, triage_note = ?{where}",
+                    [state, note] + params)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_a_moved_payload_retires_the_decided_row(self):
+        import os
+        from server.engines import webshell
+        case, webroot = self._case()
+        shell = webroot / "cache-warm.php"
+        shell.write_text("<?php\n" + self.PAYLOAD, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+        self._decide(case, "dismissed", note="cache warmer, known")
+        before = len(self._rows(case))
+
+        shell.write_text("<?php\n// cache warmer\n// nightly, keep\n"
+                         + self.PAYLOAD, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+
+        rows = self._rows(case)
+        stale = [r for r in rows if r["line"] == 2]
+        moved = [r for r in rows if r["line"] == 4]
+        self.assertTrue(stale, "the fixture no longer fires a content rule")
+        self.assertEqual(len(stale), len(moved),
+                         "the payload moved from line 2 to line 4, so every "
+                         "content rule must appear at both")
+        for r in stale:
+            self.assertEqual(1, r["retired"],
+                             f"{r['rule']} at line 2 describes text that is "
+                             f"no longer there and must be retired")
+            self.assertEqual("dismissed", r["triage"],
+                             "retirement erased the decision")
+            self.assertEqual("cache warmer, known", r["triage_note"],
+                             "retirement erased the note")
+        for r in moved:
+            self.assertEqual(0, r["retired"])
+            self.assertEqual("new", r["triage"])
+
+        # Nothing was deleted -- the table grew by exactly the moved rows.
+        self.assertEqual(before + len(moved), len(rows))
+
+        art = self._artifact(case, os.path.abspath(str(shell)))
+        live = [r for r in rows if r["retired"] == 0]
+        self.assertEqual(len(live), art["findings"],
+                         "the artifact still counts rows the completed scan "
+                         "did not reproduce -- one moved payload reads as "
+                         "two problems again")
+        self.assertEqual(len(stale), art["retired"])
+        # The named tradeoff: the fresh row is a new, honest question.
+        self.assertEqual("new", art["triage"])
+
+    def test_a_file_gone_between_scans_is_marked_not_current(self):
+        import os
+        from server.engines import webshell
+        case, webroot = self._case()
+        keep = webroot / "a.php"
+        gone = webroot / "b.php"
+        quiet = webroot / "c.php"
+        for f in (keep, gone, quiet):
+            f.write_text("<?php\n" + self.PAYLOAD, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+        self._decide(case, "confirmed",
+                     artifacts=[os.path.abspath(str(keep)),
+                                os.path.abspath(str(gone))])
+        gone.unlink()
+        quiet.unlink()
+        webshell.scan(case, [str(webroot)])
+
+        kept = self._artifact(case, os.path.abspath(str(keep)))
+        self.assertGreater(kept["findings"], 0)
+        self.assertEqual(0, kept["retired"])
+        self.assertEqual("confirmed", kept["triage"])
+
+        lost = self._artifact(case, os.path.abspath(str(gone)))
+        self.assertEqual(0, lost["findings"],
+                         "the case still counts a shell that is not on disk")
+        self.assertGreater(lost["retired"], 0)
+        self.assertEqual("confirmed", lost["triage"],
+                         "the decision fell off the fully retired artifact")
+
+        # The work list keeps the decided one -- greying out is not
+        # deleting -- and releases the undecided one, stated in
+        # retired_hidden rather than silently.
+        conn = db.connect(case)
+        try:
+            listed = {r["artifact"] for r in db.rows(
+                conn, f"WITH art AS ({art_sql(())}) "
+                      f"SELECT artifact FROM art WHERE {MUTED_CLAUSE}")}
+        finally:
+            conn.close()
+        self.assertIn(os.path.abspath(str(gone)), listed)
+        self.assertNotIn(os.path.abspath(str(quiet)), listed)
+
+    def test_a_cancelled_run_retires_nothing(self):
+        from server.engines import webshell
+        case, webroot = self._case()
+        keep = webroot / "a.php"
+        gone = webroot / "b.php"
+        for f in (keep, gone):
+            f.write_text("<?php\n" + self.PAYLOAD, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+        gone.unlink()
+
+        class CancelledAtOnce:
+            def cancelled(self):
+                return True
+
+            def progress(self, *args, **kwargs):
+                pass
+
+        # The run stops before its first file. It saw nothing, so it may
+        # say nothing: every finding of the completed first run stays live,
+        # the deleted shell included.
+        webshell.scan(case, [str(webroot)], ctx=CancelledAtOnce())
+        rows = self._rows(case)
+        self.assertTrue(rows)
+        self.assertEqual({0}, {r["retired"] for r in rows},
+                         "a run that was cancelled before its first file "
+                         "retired real findings")
+
+    def test_a_row_seen_again_returns_with_its_triage(self):
+        import os
+        from server.engines import webshell
+        case, webroot = self._case()
+        shell = webroot / "a.php"
+        body = "<?php\n" + self.PAYLOAD
+        shell.write_text(body, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+        self._decide(case, "confirmed", note="the dropped shell")
+        shell.unlink()
+        webshell.scan(case, [str(webroot)])
+        self.assertEqual(0, self._artifact(
+            case, os.path.abspath(str(shell)))["findings"])
+
+        # The file comes back -- a restored backup, a second webroot copy --
+        # and the next scan reproduces the rows: live again, decision intact.
+        # Retirement is a statement about the last scan, never a deletion.
+        shell.write_text(body, encoding="utf-8")
+        webshell.scan(case, [str(webroot)])
+        art = self._artifact(case, os.path.abspath(str(shell)))
+        self.assertGreater(art["findings"], 0)
+        self.assertEqual(0, art["retired"])
+        self.assertEqual("confirmed", art["triage"])
+        rows = [r for r in self._rows(case) if r["triage_note"]]
+        self.assertTrue(all(r["triage_note"] == "the dropped shell"
+                            for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main()

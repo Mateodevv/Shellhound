@@ -315,12 +315,15 @@ def scan(case_dir, targets, ctx=None, workspace=None):
 
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "webshell")
+        cancelled = False
         conn.execute("DELETE FROM inert_php")
         conn.execute("DELETE FROM skipped WHERE source = 'webshell'")
         flagged = set()
         for i, (file_path, root) in enumerate(files):
             if ctx is not None and i % 200 == 0:
                 if ctx.cancelled():
+                    cancelled = True
                     break
                 ctx.progress(0.02 + (i / total) * 0.93,
                              f"{i:,}/{total:,} files — "
@@ -333,7 +336,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                     continue
                 db.upsert_finding(conn, "webshell", severity, rule, "file",
                                   abs_path, line=line, evidence=evidence,
-                                  rule_id=rule_id)
+                                  rule_id=rule_id, engine="webshell", run=run)
                 stats["findings"] += 1
                 flagged.add(abs_path)
             if inert:
@@ -365,6 +368,10 @@ def scan(case_dir, targets, ctx=None, workspace=None):
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('webshell_hashes', ?)",
                      (json.dumps(hashes),))
         conn.commit()
+        # Only a run that saw every file may retire what it did not
+        # reproduce; a cancelled one has no opinion about the rest.
+        if not cancelled:
+            db.complete_run(conn, "webshell", run)
     finally:
         conn.close()
     return stats

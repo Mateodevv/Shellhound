@@ -103,6 +103,8 @@ def scan(case_dir, workspace=None, ctx=None):
 
     conn = db.connect(case_dir)
     try:
+        run = db.begin_run(conn, "sigmascan")
+        cancelled = False
         conn.execute("DELETE FROM skipped WHERE source = 'sigma'")
         for entry in broken:
             conn.execute(
@@ -113,6 +115,7 @@ def scan(case_dir, workspace=None, ctx=None):
         for i, rule in enumerate(usable):
             if ctx is not None:
                 if ctx.cancelled():
+                    cancelled = True
                     break
                 ctx.progress(0.05 + (i / (len(usable) or 1)) * 0.9,
                              f"{rule['title']}")
@@ -145,11 +148,17 @@ def scan(case_dir, workspace=None, ctx=None):
                               f"{client['ok_hits']}x 2xx - SIGMA rule "
                               f"{rule['id']} ({rule['file']})"
                               + (f" - e.g. {example}" if example else ""))[:400],
-                    rule_id=rule["id"])
+                    rule_id=rule["id"], engine="sigmascan", run=run)
                 stats["findings"] += 1
                 touched.add(client["ip"])
         stats["clients"] = len(touched)
         conn.commit()
+        # A cancelled run has no opinion about the rules it never ran. A run
+        # over an emptied rule folder completes with nothing -- findings of
+        # deleted rules stop being current, and the next run of a restored
+        # rule brings them back with their triage untouched.
+        if not cancelled:
+            db.complete_run(conn, "sigmascan", run)
     finally:
         conn.close()
         log_conn.close()

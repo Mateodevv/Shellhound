@@ -420,7 +420,13 @@ CONTRACT = [
     Entry("Finding -- GET /findings",
           "Finding", lambda a: a["findings"]["findings"],
           extras={"rule_id": "the stable identity the rule switch stores. "
-                             "The interface shows `rule`, the sentence."}),
+                             "The interface shows `rule`, the sentence.",
+                  "engine": "bookkeeping of the retirement mechanic: which "
+                            "engine owns the row. The interface reads the "
+                            "derived `retired` flag, never this.",
+                  "seen_run": "bookkeeping of the retirement mechanic: the "
+                              "run that last reproduced the row. The "
+                              "interface reads `retired`, never this."}),
 
     Entry("ArtifactContext -- GET /artifact",
           "ArtifactContext", lambda a: a["contexts"],
