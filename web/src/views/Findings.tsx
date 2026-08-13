@@ -36,7 +36,8 @@ import {
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
-  Button, Card, Chip, EmptyState, SearchInput, SeverityBadge, TriageBadge,
+  Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge,
+  TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
@@ -129,6 +130,7 @@ export function Findings({ slug, gotoView }: {
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   // What the trace should mark red -- comes from the artifact window, which
   // knows what this is about (the file, or the client's alert).
@@ -229,12 +231,18 @@ export function Findings({ slug, gotoView }: {
     overscan: 20,
   })
 
-  // Keyboard: j/k over artifact rows, x checks, c/d/r decide
+  // Keyboard: j/k over artifact rows, x checks, c/d/r decide and move on,
+  // ? shows the bindings
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (selected || viewing || traceIps || e.target instanceof HTMLInputElement ||
           e.target instanceof HTMLTextAreaElement) return
-      if (!items.length) return
+      if (e.key === '?') {
+        setHelpOpen((v) => !v)
+        e.preventDefault()
+        return
+      }
+      if (helpOpen || !items.length) return
       const move = (dir: 1 | -1) => {
         let i = cursor + dir
         while (i >= 0 && i < items.length && !isArtifactRow(items[i])) i += dir
@@ -259,13 +267,28 @@ export function Findings({ slug, gotoView }: {
         }
       } else if (e.key === 'c' || e.key === 'd' || e.key === 'r') {
         bulkTriage(e.key === 'c' ? 'confirmed' : e.key === 'd' ? 'dismissed' : 'reviewed')
+        // The hand stays on the keyboard: after the decision the cursor
+        // moves on to the next artifact that still needs one. Only for the
+        // single-row decision -- a bulk decision has no single "next".
+        if (!checked.size) {
+          let i = cursor + 1
+          while (i < items.length) {
+            const it = items[i]
+            if (isArtifactRow(it)) {
+              const triage = (it as { a: Artifact }).a.triage
+              if (triage === 'new' || triage === 'reviewed') break
+            }
+            i += 1
+          }
+          if (i < items.length) setCursor(i)
+        }
       } else return
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, cursor, selected, viewing, traceIps, checked, bulkNote])
+  }, [items, cursor, selected, viewing, traceIps, checked, bulkNote, helpOpen])
 
   useEffect(() => { virtualizer.scrollToIndex(cursor) }, [cursor, virtualizer])
 
@@ -471,7 +494,9 @@ export function Findings({ slug, gotoView }: {
             <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> {tr('findings.keys.check')},{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">c</kbd> True Positive,{' '}
             <kbd className="rounded bg-[var(--panel-2)] px-1">d</kbd> False Positive,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">Enter</kbd> Details
+            <kbd className="rounded bg-[var(--panel-2)] px-1">r</kbd> {tr('triage.reviewed')},{' '}
+            <kbd className="rounded bg-[var(--panel-2)] px-1">Enter</kbd> Details,{' '}
+            <kbd className="rounded bg-[var(--panel-2)] px-1">?</kbd> {tr('findings.keys.help')}
           </span>
         </div>
       )}
@@ -726,6 +751,35 @@ export function Findings({ slug, gotoView }: {
       />
 
       <TriageFollowUp t={t} roots={roots} />
+
+      {/* The bindings on demand -- the footer names them, but a footer
+          under 2000 rows is off-screen exactly when one wonders what `r`
+          did. `?` is the convention every list tool shares. */}
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)}
+        title={tr('findings.help.title')}>
+        <div className="flex flex-col gap-1.5 text-[13px]">
+          {([
+            ['j / k', tr('findings.help.navigate')],
+            ['Enter', tr('findings.help.open')],
+            ['x', tr('findings.help.check')],
+            ['c', tr('triage.confirmed')],
+            ['d', tr('triage.dismissed')],
+            ['r', tr('triage.reviewed')],
+            ['?', tr('findings.help.this')],
+            ['Esc', tr('findings.help.close')],
+          ] as const).map(([key, what]) => (
+            <div key={key} className="flex items-baseline gap-3">
+              <kbd className="w-16 shrink-0 rounded bg-[var(--panel-2)] px-1.5 py-0.5 text-center text-[12px]">
+                {key}
+              </kbd>
+              <span>{what}</span>
+            </div>
+          ))}
+          <p className="mt-2 text-[12px] text-[var(--muted)]">
+            {tr('findings.help.decide')}
+          </p>
+        </div>
+      </Modal>
     </div>
   )
 }
