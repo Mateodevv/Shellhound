@@ -1,0 +1,18 @@
+# The build context is what can END UP IN AN IMAGE. assets/docs stays out
+# first and foremost: it holds documentation screenshots, some of which
+# are gitignored precisely because they must never be published -- an
+# image is a form of publishing. The rest of the repository stays IN the
+# context on purpose: the test stage runs the whole suite, and the suite
+# reads assets/brand, docs/, .github/ and web/src as fixtures.
+assets/docs
+.git
+.claude
+Testing
+dist
+build
+*.egg-info
+__pycache__
+**/__pycache__
+web/node_modules
+web/dist
+server/static

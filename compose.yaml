@@ -1,0 +1,26 @@
+# A single-host deployment: one service, one named volume for the cases,
+# evidence mounted read-only. TLS and per-user login belong in a reverse
+# proxy in front of this -- the token is transport-level access, not
+# identity.
+services:
+  shellhound:
+    build: .
+    ports:
+      - "8710:8710"
+    environment:
+      # Refuses to start without one -- deliberately. Set it in the shell
+      # or in an .env file next to this compose file.
+      SHELLHOUND_TOKEN: ${SHELLHOUND_TOKEN:?choose an access token, e.g. SHELLHOUND_TOKEN=$(openssl rand -hex 24)}
+    volumes:
+      # The cases. A NAMED volume on purpose: SQLite in WAL mode wants a
+      # real local filesystem, not a Windows bind mount or NFS.
+      - workspace:/workspace
+      # THE MOUNT CONVENTION -- a convention, not code: evidence lives
+      # under /evidence/<case>, registered in the interface by that path.
+      # Read-only is a forensic statement, not hardening decor: the tool
+      # cannot touch the copy, not even through a bug. Registered paths
+      # are stored absolute, so keep this mapping stable across restarts.
+      - ./evidence:/evidence:ro
+
+volumes:
+  workspace:
