@@ -155,7 +155,7 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   )
 }
 
-export function Button({ children, onClick, variant = 'default', disabled, className, title, style }: {
+export function Button({ children, onClick, variant = 'default', disabled, className, title, style, onMouseLeave }: {
   children: ReactNode
   onClick?: () => void
   variant?: 'default' | 'primary' | 'danger' | 'ghost'
@@ -165,10 +165,14 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   /** For the case where a button has to stand out from the surface it sits
    *  on -- a utility class would lose against the variant. */
   style?: React.CSSProperties
+  /** For a button that ARMS on first click (delete, and nothing else so
+   *  far): leaving it must disarm, or the armed state lies in wait. */
+  onMouseLeave?: () => void
 }) {
   return (
     <button
       onClick={onClick}
+      onMouseLeave={onMouseLeave}
       disabled={disabled}
       title={title}
       style={style}
