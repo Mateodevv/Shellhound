@@ -6,39 +6,19 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
-### Added — triage without leaving the keyboard
+### Added — four usability fixes for the daily triage
 
-The findings list always had j/k, x and c/d/r; what interrupted the flow
-was everything around them. After a single-row decision the cursor now
-jumps to the next open artifact instead of resting on the decided one,
-and `?` opens an overview of the bindings — the footer names them, but
-under 2000 rows it is off-screen exactly when one wonders what `r` did.
-
-### Added — the retired banner shows what it counts
-
-"N undecided artifacts are not shown" now carries a switch: show them,
-greyed, in place — and hide them again. Saying a number without offering
-a look at the rows behind it was a dead end the muted banner never had.
-
-### Added — a path indicator opens its file
-
-Path IOCs are stored webroot-relative on purpose (what the other side
-can look for); the server now also resolves each one back to the file in
-the registered evidence copy, and the box offers "view" exactly on the
-entries that resolve — the counterpart to the trace button on an
-address. An entry whose file the copy does not hold simply has no
-button: the copy may be partial, and None is a real answer.
-
-### Fixed — prose that never went through tr(), and a guard against more
-
-"Import failed:", "Gesichtet", "User agents:" and the file browser's
-flag receipt were hardcoded in whichever language their author was
-thinking in. All four now go through the catalogue, and a new test scans
-JSX text nodes — including ones that end at an interpolation, where the
-original defect sat — for prose outside tr(). The special-range IP badge
-(priv/doc/res) also knew only the German range names and fell back to a
-cryptic "spez" in the English interface; both spellings are known now
-and the reserved range finally explains itself in the tooltip.
+- **Keyboard triage.** After c/d/r the cursor jumps to the next open
+  artifact; `?` shows the bindings.
+- **Retired banner.** "N artifacts are not shown" carries a switch now:
+  show them greyed in place, hide them again.
+- **Path IOCs open their file.** The box resolves each webroot-relative
+  path back into the registered evidence copy and offers "view" where
+  the copy holds the file — the counterpart to the trace on an address.
+- **No prose outside tr().** Four hardcoded interface literals went
+  through the catalogue, a new guard test keeps it that way, and the
+  special-range IP badge (priv/doc/res) now knows the English range
+  names instead of falling back to a cryptic "spez".
 
 ### Changed — the IOC box shows a case, not a card stack
 
