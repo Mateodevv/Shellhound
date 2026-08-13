@@ -162,7 +162,12 @@ def to_csv(iocs, links=()):
     by_ioc = _by_ioc(links)
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["Value", "Type", "Tags", "Note", "Origin", "Added", "Related"])
+    # The seen columns are DATES in the log's own local time -- the days the
+    # address appears in this case's access logs. Said in the header, since
+    # a CSV has nowhere else to say it and a bare date invites the reader's
+    # own time zone.
+    w.writerow(["Value", "Type", "Tags", "Note", "Origin", "Added",
+                "First seen (log date)", "Last seen (log date)", "Related"])
     for i in iocs:
         value = str(i["value"])
         # formula-injection guard, same rule as the legacy reports
@@ -171,7 +176,9 @@ def to_csv(iocs, links=()):
         related = "; ".join(
             f"{label} {other}" for label, other, _t, _n in by_ioc.get(i["id"], ()))
         w.writerow([value, i["type"], " ".join(json.loads(i["tags"] or "[]")),
-                    i["note"], i["origin"], i["added"], related])
+                    i["note"], i["origin"], i["added"],
+                    i.get("first_seen") or "", i.get("last_seen") or "",
+                    related])
     return buf.getvalue()
 
 
@@ -208,12 +215,22 @@ def to_json(iocs, case_name="", links=(), chain=None):
         "iocs": [{"value": i["value"], "type": i["type"],
                   "tags": json.loads(i["tags"] or "[]"),
                   "note": i["note"], "origin": i["origin"], "added": i["added"],
+                  "first_seen": i.get("first_seen"),
+                  "last_seen": i.get("last_seen"),
                   "related": [{"relation": label, "value": other, "type": typ,
                                "note": note}
                               for label, other, typ, note
                               in by_ioc.get(i["id"], ())]}
                  for i in iocs],
     }
+    if any(i.get("first_seen") for i in iocs):
+        # The one sentence that gives the dates a frame. `added` is when the
+        # indicator entered the box; first/last_seen is when the address
+        # appears in the case's access logs.
+        out["seen_note"] = ("first_seen/last_seen are dates in the log's own "
+                            "local time -- the days the address appears in "
+                            "this case's access logs. `added` is only when "
+                            "the indicator entered the box.")
     # The chronology travels along: the order of the events is the statement
     # that makes up the case, and until now it existed only in the dashboard.
     # `gaps` belongs to it -- what the case does NOT prove is part of the
@@ -298,6 +315,15 @@ def to_stix(iocs, case_name="", links=()):
             continue
         tags = json.loads(i["tags"] or "[]")
         stix_ids[i["id"]] = f"indicator--{uuid.uuid4()}"
+        description = (i["note"] or i["origin"] or "")
+        # The activity window travels in prose, NOT in valid_from: the days
+        # are log-local dates, and valid_from is a UTC timestamp -- writing
+        # one into the other would assert a frame the log never stated.
+        if i.get("first_seen"):
+            span = (f"Active in the case's logs {i['first_seen']} to "
+                    f"{i.get('last_seen') or i['first_seen']} "
+                    f"(log-local dates).")
+            description = f"{description} {span}".strip()
         objects.append({
             "type": "indicator",
             "spec_version": "2.1",
@@ -305,7 +331,7 @@ def to_stix(iocs, case_name="", links=()):
             "created": now,
             "modified": now,
             "name": f"{i['type']}: {i['value']}",
-            "description": (i["note"] or i["origin"] or ""),
+            "description": description,
             "labels": tags or ["indicator"],
             "pattern": pattern,
             "pattern_type": "stix",

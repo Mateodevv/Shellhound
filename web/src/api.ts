@@ -402,6 +402,12 @@ export interface Ioc {
   tags: string[]
   origin: string
   added: string
+  /** First/last day the address appears in this case's access logs, as
+   *  dates in the log's own local time -- null for non-addresses and for
+   *  addresses the index has no dated requests for. `added` is only when
+   *  the indicator entered the box; these two are when it was ACTIVE. */
+  first_seen: string | null
+  last_seen: string | null
   links: IocLink[]
 }
 
