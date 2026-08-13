@@ -83,7 +83,7 @@ const HASH_IOC: Ioc = {
 }
 
 describe('cross-case IOC matches', () => {
-  it('names and links the other case without hiding the current IOC', async () => {
+  it('folds to a bar that still states the numbers, and links on demand', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith('/iocs/cross-case')) return CROSS_CASE
       if (path.endsWith('/iocs')) return [IOC]
@@ -92,10 +92,34 @@ describe('cross-case IOC matches', () => {
 
     renderWithProviders(<IocBox slug="current-case" gotoView={() => {}} />)
 
-    expect((await screen.findAllByText(IOC.value)).length).toBeGreaterThanOrEqual(2)
+    // Folded by default: the bar names the fact, the details wait. The
+    // current IOC's own card is not hidden by any of this.
+    await screen.findByText(IOC.value, { selector: '.mono span' })
+    expect(screen.getByText('Also seen in other cases')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Previous Case/ }))
+      .not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Also seen in other cases'))
     const link = await screen.findByRole('link', { name: /Previous Case/ })
     expect(link).toHaveAttribute('href', expect.stringContaining('case=previous-case'))
-    expect(screen.getByText('Also seen in other cases')).toBeInTheDocument()
+  })
+
+  it('marks the matching entry itself with a badge that unfolds the section', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/iocs/cross-case')) return CROSS_CASE
+      if (path.endsWith('/iocs')) return [IOC]
+      throw new Error(`unexpected API call: ${path}`)
+    })
+
+    renderWithProviders(<IocBox slug="current-case" gotoView={() => {}} />)
+
+    await screen.findByText(IOC.value, { selector: '.mono span' })
+    // The badge sits on the entry the analyst is looking at -- not only in
+    // a summary block they would have to cross-reference by value.
+    const badge = screen.getByRole('button', { name: 'Also seen in other cases' })
+    fireEvent.click(badge)
+    expect(await screen.findByRole('link', { name: /Previous Case/ }))
+      .toBeInTheDocument()
   })
 })
 

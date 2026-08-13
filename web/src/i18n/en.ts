@@ -314,6 +314,7 @@ export const en: Record<string, string> = {
   'iocbox.links.title': 'Linked indicators',
   'iocbox.links.hint': 'Created when collecting — click jumps to the linked entry.',
   'iocbox.links.n': '{n} linked indicator(s)',
+  'cross.badge.hint': 'Click unfolds the matches above and jumps to this indicator\'s line.',
   'iocbox.note.short': 'Note…',
   'iocbox.origin': 'Origin',
   'iocbox.span.title': 'When the address was active',
