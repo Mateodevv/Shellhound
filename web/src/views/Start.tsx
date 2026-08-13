@@ -247,7 +247,9 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
 
       {importCase.isError && (
         <div className="mt-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)] animate-fade-up">
-          Import fehlgeschlagen: {String((importCase.error as Error)?.message ?? importCase.error)}
+          {tr('start.import.failed', {
+            msg: String((importCase.error as Error)?.message ?? importCase.error),
+          })}
         </div>
       )}
 

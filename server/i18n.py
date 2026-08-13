@@ -233,7 +233,13 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "de": "Dokumentations-Bereich (RFC 5737/3849) — absichtlich "
               "unzuordenbar",
     },
-    "geo.reserved": {"en": "Reserved range", "de": "Reservierter Bereich"},
+    "geo.reserved": {
+        "en": "Reserved range — not allocated on the public internet; as a "
+              "source this points at spoofing or a capture artefact",
+        "de": "Reservierter Bereich — im öffentlichen Internet nicht "
+              "vergeben; als Absender deutet das auf Spoofing oder einen "
+              "Erfassungsfehler",
+    },
     "geo.unlisted": {
         "en": "not listed in the database",
         "de": "in der Datenbank nicht verzeichnet",
