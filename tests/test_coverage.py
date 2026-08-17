@@ -242,10 +242,10 @@ class TimelineOrderTests(unittest.TestCase):
             self._at(self.timeline, "<TimelineChart", "the timeline"),
             self._at(self.timeline, "<LogCoverage", "the timeline"))
 
-    def test_both_stand_after_the_artifact_tiles(self):
-        """The tiles are the case at a glance and stay at the top."""
+    def test_the_evidence_charts_stand_after_the_forensic_scope(self):
+        """Scope and entities are the case at a glance and stay at the top."""
         self.assertLess(
-            self._at(self.dashboard, "dashboard.artifacts'", "the dashboard"),
+            self._at(self.dashboard, "dashboard.entities.title", "the dashboard"),
             self._at(self.dashboard, "<TimelineChart", "the dashboard"))
 
 

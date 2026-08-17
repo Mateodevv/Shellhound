@@ -299,11 +299,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
                 )}
               </div>
               <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-                {tr(`nav.${view}`)} · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}
+                {tr(`nav.${view}`)}
+                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
               </div>
             </div>
-            <div className="w-36"><ProgressBar value={completion} /></div>
-            {openArtifacts > 0 && view !== 'findings' && (
+            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
+            {openArtifacts > 0 && view !== 'findings' && view !== 'dashboard' && (
               <button onClick={() => gotoView('findings', { triage: 'new,reviewed' })}
                 className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-110 cursor-pointer">
                 {tr('case.continueTriage', { n: openArtifacts })}

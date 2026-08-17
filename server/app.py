@@ -790,7 +790,7 @@ def create_app(config: Config) -> FastAPI:
     # --- dashboard ----------------------------------------------------------
 
     @app.get("/api/cases/{slug}/dashboard", dependencies=[auth])
-    def dashboard(slug: str):
+    def dashboard(slug: str, lang: str = lang_dep, tz: str = tz_dep):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
@@ -801,6 +801,12 @@ def create_app(config: Config) -> FastAPI:
                 conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
                       f"FROM art WHERE triage != 'dismissed' GROUP BY worst")}
             triage = artifact_counts(conn)["triage"]
+            confirmed_kinds = {r["artifact_kind"]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact_kind, count(*) n "
+                      f"FROM art WHERE triage = 'confirmed' GROUP BY artifact_kind")}
+            confirmed_severity = {r["worst"]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
+                      f"FROM art WHERE triage = 'confirmed' GROUP BY worst")}
             findings_total = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
@@ -824,14 +830,63 @@ def create_app(config: Config) -> FastAPI:
                 r["stats"] = json.loads(r.get("stats") or "{}")
         finally:
             conn.close()
+
+        # The dashboard names a handful of measured milestones, not an
+        # inferred attack story.  Build them from the same chronology as the
+        # dedicated view so timestamps, clock alignment and source labels
+        # cannot drift between the two surfaces.
+        chain = case_chain(case_dir, lang, tz, event_cap=None)
+        events = chain["events"]
+        observations = []
+        seen = set()
+
+        def observe(role, event):
+            if event is None:
+                return
+            identity = (event["at"], event["kind"], event["title"],
+                        event["artifact"])
+            if identity in seen:
+                return
+            seen.add(identity)
+            observations.append({
+                key: event[key] for key in (
+                    "at", "kind", "title", "detail", "source", "artifact",
+                    "artifact_kind", "ip", "severity")
+            } | {"role": role})
+
+        observe("first", events[0] if events else None)
+        first_success = next(
+            (event for event in events if event["kind"] == "erfolg"), None)
+        observe("first_success", first_success)
+        observe("account", next(
+            (event for event in events if event["kind"] == "konto"), None))
+        observe("first_alert", next(
+            (event for event in events if event["kind"] == "alarm"), None))
+        observe("last", events[-1] if events else None)
+        observations.sort(key=lambda event: event["at"])
+
         return {
             "severity": severity, "triage": triage, "iocs": ioc_count,
+            "confirmed_kinds": confirmed_kinds,
+            "confirmed_severity": confirmed_severity,
             "findings_total": findings_total,
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
+            "chronology": {
+                "total_events": chain["total_events"],
+                "event_span": chain["event_span"],
+                "first_success_at": (first_success["at"]
+                                     if first_success else None),
+                "observations": observations,
+                "gaps": chain["gaps"],
+                "undated": len(chain["undated"]),
+                "zone": chain["zone"],
+                "tz_offsets": chain["tz_offsets"],
+                "tz_mixed": chain["tz_mixed"],
+            },
         }
 
     # --- the chronology of the case -----------------------------------------
