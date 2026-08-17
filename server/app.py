@@ -839,8 +839,31 @@ def create_app(config: Config) -> FastAPI:
     # server writes, shared by this route and the JSON export.
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
-    def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep):
-        return case_chain(case_dir_or_404(slug), lang, tz)
+    def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep,
+              limit: int = 80, offset: int = 0, order: str = "asc"):
+        """One page of the evidential chronology.
+
+        Pagination is a presentation concern, not an evidence gap: the
+        response therefore carries an exact total and never files events
+        beyond the current page as undated evidence.
+        """
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be between 1 and 200")
+        if offset < 0:
+            raise HTTPException(422, "offset must not be negative")
+        if order not in ("asc", "desc"):
+            raise HTTPException(422, "order must be asc or desc")
+
+        result = case_chain(case_dir_or_404(slug), lang, tz, event_cap=None)
+        complete = result["events"]
+        if order == "desc":
+            complete = list(reversed(complete))
+        result["events"] = complete[offset:offset + limit]
+        result["offset"] = offset
+        result["limit"] = limit
+        result["order"] = order
+        result["truncated"] = offset + len(result["events"]) < len(complete)
+        return result
 
     @app.get("/api/cases/{slug}/activity", dependencies=[auth])
     def activity(slug: str):

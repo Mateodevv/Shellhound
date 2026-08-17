@@ -405,6 +405,24 @@ class EndpointSurfaceTests(unittest.TestCase):
         status, _headers, _body = get("/api/yara/rules/not-a-rule-here")
         self.assertEqual(404, status)
 
+    def test_the_chronology_is_paged_and_can_start_with_the_newest(self):
+        status, _headers, raw = get(
+            f"/api/cases/{CASE}/chain?limit=2&offset=0&order=desc")
+        self.assertEqual(200, status)
+        body = json.loads(raw)
+        self.assertEqual("desc", body["order"])
+        self.assertEqual(2, body["limit"])
+        self.assertEqual(0, body["offset"])
+        self.assertLessEqual(len(body["events"]), 2)
+        times = [event["at"] for event in body["events"]]
+        self.assertEqual(sorted(times, reverse=True), times)
+        self.assertGreaterEqual(body["total_events"], len(body["events"]))
+
+    def test_the_chronology_rejects_unbounded_pages(self):
+        status, _headers, _body = get(
+            f"/api/cases/{CASE}/chain?limit=201")
+        self.assertEqual(422, status)
+
     def test_a_broken_yara_rule_names_the_compiler_error(self):
         status, _headers, raw = request(
             "PUT", "/api/yara/rules/compile-detail-test.yar",

@@ -12,11 +12,11 @@
 // "nothing is proven in between" is a statement of the case.
 import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  AlertTriangle, ArrowRight, CircleHelp, Clock, Crosshair, Database, DoorOpen,
-  FileWarning, LogIn, UserPlus,
+  AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleHelp, Clock, Crosshair,
+  Database, DoorOpen, FileWarning, LoaderCircle, LogIn, UserPlus,
 } from 'lucide-react'
 import { api, post, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
@@ -48,6 +48,8 @@ const SOURCE_KEY: Record<ChainEvent['source'], string> = {
   log: 'chain.source.log',
   dump: 'chain.source.dump',
 }
+
+const PAGE_SIZE = 80
 
 /** The clock alignment: an offset per source, set by the analyst.
  *
@@ -129,22 +131,32 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   const tr = useT()
   const [open, setOpen] = useState(true)
   const [clockOpen, setClockOpen] = useState(false)
-  const { data } = useQuery({
-    queryKey: ['chain', slug],
-    queryFn: () => api<ChainData>(`/api/cases/${slug}/chain`),
+  const [order, setOrder] = useState<'asc' | 'desc'>('asc')
+  const chain = useInfiniteQuery({
+    queryKey: ['chain', slug, order],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => api<ChainData>(
+      `/api/cases/${slug}/chain?limit=${PAGE_SIZE}&offset=${pageParam}&order=${order}`),
+    getNextPageParam: (last) => last.truncated
+      ? last.offset + last.events.length
+      : undefined,
   })
+  const data = chain.data?.pages[0]
   if (!data) return null
-  if (!data.events.length && !data.gaps.length && !data.undated.length) return null
+  const events = chain.data?.pages.flatMap((page) => page.events) ?? []
+  if (!events.length && !data.gaps.length && !data.undated.length) return null
 
-  const first = data.events[0]?.at ?? null
-  const last = data.events[data.events.length - 1]?.at ?? null
+  const first = data.event_span.first
+  const last = data.event_span.last
+  const total = data.total_events
+  const remaining = Math.max(0, total - events.length)
   const adjusted = data.offsets && (data.offsets.logs !== 0 || data.offsets.dump !== 0)
 
   return (
     <Collapsible
       open={open}
       onToggle={() => setOpen(!open)}
-      count={data.events.length || undefined}
+      count={total || undefined}
       title={
         <>
           {tr('chain.title')}
@@ -154,8 +166,8 @@ export function CaseChain({ slug, onOpen, onTrace }: {
             hint={tr('chain.title.hint')} />
         </>
       }
-      sub={data.events.length
-        ? tr('chain.sub', { n: data.events.length, confirmed: data.confirmed, span: formatSpan(first, last) })
+      sub={events.length
+        ? tr('chain.sub', { n: total, confirmed: data.confirmed, span: formatSpan(first, last) })
         : tr('chain.empty')}
       right={
         <div className="flex items-center gap-3">
@@ -163,7 +175,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
               own, so this is the only thing that says what they mean. A
               chronology whose times do not state their zone is one nobody
               can quote. */}
-          {data.events.length > 0 && (
+          {events.length > 0 && (
             data.tz_mixed
               ? <Tooltip hint={tr('time.mixed.hint')}>
                   <span className="inline-flex items-center gap-1 text-[11.5px] text-[var(--sev-low)]">
@@ -193,19 +205,47 @@ export function CaseChain({ slug, onOpen, onTrace }: {
           onClose={() => setClockOpen(false)} />
       )}
       <Card className="overflow-hidden">
-        {data.events.map((e, i) => {
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-4 py-2.5">
+          <div className="flex items-center gap-2 text-[12px] text-[var(--muted)]" role="status" aria-live="polite">
+            {chain.isFetching && (
+              <LoaderCircle size={13} className="animate-spin text-[var(--accent)]" />
+            )}
+            <span>{tr('chain.showing', { shown: events.length, total })}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1" aria-label={tr('common.sort')}>
+            <button type="button" aria-pressed={order === 'asc'}
+              onClick={() => setOrder('asc')}
+              className={clsx(
+                'inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                order === 'asc'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                  : 'border-transparent text-[var(--muted)] hover:border-[var(--line)] hover:text-[var(--fg)]')}>
+              <ArrowDown size={12} /> {tr('chain.sort.oldest')}
+            </button>
+            <button type="button" aria-pressed={order === 'desc'}
+              onClick={() => setOrder('desc')}
+              className={clsx(
+                'inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                order === 'desc'
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                  : 'border-transparent text-[var(--muted)] hover:border-[var(--line)] hover:text-[var(--fg)]')}>
+              <ArrowUp size={12} /> {tr('chain.sort.newest')}
+            </button>
+          </div>
+        </div>
+        {events.map((e, i) => {
           const Icon = KIND_ICON[e.kind] ?? CircleHelp
-          const prev = data.events[i - 1]
+          const prev = events[i - 1]
           // Same second = one moment, not two. The time then appears only
           // once, otherwise one observation reads like two.
           const sameMoment = prev?.at === e.at
-          const gapBefore = prev && e.at - prev.at > 3600
+          const gapBefore = prev && Math.abs(e.at - prev.at) > 3600
           return (
             <div key={i}>
               {gapBefore && (
                 <div className="flex items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-4 py-1 text-[11px] text-[var(--muted)]">
                   <span className="ml-[104px]">
-                    ↕ {formatSpan(prev.at, e.at)} {tr('chain.gap')}
+                    ↕ {formatSpan(Math.min(prev.at, e.at), Math.max(prev.at, e.at))} {tr('chain.gap')}
                   </span>
                 </div>
               )}
@@ -257,6 +297,20 @@ export function CaseChain({ slug, onOpen, onTrace }: {
             </div>
           )
         })}
+        {chain.hasNextPage && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-[var(--panel-2)] px-4 py-3">
+            <span className="text-[11.5px] text-[var(--muted)]">
+              {tr('chain.remaining', { n: remaining })}
+            </span>
+            <Button variant="default" disabled={chain.isFetchingNextPage}
+              onClick={() => chain.fetchNextPage()}>
+              {chain.isFetchingNextPage
+                ? <LoaderCircle size={13} className="animate-spin" />
+                : <ArrowDown size={13} />}
+              {tr('chain.loadMore', { n: Math.min(PAGE_SIZE, remaining) })}
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* What the case does NOT prove belongs in the report just as much as
