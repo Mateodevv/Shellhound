@@ -807,6 +807,28 @@ def create_app(config: Config) -> FastAPI:
             confirmed_severity = {r["worst"]: r["n"] for r in db.rows(
                 conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
                       f"FROM art WHERE triage = 'confirmed' GROUP BY worst")}
+            # A dashboard count without any names forces the analyst to leave
+            # the overview before it answers the basic question "what was
+            # confirmed?".  Keep the preview short, but balance it by entity
+            # type so a case with many client artifacts does not hide every
+            # confirmed file (or vice versa).
+            confirmed_artifacts = db.rows(conn, f"""
+                WITH art AS ({ART_SQL}), ranked AS (
+                    SELECT artifact, artifact_kind, worst,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artifact_kind
+                               ORDER BY worst, lower(artifact)
+                           ) AS kind_rank
+                    FROM art WHERE triage = 'confirmed'
+                )
+                SELECT artifact, artifact_kind, worst FROM ranked
+                ORDER BY kind_rank,
+                         CASE artifact_kind
+                           WHEN 'file' THEN 0 WHEN 'table' THEN 1
+                           WHEN 'dump' THEN 2 ELSE 3 END,
+                         worst, lower(artifact)
+                LIMIT 6
+            """)
             findings_total = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
@@ -869,6 +891,7 @@ def create_app(config: Config) -> FastAPI:
             "severity": severity, "triage": triage, "iocs": ioc_count,
             "confirmed_kinds": confirmed_kinds,
             "confirmed_severity": confirmed_severity,
+            "confirmed_artifacts": confirmed_artifacts,
             "findings_total": findings_total,
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,

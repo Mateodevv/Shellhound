@@ -12,7 +12,9 @@ All notable changes to SHELLHOUND. Format after
   launcher: it leads with confirmed artifacts, evidenced incident time,
   central observations, involved entities, log coverage and explicit evidence
   limitations. Next actions, case activity and report preparation stay out of
-  this surface.
+  this surface. Incident-time terms now explain their evidential meaning in
+  tooltips, and the confirmed-artifact card names a representative set of the
+  actual true positives instead of showing category totals alone.
 - The case shell is organised into **Prepare, Investigate and Finish**, keeps
   the case identity and triage progress visible, and offers the next useful
   action instead of returning to a passive dashboard.

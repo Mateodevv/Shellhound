@@ -430,6 +430,22 @@ class EndpointSurfaceTests(unittest.TestCase):
         confirmed = body["triage"].get("confirmed", 0)
         self.assertEqual(confirmed, sum(body["confirmed_kinds"].values()))
         self.assertEqual(confirmed, sum(body["confirmed_severity"].values()))
+        preview = body["confirmed_artifacts"]
+        self.assertLessEqual(len(preview), 6)
+        self.assertEqual(len(preview), len({
+            (item["artifact_kind"], item["artifact"]) for item in preview
+        }))
+        status, confirmed_body = get_json(
+            f"/api/cases/{CASE}/findings?"
+            "hide_triage=new%2Creviewed%2Cdismissed&limit=500")
+        self.assertEqual(200, status, confirmed_body)
+        confirmed_names = {
+            (item["artifact_kind"], item["artifact"])
+            for item in confirmed_body["artifacts"]
+        }
+        self.assertLessEqual({
+            (item["artifact_kind"], item["artifact"]) for item in preview
+        }, confirmed_names)
 
         chronology = body["chronology"]
         observations = chronology["observations"]

@@ -567,6 +567,12 @@ export interface DashboardObservation extends ChainEvent {
   role: 'first' | 'first_success' | 'account' | 'first_alert' | 'last'
 }
 
+export interface DashboardConfirmedArtifact {
+  artifact: string
+  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  worst: number
+}
+
 export interface DashboardChronology {
   total_events: number
   event_span: { first: number | null; last: number | null }
@@ -588,6 +594,8 @@ export interface Dashboard {
   /** Confirmed incident artifacts grouped by entity type and severity. */
   confirmed_kinds: Record<string, number>
   confirmed_severity: Record<string, number>
+  /** A type-balanced preview; the full confirmed queue remains in Findings. */
+  confirmed_artifacts: DashboardConfirmedArtifact[]
   findings_total: number
   iocs: number
   accounts: number
