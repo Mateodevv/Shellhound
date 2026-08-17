@@ -152,17 +152,17 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="CMS Inventory"
+        <Tooltip title={tr('nav.cms')}
           body={tr('cms.title.body')}
           hint={tr('cms.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">CMS Inventory</h1>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.cms')}</h1>
         </Tooltip>
         {typeCounts.map(([base, n]) => (
           <Tooltip key={base}
             hint={hiddenTypes.has(base)
               ? tr('cms.hidden')
               : tr('cms.type.hide')}>
-            <Chip active={false} dimmed={hiddenTypes.has(base)}
+            <Chip active={!hiddenTypes.has(base)} dimmed={hiddenTypes.has(base)}
               onClick={() => toggle(setHiddenTypes, base)} count={n}>
               {base}
             </Chip>
@@ -170,13 +170,13 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         ))}
         {typeCounts.length > 0 && <span className="mx-1 h-4 w-px bg-[var(--line)]" />}
         <Tooltip hint={tr('cms.hideVersioned')}>
-          <Chip active={false} dimmed={hiddenVersion.has('known')}
+          <Chip active={!hiddenVersion.has('known')} dimmed={hiddenVersion.has('known')}
             onClick={() => toggle(setHiddenVersion, 'known')} count={versionCounts.known}>
             {tr('cms.withVersion')}
           </Chip>
         </Tooltip>
         <Tooltip hint={tr('field.unknown_version')}>
-          <Chip active={false} dimmed={hiddenVersion.has('unknown')}
+          <Chip active={!hiddenVersion.has('unknown')} dimmed={hiddenVersion.has('unknown')}
             onClick={() => toggle(setHiddenVersion, 'unknown')} count={versionCounts.unknown}>
             <TriangleAlert size={12} /> {tr('cms.withoutVersion')}
           </Chip>

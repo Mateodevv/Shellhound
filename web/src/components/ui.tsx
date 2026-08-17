@@ -136,6 +136,7 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   return (
     <button
       onClick={onClick}
+      aria-pressed={!dimmed}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
         'transition-colors duration-150 cursor-pointer',
@@ -175,6 +176,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       onMouseLeave={onMouseLeave}
       disabled={disabled}
       title={title}
+      aria-label={title}
       style={style}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',

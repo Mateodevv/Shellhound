@@ -1,52 +1,49 @@
 // Dashboard.tsx — the case at a glance: severity tiles, coverage chart,
 // live jobs, evidence status.
 import { useT } from '../i18n'
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, FileText, Server } from 'lucide-react'
-import { api, downloadUrl, type CaseDetail, type Dashboard as DashboardData } from '../api'
-import { formatCount, formatDay, type EvidenceRoot } from '../format'
+import { api, downloadUrl, type Dashboard as DashboardData } from '../api'
+import { formatCount, formatDay } from '../format'
 import { Card, ProgressBar, Section, StatTile, Tag } from '../components/ui'
 import { TimelineChart } from '../components/TimelineChart'
-import { CaseChain } from '../components/CaseChain'
 import { LogCoverage } from '../components/LogCoverage'
 import { GeoBanner } from '../components/GeoBanner'
 import { EnrichmentBanners } from '../components/SetupBanners'
-import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { FileViewer } from '../components/FileViewer'
-import { TriageFollowUp } from '../components/triage'
-import { useTriage } from '../components/useTriage'
-import type { ViewId } from '../App'
+import type { Navigate } from '../App'
 
-export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
+export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const tr = useT()
-  // From the chronology one should be able to do the same as everywhere:
-  // open the artifact, trace the client. A timeline from which one cannot
-  // jump into the evidence is a list of claims.
-  const [selected, setSelected] = useState<ArtifactStub | null>(null)
-  const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
-  const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
-  const t = useTriage(slug)
-
   const { data } = useQuery({
     queryKey: ['dashboard', slug],
     queryFn: () => api<DashboardData>(`/api/cases/${slug}/dashboard`),
     refetchInterval: 10000,
   })
-  const { data: caseInfo } = useQuery({
-    queryKey: ['case', slug],
-    queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
-  })
-  const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
-    kind: e.kind, path: e.path, label: e.label,
-  }))
   if (!data) return <div className="py-16 text-center text-[var(--muted)] animate-pulse-soft">{tr('dashboard.loading')}</div>
 
   const sev = data.severity
   const triage = data.triage
   const noEvidence = !data.evidence.length
+  const nextActions = [
+    noEvidence ? {
+      label: tr('dashboard.action.evidence'), detail: tr('dashboard.action.evidence.sub'),
+      go: () => gotoView('evidence'), tone: 'var(--accent)',
+    } : null,
+    (triage.new ?? 0) > 0 ? {
+      label: tr('dashboard.action.new', { n: formatCount(triage.new ?? 0) }),
+      detail: tr('dashboard.action.new.sub'),
+      go: () => gotoView('findings', { triage: 'new' }), tone: 'var(--sev-high)',
+    } : null,
+    (triage.reviewed ?? 0) > 0 ? {
+      label: tr('dashboard.action.reviewed', { n: formatCount(triage.reviewed ?? 0) }),
+      detail: tr('dashboard.action.reviewed.sub'),
+      go: () => gotoView('findings', { triage: 'reviewed' }), tone: 'var(--sev-medium)',
+    } : null,
+    (triage.confirmed ?? 0) > 0 ? {
+      label: tr('dashboard.action.report'), detail: tr('dashboard.action.report.sub'),
+      go: () => gotoView('report'), tone: 'var(--ok)',
+    } : null,
+  ].filter((action): action is NonNullable<typeof action> => action != null)
 
   return (
     <div className="flex flex-col gap-6">
@@ -77,6 +74,24 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
       <GeoBanner onOpenSettings={() => gotoView('settings')} />
       <EnrichmentBanners onOpenSettings={() => gotoView('settings')} />
 
+      {nextActions.length > 0 && (
+        <Section title={tr('dashboard.nextActions')} sub={tr('dashboard.nextActions.sub')}>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {nextActions.slice(0, 3).map((action) => (
+              <button key={action.label} onClick={action.go}
+                className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4 text-left transition-colors hover:border-[var(--accent)]/60 hover:bg-[var(--panel-2)]">
+                <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: action.tone }} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold">{action.label}</span>
+                  <span className="mt-0.5 block text-[11.5px] text-[var(--muted)]">{action.detail}</span>
+                </span>
+                <ArrowRight size={15} className="shrink-0 text-[var(--muted)]" />
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {data.jobs_running.length > 0 && (
         <Card className="px-4 py-3 animate-fade-up">
           <div className="mb-2 text-[13px] font-semibold">{tr('dashboard.running')}</div>
@@ -97,16 +112,20 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
           <StatTile label={tr('dashboard.high')} value={formatCount(sev['0'] ?? 0)}
             info={tr('dashboard.high.info')}
-            sub={tr('dashboard.artifacts')} tone="var(--sev-high)" onClick={() => gotoView('findings')} />
+            sub={tr('dashboard.artifacts')} tone="var(--sev-high)"
+            onClick={() => gotoView('findings', { severity: '0' })} />
           <StatTile label={tr('dashboard.medium')} value={formatCount(sev['1'] ?? 0)}
             info={tr('dashboard.medium.info')}
-            sub={tr('dashboard.artifacts')} tone="var(--sev-medium)" onClick={() => gotoView('findings')} />
+            sub={tr('dashboard.artifacts')} tone="var(--sev-medium)"
+            onClick={() => gotoView('findings', { severity: '1' })} />
           <StatTile label={tr('dashboard.low')} value={formatCount(sev['2'] ?? 0)}
             info={tr('dashboard.low.info')}
-            sub={tr('dashboard.artifacts')} tone="var(--sev-low)" onClick={() => gotoView('findings')} />
+            sub={tr('dashboard.artifacts')} tone="var(--sev-low)"
+            onClick={() => gotoView('findings', { severity: '2' })} />
           <StatTile label={tr('dashboard.truePositive')} value={formatCount(triage['confirmed'] ?? 0)}
             info={tr('dashboard.confirmed.info')}
-            sub={tr('dashboard.confirmed.sub')} onClick={() => gotoView('findings')} />
+            sub={tr('dashboard.confirmed.sub')}
+            onClick={() => gotoView('findings', { triage: 'confirmed' })} />
           <StatTile label={tr('dashboard.iocs')} value={formatCount(data.iocs)}
             info={tr('dashboard.iocs.info')}
             sub={tr('dashboard.iocs.sub')} onClick={() => gotoView('iocbox')} />
@@ -148,16 +167,16 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
       )}
 
       <LogCoverage slug={slug} />
-
-      <CaseChain slug={slug}
-        onOpen={(artifact, kind) => setSelected({
-          artifact,
-          artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
-          // The chain only ever shows confirmed artifacts; everything else
-          // the window fetches itself through the context endpoint.
-          worst: 0, triage: 'confirmed', triage_note: '',
-        })}
-        onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
+      <Card className="flex items-center justify-between gap-3 px-4 py-3">
+        <div>
+          <div className="text-[13px] font-semibold">{tr('dashboard.timeline.title')}</div>
+          <div className="text-[11.5px] text-[var(--muted)]">{tr('dashboard.timeline.sub')}</div>
+        </div>
+        <button onClick={() => gotoView('timeline')}
+          className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[12.5px] font-semibold text-[var(--accent-text)] hover:underline">
+          {tr('dashboard.timeline.open')} <ArrowRight size={14} />
+        </button>
+      </Card>
 
       {data.cms_installs.length > 0 && (
         <Section title={tr('dashboard.installs')} sub={tr('dashboard.installs.sub')}>
@@ -183,28 +202,6 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: (v: View
         </Section>
       )}
 
-      <ArtifactWindow
-        slug={slug}
-        artifact={selected}
-        roots={roots}
-        collected={t.collected}
-        onView={(path, line) => setViewing({ path, line })}
-        onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
-        onClose={() => { setSelected(null); t.clearCollected() }}
-        onTriage={(state, note) => {
-          if (selected) t.decide([selected.artifact], state, note)
-        }}
-      />
-      <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
-        onClose={() => setTraceIps(null)} />
-      <FileViewer
-        slug={slug}
-        path={viewing?.path ?? null}
-        focusLine={viewing?.line ?? null}
-        layer={2}
-        onClose={() => setViewing(null)}
-      />
-      <TriageFollowUp t={t} roots={roots} />
     </div>
   )
 }

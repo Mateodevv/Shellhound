@@ -339,6 +339,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               {!shipped && (
                 <Tooltip hint={tr('hunt.edit.hint')}>
                   <button
+                    aria-label={tr('hunt.edit.hint')}
                     className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                     onClick={() => setEditing(p.id)}>
                     <PencilLine size={14} />
@@ -349,6 +350,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                 <Tooltip hint={p.enabled ? tr('hunt.disable.hint')
                                          : tr('hunt.enable.hint')}>
                   <button
+                    aria-label={p.enabled ? tr('hunt.disable.hint') : tr('hunt.enable.hint')}
                     className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                     onClick={() => toggle.mutate({ id: p.id, enabled: !p.enabled })}>
                     {p.enabled ? <ToggleRight size={16} className="text-[var(--accent)]" />
@@ -358,6 +360,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
               ) : (
                 <Tooltip hint={tr('hunt.delete.hint')}>
                   <button
+                    aria-label={tr('hunt.delete.hint')}
                     className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
                     onClick={() => remove.mutate(p.id)}>
                     <Trash2 size={14} />

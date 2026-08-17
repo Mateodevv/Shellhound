@@ -4,7 +4,7 @@
 // it renders <TriageFollowUp> once.
 import { plural, useT } from '../i18n'
 import { useEffect, useState } from 'react'
-import { Bug, Check, Crosshair, Undo2, X } from 'lucide-react'
+import { Box, Bug, Check, Crosshair, Trash2, Undo2, X } from 'lucide-react'
 import { type TriageLink } from '../api'
 import { formatCount, relativeToRoot, type EvidenceRoot } from '../format'
 import { Button, Modal, Toast, TriageBadge } from './ui'
@@ -19,10 +19,11 @@ function shortArtifact(artifact: string): string {
 
 /** Message plus suggestion window for a decision. Render once per view;
  *  `layer` lifts the suggestion window above an open artifact window. */
-export function TriageFollowUp({ t, roots, layer = 1 }: {
+export function TriageFollowUp({ t, roots, layer = 1, onOpenIocs }: {
   t: TriageController
   roots: EvidenceRoot[]
   layer?: number
+  onOpenIocs?: () => void
 }) {
   const tr = useT()
   const n = t.notice
@@ -59,6 +60,31 @@ export function TriageFollowUp({ t, roots, layer = 1 }: {
           </Button>
         }>
         {tr('triage.nothingRecorded')}
+      </Toast>
+
+      <Toast open={!!t.retained} onClose={t.keepRetained} tone="info"
+        title={tr('triage.retained.title', { n: formatCount(t.retained?.length ?? 0) })}
+        actions={<>
+          {onOpenIocs && (
+            <Button onClick={() => { t.keepRetained(); onOpenIocs() }}>
+              <Box size={14} /> {tr('triage.retained.review')}
+            </Button>
+          )}
+          {!!t.retained?.some((ioc) => ioc.removable) && (
+            <Button variant="danger" onClick={() => t.removeRetained()}>
+              <Trash2 size={14} /> {tr('triage.retained.remove', {
+                n: formatCount(t.retained.filter((ioc) => ioc.removable).length),
+              })}
+            </Button>
+          )}
+          <Button variant="ghost" onClick={t.keepRetained}>{tr('triage.retained.keep')}</Button>
+        </>}>
+        <p>{tr('triage.retained.body')}</p>
+        <ul className="mt-1 flex flex-col gap-0.5">
+          {t.retained?.slice(0, 4).map((ioc) => (
+            <li key={ioc.id} className="mono truncate text-[11.5px]">{ioc.value}</li>
+          ))}
+        </ul>
       </Toast>
 
       <Toast

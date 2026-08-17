@@ -220,6 +220,7 @@ function DetectionRules() {
                       {readable && (
                         <Tooltip hint={tr('settings.rules.show.hint')}>
                           <button
+                            aria-label={tr('settings.rules.show.hint')}
                             className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
                             onClick={() => setShown((prev) => {
                               const next = new Set(prev)
@@ -234,6 +235,7 @@ function DetectionRules() {
                       <Tooltip hint={r.enabled ? tr('settings.rules.off.hint')
                                                : tr('settings.rules.on.hint')}>
                         <button
+                          aria-label={r.enabled ? tr('settings.rules.off.hint') : tr('settings.rules.on.hint')}
                           className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
                           onClick={() => toggle.mutate({ id: r.id, enabled: !r.enabled })}>
                           {r.enabled ? <ToggleRight size={17} className="text-[var(--accent)]" />
@@ -404,6 +406,7 @@ function YaraRules() {
             </div>
             <Tooltip hint={tr('settings.yara.edit.hint')}>
               <button
+                aria-label={tr('settings.yara.edit.hint')}
                 className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
                 onClick={() => { setEditing(r.name); setCreating(false) }}>
                 <PencilLine size={15} />
@@ -412,6 +415,7 @@ function YaraRules() {
             <Tooltip hint={r.enabled ? tr('settings.yara.off.hint')
                                      : tr('settings.yara.on.hint')}>
               <button
+                aria-label={r.enabled ? tr('settings.yara.off.hint') : tr('settings.yara.on.hint')}
                 className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--accent)]"
                 onClick={() => toggle.mutate({ name: r.name, enabled: !r.enabled })}>
                 {r.enabled ? <ToggleRight size={17} className="text-[var(--accent)]" />
@@ -420,6 +424,7 @@ function YaraRules() {
             </Tooltip>
             <Tooltip hint={tr('settings.yara.delete.hint')}>
               <button
+                aria-label={tr('settings.yara.delete.hint')}
                 className="shrink-0 cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--danger-soft)] hover:text-[var(--danger-text)]"
                 onClick={() => remove.mutate(r.name)}>
                 <Trash2 size={15} />

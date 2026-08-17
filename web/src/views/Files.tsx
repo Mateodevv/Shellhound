@@ -280,6 +280,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
               </span>
               <Tooltip hint={tr('findings.viewFile.hint')}>
                 <button
+                  aria-label={tr('findings.viewFile.hint')}
                   className="shrink-0 cursor-pointer rounded p-1 text-[var(--muted)] opacity-0 transition-opacity hover:text-[var(--accent)] group-hover:opacity-100"
                   onClick={() => setViewing({ path: f.path, line: null })}>
                   <FileSearch size={15} />
