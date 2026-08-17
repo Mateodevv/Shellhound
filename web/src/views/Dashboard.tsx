@@ -13,9 +13,13 @@ import {
   HardDrive, Radar, ShieldCheck, Users,
 } from 'lucide-react'
 import { api, type Dashboard as DashboardData } from '../api'
-import { formatCount, formatDay, formatLogTime, formatSpan } from '../format'
+import {
+  formatCount, formatDay, formatLogTime, formatSpan, relativeToRoot,
+  SEVERITY_LABEL, SEVERITY_VAR, shortPath,
+} from '../format'
 import { KIND_ICON } from '../artifactKinds'
 import { Card, EmptyState, Section, Tag } from '../components/ui'
+import { InfoDot, Tooltip } from '../components/Tooltip'
 import { TimelineChart } from '../components/TimelineChart'
 import { LogCoverage } from '../components/LogCoverage'
 import type { Navigate } from '../App'
@@ -62,15 +66,34 @@ function Metric({ label, value, sub, icon, onClick, tone }: {
     : <div className={classes}>{content}</div>
 }
 
-function TimeFact({ label, at }: { label: string; at?: number | null }) {
+function TimeFact({ label, at, explanation }: {
+  label: string
+  at?: number | null
+  explanation: { title: string; body: string; hint?: string }
+}) {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-[var(--line-soft)] py-2 last:border-0">
-      <span className="text-[12px] text-[var(--muted)]">{label}</span>
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--muted)]">
+        {label}
+        <InfoDot {...explanation} wide />
+      </span>
       <span className="mono shrink-0 text-[12px] tabular">
         {at ? formatLogTime(at, 0).slice(0, 16) : '—'}
       </span>
     </div>
   )
+}
+
+function artifactLabel(
+  item: DashboardData['confirmed_artifacts'][number],
+  evidence: DashboardData['evidence'],
+) {
+  if (item.artifact_kind === 'file') {
+    const { root, rel } = relativeToRoot(item.artifact, evidence)
+    return root ? rel : shortPath(item.artifact, 64)
+  }
+  if (item.artifact_kind === 'dump') return shortPath(item.artifact, 64)
+  return item.artifact
 }
 
 export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
@@ -158,12 +181,31 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
               <span className="inline-flex items-center gap-2 text-[12px] font-semibold">
                 <CalendarClock size={14} className="text-[var(--accent)]" />
                 {formatSpan(chronology.event_span.first, chronology.event_span.last)}
+                <InfoDot wide
+                  title={tr('dashboard.incidentTime.spanTooltip.title')}
+                  body={tr('dashboard.incidentTime.spanTooltip.body')}
+                  hint={tr('dashboard.incidentTime.spanTooltip.hint')} />
               </span>
               {zone && <span className="text-[10.5px] text-[var(--muted)]">{tr('time.zone', { zone })}</span>}
             </div>
-            <TimeFact label={tr('dashboard.incidentTime.first')} at={chronology.event_span.first} />
-            <TimeFact label={tr('dashboard.incidentTime.firstSuccess')} at={chronology.first_success_at} />
-            <TimeFact label={tr('dashboard.incidentTime.last')} at={chronology.event_span.last} />
+            <TimeFact label={tr('dashboard.incidentTime.first')} at={chronology.event_span.first}
+              explanation={{
+                title: tr('dashboard.incidentTime.firstTooltip.title'),
+                body: tr('dashboard.incidentTime.firstTooltip.body'),
+                hint: tr('dashboard.incidentTime.firstTooltip.hint'),
+              }} />
+            <TimeFact label={tr('dashboard.incidentTime.firstSuccess')} at={chronology.first_success_at}
+              explanation={{
+                title: tr('dashboard.incidentTime.successTooltip.title'),
+                body: tr('dashboard.incidentTime.successTooltip.body'),
+                hint: tr('dashboard.incidentTime.successTooltip.hint'),
+              }} />
+            <TimeFact label={tr('dashboard.incidentTime.last')} at={chronology.event_span.last}
+              explanation={{
+                title: tr('dashboard.incidentTime.lastTooltip.title'),
+                body: tr('dashboard.incidentTime.lastTooltip.body'),
+                hint: tr('dashboard.incidentTime.lastTooltip.hint'),
+              }} />
             <button onClick={() => gotoView('timeline')}
               className="mt-3 inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-[var(--accent-text)] hover:underline">
               {tr('dashboard.timeline.open')} <ArrowRight size={13} />
@@ -226,27 +268,51 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
               <span><b className="text-[var(--sev-low)]">{formatCount(low)}</b> LOW</span>
               <span><b>{formatCount(info)}</b> INFO</span>
             </div>
-            <div className="flex flex-1 flex-col">
+            <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 border-b border-[var(--line-soft)] pb-2 text-[10.5px] text-[var(--muted)]">
               {KIND_ORDER.map((kind) => {
                 const count = data.confirmed_kinds[kind] ?? 0
-                if (!count) return null
-                const Icon = KIND_ICON[kind]
+                return count > 0 && <span key={kind}>{formatCount(count)} {tr(`kind.${kind}.many`)}</span>
+              })}
+            </div>
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)]">
+              {tr('dashboard.entities.confirmedEntries')}
+              <InfoDot wide
+                title={tr('dashboard.entities.confirmedEntriesTooltip.title')}
+                body={tr('dashboard.entities.confirmedEntriesTooltip.body')}
+                hint={tr('dashboard.entities.confirmedEntriesTooltip.hint')} />
+            </div>
+            <div className="flex flex-1 flex-col">
+              {data.confirmed_artifacts.map((item) => {
+                const Icon = KIND_ICON[item.artifact_kind]
                 return (
-                  <button key={kind} type="button"
-                    onClick={() => kind === 'client'
-                      ? gotoView('actors')
-                      : kind === 'table' || kind === 'dump'
-                        ? gotoView('database')
-                        : gotoView('findings', { triage: 'confirmed' })}
-                    className="flex cursor-pointer items-center justify-between gap-2 rounded-md px-1 py-1.5 text-[12px] hover:bg-[var(--panel-2)]">
-                    <span className="inline-flex items-center gap-2 text-[var(--muted)]">
-                      <Icon size={13} /> {tr(`kind.${kind}.many`)}
+                  <button key={`${item.artifact_kind}-${item.artifact}`} type="button"
+                    onClick={() => gotoView('findings', {
+                      triage: 'confirmed', artifact: item.artifact,
+                    })}
+                    className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-[var(--panel-2)]">
+                    <Icon size={13} className="shrink-0 text-[var(--muted)]" />
+                    <Tooltip wide className="min-w-0 flex-1"
+                      title={tr(`kind.${item.artifact_kind}.one`)}
+                      body={<span className="mono break-all">{item.artifact}</span>}>
+                      <span className="mono block min-w-0 truncate text-[11.5px] font-medium">
+                        {artifactLabel(item, data.evidence)}
+                      </span>
+                    </Tooltip>
+                    <span className="shrink-0 text-[9.5px] font-semibold"
+                      style={{ color: SEVERITY_VAR[item.worst] }}>
+                      {SEVERITY_LABEL[item.worst]}
                     </span>
-                    <span className="font-semibold tabular">{formatCount(count)}</span>
                   </button>
                 )
               })}
             </div>
+            {confirmed > data.confirmed_artifacts.length && (
+              <button type="button" onClick={() => gotoView('findings', { triage: 'confirmed' })}
+                className="mt-2 inline-flex cursor-pointer items-center gap-1 text-[11.5px] font-semibold text-[var(--accent-text)] hover:underline">
+                {tr('dashboard.entities.openConfirmed', { n: formatCount(confirmed) })}
+                <ArrowRight size={12} />
+              </button>
+            )}
           </Card>
 
           <Card className="flex flex-col px-4 py-3">
