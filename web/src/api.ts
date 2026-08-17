@@ -563,11 +563,31 @@ export interface DbAccount {
   in_box: boolean
 }
 
+export interface DashboardObservation extends ChainEvent {
+  role: 'first' | 'first_success' | 'account' | 'first_alert' | 'last'
+}
+
+export interface DashboardChronology {
+  total_events: number
+  event_span: { first: number | null; last: number | null }
+  /** Kept separately because the first event may itself be the first success. */
+  first_success_at: number | null
+  observations: DashboardObservation[]
+  gaps: string[]
+  undated: number
+  zone: string
+  tz_offsets: string[]
+  tz_mixed: boolean
+}
+
 export interface Dashboard {
   /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
   severity: Record<string, number>
   /** Artefakte je Entscheidung. */
   triage: Record<string, number>
+  /** Confirmed incident artifacts grouped by entity type and severity. */
+  confirmed_kinds: Record<string, number>
+  confirmed_severity: Record<string, number>
   findings_total: number
   iocs: number
   accounts: number
@@ -588,6 +608,7 @@ export interface Dashboard {
     /** Answered with 2xx; null on an index from before schema 3. */
     ok: number | null
   }[]
+  chronology: DashboardChronology
 }
 
 export interface CaseSummary {

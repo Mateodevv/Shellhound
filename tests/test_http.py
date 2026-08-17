@@ -423,6 +423,28 @@ class EndpointSurfaceTests(unittest.TestCase):
             f"/api/cases/{CASE}/chain?limit=201")
         self.assertEqual(422, status)
 
+    def test_the_dashboard_summarises_confirmed_evidence_and_measured_time(self):
+        status, body = get_json(f"/api/cases/{CASE}/dashboard")
+        self.assertEqual(200, status, body)
+
+        confirmed = body["triage"].get("confirmed", 0)
+        self.assertEqual(confirmed, sum(body["confirmed_kinds"].values()))
+        self.assertEqual(confirmed, sum(body["confirmed_severity"].values()))
+
+        chronology = body["chronology"]
+        observations = chronology["observations"]
+        self.assertGreaterEqual(chronology["total_events"], len(observations))
+        self.assertEqual(sorted(event["at"] for event in observations),
+                         [event["at"] for event in observations])
+        self.assertLessEqual(
+            set(event["role"] for event in observations),
+            {"first", "first_success", "account", "first_alert", "last"})
+        if chronology["first_success_at"] is not None:
+            self.assertTrue(any(
+                event["kind"] == "erfolg"
+                and event["at"] == chronology["first_success_at"]
+                for event in observations))
+
     def test_a_broken_yara_rule_names_the_compiler_error(self):
         status, _headers, raw = request(
             "PUT", "/api/yara/rules/compile-detail-test.yar",
