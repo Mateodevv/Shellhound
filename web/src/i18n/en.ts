@@ -125,8 +125,8 @@ export const en: Record<string, string> = {
   'evidence.candidates': '{n} evidence candidates detected',
   'evidence.applyAll': 'Apply all',
   'evidence.allCandidatesApplied': 'All detected candidates are registered.',
-  'dashboard.timeline.title': 'Full chronology and activity log',
-  'dashboard.timeline.sub': 'Open the dedicated workspace for incident time, evidence gaps and analyst actions.',
+  'dashboard.timeline.title': 'Full investigation chronology',
+  'dashboard.timeline.sub': 'Open the dedicated workspace for incident time, confirmed observations and evidence gaps.',
   'dashboard.timeline.open': 'Open timeline',
   'nav.currentView': 'Current workspace view',
 

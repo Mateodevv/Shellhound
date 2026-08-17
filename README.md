@@ -184,11 +184,11 @@ The current queue is linkable: view, severity, triage, source, search and the
 open artifact survive refresh and browser back. Frequently used combinations
 can be named and stored as saved views in the browser.
 
-### Chronology and activity
+### Chronology
 
-The dedicated timeline keeps two clocks apart: case activity records scans,
-hunts and analyst decisions; the incident chronology orders confirmed
-artifacts in evidential time, every line naming its source. It orders
+The dedicated timeline orders confirmed artifacts in evidential time, every
+line naming its source. It stays focused on incident evidence: scans, hunts
+and analyst actions are not mixed into the incident chronology. It orders
 observations and derives no causes.
 
 ![Chronology](assets/docs/chronology.png)
