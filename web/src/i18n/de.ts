@@ -120,8 +120,8 @@ export const de: Record<string, string> = {
   'evidence.candidates': '{n} Beweismittel-Kandidaten erkannt',
   'evidence.applyAll': 'Alle übernehmen',
   'evidence.allCandidatesApplied': 'Alle erkannten Kandidaten sind registriert.',
-  'dashboard.timeline.title': 'Vollständige Chronologie und Aktivitätsprotokoll',
-  'dashboard.timeline.sub': 'Öffne den eigenen Arbeitsbereich für Vorfallzeit, Beweislücken und Analystenaktionen.',
+  'dashboard.timeline.title': 'Vollständige Untersuchungs-Chronologie',
+  'dashboard.timeline.sub': 'Öffne den eigenen Arbeitsbereich für Vorfallzeit, bestätigte Beobachtungen und Beweislücken.',
   'dashboard.timeline.open': 'Chronologie öffnen',
   'nav.currentView': 'Aktueller Arbeitsbereich',
 
