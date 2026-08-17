@@ -194,7 +194,14 @@ def _table(headers, rows, empty):
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
-def render(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> str:
+REPORT_SECTIONS = {
+    "notes", "evidence", "decisions", "chronology", "limitations",
+    "indicators", "hunts", "cross",
+}
+
+
+def render(case_dir: Path, lang="en", tz_mode="log", cross_case=None,
+           sections=None) -> str:
     data = collect(case_dir, lang, tz_mode, cross_case)
     w = WORDS[data["lang"]]
     info, summary = data["info"], data["summary"]
@@ -255,6 +262,40 @@ def render(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> str:
         f'<div class="card"><strong>{_e(value)}</strong><span>{_e(label)}</span></div>'
         for label, value in cards)
     case_notes = _e(info.get("notes") or "—").replace("\n", "<br>")
+    enabled = REPORT_SECTIONS if sections is None else (
+        {str(item) for item in sections} & REPORT_SECTIONS)
+    blocks = []
+    if "notes" in enabled:
+        blocks.append(f'<h2>{_e(w["notes"])}</h2><p>{case_notes}</p>')
+    if "evidence" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["evidence"])}</h2><p class="quiet">'
+            f'{_e(w["no_hash"])}</p>'
+            f'{_table((w["source"],w["kind"],w["files"],w["bytes"],w["scanned"]), evidence_rows, w["none"])}')
+    if "decisions" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["decisions"])}</h2>'
+            f'{_table((w["artifact"],w["kind"],w["severity"],w["rules"],w["decision_note"]), decision_rows, w["none"])}')
+    if "chronology" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["chronology"])}</h2><p class="quiet">'
+            f'{_e(w["zone"])}: {_e(zone)}</p>'
+            f'{_table((w["time"],w["event"],w["detail"],w["source"]), event_rows, w["none"])}')
+    if "limitations" in enabled:
+        blocks.append(f'<h2>{_e(w["limitations"])}</h2>{limitations_html}')
+    if "indicators" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["indicators"])}</h2>'
+            f'{_table((w["value"],w["type"],w["tags"],w["notes"],w["origin"],w["related"]), ioc_rows, w["none"])}')
+    if "hunts" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["hunts"])}</h2>'
+            f'{_table((w["pattern"],w["ran"],w["hits"],w["clients"]), hunt_rows, w["none"])}')
+    if "cross" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["cross"])}</h2>'
+            f'{_table((w["value"],w["type"],w["case"],w["reference"]), cross_rows, w["none"])}')
+    sections_html = "\n".join(blocks)
 
     return f'''<!doctype html>
 <html lang="{data["lang"]}"><head><meta charset="utf-8">
@@ -273,18 +314,12 @@ ul{{padding-left:22px}} code{{font-family:ui-monospace,monospace}} footer{{margi
 </style></head><body>
 <header><h1>{_e(info["name"])}</h1><div class="meta">{_e(w["report"])} · {_e(w["reference"])}: {_e(info.get("reference") or "—")} · {_e(w["generated"])}: {_e(data["generated"])}</div></header>
 <div class="cards">{card_html}</div>
-<h2>{_e(w["notes"])}</h2><p>{case_notes}</p>
-<h2>{_e(w["evidence"])}</h2><p class="quiet">{_e(w["no_hash"])}</p>{_table((w["source"],w["kind"],w["files"],w["bytes"],w["scanned"]), evidence_rows, w["none"])}
-<h2>{_e(w["decisions"])}</h2>{_table((w["artifact"],w["kind"],w["severity"],w["rules"],w["decision_note"]), decision_rows, w["none"])}
-<h2>{_e(w["chronology"])}</h2><p class="quiet">{_e(w["zone"])}: {_e(zone)}</p>{_table((w["time"],w["event"],w["detail"],w["source"]), event_rows, w["none"])}
-<h2>{_e(w["limitations"])}</h2>{limitations_html}
-<h2>{_e(w["indicators"])}</h2>{_table((w["value"],w["type"],w["tags"],w["notes"],w["origin"],w["related"]), ioc_rows, w["none"])}
-<h2>{_e(w["hunts"])}</h2>{_table((w["pattern"],w["ran"],w["hits"],w["clients"]), hunt_rows, w["none"])}
-<h2>{_e(w["cross"])}</h2>{_table((w["value"],w["type"],w["case"],w["reference"]), cross_rows, w["none"])}
+{sections_html}
 <footer>{_e(w["tool"])}: {_e(data["version"])} · SHA-256 is returned in the HTTP <code>X-Content-SHA256</code> header.</footer>
 </body></html>'''
 
 
-def render_bytes(case_dir: Path, lang="en", tz_mode="log", cross_case=None):
-    body = render(case_dir, lang, tz_mode, cross_case).encode("utf-8")
+def render_bytes(case_dir: Path, lang="en", tz_mode="log", cross_case=None,
+                 sections=None):
+    body = render(case_dir, lang, tz_mode, cross_case, sections).encode("utf-8")
     return body, hashlib.sha256(body).hexdigest()

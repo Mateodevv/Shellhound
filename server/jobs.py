@@ -83,14 +83,15 @@ class JobManager:
         self.live = {}          # (case_dir, job_id) -> JobContext
         self._lock = threading.Lock()
 
-    def submit(self, case_dir, kind, fn, evidence_id=None):
+    def submit(self, case_dir, kind, fn, evidence_id=None, run_id=""):
         """Queue `fn(ctx)` as a job. fn returns a stats dict (stored as JSON)
         and may raise -- the traceback lands in the job row, never in a 500."""
         conn = db.connect(case_dir)
         try:
             cur = conn.execute(
-                "INSERT INTO jobs (kind, evidence_id, state, created) "
-                "VALUES (?,?, 'queued', ?)", (kind, evidence_id, db.now()))
+                "INSERT INTO jobs (kind, evidence_id, state, created, run_id) "
+                "VALUES (?,?, 'queued', ?, ?)",
+                (kind, evidence_id, db.now(), str(run_id or "")))
             job_id = cur.lastrowid
             conn.commit()
         finally:

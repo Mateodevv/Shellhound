@@ -148,7 +148,7 @@ export function WebrootDiff({ slug, evidence, onView }: {
               <Tooltip key={s} title={tr(STATUS_KEY[s])} body={tr(`${STATUS_KEY[s]}.hint`)}
                 hint={hidden.has(s) ? tr('filter.hidden.back')
                                     : tr('diff.filter.hide')}>
-                <Chip active={false} dimmed={hidden.has(s)} count={counts[s]}
+                <Chip active={!hidden.has(s)} dimmed={hidden.has(s)} count={counts[s]}
                   onClick={() => setHidden((prev) => {
                     const next = new Set(prev)
                     if (next.has(s)) next.delete(s)

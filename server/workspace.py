@@ -88,6 +88,37 @@ def case_info(case_dir):
     return info
 
 
+def update_case(case_dir, *, name=None, reference=None, notes=None):
+    """Update the human-owned case identity, atomically on disk and in DB."""
+    case_dir = Path(case_dir)
+    path = case_dir / CASE_FILE
+    identity = {"name": case_dir.name, "reference": "", "notes": "",
+                "created": ""}
+    try:
+        identity.update(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    for key, value in (("name", name), ("reference", reference),
+                       ("notes", notes)):
+        if value is not None:
+            identity[key] = str(value).strip() if key != "notes" else str(value)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(identity, indent=2, ensure_ascii=False),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+    conn = db.connect(case_dir)
+    try:
+        conn.executemany(
+            "INSERT INTO meta (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [(key, identity.get(key, "")) for key in
+             ("name", "reference", "notes", "created")])
+        conn.commit()
+    finally:
+        conn.close()
+    return case_info(case_dir)
+
+
 def list_cases(workspace):
     workspace = Path(workspace)
     if not workspace.is_dir():

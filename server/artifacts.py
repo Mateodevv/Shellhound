@@ -120,8 +120,15 @@ def counts(conn):
             conn, f"WITH art AS ({ART_SQL}) "
                   f"SELECT {column}, count(*) n FROM art GROUP BY {column}")}
     sev = group("worst")
+    # Source is multi-valued at artifact level: the same file can be found
+    # by a custom YARA rule and by the shipped scan. Counting the arbitrary
+    # representative source from ART_SQL made the YARA facet read zero even
+    # while the artifact drawer visibly named a YARA match.
+    sources = {r["source"]: r["n"] for r in db.rows(
+        conn, "SELECT source, count(DISTINCT artifact) n FROM findings "
+              "GROUP BY source")}
     return {"severity": sev, "triage": group("triage"),
-            "source": group("source"),
+            "source": sources,
             "total": sum(sev.values())}
 
 

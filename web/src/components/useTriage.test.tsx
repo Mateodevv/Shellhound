@@ -49,7 +49,7 @@ const SHOWS_A_TRIAGE_STATE: [owner: string, key: readonly unknown[]][] = [
 ]
 
 const RESULT: TriageResult = {
-  updated: 3, artifacts: 1, collected: [], linked: [], suggested: [],
+  updated: 3, artifacts: 1, collected: [], linked: [], suggested: [], retained_iocs: [],
 }
 
 function link(artifact: string): TriageLink {
