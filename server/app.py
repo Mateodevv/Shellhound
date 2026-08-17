@@ -71,7 +71,10 @@ def _find_web_dist():
     works without a Node toolchain on the forensic machine and development in
     the repository stays unchanged."""
     here = Path(__file__).resolve().parent
-    for candidate in (here / "static", here.parent / "web" / "dist"):
+    # A source checkout can also contain a staged server/static left behind by
+    # a package build.  Prefer the live web build there; an installed package
+    # has no sibling web/dist and naturally falls through to server/static.
+    for candidate in (here.parent / "web" / "dist", here / "static"):
         if (candidate / "index.html").is_file():
             return candidate
     # Nothing built: the server runs anyway (the API is complete), and the
@@ -2008,6 +2011,58 @@ def create_app(config: Config) -> FastAPI:
         # after the third case.
         ids: list[str] = []
 
+    class PreviewHunt(BaseModel):
+        patterns: list[str] = []
+        match: str = "any"
+
+    def enrich_hunt_match(conn, match):
+        """Attach only case-owned correlations to the clients on screen.
+
+        Reputation is deliberately absent: this answers whether the same
+        address is already a finding, a decision or an indicator in THIS
+        case.  Those are measured relationships the analyst can act on.
+        """
+        clients = match.get("clients") or []
+        ips = [client["ip"] for client in clients]
+        states = {}
+        boxed = set()
+        if ips:
+            # A multi-path ANY hunt can merge up to 200 clients per path.
+            # Stay below SQLite builds that still cap parameters at 999.
+            for start in range(0, len(ips), 800):
+                chunk = ips[start:start + 800]
+                marks = ",".join("?" * len(chunk))
+                states.update({row["artifact"]: row for row in db.rows(
+                    conn, f"WITH art AS ({ART_SQL}) "
+                          f"SELECT artifact, triage, findings FROM art "
+                          f"WHERE artifact_kind = 'client' "
+                          f"AND artifact IN ({marks})", chunk)})
+                boxed.update(row["value"] for row in db.rows(
+                    conn, f"SELECT value FROM iocs WHERE type = 'ip' "
+                          f"AND value IN ({marks})", chunk))
+        for client in clients:
+            state = states.get(client["ip"], {})
+            client["triage"] = state.get("triage", "")
+            client["finding_count"] = state.get("findings", 0)
+            client["in_box"] = client["ip"] in boxed
+        return match
+
+    @app.post("/api/cases/{slug}/hunt/preview", dependencies=[auth])
+    def hunt_preview(slug: str, body: PreviewHunt, lang: str = lang_dep):
+        """Test an unsaved hypothesis without writing findings or history."""
+        try:
+            paths, mode = patternlib.validate_hypothesis(
+                body.patterns, body.match)
+        except patternlib.PatternError as e:
+            raise HTTPException(400, _pattern_error(e, lang)) from e
+        case_dir = case_dir_or_404(slug)
+        match = logindex.match_patterns(case_dir, paths, mode)
+        conn = db.connect(case_dir)
+        try:
+            return enrich_hunt_match(conn, match)
+        finally:
+            conn.close()
+
     @app.post("/api/cases/{slug}/hunt/run", dependencies=[auth])
     def hunt_run(slug: str, body: RunHunt):
         """Every pattern against the log index. Hits become findings on the
@@ -2015,9 +2070,8 @@ def create_app(config: Config) -> FastAPI:
         triage instead of opening a second work list next to the first.
 
         Outcome-gated like the other log rules: answered with 2xx a hit is
-        HIGH, a bare attempt stays LOW. With the pattern the analyst has said
-        that the path belongs to an exploit -- whether the server played
-        along is something only the status code says."""
+        HIGH, a bare attempt stays LOW. That raises its review priority; the
+        HTTP status alone does not prove that exploitation succeeded."""
         case_dir = case_dir_or_404(slug)
         # Enabled patterns only, both halves. A switched-off bundled pattern
         # is not run even when its id is asked for by name.
@@ -2053,6 +2107,7 @@ def create_app(config: Config) -> FastAPI:
                                   f"{match['pattern']} ({origin}) · "
                                   f"e.g. {example}")[:400])
                     new_findings += 1
+                enrich_hunt_match(conn, match)
                 conn.execute(
                     "INSERT INTO hunt_runs (pattern, label, ran_at, hits,"
                     " ok_hits, clients, ok_clients, uris, first_epoch,"

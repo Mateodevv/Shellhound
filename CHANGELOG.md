@@ -34,6 +34,14 @@ All notable changes to SHELLHOUND. Format after
   a confirmation is withdrawn the indicators remain visibly marked as stale;
   the analyst chooses to retain, review or safely remove only entries with no
   manual or still-active source.
+- **Pattern Hunt** is now a hypothesis workspace: a searchable library stays
+  beside the selected pattern, every hypothesis states what a match does and
+  does not prove, and results separate clients, matched URLs and the daily
+  request timeline. Client results expose existing confirmations, findings
+  and IOC membership, can be filtered and selected, and only the selection is
+  traced or promoted. A read-only preview lets analysts tune a new pattern
+  before it writes findings or hunt history. HTTP 2xx is consistently labelled
+  as a server response, never as proof of successful exploitation.
 
 ### Fixed — tested workflow defects
 

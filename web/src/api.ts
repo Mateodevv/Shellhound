@@ -744,6 +744,18 @@ export interface HuntClient {
   first_epoch: number | null
   last_epoch: number | null
   tz: number
+  /** Existing case context, including findings written by this hunt. */
+  triage: '' | TriageState
+  finding_count: number
+  in_box: boolean
+}
+
+export interface HuntTimelineDay {
+  day: string
+  requests: number
+  ok: number
+  errors: number
+  clients: number
 }
 
 export interface HuntResult {
@@ -769,15 +781,16 @@ export interface HuntResult {
   /** The URI list is a sample too. Without this the block reads as the whole
    *  answer, and a pattern reaching too far looks precise. */
   uris_truncated: boolean
-  /** The key figures of the search. `ok_clients` is the number for the
-   *  record: how many addresses got through, not how often someone knocked.
-   *  `uri_total` counts ALL URLs hit -- `uris` is only the sample. */
+  /** The key figures of the search. `ok_clients` is the number of addresses
+   *  that received at least one 2xx response; it is not a claim that an
+   *  exploit succeeded. `uri_total` counts all URLs hit. */
   clients_total: number
   ok_clients: number
   uri_total: number
   first_epoch: number | null
   last_epoch: number | null
   tz: number
+  timeline: HuntTimelineDay[]
 }
 
 /** An event of the case chronology. `at` is a NAIVE LOCAL TIME in seconds --

@@ -423,6 +423,39 @@ class EndpointSurfaceTests(unittest.TestCase):
             f"/api/cases/{CASE}/chain?limit=201")
         self.assertEqual(422, status)
 
+    def test_hunt_preview_is_read_only_and_returns_case_context(self):
+        status, before_findings = get_json(f"/api/cases/{CASE}/findings")
+        self.assertEqual(200, status, before_findings)
+        status, before_runs = get_json(f"/api/cases/{CASE}/hunt/runs")
+        self.assertEqual(200, status, before_runs)
+
+        status, too_broad = post_json(
+            f"/api/cases/{CASE}/hunt/preview",
+            {"patterns": ["*"], "match": "any"})
+        self.assertEqual(400, status, too_broad)
+
+        status, preview = post_json(
+            f"/api/cases/{CASE}/hunt/preview",
+            {"patterns": ["/uploads/*.php"], "match": "any"})
+        self.assertEqual(200, status, preview)
+        self.assertGreater(preview["hits"], 0)
+        self.assertGreater(len(preview["timeline"]), 0)
+        self.assertLessEqual(preview["ok_hits"], preview["hits"])
+        for client in preview["clients"]:
+            self.assertIn("triage", client)
+            self.assertIn("finding_count", client)
+            self.assertIn("in_box", client)
+        for day in preview["timeline"]:
+            self.assertEqual(
+                {"day", "requests", "ok", "errors", "clients"}, set(day))
+
+        status, after_findings = get_json(f"/api/cases/{CASE}/findings")
+        self.assertEqual(200, status, after_findings)
+        status, after_runs = get_json(f"/api/cases/{CASE}/hunt/runs")
+        self.assertEqual(200, status, after_runs)
+        self.assertEqual(before_findings["total"], after_findings["total"])
+        self.assertEqual(before_runs, after_runs)
+
     def test_the_dashboard_summarises_confirmed_evidence_and_measured_time(self):
         status, body = get_json(f"/api/cases/{CASE}/dashboard")
         self.assertEqual(200, status, body)

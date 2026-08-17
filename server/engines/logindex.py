@@ -1514,10 +1514,10 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
         return {"pattern": pattern, "uris": uris, "clients": clients,
                 "hits": int(totals["hits"] or 0),
                 "ok_hits": int(totals["ok_hits"] or 0),
-                # The key figures of the search. `ok_clients` is the number
-                # that goes into the report: not how often someone knocked,
-                # but how many got through. Counted over the whole result,
-                # not over the sample above it.
+                # The key figures of the search. `ok_clients` says how many
+                # clients received at least one 2xx response. It is counted
+                # over the whole result, not over the sample above it; it does
+                # not claim that exploitation succeeded.
                 "clients_total": int(totals["clients"] or 0),
                 "ok_clients": int(totals["ok_clients"] or 0),
                 "clients_truncated": len(clients) < int(totals["clients"] or 0),
@@ -1561,6 +1561,7 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
         out = match_pattern(case_dir, paths[0], limit)
         out["patterns"] = paths
         out["match"] = mode
+        out["timeline"] = _pattern_timeline(case_dir, paths)
         return out
 
     parts = [match_pattern(case_dir, p, limit) for p in paths]
@@ -1633,7 +1634,81 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
         "last_epoch": max(lasts) if lasts else None,
         "tz": max(tzs) if tzs else 0,
         "truncated": any(p["truncated"] for p in parts),
+        "timeline": _pattern_timeline(
+            case_dir, paths, keep if mode == "all" else None),
     }
+
+
+def _pattern_timeline(case_dir, paths, ips=None):
+    """Daily request outcomes for a hunt, using the same plain wildcard
+    semantics as the match itself.
+
+    The chart is evidence, not decoration: it shows whether a hit was one
+    burst or background traffic spread across weeks.  `ips` is used for an
+    ALL-combination, where only clients that matched every path survive.
+    """
+    paths = [p for p in paths if str(p).strip()]
+    if not paths:
+        return []
+    # An explicitly empty set is the result of an ALL hunt with no client
+    # matching every path.  It must not fall back to an unfiltered timeline.
+    if ips is not None and not ips:
+        return []
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return []
+    try:
+        # Resolve the pattern against interned strings once, then use the same
+        # indexed leaf + exact URI join as match_pattern.  Applying LIKE to
+        # every request would turn the timeline into another full log scan.
+        uri_rows = {}
+        for path in paths:
+            rows = conn.execute(
+                "SELECT id, text FROM strings WHERE text LIKE ? ESCAPE '\\' "
+                "LIMIT ?", (_like_from_pattern(path), _PATTERN_URI_CAP + 1)
+            ).fetchall()
+            for row in rows[:_PATTERN_URI_CAP]:
+                uri_rows[row["id"]] = row["text"]
+        if not uri_rows:
+            return []
+        conn.execute(
+            "CREATE TEMP TABLE timeline_uri (id INTEGER PRIMARY KEY)")
+        conn.executemany("INSERT INTO timeline_uri VALUES (?)",
+                         [(key,) for key in uri_rows])
+        conn.execute(
+            "CREATE TEMP TABLE timeline_leaf (id INTEGER PRIMARY KEY)")
+        leaves = sorted({_leaf(text) for text in uri_rows.values()})
+        for chunk in _chunks(leaves, 800):
+            marks = ",".join("?" * len(chunk))
+            conn.execute(
+                f"INSERT OR IGNORE INTO timeline_leaf "
+                f"SELECT id FROM strings WHERE text IN ({marks})", chunk)
+
+        params = []
+        ip_clause = ""
+        wanted = sorted(ips or [])
+        if wanted:
+            marks = ",".join("?" * len(wanted))
+            ip_clause = f"AND i.ip IN ({marks})"
+            params += wanted
+        rows = conn.execute(
+            f"""SELECT (r.epoch + COALESCE(r.tz, 0)) / 86400 AS d,
+                       count(*) AS requests,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299
+                           THEN 1 ELSE 0 END) AS ok,
+                       sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) AS errors,
+                       count(DISTINCT r.ip) AS clients
+                FROM requests r
+                JOIN timeline_leaf tl ON tl.id = r.leaf
+                JOIN timeline_uri tu ON tu.id = r.uri
+                JOIN ips i ON i.id = r.ip
+                WHERE r.epoch IS NOT NULL {ip_clause}
+                GROUP BY d ORDER BY d""", params).fetchall()
+        return [{"day": _day_iso(row["d"]), "requests": row["requests"],
+                 "ok": row["ok"], "errors": row["errors"],
+                 "clients": row["clients"]} for row in rows]
+    finally:
+        conn.close()
 
 
 def _distinct_uris(case_dir, paths, ips):
