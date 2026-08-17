@@ -2,7 +2,8 @@ import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { api, type CrossCaseIocResponse, type Ioc } from '../api'
 import { renderWithProviders } from '../test/setup'
-import { defang, IocBox } from './IocBox'
+import { IocBox } from './IocBox'
+import { defang } from '../defang'
 
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),

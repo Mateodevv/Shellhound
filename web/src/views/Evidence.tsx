@@ -1,10 +1,10 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
 import { useT } from '../i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Archive, CheckCircle2, ChevronRight, FileText, FolderOpen, FolderSearch,
+  Archive, CheckCircle2, ChevronDown, ChevronRight, FileText, FolderOpen, FolderSearch,
   HardDrive, Pencil, Play, Server, Trash2, TriangleAlert, XCircle,
 } from 'lucide-react'
 import {
@@ -24,10 +24,9 @@ const KIND_ICON: Record<string, typeof HardDrive> = {
   reference: Server,
 }
 
-export function Evidence({ slug, onClosed }: {
+export function Evidence({ slug }: {
   slug: string
   gotoView: (v: ViewId) => void
-  onClosed?: () => void
 }) {
   const tr = useT()
   const qc = useQueryClient()
@@ -53,7 +52,23 @@ export function Evidence({ slug, onClosed }: {
   const addEvidence = useMutation({
     mutationFn: (v: { kind: string; path: string }) =>
       post(`/api/cases/${slug}/evidence`, v),
-    onSuccess: invalidate,
+    onSuccess: (_result, added) => {
+      invalidate()
+      // Applied suggestions are a checklist, not a repeating offer. The
+      // evidence card above is the durable receipt.
+      setDetected((current) => {
+        if (!current || !(added.kind in current.candidates)) return current
+        const kind = added.kind as keyof DetectResult['candidates']
+        return {
+          ...current,
+          candidates: {
+            ...current.candidates,
+            [kind]: current.candidates[kind]
+              .filter((candidate) => candidate.path !== added.path),
+          },
+        }
+      })
+    },
   })
   const removeEvidence = useMutation({
     mutationFn: (id: number) => del(`/api/cases/${slug}/evidence/${id}`),
@@ -75,11 +90,19 @@ export function Evidence({ slug, onClosed }: {
 
   const evidence = caseInfo?.evidence_items ?? []
   const index = caseInfo?.log_index
+  const runs = useMemo(() => groupJobs(jobs ?? []), [jobs])
+  const registered = new Set(evidence.map((item) =>
+    `${item.kind}\u0000${item.path.replace(/\\/g, '/').toLowerCase()}`))
+  const availableCandidates = detected ? (['webroot', 'access_logs', 'sql_dump'] as const)
+    .flatMap((kind) => detected.candidates[kind]
+      .filter((candidate) => !registered.has(
+        `${kind}\u0000${candidate.path.replace(/\\/g, '/').toLowerCase()}`))
+      .map((candidate) => ({ ...candidate, evidenceKind: kind }))) : []
 
   return (
     <div className="flex flex-col gap-6">
       <Section
-        title="Evidence"
+        title={tr('evidence.title')}
         sub={tr('evidence.sub')}
         right={
           <Button variant="primary" disabled={!evidence.length || analyze.isPending}
@@ -159,8 +182,22 @@ export function Evidence({ slug, onClosed }: {
         {detected && (
           <div className="mt-3 flex flex-col gap-2 animate-fade-up">
             {detected.error && <div className="text-[13px] text-[var(--danger-text)]">{detected.error}</div>}
+            {availableCandidates.length > 1 && (
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--panel-2)] px-3 py-2">
+                <span className="text-[12px] text-[var(--muted)]">
+                  {tr('evidence.candidates', { n: formatCount(availableCandidates.length) })}
+                </span>
+                <Button onClick={() => availableCandidates.forEach((candidate) =>
+                  addEvidence.mutate({ kind: candidate.evidenceKind, path: candidate.path }))}>
+                  {tr('evidence.applyAll')}
+                </Button>
+              </div>
+            )}
             {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) =>
-              detected.candidates[kind]?.slice(0, 4).map((c) => (
+              detected.candidates[kind]
+                ?.filter((candidate) => !registered.has(
+                  `${kind}\u0000${candidate.path.replace(/\\/g, '/').toLowerCase()}`))
+                .slice(0, 4).map((c) => (
                 <Card key={kind + c.path} className="flex items-center gap-3 px-4 py-2.5">
                   <Tag tone="accent">{tr(`evidence.${kind}`)}</Tag>
                   <div className="min-w-0 flex-1">
@@ -173,25 +210,27 @@ export function Evidence({ slug, onClosed }: {
                 </Card>
               )))}
             {!detected.error &&
-              Object.values(detected.candidates).every((c) => !c.length) && (
+              availableCandidates.length === 0 && (
                 <div className="text-[13px] text-[var(--muted)]">
-                  {tr('evidence.noCandidates', { n: detected.scanned })}
+                  {evidence.length
+                    ? tr('evidence.allCandidatesApplied')
+                    : tr('evidence.noCandidates', { n: detected.scanned })}
                 </div>
               )}
           </div>
         )}
       </Section>
 
-      <Section title="Jobs" sub={tr('evidence.jobs.sub')}>
+      <Section title={tr('evidence.runs')} sub={tr('evidence.jobs.sub')}>
         <div className="flex flex-col gap-2">
-          {(jobs ?? []).map((j) => <JobRow key={j.id} job={j} slug={slug} />)}
+          {runs.map((run, index) => (
+            <AnalysisRun key={run.id} run={run} slug={slug} initiallyOpen={index === 0} />
+          ))}
           {jobs && !jobs.length && (
             <div className="text-[13px] text-[var(--muted)]">{tr('evidence.noJobs')}</div>
           )}
         </div>
       </Section>
-
-      <CloseCase slug={slug} caseName={caseInfo?.name ?? slug} onClosed={onClosed} />
 
       {browsing && (
         <PathBrowser
@@ -294,7 +333,7 @@ function EvidenceCard({ item, onRename, onRemove }: {
   )
 }
 
-function CloseCase({ slug, caseName, onClosed }: {
+export function CloseCase({ slug, caseName, onClosed }: {
   slug: string; caseName: string; onClosed?: () => void
 }) {
   const tr = useT()
@@ -396,6 +435,63 @@ function CloseCase({ slug, caseName, onClosed }: {
 const JOB_KINDS = ['index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
                    'yara', 'sigma']
 
+interface RunGroup { id: string; created: string; jobs: Job[] }
+
+function groupJobs(jobs: Job[]): RunGroup[] {
+  const groups = new Map<string, RunGroup>()
+  for (const job of jobs) {
+    // Cases from before run_id are still readable. Jobs created by one click
+    // share a second, which is a better legacy boundary than displaying the
+    // unrelated database row ids as if they were runs.
+    const id = job.run_id || `legacy-${job.created}`
+    const group = groups.get(id)
+    if (group) group.jobs.push(job)
+    else groups.set(id, { id, created: job.created, jobs: [job] })
+  }
+  return [...groups.values()]
+}
+
+function AnalysisRun({ run, slug, initiallyOpen }: {
+  run: RunGroup; slug: string; initiallyOpen: boolean
+}) {
+  const tr = useT()
+  const [open, setOpen] = useState(initiallyOpen)
+  const running = run.jobs.some((job) => job.state === 'running' || job.state === 'queued')
+  const failed = run.jobs.some((job) => job.state === 'failed')
+  const complete = run.jobs.filter((job) => job.state === 'done').length
+  const progress = run.jobs.reduce((sum, job) => sum + job.progress, 0) / run.jobs.length
+  return (
+    <Card className="overflow-hidden">
+      <button onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-[var(--panel-2)]">
+        {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        {failed
+          ? <XCircle size={15} className="text-[var(--sev-high)]" />
+          : running
+            ? <span className="h-2 w-2 animate-pulse-soft rounded-full bg-[var(--accent)]" />
+            : <CheckCircle2 size={15} className="text-[var(--ok)]" />}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-[13px] font-semibold">{tr('evidence.run')}</span>
+            <span className="mono text-[10.5px] text-[var(--muted)]">{run.id.replace('legacy-', '')}</span>
+          </div>
+          <div className="text-[11px] text-[var(--muted)]">
+            {run.created?.slice(0, 16).replace('T', ' ')} · {tr('evidence.run.engines', {
+              done: complete, total: run.jobs.length,
+            })}
+          </div>
+        </div>
+        <Tag tone={failed ? 'danger' : running ? 'warn' : 'accent'}>
+          {failed ? tr('evidence.run.failed') : running ? tr('evidence.run.running') : tr('evidence.run.done')}
+        </Tag>
+      </button>
+      {running && <div className="px-4 pb-3"><ProgressBar value={progress} /></div>}
+      {open && <div>{run.jobs.map((job) => <JobRow key={job.id} job={job} slug={slug} />)}</div>}
+    </Card>
+  )
+}
+
 function JobRow({ job, slug }: { job: Job; slug: string }) {
   const tr = useT()
   const cancel = useMutation({
@@ -408,7 +504,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
     .map(([k, v]) => `${k}: ${formatCount(v as number)}`)
     .join(' · ')
   return (
-    <Card className="px-4 py-3">
+    <div className="border-t border-[var(--line)] px-4 py-3">
       <div className="flex items-center gap-3">
         {job.state === 'done' && <CheckCircle2 size={15} className="text-[var(--ok)]" />}
         {job.state === 'failed' && <XCircle size={15} className="text-[var(--sev-high)]" />}
@@ -449,7 +545,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
           <Button variant="ghost" onClick={() => cancel.mutate()}>{tr('common.cancel')}</Button>
         )}
       </div>
-    </Card>
+    </div>
   )
 }
 

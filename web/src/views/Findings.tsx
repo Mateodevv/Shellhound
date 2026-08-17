@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  BellOff, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
+  BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
   Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
   KeyRound, Radar, X,
 } from 'lucide-react'
@@ -47,7 +47,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
-import type { ViewId } from '../App'
+import type { Navigate } from '../App'
 
 // One icon per category. The category is the structure one starts from --
 // it should be distinguishable at a glance and not stand as yet another line
@@ -84,6 +84,15 @@ interface CatGroup {
   kind: string          // predominant artifact kind, for "12 files"
 }
 
+interface SavedView {
+  name: string
+  hiddenSeverity: string[]
+  hiddenTriage: string[]
+  hiddenSource: string[]
+  search: string
+  showRetired: boolean
+}
+
 // Row types of the virtualised list.
 type Item =
   | { t: 'c'; c: CatGroup }
@@ -104,24 +113,39 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
 /** How many artifacts one request fetches. The count in the header
  *  describes the whole set, so anything above this has to be stated. */
 const LIST_CAP = 2000
+const ALL_SEVERITIES = ['0', '1', '2', '3']
+const ALL_TRIAGE = ['new', 'reviewed', 'confirmed', 'dismissed']
+const ALL_SOURCES = ['webshell', 'sqldb', 'logs', 'yara']
+
+function hiddenFromUrl(key: string, all: string[], fallback: string[]): Set<string> {
+  const raw = new URLSearchParams(location.search).get(key)
+  if (raw == null) return new Set(fallback)
+  const visible = new Set(raw.split(',').filter((value) => all.includes(value)))
+  return new Set(all.filter((value) => !visible.has(value)))
+}
 
 export function Findings({ slug, gotoView }: {
   slug: string
-  gotoView: (v: ViewId) => void
+  gotoView: Navigate
 }) {
   const tr = useT()
   // EVERY filter chip is a hide switch: a click hides its class, the next
   // click brings it back, several of them stack. Hidden by default: false
   // positives (they do not belong to the case) and info (context without a
   // statement about this system).
-  const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(new Set(['3']))
-  const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(new Set(['dismissed']))
-  const [hiddenSource, setHiddenSource] = useState<Set<string>>(new Set())
+  const [hiddenSeverity, setHiddenSeverity] = useState<Set<string>>(
+    () => hiddenFromUrl('severity', ALL_SEVERITIES, ['3']))
+  const [hiddenTriage, setHiddenTriage] = useState<Set<string>>(
+    () => hiddenFromUrl('triage', ALL_TRIAGE, ['dismissed']))
+  const [hiddenSource, setHiddenSource] = useState<Set<string>>(
+    () => hiddenFromUrl('source', ALL_SOURCES, []))
   // "Say AND show": the banner names how many artifacts the last completed
   // scan no longer reported -- this switch lets the analyst look at them,
   // greyed, instead of taking a number on faith.
-  const [showRetired, setShowRetired] = useState(false)
-  const [search, setSearch] = useState('')
+  const [showRetired, setShowRetired] = useState(
+    () => new URLSearchParams(location.search).get('retired') === '1')
+  const [search, setSearch] = useState(
+    () => new URLSearchParams(location.search).get('search') ?? '')
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -139,6 +163,11 @@ export function Findings({ slug, gotoView }: {
   // What the trace should mark red -- comes from the artifact window, which
   // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
+  const savedKey = `shellhound.saved-findings.${slug}`
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
+    try { return JSON.parse(localStorage.getItem(savedKey) || '[]') }
+    catch { return [] }
+  })
 
   // Decision plus follow-up (receipt, propagation message, suggestions) --
   // shared with Actors, so that it is the same decision everywhere.
@@ -148,7 +177,9 @@ export function Findings({ slug, gotoView }: {
     const p = new URLSearchParams()
     if (hiddenSeverity.size) p.set('hide_severity', [...hiddenSeverity].join(','))
     if (hiddenTriage.size) p.set('hide_triage', [...hiddenTriage].join(','))
-    if (hiddenSource.size) p.set('hide_source', [...hiddenSource].join(','))
+    if (hiddenSource.size) {
+      p.set('source', ALL_SOURCES.filter((value) => !hiddenSource.has(value)).join(','))
+    }
     if (showRetired) p.set('show_retired', '1')
     if (search) p.set('search', search)
     p.set('limit', String(LIST_CAP))
@@ -160,6 +191,37 @@ export function Findings({ slug, gotoView }: {
     queryFn: () => api<FindingsResponse>(`/api/cases/${slug}/findings?${query}`),
   })
   const roots: EvidenceRoot[] = useMemo(() => data?.roots ?? [], [data])
+
+  // The work list is linkable: refresh, browser back and a copied URL keep
+  // the exact queue instead of dropping the analyst on the dashboard.
+  useEffect(() => {
+    const url = new URL(location.href)
+    const visible = (all: string[], hidden: Set<string>) =>
+      all.filter((value) => !hidden.has(value)).join(',')
+    url.searchParams.set('severity', visible(ALL_SEVERITIES, hiddenSeverity))
+    url.searchParams.set('triage', visible(ALL_TRIAGE, hiddenTriage))
+    const sources = visible(ALL_SOURCES, hiddenSource)
+    if (sources === ALL_SOURCES.join(',')) url.searchParams.delete('source')
+    else url.searchParams.set('source', sources)
+    if (search) url.searchParams.set('search', search)
+    else url.searchParams.delete('search')
+    if (showRetired) url.searchParams.set('retired', '1')
+    else url.searchParams.delete('retired')
+    history.replaceState(null, '', url)
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, search, showRetired])
+
+  useEffect(() => {
+    const restore = () => {
+      setHiddenSeverity(hiddenFromUrl('severity', ALL_SEVERITIES, ['3']))
+      setHiddenTriage(hiddenFromUrl('triage', ALL_TRIAGE, ['dismissed']))
+      setHiddenSource(hiddenFromUrl('source', ALL_SOURCES, []))
+      const params = new URLSearchParams(location.search)
+      setSearch(params.get('search') ?? '')
+      setShowRetired(params.get('retired') === '1')
+    }
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
 
   // Two levels: category ("Web shells & backdoors") -> the artifacts in
   // it.
@@ -190,6 +252,57 @@ export function Findings({ slug, gotoView }: {
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
   }, [data, tr])
+
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('artifact')
+    if (!requested || selected?.artifact === requested) return
+    const found = categories.flatMap((category) => category.artifacts)
+      .find((artifact) => artifact.artifact === requested)
+    if (found) setSelected(found)
+  }, [categories, selected?.artifact])
+
+  const openArtifact = (artifact: Artifact) => {
+    t.clearCollected()
+    setSelected(artifact)
+    const url = new URL(location.href)
+    url.searchParams.set('artifact', artifact.artifact)
+    history.replaceState(null, '', url)
+  }
+
+  const closeArtifact = () => {
+    setSelected(null)
+    t.clearCollected()
+    const url = new URL(location.href)
+    url.searchParams.delete('artifact')
+    history.replaceState(null, '', url)
+  }
+
+  const saveView = () => {
+    const name = window.prompt(tr('findings.saved.prompt'))?.trim()
+    if (!name) return
+    const next = savedViews.filter((view) => view.name !== name)
+    next.push({
+      name,
+      hiddenSeverity: [...hiddenSeverity],
+      hiddenTriage: [...hiddenTriage],
+      hiddenSource: [...hiddenSource],
+      search,
+      showRetired,
+    })
+    next.sort((a, b) => a.name.localeCompare(b.name))
+    setSavedViews(next)
+    localStorage.setItem(savedKey, JSON.stringify(next))
+  }
+
+  const applyView = (name: string) => {
+    const view = savedViews.find((item) => item.name === name)
+    if (!view) return
+    setHiddenSeverity(new Set(view.hiddenSeverity))
+    setHiddenTriage(new Set(view.hiddenTriage))
+    setHiddenSource(new Set(view.hiddenSource))
+    setSearch(view.search)
+    setShowRetired(view.showRetired)
+  }
 
   // An active filter means: the analyst is looking for something specific.
   // Then the categories stand open, otherwise the hit list would be hidden
@@ -259,7 +372,7 @@ export function Findings({ slug, gotoView }: {
         const it = items[cursor]
         if (isArtifactRow(it)) {
           t.clearCollected()
-          setSelected((it as { a: Artifact }).a)
+          openArtifact((it as { a: Artifact }).a)
         }
       } else if (e.key === 'x') {
         const it = items[cursor]
@@ -329,9 +442,9 @@ export function Findings({ slug, gotoView }: {
   const counts = data?.counts
 
   return (
-    <div className="flex h-[calc(100vh-40px)] flex-col gap-3">
+    <div className="flex h-[calc(100vh-150px)] flex-col gap-3 md:h-[calc(100vh-110px)]">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="Artefakte"
+        <Tooltip title={tr('dashboard.artifacts')}
           body={tr('findings.title.body')}
           hint={tr('findings.title.hint')}>
           <h1 className="mr-2 text-lg font-bold">{tr('nav.findings')}</h1>
@@ -343,7 +456,7 @@ export function Findings({ slug, gotoView }: {
             hint={hiddenSeverity.has(s)
               ? tr('findings.hidden.back', { what: label })
               : tr('filter.hide', { what: label })}>
-            <Chip active={false} dimmed={hiddenSeverity.has(s)}
+            <Chip active={!hiddenSeverity.has(s)} dimmed={hiddenSeverity.has(s)}
               onClick={() => setHiddenSeverity((prev) => toggleHidden(prev, s))}
               count={counts?.severity[s] ?? 0}>
               <span className="h-2 w-2 rounded-full" style={{ background: color }} /> {label}
@@ -351,12 +464,12 @@ export function Findings({ slug, gotoView }: {
           </Tooltip>
         ))}
         <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {(['new', 'confirmed', 'dismissed'] as const).map((state) => (
+        {(['new', 'reviewed', 'confirmed', 'dismissed'] as const).map((state) => (
           <Tooltip key={state}
             hint={hiddenTriage.has(state)
               ? tr('findings.hidden.back', { what: tr(`triage.${state}`) })
               : tr('filter.hide', { what: tr(`triage.${state}`) })}>
-            <Chip active={false} dimmed={hiddenTriage.has(state)}
+            <Chip active={!hiddenTriage.has(state)} dimmed={hiddenTriage.has(state)}
               onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
               count={counts?.triage[state] ?? 0}>
               {tr(`triage.${state}`)}
@@ -376,14 +489,25 @@ export function Findings({ slug, gotoView }: {
             hint={hiddenSource.has(key)
               ? tr('findings.hidden.back', { what: label })
               : tr('filter.hide', { what: label })}>
-            <Chip active={false} dimmed={hiddenSource.has(key)}
+            <Chip active={!hiddenSource.has(key)} dimmed={hiddenSource.has(key)}
               onClick={() => setHiddenSource((prev) => toggleHidden(prev, key))}
               count={counts?.source[key] ?? 0}>
               {label}
             </Chip>
           </Tooltip>
         )})}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {savedViews.length > 0 && (
+            <select defaultValue="" aria-label={tr('findings.saved.views')}
+              onChange={(event) => { applyView(event.target.value); event.target.value = '' }}
+              className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-[12px] text-[var(--muted)] outline-none">
+              <option value="" disabled>{tr('findings.saved.views')}</option>
+              {savedViews.map((view) => <option key={view.name} value={view.name}>{view.name}</option>)}
+            </select>
+          )}
+          <Button variant="ghost" onClick={saveView} title={tr('findings.saved.save')}>
+            <BookmarkPlus size={14} /> {tr('findings.saved.save')}
+          </Button>
           <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
       </div>
@@ -446,6 +570,22 @@ export function Findings({ slug, gotoView }: {
           </button>
         </div>
       )}
+
+      <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--muted)]">
+        <span>{tr('findings.filterMeaning')}</span>
+        {(hiddenSeverity.size > 0 || hiddenTriage.size > 0 || hiddenSource.size > 0 || search || showRetired) && (
+          <button className="cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
+            onClick={() => {
+              setHiddenSeverity(new Set(['3']))
+              setHiddenTriage(new Set(['dismissed']))
+              setHiddenSource(new Set())
+              setSearch('')
+              setShowRetired(false)
+            }}>
+            {tr('findings.resetFilters')}
+          </button>
+        )}
+      </div>
 
       {checked.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
@@ -564,6 +704,7 @@ export function Findings({ slug, gotoView }: {
                     onChange={() => toggleCategoryChecked(c)}
                     title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
+                    aria-label={open ? tr('findings.collapse') : tr('findings.expand')}
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
                     {open
                       ? <ChevronDown size={16} className="shrink-0 text-[var(--muted)]" />
@@ -646,6 +787,7 @@ export function Findings({ slug, gotoView }: {
                     }} />
                   <Tooltip hint={open ? tr('findings.collapse') : tr('findings.expand')}>
                     <button onClick={() => toggleArtifact(a)}
+                      aria-label={open ? tr('findings.collapse') : tr('findings.expand')}
                       className="shrink-0 cursor-pointer rounded p-0.5 text-[var(--muted)] hover:text-[var(--fg)]">
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
@@ -657,8 +799,7 @@ export function Findings({ slug, gotoView }: {
                       // The collect result belongs to THE action that produced
                       // it -- opening another artifact expires it, otherwise it
                       // reads as a result for this one.
-                      t.clearCollected()
-                      setSelected(a)
+                      openArtifact(a)
                     }}>
                     {/* The artifact kind as an icon, tinted by severity: a file
                         looks different from a client, and red stands out of a
@@ -690,6 +831,7 @@ export function Findings({ slug, gotoView }: {
                     {a.artifact_kind === 'file' && (
                       <Tooltip hint={tr('findings.viewFile.hint')}>
                         <button
+                          aria-label={tr('findings.viewFile.hint')}
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setViewing({ path: a.artifact, line: a.items[0]?.line ?? null })}>
                           <FileSearch size={15} />
@@ -699,6 +841,7 @@ export function Findings({ slug, gotoView }: {
                     {a.artifact_kind === 'client' && (
                       <Tooltip hint={tr('findings.trace.hint')}>
                         <button
+                          aria-label={tr('findings.trace.hint')}
                           className="cursor-pointer rounded p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel)] hover:text-[var(--accent)]"
                           onClick={() => setTraceIps([a.artifact])}>
                           <Crosshair size={15} />
@@ -748,7 +891,7 @@ export function Findings({ slug, gotoView }: {
         collected={t.collected}
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
-        onClose={() => { setSelected(null); t.clearCollected() }}
+        onClose={closeArtifact}
         onTriage={(state, note) => {
           if (selected) t.decide([selected.artifact], state, note)
         }}
@@ -765,7 +908,7 @@ export function Findings({ slug, gotoView }: {
         onClose={() => setViewing(null)}
       />
 
-      <TriageFollowUp t={t} roots={roots} />
+      <TriageFollowUp t={t} roots={roots} onOpenIocs={() => gotoView('iocbox')} />
 
       {/* The bindings on demand -- the footer names them, but a footer
           under 2000 rows is off-screen exactly when one wonders what `r`
@@ -899,4 +1042,3 @@ function ArtifactName({ artifact, kind, roots }: {
     </Tooltip>
   )
 }
-

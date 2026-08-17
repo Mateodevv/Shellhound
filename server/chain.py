@@ -117,10 +117,16 @@ def clock_offsets(conn):
             "dump": int(raw.get("dump", 0) or 0)}
 
 
-def case_chain(case_dir, lang="en", tz_mode="log"):
+def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
     """The chronology as data -- shared by the route and the exports: what
     the analyst reads in the dashboard has to be the same thing the case
-    hands out."""
+    hands out.
+
+    ``event_cap=None`` returns the complete sequence.  The interactive route
+    uses that form and paginates the result explicitly; reports retain the
+    conservative default cap so an unexpectedly large case cannot make an
+    export unbounded.
+    """
     conn = db.connect(case_dir)
     try:
         confirmed = db.rows(
@@ -322,7 +328,12 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
             severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
 
     events.sort(key=lambda e: e["at"])
-    truncated = len(events) > EVENT_CAP
+    total_events = len(events)
+    event_span = {
+        "first": events[0]["at"] if events else None,
+        "last": events[-1]["at"] if events else None,
+    }
+    truncated = event_cap is not None and total_events > event_cap
     if truncated:
         # WHAT THE CAP CUTS OFF STILL HAS TO BE ACCOUNTED FOR. `dated` was
         # filled while the events were being built, so an artifact whose only
@@ -338,7 +349,7 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         #
         # Cut artifacts are their own answer: they HAVE measured times, and
         # this chronology does not reach them.
-        events, cut = events[:EVENT_CAP], events[EVENT_CAP:]
+        events, cut = events[:event_cap], events[event_cap:]
         still_shown = {e["artifact"] for e in events}
         for event in cut:
             artifact = event["artifact"]
@@ -362,7 +373,7 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
         undated.append({
             "artifact": row["artifact"], "artifact_kind": kind,
             "artifact_rel": files.get(row["artifact"], row["artifact"]),
-            "why": t(lang, key, n=EVENT_CAP)})
+            "why": t(lang, key, n=event_cap)})
 
     # --- what the case does NOT prove ----------------------------------
     if not confirmed:
@@ -374,7 +385,7 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
     if files and not any(e["kind"] == "erfolg" for e in events):
         gaps.append(t(lang, "chain.gap.onlyAttempts"))
     if truncated:
-        gaps.append(t(lang, "chain.gap.truncated", n=EVENT_CAP))
+        gaps.append(t(lang, "chain.gap.truncated", n=event_cap))
     # WHERE THE LOGS ARE SILENT is the same kind of statement as the gaps
     # above: something the case cannot show. A window somebody removed and a
     # quiet night look identical from here, so this points at the question
@@ -398,8 +409,10 @@ def case_chain(case_dir, lang="en", tz_mode="log"):
 
     return {
         "span": {"first": span_first, "last": span_last},
+        "event_span": event_span,
         "events": events, "gaps": gaps, "undated": undated,
         "confirmed": len(confirmed), "truncated": truncated,
+        "total_events": total_events,
         "offsets": offsets,
         # What zone the times above are in. The events carry no offset of
         # their own -- they arrive already shifted -- so this is the only

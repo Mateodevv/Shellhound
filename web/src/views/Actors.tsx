@@ -142,17 +142,17 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title="Actors"
+        <Tooltip title={tr('nav.actors')}
           body={tr('actors.title.body')}
           hint={tr('actors.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">Actors</h1>
+          <h1 className="mr-2 text-lg font-bold">{tr('nav.actors')}</h1>
         </Tooltip>
         {FLAGS.map((f) => (
           <Tooltip key={f.id}
             hint={hidden.has(f.id)
               ? `${tr('actors.flag.hidden')} ${tr(`actors.flag.${f.key}.hint`)}`
               : `${tr('actors.flag.hide')} ${tr(`actors.flag.${f.key}.hint`)}`}>
-            <Chip active={false} dimmed={hidden.has(f.id)}
+            <Chip active={!hidden.has(f.id)} dimmed={hidden.has(f.id)}
               onClick={() => setHidden((prev) => {
                 const next = new Set(prev)
                 if (next.has(f.id)) next.delete(f.id)
@@ -381,4 +381,3 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     </div>
   )
 }
-

@@ -91,6 +91,16 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual([], self.manager.wait_for(self.a, [job], timeout=5))
         self.assertNotIn((str(self.a), job), self.manager.live)
 
+    def test_a_job_records_the_analysis_run_it_belongs_to(self):
+        job = self.manager.submit(self.a, "test", self._blocking_job,
+                                  run_id="run-together")
+        conn = db.connect(self.a)
+        try:
+            row = db.one(conn, "SELECT run_id FROM jobs WHERE id = ?", (job,))
+        finally:
+            conn.close()
+        self.assertEqual("run-together", row["run_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -261,14 +261,14 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-[var(--sev-high)]">
-                      <ShieldOff size={12} /> fehlt
+                      <ShieldOff size={12} /> {tr('artifact.guard.missing')}
                     </span>
                   )}
                 </MetaCell>
                 <MetaCell label={tr('artifact.uploadDir')} explain={tr('field.upload_dir')}>
                   {file.in_upload_dir
                     ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
-                    : 'nein'}
+                    : tr('artifact.uploadDirNo')}
                 </MetaCell>
                 {file.sha256 && (
                   <div className="col-span-2">

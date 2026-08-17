@@ -19,6 +19,7 @@ import io
 import json
 import os
 import time
+import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -70,7 +71,10 @@ def _find_web_dist():
     works without a Node toolchain on the forensic machine and development in
     the repository stays unchanged."""
     here = Path(__file__).resolve().parent
-    for candidate in (here / "static", here.parent / "web" / "dist"):
+    # A source checkout can also contain a staged server/static left behind by
+    # a package build.  Prefer the live web build there; an installed package
+    # has no sibling web/dist and naturally falls through to server/static.
+    for candidate in (here.parent / "web" / "dist", here / "static"):
         if (candidate / "index.html").is_file():
             return candidate
     # Nothing built: the server runs anyway (the API is complete), and the
@@ -240,6 +244,18 @@ def create_app(config: Config) -> FastAPI:
             case_dir, log_targets if log_targets else None, lang)
         return info
 
+    class PatchCase(BaseModel):
+        name: str | None = None
+        reference: str | None = None
+        notes: str | None = None
+
+    @app.patch("/api/cases/{slug}", dependencies=[auth])
+    def patch_case(slug: str, body: PatchCase):
+        case_dir = case_dir_or_404(slug)
+        return workspace.update_case(
+            case_dir, name=body.name, reference=body.reference,
+            notes=body.notes)
+
     @app.get("/api/cases/{slug}/summary", dependencies=[auth])
     def case_close_preview(slug: str):
         """What closing this case would pack away -- shown before it happens."""
@@ -329,13 +345,13 @@ def create_app(config: Config) -> FastAPI:
         path: str
 
     @app.post("/api/cases/{slug}/evidence", dependencies=[auth])
-    def add_evidence(slug: str, body: NewEvidence):
+    def add_evidence(slug: str, body: NewEvidence, lang: str = lang_dep):
         case_dir = case_dir_or_404(slug)
         if body.kind not in EVIDENCE_KINDS:
             raise HTTPException(400, f"kind must be one of {EVIDENCE_KINDS}")
         path = str(Path(body.path).expanduser())
         if not os.path.exists(path):
-            raise HTTPException(400, f"path does not exist: {path}")
+            raise HTTPException(400, _t(lang, "err.evidenceMissing", path=path))
         conn = db.connect(case_dir)
         try:
             conn.execute(
@@ -516,7 +532,13 @@ def create_app(config: Config) -> FastAPI:
     # still be dropped in by hand or pulled from a vendor feed.
 
     def _yara_error(exc, lang):
-        return _t(lang, exc.key) if exc.key else str(exc)
+        if not exc.key:
+            return str(exc)
+        label = _t(lang, exc.key)
+        detail = str(exc).strip()
+        # The catalogue explains the class of error; the compiler says where
+        # it is. Both are needed to repair a rule in the editor.
+        return f"{label}: {detail}" if detail and detail != label else label
 
     @app.get("/api/yara/rules", dependencies=[auth])
     def yara_rules():
@@ -663,6 +685,7 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         by_kind = _evidence_by_kind(case_dir)
         started = []
+        run_id = uuid.uuid4().hex[:12]
 
         logs = by_kind.get("access_logs", [])
         if logs:
@@ -675,7 +698,8 @@ def create_app(config: Config) -> FastAPI:
                 return stats
 
             started.append({"kind": "index_logs",
-                            "job": manager.submit(case_dir, "index_logs", run_logs)})
+                            "job": manager.submit(case_dir, "index_logs", run_logs,
+                                                  run_id=run_id)})
 
             # The error logs sit in the same directory and were skipped by
             # the index -- they name files the access log structurally
@@ -685,7 +709,8 @@ def create_app(config: Config) -> FastAPI:
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
             started.append({"kind": "errorlog",
-                            "job": manager.submit(case_dir, "errorlog", run_errors)})
+                            "job": manager.submit(case_dir, "errorlog", run_errors,
+                                                  run_id=run_id)})
 
             # The analyst's own SIGMA rules over the finished index. Its own
             # job because it is the log-side counterpart to the YARA one:
@@ -695,7 +720,8 @@ def create_app(config: Config) -> FastAPI:
                 return sigmascan.scan(case_dir, config.workspace, ctx)
 
             started.append({"kind": "sigma",
-                            "job": manager.submit(case_dir, "sigma", run_sigma)})
+                            "job": manager.submit(case_dir, "sigma", run_sigma,
+                                                  run_id=run_id)})
 
         webroots = by_kind.get("webroot", [])
         if webroots:
@@ -711,9 +737,11 @@ def create_app(config: Config) -> FastAPI:
                 return cmsinventory.scan(case_dir, paths, ctx)
 
             started.append({"kind": "webshell",
-                            "job": manager.submit(case_dir, "webshell", run_shell)})
+                            "job": manager.submit(case_dir, "webshell", run_shell,
+                                                  run_id=run_id)})
             started.append({"kind": "cms",
-                            "job": manager.submit(case_dir, "cms", run_cms)})
+                            "job": manager.submit(case_dir, "cms", run_cms,
+                                                  run_id=run_id)})
 
             # The analyst's OWN rules, if there are any. Queued as its own
             # job so a slow rule set never holds up the shipped scan.
@@ -723,7 +751,8 @@ def create_app(config: Config) -> FastAPI:
                                          workspace=config.workspace, ctx=ctx)
 
                 started.append({"kind": "yara",
-                                "job": manager.submit(case_dir, "yara", run_yara)})
+                                "job": manager.submit(case_dir, "yara", run_yara,
+                                                      run_id=run_id)})
 
         dumps = by_kind.get("sql_dump", [])
         if dumps:
@@ -736,11 +765,12 @@ def create_app(config: Config) -> FastAPI:
                 return stats
 
             started.append({"kind": "sqldb",
-                            "job": manager.submit(case_dir, "sqldb", run_sql)})
+                            "job": manager.submit(case_dir, "sqldb", run_sql,
+                                                  run_id=run_id)})
 
         if not started:
             raise HTTPException(400, "no evidence registered — add paths first")
-        return {"started": started}
+        return {"run_id": run_id, "started": started}
 
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])
     def jobs_list(slug: str):
@@ -763,7 +793,7 @@ def create_app(config: Config) -> FastAPI:
     # --- dashboard ----------------------------------------------------------
 
     @app.get("/api/cases/{slug}/dashboard", dependencies=[auth])
-    def dashboard(slug: str):
+    def dashboard(slug: str, lang: str = lang_dep, tz: str = tz_dep):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
@@ -774,6 +804,34 @@ def create_app(config: Config) -> FastAPI:
                 conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
                       f"FROM art WHERE triage != 'dismissed' GROUP BY worst")}
             triage = artifact_counts(conn)["triage"]
+            confirmed_kinds = {r["artifact_kind"]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact_kind, count(*) n "
+                      f"FROM art WHERE triage = 'confirmed' GROUP BY artifact_kind")}
+            confirmed_severity = {r["worst"]: r["n"] for r in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
+                      f"FROM art WHERE triage = 'confirmed' GROUP BY worst")}
+            # A dashboard count without any names forces the analyst to leave
+            # the overview before it answers the basic question "what was
+            # confirmed?".  Keep the preview short, but balance it by entity
+            # type so a case with many client artifacts does not hide every
+            # confirmed file (or vice versa).
+            confirmed_artifacts = db.rows(conn, f"""
+                WITH art AS ({ART_SQL}), ranked AS (
+                    SELECT artifact, artifact_kind, worst,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY artifact_kind
+                               ORDER BY worst, lower(artifact)
+                           ) AS kind_rank
+                    FROM art WHERE triage = 'confirmed'
+                )
+                SELECT artifact, artifact_kind, worst FROM ranked
+                ORDER BY kind_rank,
+                         CASE artifact_kind
+                           WHEN 'file' THEN 0 WHEN 'table' THEN 1
+                           WHEN 'dump' THEN 2 ELSE 3 END,
+                         worst, lower(artifact)
+                LIMIT 6
+            """)
             findings_total = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
@@ -797,14 +855,64 @@ def create_app(config: Config) -> FastAPI:
                 r["stats"] = json.loads(r.get("stats") or "{}")
         finally:
             conn.close()
+
+        # The dashboard names a handful of measured milestones, not an
+        # inferred attack story.  Build them from the same chronology as the
+        # dedicated view so timestamps, clock alignment and source labels
+        # cannot drift between the two surfaces.
+        chain = case_chain(case_dir, lang, tz, event_cap=None)
+        events = chain["events"]
+        observations = []
+        seen = set()
+
+        def observe(role, event):
+            if event is None:
+                return
+            identity = (event["at"], event["kind"], event["title"],
+                        event["artifact"])
+            if identity in seen:
+                return
+            seen.add(identity)
+            observations.append({
+                key: event[key] for key in (
+                    "at", "kind", "title", "detail", "source", "artifact",
+                    "artifact_kind", "ip", "severity")
+            } | {"role": role})
+
+        observe("first", events[0] if events else None)
+        first_success = next(
+            (event for event in events if event["kind"] == "erfolg"), None)
+        observe("first_success", first_success)
+        observe("account", next(
+            (event for event in events if event["kind"] == "konto"), None))
+        observe("first_alert", next(
+            (event for event in events if event["kind"] == "alarm"), None))
+        observe("last", events[-1] if events else None)
+        observations.sort(key=lambda event: event["at"])
+
         return {
             "severity": severity, "triage": triage, "iocs": ioc_count,
+            "confirmed_kinds": confirmed_kinds,
+            "confirmed_severity": confirmed_severity,
+            "confirmed_artifacts": confirmed_artifacts,
             "findings_total": findings_total,
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
+            "chronology": {
+                "total_events": chain["total_events"],
+                "event_span": chain["event_span"],
+                "first_success_at": (first_success["at"]
+                                     if first_success else None),
+                "observations": observations,
+                "gaps": chain["gaps"],
+                "undated": len(chain["undated"]),
+                "zone": chain["zone"],
+                "tz_offsets": chain["tz_offsets"],
+                "tz_mixed": chain["tz_mixed"],
+            },
         }
 
     # --- the chronology of the case -----------------------------------------
@@ -812,21 +920,72 @@ def create_app(config: Config) -> FastAPI:
     # server writes, shared by this route and the JSON export.
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
-    def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep):
-        return case_chain(case_dir_or_404(slug), lang, tz)
+    def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep,
+              limit: int = 80, offset: int = 0, order: str = "asc"):
+        """One page of the evidential chronology.
+
+        Pagination is a presentation concern, not an evidence gap: the
+        response therefore carries an exact total and never files events
+        beyond the current page as undated evidence.
+        """
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be between 1 and 200")
+        if offset < 0:
+            raise HTTPException(422, "offset must not be negative")
+        if order not in ("asc", "desc"):
+            raise HTTPException(422, "order must be asc or desc")
+
+        result = case_chain(case_dir_or_404(slug), lang, tz, event_cap=None)
+        complete = result["events"]
+        if order == "desc":
+            complete = list(reversed(complete))
+        result["events"] = complete[offset:offset + limit]
+        result["offset"] = offset
+        result["limit"] = limit
+        result["order"] = order
+        result["truncated"] = offset + len(result["events"]) < len(complete)
+        return result
+
+    @app.get("/api/cases/{slug}/activity", dependencies=[auth])
+    def activity(slug: str):
+        """Analyst decisions and analysis runs, newest first.
+
+        The evidential chronology remains `/chain`; this is the audit trail
+        of work performed on the case and deliberately does not pretend to be
+        incident time.
+        """
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            decisions = db.rows(
+                conn, "SELECT * FROM triage_events ORDER BY id DESC LIMIT 100")
+            jobs = db.rows(
+                conn, "SELECT id, run_id, kind, state, created, started, "
+                      "finished, stats FROM jobs ORDER BY id DESC LIMIT 100")
+            for job in jobs:
+                job["stats"] = json.loads(job.get("stats") or "{}")
+            hunts = db.rows(
+                conn, "SELECT id, pattern, label, ran_at, hits, clients "
+                      "FROM hunt_runs ORDER BY id DESC LIMIT 50")
+            return {"decisions": decisions, "jobs": jobs, "hunts": hunts}
+        finally:
+            conn.close()
 
     @app.get("/api/cases/{slug}/report.html", dependencies=[auth])
-    def report_download(slug: str, lang: str = lang_dep, tz: str = tz_dep):
+    def report_download(slug: str, sections: str = "", preview: bool = False,
+                        lang: str = lang_dep, tz: str = tz_dep):
         """One offline, printable file containing the case's stated facts."""
         case_dir = case_dir_or_404(slug)
         cross_case = correlation.compare(config.workspace, slug)
         body, digest = case_report.render_bytes(
-            case_dir, lang, tz, cross_case=cross_case)
+            case_dir, lang, tz, cross_case=cross_case,
+            sections=(sections.split(",") if sections else None))
         return Response(
             body, media_type="text/html",
             headers={
                 "Content-Disposition":
-                    f"attachment; filename=report_{case_dir.name}_{tz}.html",
+                    f"{'inline' if preview else 'attachment'}; "
+                    f"filename=report_{case_dir.name}_{tz}.html",
                 "X-Content-SHA256": digest,
                 "X-Content-Type-Options": "nosniff",
             })
@@ -923,12 +1082,16 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
-                      hide_source: str = "", kind: str = "", search: str = "",
+                      hide_source: str = "", source: str = "", kind: str = "",
+                      search: str = "",
                       show_retired: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
 
-        FILTERS HIDE, THEY DO NOT SELECT: every chip in the UI is a toggle
+        Legacy hide filters remove a class. `source` is the inclusive source
+        facet used by the current UI: every chip directly says what remains
+        visible, and a mixed-source artifact matches every source it carries.
+        Every chip in the UI is a toggle
         that removes its class from view (`hide_severity=3,2` etc.) and
         brings it back on the next click. Several can stack. Nothing is
         deleted -- the counts always describe the whole set, and an artifact
@@ -960,10 +1123,25 @@ def create_app(config: Config) -> FastAPI:
         if triages:
             where.append(f"triage NOT IN ({','.join('?' * len(triages))})")
             params += triages
-        sources = csv_values(hide_source, {"webshell", "sqldb", "logs"})
+        allowed_sources = {"webshell", "sqldb", "logs", "yara", "errorlog"}
+        sources = csv_values(hide_source, allowed_sources)
         if sources:
             where.append(f"source NOT IN ({','.join('?' * len(sources))})")
             params += sources
+        # New clients use an inclusive source facet. An artifact may have
+        # findings from more than one engine (a custom YARA rule and the
+        # shipped webshell rules on the same file), so filtering the single
+        # representative `art.source` loses exactly those mixed artifacts.
+        # Select through the underlying findings instead.
+        selected_sources = csv_values(source, allowed_sources)
+        if source:
+            if selected_sources:
+                where.append(
+                    "artifact IN (SELECT DISTINCT artifact FROM findings "
+                    f"WHERE source IN ({','.join('?' * len(selected_sources))}))")
+                params += selected_sources
+            else:
+                where.append("0 = 1")
         if kind:
             where.append("artifact_kind = ?")
             params.append(kind)
@@ -1103,11 +1281,16 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(400, f"state must be one of {db.TRIAGE_STATES}")
         conn = db.connect(case_dir)
         collected = []
+        retained_iocs = []
         try:
             artifacts = _artifacts_of(conn, body.artifacts, body.fingerprints)
             if not artifacts:
-                return {"updated": 0, "artifacts": 0, "collected": []}
+                return {"updated": 0, "artifacts": 0, "collected": [],
+                        "linked": [], "suggested": [], "retained_iocs": []}
             marks = ",".join("?" * len(artifacts))
+            previous = {row["artifact"]: row for row in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact, artifact_kind, "
+                      f"triage FROM art WHERE artifact IN ({marks})", artifacts)}
             rows = db.rows(conn,
                            f"SELECT * FROM findings WHERE artifact IN ({marks}) "
                            f"ORDER BY severity, line", artifacts)
@@ -1122,6 +1305,15 @@ def create_app(config: Config) -> FastAPI:
                     f"UPDATE findings SET triage = ?, triage_note = ?, "
                     f"triaged_at = ? WHERE artifact IN ({marks})",
                     [body.state, body.note, db.now()] + artifacts)
+            for artifact in artifacts:
+                before = previous.get(artifact)
+                if before and before["triage"] != body.state:
+                    conn.execute(
+                        "INSERT INTO triage_events (artifact, artifact_kind, "
+                        "from_state, to_state, note, propagated, at) "
+                        "VALUES (?,?,?,?,?,0,?)",
+                        (artifact, before["artifact_kind"], before["triage"],
+                         body.state, body.note or "", db.now()))
             # Confirming collects the artifact into the IOC box -- provenance
             # is written at the moment of collection -- and travels one step
             # along the links the log index can PROVE.
@@ -1142,13 +1334,77 @@ def create_app(config: Config) -> FastAPI:
                 if body.propagate:
                     linked, suggested = _propagate(conn, case_dir,
                                                    set(artifacts), touches)
+            else:
+                # Removing a confirmation does not silently delete evidence
+                # from the IOC box. It marks the structured provenance stale
+                # and returns an explicit keep/review/remove decision.
+                formerly_confirmed = [artifact for artifact in artifacts
+                                      if artifact in previous and
+                                      previous[artifact]["triage"] == "confirmed"]
+                if formerly_confirmed:
+                    retained_iocs = _retire_collected_iocs(
+                        conn, formerly_confirmed)
             conn.commit()
         finally:
             conn.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
         return {"updated": len(rows), "artifacts": len(artifacts),
                 "collected": _dedupe_collected(collected),
-                "linked": linked, "suggested": suggested}
+                "linked": linked, "suggested": suggested,
+                "retained_iocs": retained_iocs}
+
+    class RemoveGeneratedIocsBody(BaseModel):
+        ioc_ids: list[int] = []
+        artifacts: list[str] = []
+
+    @app.post("/api/cases/{slug}/triage/iocs/remove", dependencies=[auth])
+    def remove_generated_iocs(slug: str, body: RemoveGeneratedIocsBody):
+        """Remove only stale indicators created solely by withdrawn triage.
+
+        A manually added IOC or one still backed by another confirmed
+        artifact is never eligible, even if a client tampers with the ids in
+        the request. The server rechecks the provenance instead of trusting
+        the button state.
+        """
+        case_dir = case_dir_or_404(slug)
+        ids = sorted({int(value) for value in body.ioc_ids if int(value) > 0})
+        artifacts = sorted({str(value) for value in body.artifacts
+                            if str(value).strip()})
+        if not ids or not artifacts:
+            return {"removed": [], "kept": ids}
+        id_marks = ",".join("?" * len(ids))
+        art_marks = ",".join("?" * len(artifacts))
+        conn = db.connect(case_dir)
+        removed = []
+        try:
+            candidates = db.rows(
+                conn, "SELECT DISTINCT i.* FROM iocs i JOIN ioc_sources s "
+                      "ON s.ioc_id = i.id "
+                      f"WHERE i.id IN ({id_marks}) AND s.artifact IN "
+                      f"({art_marks}) AND s.active = 0", ids + artifacts)
+            for ioc in candidates:
+                active = conn.execute(
+                    "SELECT 1 FROM ioc_sources WHERE ioc_id = ? AND active = 1",
+                    (ioc["id"],)).fetchone()
+                try:
+                    tags = set(json.loads(ioc.get("tags") or "[]"))
+                except (TypeError, ValueError):
+                    tags = set()
+                if active or ioclib.TAG_ANALYST in tags:
+                    continue
+                conn.execute("DELETE FROM ioc_links WHERE src = ? OR dst = ?",
+                             (ioc["id"], ioc["id"]))
+                conn.execute("DELETE FROM ioc_sources WHERE ioc_id = ?",
+                             (ioc["id"],))
+                conn.execute("DELETE FROM iocs WHERE id = ?", (ioc["id"],))
+                removed.append(ioc["id"])
+            conn.commit()
+        finally:
+            conn.close()
+        if removed:
+            hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"removed": removed, "kept": [value for value in ids
+                                               if value not in removed]}
 
     # Nobody computes more than this in passing: a hash over a 2 GB file
     # leaves the request hanging. The same limit as in the detail view.
@@ -1291,10 +1547,17 @@ def create_app(config: Config) -> FastAPI:
         # The propagation itself: its own note, so the case records WHAT the
         # decision follows from and that it was not made by hand.
         for item in linked:
+            note = f"propagated: {item['why']}"
             conn.execute(
                 "UPDATE findings SET triage = 'confirmed', triage_note = ?, "
                 "triaged_at = ? WHERE artifact = ?",
-                (f"propagated: {item['why']}", db.now(), item["artifact"]))
+                (note, db.now(), item["artifact"]))
+            conn.execute(
+                "INSERT INTO triage_events (artifact, artifact_kind, "
+                "from_state, to_state, note, propagated, at) "
+                "VALUES (?,?,?,?,?,1,?)",
+                (item["artifact"], item["kind"], item["previous"]["state"],
+                 "confirmed", note, db.now()))
         return linked, suggested
 
     def _dedupe_collected(items):
@@ -1307,6 +1570,41 @@ def create_app(config: Config) -> FastAPI:
                 continue
             seen.add(key)
             out.append(item)
+        return out
+
+    def _track_ioc(conn, ioc_id, artifact, role="direct"):
+        """Record machine-readable provenance for a generated indicator."""
+        conn.execute(
+            "INSERT INTO ioc_sources (ioc_id, artifact, role, active, added) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(ioc_id, artifact, role) DO UPDATE "
+            "SET active = 1, added = excluded.added",
+            (ioc_id, artifact, role, 1, db.now()))
+
+    def _retire_collected_iocs(conn, artifacts):
+        marks = ",".join("?" * len(artifacts))
+        conn.execute(f"UPDATE ioc_sources SET active = 0 WHERE artifact IN "
+                     f"({marks})", artifacts)
+        rows = db.rows(
+            conn, "SELECT DISTINCT i.* FROM iocs i JOIN ioc_sources s "
+                  f"ON s.ioc_id = i.id WHERE s.artifact IN ({marks}) "
+                  "ORDER BY i.type, i.value", artifacts)
+        out = []
+        for ioc in rows:
+            active = conn.execute(
+                "SELECT 1 FROM ioc_sources WHERE ioc_id = ? AND active = 1",
+                (ioc["id"],)).fetchone()
+            try:
+                tags = set(json.loads(ioc.get("tags") or "[]"))
+            except (TypeError, ValueError):
+                tags = set()
+            sources = db.rows(
+                conn, "SELECT artifact, role, active FROM ioc_sources "
+                      "WHERE ioc_id = ? ORDER BY artifact", (ioc["id"],))
+            out.append({
+                "id": ioc["id"], "value": ioc["value"], "type": ioc["type"],
+                "origin": ioc.get("origin") or "", "sources": sources,
+                "removable": not active and ioclib.TAG_ANALYST not in tags,
+            })
         return out
 
     def _collect_confirmed(conn, case_dir, artifact, findings, hashes,
@@ -1334,6 +1632,7 @@ def create_app(config: Config) -> FastAPI:
             # that machine -- and an export would otherwise carry it out.
             value = db.case_relative_path(conn, artifact)
             path_id = db.add_ioc(conn, value, "path", tags, origin=origin)
+            _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
             # The hash from the scan, otherwise computed now: the detail
             # view shows it anyway, and a confirmed artifact without its
@@ -1343,6 +1642,7 @@ def create_app(config: Config) -> FastAPI:
                 hash_id = db.add_ioc(conn, digest, "hash",
                                      [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
                                      origin=f"sha-256 of {os.path.basename(artifact)}")
+                _track_ioc(conn, hash_id, artifact, "hash")
                 # Path and hash describe THE SAME file. Only here is that
                 # still known: afterwards the box holds two rows one cannot
                 # tell it from.
@@ -1357,6 +1657,7 @@ def create_app(config: Config) -> FastAPI:
                 ip_id = db.add_ioc(conn, hit["ip"], "ip", tags,
                                    origin=f"requested {name} ({hit['hits']}×, "
                                           f"{hit['ok_hits']}× 2xx)")
+                _track_ioc(conn, ip_id, artifact, "requester")
                 db.link_iocs(conn, ip_id, path_id, ioclib.LINK_REQUESTED,
                              f"{hit['hits']}× requested, {hit['ok_hits']}× 2xx")
                 out.append({"value": hit["ip"], "type": "ip",
@@ -1369,13 +1670,15 @@ def create_app(config: Config) -> FastAPI:
                 tags.append(ioclib.TAG_BRUTE)
             if "successful" in rule_text:
                 tags.append(ioclib.TAG_SUCCESS)
-            db.add_ioc(conn, artifact, "ip", tags, origin=origin)
+            client_id = db.add_ioc(conn, artifact, "ip", tags, origin=origin)
+            _track_ioc(conn, client_id, artifact, "direct")
             out.append({"value": artifact, "type": "ip"})
         elif kind == "table":
             table_id = db.add_ioc(
                 conn, artifact, "other",
                 [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED, ioclib.TAG_INJECTED],
                 origin=origin)
+            _track_ioc(conn, table_id, artifact, "direct")
             out.append({"value": artifact, "type": "other"})
             hosts = []
             for f in findings:
@@ -1384,6 +1687,7 @@ def create_app(config: Config) -> FastAPI:
                 host_id = db.add_ioc(conn, host, "domain",
                                      [ioclib.TAG_DERIVED, ioclib.TAG_INJECTED],
                                      origin=f"host in evidence of: {rules}")
+                _track_ioc(conn, host_id, artifact, "derived-host")
                 # WHERE the domain stood is half the statement: a domain
                 # without a place of finding is a mere claim in a report.
                 db.link_iocs(conn, host_id, table_id, ioclib.LINK_HOST_IN,
@@ -1707,6 +2011,58 @@ def create_app(config: Config) -> FastAPI:
         # after the third case.
         ids: list[str] = []
 
+    class PreviewHunt(BaseModel):
+        patterns: list[str] = []
+        match: str = "any"
+
+    def enrich_hunt_match(conn, match):
+        """Attach only case-owned correlations to the clients on screen.
+
+        Reputation is deliberately absent: this answers whether the same
+        address is already a finding, a decision or an indicator in THIS
+        case.  Those are measured relationships the analyst can act on.
+        """
+        clients = match.get("clients") or []
+        ips = [client["ip"] for client in clients]
+        states = {}
+        boxed = set()
+        if ips:
+            # A multi-path ANY hunt can merge up to 200 clients per path.
+            # Stay below SQLite builds that still cap parameters at 999.
+            for start in range(0, len(ips), 800):
+                chunk = ips[start:start + 800]
+                marks = ",".join("?" * len(chunk))
+                states.update({row["artifact"]: row for row in db.rows(
+                    conn, f"WITH art AS ({ART_SQL}) "
+                          f"SELECT artifact, triage, findings FROM art "
+                          f"WHERE artifact_kind = 'client' "
+                          f"AND artifact IN ({marks})", chunk)})
+                boxed.update(row["value"] for row in db.rows(
+                    conn, f"SELECT value FROM iocs WHERE type = 'ip' "
+                          f"AND value IN ({marks})", chunk))
+        for client in clients:
+            state = states.get(client["ip"], {})
+            client["triage"] = state.get("triage", "")
+            client["finding_count"] = state.get("findings", 0)
+            client["in_box"] = client["ip"] in boxed
+        return match
+
+    @app.post("/api/cases/{slug}/hunt/preview", dependencies=[auth])
+    def hunt_preview(slug: str, body: PreviewHunt, lang: str = lang_dep):
+        """Test an unsaved hypothesis without writing findings or history."""
+        try:
+            paths, mode = patternlib.validate_hypothesis(
+                body.patterns, body.match)
+        except patternlib.PatternError as e:
+            raise HTTPException(400, _pattern_error(e, lang)) from e
+        case_dir = case_dir_or_404(slug)
+        match = logindex.match_patterns(case_dir, paths, mode)
+        conn = db.connect(case_dir)
+        try:
+            return enrich_hunt_match(conn, match)
+        finally:
+            conn.close()
+
     @app.post("/api/cases/{slug}/hunt/run", dependencies=[auth])
     def hunt_run(slug: str, body: RunHunt):
         """Every pattern against the log index. Hits become findings on the
@@ -1714,9 +2070,8 @@ def create_app(config: Config) -> FastAPI:
         triage instead of opening a second work list next to the first.
 
         Outcome-gated like the other log rules: answered with 2xx a hit is
-        HIGH, a bare attempt stays LOW. With the pattern the analyst has said
-        that the path belongs to an exploit -- whether the server played
-        along is something only the status code says."""
+        HIGH, a bare attempt stays LOW. That raises its review priority; the
+        HTTP status alone does not prove that exploitation succeeded."""
         case_dir = case_dir_or_404(slug)
         # Enabled patterns only, both halves. A switched-off bundled pattern
         # is not run even when its id is asked for by name.
@@ -1752,6 +2107,7 @@ def create_app(config: Config) -> FastAPI:
                                   f"{match['pattern']} ({origin}) · "
                                   f"e.g. {example}")[:400])
                     new_findings += 1
+                enrich_hunt_match(conn, match)
                 conn.execute(
                     "INSERT INTO hunt_runs (pattern, label, ran_at, hits,"
                     " ok_hits, clients, ok_clients, uris, first_epoch,"

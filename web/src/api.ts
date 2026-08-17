@@ -116,6 +116,7 @@ export interface CaseDetail extends CaseInfo {
 
 export interface Job {
   id: number
+  run_id: string
   kind: string
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   progress: number
@@ -127,10 +128,30 @@ export interface Job {
   stats: Record<string, unknown>
 }
 
+export interface TriageEvent {
+  id: number
+  artifact: string
+  artifact_kind: string
+  from_state: TriageState
+  to_state: TriageState
+  note: string
+  propagated: number
+  at: string
+}
+
+export interface CaseActivity {
+  decisions: TriageEvent[]
+  jobs: Job[]
+  hunts: { id: number; pattern: string; label: string; ran_at: string;
+    hits: number; clients: number }[]
+}
+
+export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog'
+
 export interface Finding {
   id: number
   fingerprint: string
-  source: 'webshell' | 'sqldb' | 'logs'
+  source: FindingSource
   severity: 0 | 1 | 2
   rule: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
@@ -159,7 +180,7 @@ export interface ArtifactRow {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
   worst: 0 | 1 | 2 | 3
-  source: 'webshell' | 'sqldb' | 'logs'
+  source: FindingSource
   /** Findings the last completed scans still reproduce. Retired rows are
    *  not in this number -- counting them made one moved payload read as
    *  two problems. */
@@ -542,11 +563,39 @@ export interface DbAccount {
   in_box: boolean
 }
 
+export interface DashboardObservation extends ChainEvent {
+  role: 'first' | 'first_success' | 'account' | 'first_alert' | 'last'
+}
+
+export interface DashboardConfirmedArtifact {
+  artifact: string
+  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  worst: number
+}
+
+export interface DashboardChronology {
+  total_events: number
+  event_span: { first: number | null; last: number | null }
+  /** Kept separately because the first event may itself be the first success. */
+  first_success_at: number | null
+  observations: DashboardObservation[]
+  gaps: string[]
+  undated: number
+  zone: string
+  tz_offsets: string[]
+  tz_mixed: boolean
+}
+
 export interface Dashboard {
   /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
   severity: Record<string, number>
   /** Artefakte je Entscheidung. */
   triage: Record<string, number>
+  /** Confirmed incident artifacts grouped by entity type and severity. */
+  confirmed_kinds: Record<string, number>
+  confirmed_severity: Record<string, number>
+  /** A type-balanced preview; the full confirmed queue remains in Findings. */
+  confirmed_artifacts: DashboardConfirmedArtifact[]
   findings_total: number
   iocs: number
   accounts: number
@@ -567,6 +616,7 @@ export interface Dashboard {
     /** Answered with 2xx; null on an index from before schema 3. */
     ok: number | null
   }[]
+  chronology: DashboardChronology
 }
 
 export interface CaseSummary {
@@ -694,6 +744,18 @@ export interface HuntClient {
   first_epoch: number | null
   last_epoch: number | null
   tz: number
+  /** Existing case context, including findings written by this hunt. */
+  triage: '' | TriageState
+  finding_count: number
+  in_box: boolean
+}
+
+export interface HuntTimelineDay {
+  day: string
+  requests: number
+  ok: number
+  errors: number
+  clients: number
 }
 
 export interface HuntResult {
@@ -719,15 +781,16 @@ export interface HuntResult {
   /** The URI list is a sample too. Without this the block reads as the whole
    *  answer, and a pattern reaching too far looks precise. */
   uris_truncated: boolean
-  /** The key figures of the search. `ok_clients` is the number for the
-   *  record: how many addresses got through, not how often someone knocked.
-   *  `uri_total` counts ALL URLs hit -- `uris` is only the sample. */
+  /** The key figures of the search. `ok_clients` is the number of addresses
+   *  that received at least one 2xx response; it is not a claim that an
+   *  exploit succeeded. `uri_total` counts all URLs hit. */
   clients_total: number
   ok_clients: number
   uri_total: number
   first_epoch: number | null
   last_epoch: number | null
   tz: number
+  timeline: HuntTimelineDay[]
 }
 
 /** An event of the case chronology. `at` is a NAIVE LOCAL TIME in seconds --
@@ -752,11 +815,19 @@ export interface ChainEvent {
  *  report just as much as the events themselves. */
 export interface CaseChain {
   span: { first: number | null; last: number | null }
+  /** First and last dated observation, independent of page and sort order. */
+  event_span: { first: number | null; last: number | null }
   events: ChainEvent[]
   gaps: string[]
   undated: { artifact: string; artifact_kind: string; why: string }[]
   confirmed: number
+  /** Number of dated events in the complete chronology, before paging. */
+  total_events: number
   truncated: boolean
+  /** Paging applied by the interactive chronology endpoint. */
+  offset: number
+  limit: number
+  order: 'asc' | 'desc'
   /** Clock offset per source, set by the analyst, in seconds. */
   offsets: { logs: number; dump: number }
   /** Which reading the events are in, and what to call it. They arrive
@@ -817,6 +888,16 @@ export interface TriageResult {
   collected: { value: string; type: string; hits?: number; ok_hits?: number }[]
   linked: TriageLink[]
   suggested: TriageLink[]
+  retained_iocs: RetainedIoc[]
+}
+
+export interface RetainedIoc {
+  id: number
+  value: string
+  type: string
+  origin: string
+  removable: boolean
+  sources: { artifact: string; role: string; active: number }[]
 }
 
 /** An IP that hangs on this artifact -- with the reason why it is here.
