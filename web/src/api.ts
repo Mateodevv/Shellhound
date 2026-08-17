@@ -773,11 +773,19 @@ export interface ChainEvent {
  *  report just as much as the events themselves. */
 export interface CaseChain {
   span: { first: number | null; last: number | null }
+  /** First and last dated observation, independent of page and sort order. */
+  event_span: { first: number | null; last: number | null }
   events: ChainEvent[]
   gaps: string[]
   undated: { artifact: string; artifact_kind: string; why: string }[]
   confirmed: number
+  /** Number of dated events in the complete chronology, before paging. */
+  total_events: number
   truncated: boolean
+  /** Paging applied by the interactive chronology endpoint. */
+  offset: number
+  limit: number
+  order: 'asc' | 'desc'
   /** Clock offset per source, set by the analyst, in seconds. */
   offsets: { logs: number; dump: number }
   /** Which reading the events are in, and what to call it. They arrive

@@ -42,7 +42,7 @@ from fastapi import HTTPException
 from server import db, enrich, i18n, rules as rulelib, ruleswitch, settings
 from server.app import create_app
 from server.artifacts import counts as artifact_counts
-from server.chain import case_chain
+from server.chain import EVENT_CAP, case_chain
 from server.config import Config
 from server.engines import logindex, sqldump, webshell
 from tests.fixtures_hostile import ATTACKER, HostileEvidence, hostile_shapes
@@ -583,6 +583,14 @@ class ChronologyAccountsForEverythingTests(unittest.TestCase):
             set(), confirmed - self._accounted(chain),
             "the chronology was cut short and took confirmed artifacts with "
             "it -- they are in neither list")
+
+        complete = case_chain(evidence.case_dir, event_cap=None)
+        self.assertFalse(complete["truncated"])
+        self.assertGreater(len(complete["events"]), EVENT_CAP)
+        self.assertEqual(complete["total_events"], len(complete["events"]))
+        self.assertEqual(
+            set(), confirmed - self._accounted(complete),
+            "the complete sequence lost an artifact before the API could page it")
 
 
 class ForeignVerdictsMoveNothingTests(unittest.TestCase):
