@@ -144,10 +144,10 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
 
   return (
     <div className="flex flex-col gap-6">
-      <Tooltip title="Database"
+      <Tooltip title={tr('nav.database')}
         body={tr('database.title.body')}
         hint={tr('database.title.hint')}>
-        <h1 className="text-lg font-bold">Database</h1>
+        <h1 className="text-lg font-bold">{tr('nav.database')}</h1>
       </Tooltip>
 
       {/* ---- WHAT we read from: the export itself ---- */}
@@ -183,7 +183,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
               hint={hiddenSignals.has(id)
                 ? tr('database.signal.hidden')
                 : tr('database.signal.hide')}>
-              <Chip active={false} dimmed={hiddenSignals.has(id)} count={s.n}
+              <Chip active={!hiddenSignals.has(id)} dimmed={hiddenSignals.has(id)} count={s.n}
                 onClick={() => setHiddenSignals((prev) => {
                   const next = new Set(prev)
                   if (next.has(id)) next.delete(id)
@@ -358,7 +358,7 @@ export function DatabaseView({ slug }: { slug: string; gotoView: (v: ViewId) => 
             <thead className="sticky top-0 z-10 bg-[var(--panel)]">
               <tr className="border-b border-[var(--line)] text-left text-[11px] uppercase tracking-wider text-[var(--muted)]">
                 <th className="px-4 py-2">{tr('kind.table')}</th>
-                <th className="px-2 py-2">Findings</th>
+                <th className="px-2 py-2">{tr('nav.findings')}</th>
                 <th className="px-2 py-2 text-right">{tr('artifact.columns')}</th>
                 <th className="px-2 py-2 text-right">{tr('table.rows')}</th>
                 <th className="px-2 py-2 text-right">{tr('artifact.dumpBytes')}</th>

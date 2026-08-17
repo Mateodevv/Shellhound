@@ -324,6 +324,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/coverage": "",
     "/api/cases/{slug}/enrichment": "",
     "/api/cases/{slug}/jobs": "",
+    "/api/cases/{slug}/activity": "",
     "/api/cases/{slug}/dashboard": "",
     "/api/cases/{slug}/chain": "",
     "/api/cases/{slug}/report.html": "",
@@ -404,6 +405,16 @@ class EndpointSurfaceTests(unittest.TestCase):
         status, _headers, _body = get("/api/yara/rules/not-a-rule-here")
         self.assertEqual(404, status)
 
+    def test_a_broken_yara_rule_names_the_compiler_error(self):
+        status, _headers, raw = request(
+            "PUT", "/api/yara/rules/compile-detail-test.yar",
+            {"source": "rule broken { condition: }"})
+        self.assertEqual(400, status)
+        detail = json.loads(raw)["detail"]
+        self.assertIn("YARA could not compile this rule", detail)
+        self.assertNotEqual("err.yaraCompile", detail)
+        self.assertIn("syntax", detail.lower())
+
     def test_the_start_page_is_served(self):
         status, _headers, body = get("/")
         self.assertEqual(200, status)
@@ -473,9 +484,13 @@ class ArtifactFilterTests(unittest.TestCase):
         self.assertEqual(set(shown), set(attached) if shown else set(),
                          "findings came back for artifacts that were hidden")
         counts = body["counts"]
-        for dimension in ("severity", "triage", "source"):
+        for dimension in ("severity", "triage"):
             self.assertEqual(sum(counts[dimension].values()), counts["total"],
                              f"the {dimension} counts do not add up")
+        self.assertGreaterEqual(
+            sum(counts["source"].values()), counts["total"],
+            "source is multi-valued: its counts may overlap but may not lose "
+            "an artifact")
 
     def test_the_unfiltered_list_returns_everything_it_counts(self):
         body = self.findings()
@@ -530,6 +545,35 @@ class ArtifactFilterTests(unittest.TestCase):
                 self.assertEqual(
                     whole["total"] - whole["counts"]["source"].get(source, 0),
                     body["total"])
+
+    def test_selecting_yara_keeps_an_artifact_with_another_source(self):
+        """One file can match shipped rules and YARA. The source facet must
+        describe that fact instead of assigning the file to whichever source
+        happens to sort first."""
+        shell = str(EVIDENCE.webroot / EVIDENCE.shell_rel)
+        conn = db.connect(workspace.resolve_case(WORKSPACE, CASE))
+        try:
+            db.upsert_finding(conn, "yara", db.SEV_MEDIUM,
+                              "Custom YARA match", "file", shell,
+                              evidence="$marker at 0x20")
+            conn.commit()
+        finally:
+            conn.close()
+        self.addCleanup(self._remove_test_yara, shell)
+        body = self.findings("source=yara")
+        self.assertIn(shell, [row["artifact"] for row in body["artifacts"]])
+        self.assertGreaterEqual(body["counts"]["source"].get("yara", 0), 1)
+
+    @staticmethod
+    def _remove_test_yara(shell):
+        conn = db.connect(workspace.resolve_case(WORKSPACE, CASE))
+        try:
+            conn.execute("DELETE FROM findings WHERE source = 'yara' "
+                         "AND artifact = ? AND rule = 'Custom YARA match'",
+                         (shell,))
+            conn.commit()
+        finally:
+            conn.close()
 
     def test_a_decided_artifact_obeys_the_severity_chip(self):
         """THE regression. A confirmed artifact is still an artifact of its
@@ -862,6 +906,17 @@ class TriageEndpointTests(unittest.TestCase):
                                  {"artifacts": [ATTACKER], "state": "maybe"})
         self.assertEqual(400, status, body)
 
+    def test_case_notes_round_trip_through_the_report_editor(self):
+        notes = "Scope checked; preserve the two webshell paths."
+        status, _headers, raw = request(
+            "PATCH", f"/api/cases/{self.slug}", {"notes": notes})
+        self.assertEqual(200, status, raw)
+        self.assertEqual(notes, json.loads(raw)["notes"])
+
+        status, case = get_json(f"/api/cases/{self.slug}")
+        self.assertEqual(200, status, case)
+        self.assertEqual(notes, case["notes"])
+
     def test_a_note_is_readable_through_the_artifact_endpoint(self):
         """The note is what the report is written from, so it has to come back
         the way it went in -- through a different endpoint than the one that
@@ -894,6 +949,34 @@ class TriageEndpointTests(unittest.TestCase):
         status, box = get_json(f"/api/cases/{self.slug}/iocs")
         self.assertEqual(200, status, box)
         self.assertTrue(box)
+
+    def test_withdrawing_confirmation_exposes_reversible_ioc_provenance(self):
+        shell = str(EVIDENCE.webroot / EVIDENCE.shell_rel)
+        self.decide([shell], "confirmed")
+        result = self.decide([shell], "reviewed")
+        retained = result["retained_iocs"]
+        self.assertTrue(retained, "the generated IOCs disappeared silently")
+        self.assertTrue(all(any(source["artifact"] == shell
+                                for source in ioc["sources"])
+                            for ioc in retained))
+        removable = [ioc for ioc in retained if ioc["removable"]]
+        self.assertTrue(removable, "nothing generated solely by this decision "
+                        "can be removed")
+        status, removed = post_json(
+            f"/api/cases/{self.slug}/triage/iocs/remove",
+            {"ioc_ids": [ioc["id"] for ioc in removable],
+             "artifacts": [shell]})
+        self.assertEqual(200, status, removed)
+        self.assertEqual({ioc["id"] for ioc in removable},
+                         set(removed["removed"]))
+
+        status, activity = get_json(f"/api/cases/{self.slug}/activity")
+        self.assertEqual(200, status, activity)
+        transitions = [(event["from_state"], event["to_state"])
+                       for event in activity["decisions"]
+                       if event["artifact"] == shell]
+        self.assertIn(("new", "confirmed"), transitions)
+        self.assertIn(("confirmed", "reviewed"), transitions)
 
 
 # --- exports ---------------------------------------------------------------
@@ -1012,6 +1095,15 @@ class ExportTests(unittest.TestCase):
         self.assertIn("<!doctype html>", text)
         self.assertIn("SHELLHOUND", text)
         self.assertNotIn(str(WORKSPACE), text)
+
+    def test_the_report_builder_selects_sections_and_previews_inline(self):
+        status, headers, body = get(
+            f"/api/cases/{CASE}/report.html?sections=indicators&preview=1")
+        self.assertEqual(200, status)
+        self.assertIn("inline", headers.get("content-disposition", ""))
+        text = body.decode("utf-8")
+        self.assertIn("IOC box", text)
+        self.assertNotIn("Evidence inventory", text)
 
     def test_cross_case_iocs_only_return_explicit_box_entries(self):
         other = workspace.create_case(WORKSPACE, "Earlier matching case",

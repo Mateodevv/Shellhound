@@ -21,6 +21,7 @@ import { EnrichPanel } from '../components/Enrich'
 import { FileViewer } from '../components/FileViewer'
 import { TraceWindow } from '../components/TraceWindow'
 import type { ViewId } from '../App'
+import { defang } from '../defang'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
   ip: Globe, hash: Fingerprint, url: Link2, domain: Globe, email: AtSign,
@@ -43,19 +44,6 @@ const TAG_TONE: Record<string, 'danger' | 'warn' | 'accent' | undefined> = {
 const PROVENANCE_TAGS = new Set([
   'analyst', 'finding', 'confirmed', 'hunt', 'actor', 'derived',
 ])
-
-/** hxxps://evil[.]test -- pasteable into a ticket without anything turning
- *  into a link. Only shapes a mail client would linkify get the treatment;
- *  hashes, paths and logins are inert as they are. */
-export function defang(value: string, type: string): string {
-  let v = value
-  if (type === 'url') v = v.replace(/^http(s?):\/\//i, 'hxxp$1://')
-  if (type === 'ip' || type === 'domain' || type === 'url') {
-    v = v.replace(/\./g, '[.]')
-  }
-  if (type === 'email') v = v.replace(/\./g, '[.]').replace(/@/g, '[at]')
-  return v
-}
 
 const DEFANGABLE = new Set(['ip', 'url', 'domain', 'email'])
 
@@ -387,7 +375,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           <Tooltip key={t} body={tr(`iocType.${t}`)}
             hint={hiddenTypes.has(t) ? tr('filter.hidden.back')
                                      : tr('iocbox.type.hide')}>
-            <Chip active={false} dimmed={hiddenTypes.has(t)}
+            <Chip active={!hiddenTypes.has(t)} dimmed={hiddenTypes.has(t)}
               onClick={() => setHiddenTypes((prev) => {
                 const next = new Set(prev)
                 if (next.has(t)) next.delete(t)
@@ -438,7 +426,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
               hint={hiddenTags.has(t)
                 ? tr('iocbox.tag.hidden')
                 : tr('iocbox.tag.hide')}>
-              <Chip active={false} dimmed={hiddenTags.has(t)}
+              <Chip active={!hiddenTags.has(t)} dimmed={hiddenTags.has(t)}
                 onClick={() => setHiddenTags((prev) => {
                   const next = new Set(prev)
                   if (next.has(t)) next.delete(t)

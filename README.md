@@ -125,8 +125,9 @@ New case → *Evidence & jobs* → enter the paths.
 
 Alternative: enter the folder the evidence sits in and use **Detect evidence
 automatically**. It recognises webroot, logs and database export by their
-content (CMS markers, parsable log lines, dump headers) and states the reason
-for each proposal.
+content (CMS markers, parsable log lines, dump headers), states the reason for
+each proposal and can apply the complete detected set. Applied proposals leave
+the checklist instead of remaining actionable.
 
 ![Evidence and jobs](assets/docs/evidence.png)
 
@@ -135,7 +136,8 @@ for each proposal.
 *Analyse* runs the engines once, at roughly 55,000 log lines per second. On a
 million log lines this is the only slow step of a case; everything after it is
 a query. The jobs run in the background, each reports its own progress and can
-be cancelled.
+be cancelled. All engines started by one click belong to one expandable
+**analysis run**, with their shared status and durable run id.
 
 ### 4 · Triage
 
@@ -178,10 +180,16 @@ no chain of conclusions is built automatically.
 **False positive** is not deleted. The artifact leaves the work list and stays
 reachable through the filter, with the note attached.
 
-### Chronology
+The current queue is linkable: view, severity, triage, source, search and the
+open artifact survive refresh and browser back. Frequently used combinations
+can be named and stored as saved views in the browser.
 
-The confirmed artifacts in temporal order, every line naming its source. The
-view orders observations and derives no causes.
+### Chronology and activity
+
+The dedicated timeline keeps two clocks apart: case activity records scans,
+hunts and analyst decisions; the incident chronology orders confirmed
+artifacts in evidential time, every line naming its source. It orders
+observations and derives no causes.
 
 ![Chronology](assets/docs/chronology.png)
 
@@ -273,10 +281,12 @@ are recognised, and their accounts read generically.
 | **Files** | Browse the evidence, take files into the IOC box by hand, compare against the reference copy |
 | **IOC box** | The collected indicators with their relationships and exact matches from other open cases, exportable as CSV, JSON or STIX 2.1 |
 
-The dashboard exports one self-contained, printable HTML case report. It
-contains no evidence-root paths or remote resources and carries the SHA-256 of
-the exact response in its download header. Cross-case matching reads only the
-IOC boxes in the current workspace; it never searches raw findings or evidence.
+**Report & close** edits the case summary, checks evidence, running/failed
+analyses and open triage, and previews a selectable-section report before the
+case is archived. The self-contained HTML contains no evidence-root paths or
+remote resources and carries the SHA-256 of the exact response in its download
+header. Cross-case matching reads only the IOC boxes in the current workspace;
+it never searches raw findings or evidence.
 
 ### Third-party lookups
 

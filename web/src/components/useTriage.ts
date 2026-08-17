@@ -10,7 +10,7 @@
 // the whole file.
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { post, type TriageLink, type TriageResult } from '../api'
+import { post, type RetainedIoc, type TriageLink, type TriageResult } from '../api'
 
 export interface TriageController {
   /** Decide artifacts. `propagate: false` for undos and suggestions -- those
@@ -31,6 +31,9 @@ export interface TriageController {
    *  findings. The server answers 200 for that, so somebody has to say it. */
   nothingToDecide: boolean
   dismissNothingToDecide: () => void
+  retained: RetainedIoc[] | null
+  keepRetained: () => void
+  removeRetained: () => Promise<void>
 }
 
 export function useTriage(slug: string, onDecided?: () => void): TriageController {
@@ -40,6 +43,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
   const [notice, setNotice] = useState<
     { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
   const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
+  const [retained, setRetained] = useState<RetainedIoc[] | null>(null)
 
   const refresh = () => {
     // EVERY view that shows a triage state. The file browser, the database
@@ -65,6 +69,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
       // success and the analyst walked away believing it was filed.
       setNothingToDecide(result.updated === 0)
       setCollected(result.collected)
+      setRetained(result.retained_iocs?.length ? result.retained_iocs : null)
       // What was decided along and what is suggested are a MESSAGE, not a
       // question: the analyst has just decided and should learn what
       // followed from it without being torn out of their flow.
@@ -112,5 +117,19 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     dismissNotice: () => setNotice(null),
     reviewing,
     review: setReviewing,
+    retained,
+    keepRetained: () => setRetained(null),
+    removeRetained: async () => {
+      if (!retained) return
+      const removable = retained.filter((ioc) => ioc.removable)
+      if (!removable.length) return
+      const artifacts = [...new Set(removable.flatMap((ioc) =>
+        ioc.sources.filter((source) => !source.active).map((source) => source.artifact)))]
+      await post(`/api/cases/${slug}/triage/iocs/remove`, {
+        ioc_ids: removable.map((ioc) => ioc.id), artifacts,
+      })
+      setRetained(null)
+      refresh()
+    },
   }
 }

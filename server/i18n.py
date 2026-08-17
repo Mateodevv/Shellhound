@@ -386,6 +386,14 @@ CATALOGUE: dict[str, dict[str, str]] = {
     },
     "err.yaraUnknown": {"en": "No such rule file.",
                         "de": "Keine solche Regeldatei."},
+    "err.yaraCompile": {
+        "en": "YARA could not compile this rule",
+        "de": "YARA konnte diese Regel nicht übersetzen",
+    },
+    "err.evidenceMissing": {
+        "en": "Path does not exist: {path}",
+        "de": "Der Pfad existiert nicht: {path}",
+    },
     "err.patternBundled": {
         "en": "A pattern shipped with SHELLHOUND cannot be edited — it is the "
               "same on every installation, which is what makes it citable. "

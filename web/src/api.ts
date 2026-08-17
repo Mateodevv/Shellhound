@@ -116,6 +116,7 @@ export interface CaseDetail extends CaseInfo {
 
 export interface Job {
   id: number
+  run_id: string
   kind: string
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   progress: number
@@ -127,10 +128,30 @@ export interface Job {
   stats: Record<string, unknown>
 }
 
+export interface TriageEvent {
+  id: number
+  artifact: string
+  artifact_kind: string
+  from_state: TriageState
+  to_state: TriageState
+  note: string
+  propagated: number
+  at: string
+}
+
+export interface CaseActivity {
+  decisions: TriageEvent[]
+  jobs: Job[]
+  hunts: { id: number; pattern: string; label: string; ran_at: string;
+    hits: number; clients: number }[]
+}
+
+export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog'
+
 export interface Finding {
   id: number
   fingerprint: string
-  source: 'webshell' | 'sqldb' | 'logs'
+  source: FindingSource
   severity: 0 | 1 | 2
   rule: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
@@ -159,7 +180,7 @@ export interface ArtifactRow {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
   worst: 0 | 1 | 2 | 3
-  source: 'webshell' | 'sqldb' | 'logs'
+  source: FindingSource
   /** Findings the last completed scans still reproduce. Retired rows are
    *  not in this number -- counting them made one moved payload read as
    *  two problems. */
@@ -817,6 +838,16 @@ export interface TriageResult {
   collected: { value: string; type: string; hits?: number; ok_hits?: number }[]
   linked: TriageLink[]
   suggested: TriageLink[]
+  retained_iocs: RetainedIoc[]
+}
+
+export interface RetainedIoc {
+  id: number
+  value: string
+  type: string
+  origin: string
+  removable: boolean
+  sources: { artifact: string; role: string; active: number }[]
 }
 
 /** An IP that hangs on this artifact -- with the reason why it is here.

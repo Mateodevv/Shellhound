@@ -122,6 +122,56 @@ class ConnectTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_a_current_marker_does_not_hide_an_incomplete_upgrade(self):
+        """The marker is a shortcut, not evidence that every table made it
+        to disk. Repairing a partial upgrade must be automatic and
+        idempotent, because otherwise the new timeline crashes only on an
+        analyst's existing case."""
+        conn = db.connect(self.case)
+        conn.execute("DROP TABLE triage_events")
+        conn.execute("DROP TABLE ioc_sources")
+        conn.commit()
+        conn.close()
+
+        conn = db.connect(self.case)
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            self.assertIn("triage_events", tables)
+            self.assertIn("ioc_sources", tables)
+        finally:
+            conn.close()
+
+    def test_schema_five_adds_run_id_before_indexing_it(self):
+        """Version 5 is the released schema this work upgrades. Its jobs
+        table has no run_id, so the column must exist before its index is
+        created."""
+        conn = db.connect(self.case)
+        conn.execute("DROP INDEX idx_jobs_run")
+        conn.execute("ALTER TABLE jobs DROP COLUMN run_id")
+        conn.execute("DROP TABLE triage_events")
+        conn.execute("DROP TABLE ioc_sources")
+        conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
+        conn.commit()
+        conn.close()
+
+        conn = db.connect(self.case)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+            indexes = {row[1] for row in conn.execute("PRAGMA index_list(jobs)")}
+            self.assertIn("run_id", columns)
+            self.assertIn("idx_jobs_run", indexes)
+            self.assertTrue(db._has_current_schema(conn))
+        finally:
+            conn.close()
+
+        conn = db.connect(self.case)
+        try:
+            self.assertEqual(0, conn.total_changes,
+                             "repair must not turn every later open into a write")
+        finally:
+            conn.close()
+
     def test_writing_still_works(self):
         conn = db.connect(self.case)
         try:
