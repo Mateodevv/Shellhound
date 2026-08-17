@@ -216,11 +216,20 @@ class EngineTests(unittest.TestCase):
                            "successful shell access not counted")
 
     def test_pattern_hunt_matches(self):
-        match = logindex.match_pattern(self.ev.case_dir, "/uploads/*.php")
+        match = logindex.match_patterns(self.ev.case_dir, ["/uploads/*.php"])
         self.assertGreater(match["hits"], 0, "pattern found nothing")
         self.assertGreater(match["ok_clients"], 0,
-                           "no client recorded as successful")
+                           "no client received a 2xx response")
         self.assertTrue(any(c["ip"] == ATTACKER for c in match["clients"]))
+        self.assertTrue(match["timeline"])
+        self.assertEqual(match["hits"], sum(
+            day["requests"] for day in match["timeline"]))
+
+    def test_all_pattern_hunt_with_no_common_client_has_no_timeline(self):
+        match = logindex.match_patterns(
+            self.ev.case_dir, ["/uploads/*.php", "/never-requested"], "all")
+        self.assertEqual([], match["clients"])
+        self.assertEqual([], match["timeline"])
 
 
 if __name__ == "__main__":

@@ -244,6 +244,17 @@ def _mode(value):
     return value
 
 
+def validate_hypothesis(patterns_in, match=MATCH_ANY):
+    """Validate an unsaved hunt with the same rules as a library entry.
+
+    Previewing something that cannot be stored is confusing, and accepting an
+    unbounded list here would let one request trigger an arbitrary number of
+    index passes.  Keep that boundary in this module, beside the library's
+    canonical validation.
+    """
+    return _validate(patterns_in), _mode(match)
+
+
 def _signature(entry):
     """What makes two entries the same rule: the same paths combined the same
     way. Order does not matter -- "/a AND /b" is "/b AND /a"."""
