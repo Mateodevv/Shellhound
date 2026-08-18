@@ -8,13 +8,14 @@ All notable changes to SHELLHOUND. Format after
 
 ### Added — investigation workbench workflow
 
-- The dashboard is now a forensic case overview rather than a workflow
-  launcher: it leads with confirmed artifacts, evidenced incident time,
-  central observations, involved entities, log coverage and explicit evidence
-  limitations. Next actions, case activity and report preparation stay out of
-  this surface. Incident-time terms now explain their evidential meaning in
-  tooltips, and the confirmed-artifact card names a representative set of the
-  actual true positives instead of showing category totals alone.
+- The dashboard is now a forensic case briefing rather than a workflow
+  launcher: one case conclusion leads into the evidenced incident narrative
+  and strictly confirmed scope. Notable clients, accounts and indicators are
+  deliberately separated as observed context, while evidence basis and limits
+  remain visible without a dominant log chart. Next actions, case activity and
+  report preparation stay out of this surface. Incident-time terms explain
+  their evidential meaning in tooltips, including the explicit distinction
+  between a 2xx response and proof of successful exploitation.
 - The case shell is organised into **Prepare, Investigate and Finish**, keeps
   the case identity and triage progress visible, and offers the next useful
   action instead of returning to a passive dashboard.
