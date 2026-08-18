@@ -24,6 +24,7 @@ stale one refuses to answer (sources fingerprint), and it is excluded from
 the case archive.
 """
 import json as _json
+import ipaddress
 import os
 import re
 import sqlite3
@@ -1070,11 +1071,40 @@ def _flag_condition(flag):
         # in the list -- the condition mirrors actorBadges() in the
         # interface, so that "hide inconspicuous" removes precisely the rows
         # marked "inconspicuous".
-        return ("NOT ((login_redirects > 0 AND login_posts >= "
-                f"{BF_THRESHOLD}) OR upload_php_ok > 0 OR login_posts >= "
-                f"{BF_THRESHOLD} OR scanner_uas != '[]' OR sqli_ok > 0 "
-                "OR sqli_attempts > 0 OR traversal_ok > 0)", [])
+        return ("NOT ((admin_ok > 0 AND login_posts >= "
+                f"{BF_THRESHOLD} AND login_burst >= {BF_THRESHOLD}) "
+                "OR cms_dir_php_ok > 0 OR upload_php_ok > 0 "
+                f"OR login_posts >= {BF_THRESHOLD} OR scanner_uas != '[]' "
+                "OR sqli_attempts > 0 OR traversal_attempts > 0 "
+                "OR upload_php_attempts > 0)", [])
     return None, []
+
+
+def actor_counts(case_dir):
+    """Counts for the Actors workspace views.
+
+    These are evaluated against the complete index. Counting the current
+    page in the browser made a 200-row window look like the case population,
+    and the view tabs then changed their meaning as one paged. The classes
+    deliberately overlap; each number answers its own documented predicate.
+    """
+    conn = _open_ro(case_dir)
+    empty = {"all": 0, "quiet": 0, "relevant": 0, "alerted": 0,
+             "scanner": 0, "bruteforce": 0, "probes": 0}
+    if conn is None:
+        return empty
+    try:
+        total = int(conn.execute("SELECT count(*) FROM actors").fetchone()[0])
+        out = {"all": total}
+        for flag in ("quiet", "alerted", "scanner", "bruteforce", "probes"):
+            condition, params = _flag_condition(flag)
+            out[flag] = int(conn.execute(
+                f"SELECT count(*) FROM actors WHERE {condition}", params
+            ).fetchone()[0])
+        out["relevant"] = max(0, total - out["quiet"])
+        return out
+    finally:
+        conn.close()
 
 
 # SQLite binds only a limited number of variables per statement (999 in
@@ -1137,7 +1167,7 @@ def actors_by_ip(case_dir, ips):
 
 
 def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
-                limit=200, offset=0):
+                limit=200, offset=0, only_ips=None):
     """The Actors view: one finished row per client, filter + sort in SQL.
     `flag` selects one class; `hide` removes classes -- the UI's chips are
     hide-toggles, several can stack."""
@@ -1146,9 +1176,49 @@ def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
         return {"total": 0, "actors": []}
     try:
         where, params = [], []
-        if search:
-            where.append("ip LIKE ?")
-            params.append(f"%{search}%")
+        term = str(search or "").strip()
+        if term:
+            # CIDR is an exact network query, not another fuzzy string. A
+            # deterministic SQLite function keeps sorting and pagination in
+            # SQL while supporting IPv4 and IPv6 without changing the index
+            # schema merely for display-time filtering.
+            try:
+                network = ipaddress.ip_network(term, strict=False) if "/" in term else None
+            except ValueError:
+                network = None
+            if network is not None:
+                conn.create_function(
+                    "shellhound_in_network", 1,
+                    lambda value: int(_ip_in_network(value, network)),
+                    deterministic=True,
+                )
+                where.append("shellhound_in_network(ip) = 1")
+            else:
+                escaped = (term.replace("\\", "\\\\")
+                           .replace("%", "\\%").replace("_", "\\_"))
+                like = f"%{escaped}%"
+                # Search the interned URI/agent strings first, then use the
+                # indexed integer ids in requests. This searches the WHOLE
+                # trace, not only the page of actors currently returned.
+                where.append(
+                    "(ip LIKE ? ESCAPE '\\' OR ip_id IN ("
+                    "SELECT DISTINCT r.ip FROM requests r WHERE "
+                    "r.uri IN (SELECT id FROM strings WHERE text LIKE ? ESCAPE '\\') "
+                    "OR r.agent IN (SELECT id FROM strings WHERE text LIKE ? ESCAPE '\\')"
+                    "))")
+                params.extend([like, like, like])
+        if only_ips is not None:
+            selected = {str(ip).strip() for ip in only_ips if str(ip).strip()}
+            if not selected:
+                return {"total": 0, "actors": []}
+            # A triage view can contain more addresses than SQLite's bind
+            # limit. The set is trusted case data, captured by the function;
+            # no values are interpolated into SQL.
+            conn.create_function(
+                "shellhound_selected_actor", 1,
+                lambda value: int(value in selected), deterministic=True,
+            )
+            where.append("shellhound_selected_actor(ip) = 1")
         cond, extra = _flag_condition(flag)
         if cond:
             where.append(cond)
@@ -1160,6 +1230,18 @@ def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
                 params.extend(extra)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         order = {
+            "evidence": (
+                "CASE "
+                "WHEN upload_php_ok > 0 OR cms_dir_php_ok > 0 THEN 0 "
+                f"WHEN admin_ok > 0 AND login_posts >= {BF_THRESHOLD} "
+                f"AND login_burst >= {BF_THRESHOLD} THEN 1 "
+                "WHEN sqli_ok > 0 OR traversal_ok > 0 THEN 2 "
+                f"WHEN login_posts >= {BF_THRESHOLD} THEN 3 "
+                "WHEN sqli_attempts > 0 OR traversal_attempts > 0 "
+                "OR upload_php_attempts > 0 THEN 4 "
+                "WHEN scanner_uas != '[]' THEN 5 ELSE 6 END ASC, "
+                "last_epoch DESC, requests DESC"
+            ),
             "requests": "requests DESC",
             "first": "first_epoch ASC",
             "last": "last_epoch DESC",
@@ -1177,6 +1259,15 @@ def actors_list(case_dir, search="", sort="requests", flag="", hide=(),
         return {"total": total, "actors": rows}
     finally:
         conn.close()
+
+
+def _ip_in_network(value, network):
+    """SQLite callback used by the CIDR actor search; malformed log values
+    simply do not match instead of aborting the complete result set."""
+    try:
+        return ipaddress.ip_address(str(value)) in network
+    except ValueError:
+        return False
 
 
 def actor_sparklines(case_dir, ip_ids, buckets=48):
@@ -1263,7 +1354,8 @@ _STATUS_RANGES = {
 
 
 def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
-          offset=0, search="", status="", method="", sort="time"):
+          offset=0, search="", status="", method="", sort="time",
+          mark_exact=(), mark_contains=(), evidence_only=False):
     """Every request of these clients -- THE instant trace. Twenty clients
     cost one indexed query, not twenty log passes.
 
@@ -1298,6 +1390,23 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
             like = "%" + (search.strip().replace("\\", "\\\\")
                           .replace("%", "\\%").replace("_", "\\_")) + "%"
             params += [like, like]
+        if evidence_only:
+            evidence_conditions = []
+            for value in dict.fromkeys(
+                    str(v).strip().lower() for v in mark_exact if str(v).strip()):
+                evidence_conditions.append("lower(u.text) = ?")
+                params.append(value)
+            for value in dict.fromkeys(
+                    str(v).strip().lower().replace("\\", "/")
+                    for v in mark_contains if str(v).strip()):
+                evidence_conditions.append("lower(u.text) LIKE ? ESCAPE '\\'")
+                escaped = (value.replace("\\", "\\\\")
+                           .replace("%", "\\%").replace("_", "\\_"))
+                params.append(f"%{escaped}%")
+            # An evidence-only request without marks is an empty, explicit
+            # query -- never fall back to the complete trace by accident.
+            where.append("(" + " OR ".join(evidence_conditions) + ")"
+                         if evidence_conditions else "0 = 1")
         clause = " AND ".join(where)
         # The joins on u/a are in the COUNT query too, because `search`
         # filters on them -- otherwise it would count something other than

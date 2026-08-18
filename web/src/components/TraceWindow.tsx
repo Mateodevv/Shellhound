@@ -73,21 +73,29 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   const [status, setStatus] = useState('')
   const [method, setMethod] = useState('')
   const [sort, setSort] = useState('time')
+  const hasMarks = Boolean(marks?.exact?.some(Boolean) || marks?.contains?.some(Boolean))
+  const [evidenceOnly, setEvidenceOnly] = useState(hasMarks)
   const pageSize = 500
 
   // A new trace starts on page 1 and without the filters of the previous.
   useEffect(() => {
     setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
-  }, [ips])
+    setEvidenceOnly(hasMarks)
+  }, [ips, marks, hasMarks])
   // A filter shrinks the set -- on page 7 one would otherwise stand in the
   // void.
-  useEffect(() => { setPage(0) }, [search, status, method, sort])
+  useEffect(() => { setPage(0) }, [search, status, method, sort, evidenceOnly])
 
   const { data, isFetching } = useQuery({
-    queryKey: ['trace', slug, ips, page, search, status, method, sort],
+    queryKey: ['trace', slug, ips, page, search, status, method, sort,
+      evidenceOnly, marks?.exact, marks?.contains],
     queryFn: () => post<{ total: number; rows: TraceRow[]; methods: string[] }>(
       `/api/cases/${slug}/trace`,
-      { ips, limit: pageSize, offset: page * pageSize, search, status, method, sort }),
+      {
+        ips, limit: pageSize, offset: page * pageSize, search, status, method, sort,
+        mark_exact: marks?.exact ?? [], mark_contains: marks?.contains ?? [],
+        evidence_only: evidenceOnly,
+      }),
     enabled: !!ips?.length,
   })
 
@@ -164,6 +172,29 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
       )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {hasMarks && (
+          <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]"
+            aria-label={tr('trace.scope')}>
+            <button type="button" onClick={() => setEvidenceOnly(true)}
+              aria-pressed={evidenceOnly}
+              className={clsx(
+                'cursor-pointer px-2.5 py-1.5 text-[12px] font-medium transition-colors',
+                evidenceOnly
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
+              {tr('trace.scope.evidence')}
+            </button>
+            <button type="button" onClick={() => setEvidenceOnly(false)}
+              aria-pressed={!evidenceOnly}
+              className={clsx(
+                'cursor-pointer px-2.5 py-1.5 text-[12px] font-medium transition-colors',
+                !evidenceOnly
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
+              {tr('trace.scope.all')}
+            </button>
+          </div>
+        )}
         <SearchInput value={search} onChange={setSearch} placeholder={tr('trace.search')} />
         <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
           {STATUS_FILTERS.map((f) => (
@@ -206,9 +237,9 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
             carries a manifest: query, row count, SHA-256. */}
         <Tooltip title={tr('trace.export.title')}
           body={tr('trace.export.body')}
-          hint={filtering
-            ? tr('trace.export.filtered')
-            : tr('trace.export.hint')}>
+          hint={evidenceOnly
+            ? tr('trace.export.allScope')
+            : filtering ? tr('trace.export.filtered') : tr('trace.export.hint')}>
           <a
             className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60"
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${ips.join(',')}`
@@ -280,7 +311,9 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         </table>
         {data && !data.rows.length && (
           <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
-            {filtering
+            {evidenceOnly
+              ? tr('trace.noEvidenceRequests')
+              : filtering
               ? tr('trace.noMatch')
               : tr('trace.noRequests')}
           </div>

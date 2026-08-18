@@ -336,6 +336,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/browse": "",
     "/api/cases/{slug}/diff": "",
     "/api/cases/{slug}/actors": "",
+    "/api/cases/{slug}/actor": f"ip={ATTACKER}",
     "/api/cases/{slug}/trace.csv": f"ips={ATTACKER}",
     "/api/cases/{slug}/iocs": "",
     "/api/cases/{slug}/iocs/cross-case": "",
