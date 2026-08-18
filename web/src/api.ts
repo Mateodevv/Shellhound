@@ -305,6 +305,22 @@ export interface Actor extends ActorProfile {
   triage: TriageState | null
 }
 
+/** The evidence-oriented inspector record for one client. Telemetry exists
+ * even when no detection produced a finding; an analyst decision and its
+ * findings are therefore nullable/additive instead of gating the profile. */
+export interface ActorDetail {
+  actor: ActorProfile
+  alerts: ActorAlert[]
+  top_paths: { uri: string; n: number; ok: number }[]
+  top_agents: { agent: string; n: number }[]
+  triage: TriageState | null
+  triage_note: string
+  triaged_at: string
+  worst: number | null
+  findings: Finding[]
+  in_box: boolean
+}
+
 /** One built-in detection rule. The id lives next to the rule that
  *  implements it and is stable across versions -- the off-switch stores it. */
 export interface DetectionRule {
@@ -388,6 +404,19 @@ export interface ActorsResponse {
   total: number
   actors: Actor[]
   span: { from_hour: number; to_hour: number } | null
+  /** Complete-index counts for the investigation views. Behaviour classes
+   *  overlap; triage is the analyst's independent decision axis. */
+  facets?: {
+    all: number
+    quiet: number
+    relevant: number
+    alerted: number
+    scanner: number
+    bruteforce: number
+    probes: number
+    ioc: number
+    triage: Record<TriageState, number>
+  }
 }
 
 export interface TraceRow {

@@ -28,7 +28,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from server import case_report, correlation, coverage, db, enrich, geoip
 from server import iocs as ioclib
@@ -2365,14 +2365,10 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/actors", dependencies=[auth])
     def actors(slug: str, search: str = "", sort: str = "requests",
-               flag: str = "", hide: str = "", limit: int = 100,
-               offset: int = 0):
+               flag: str = "", hide: str = "", triage_states: str = "",
+               limit: int = 100, offset: int = 0):
         case_dir = case_dir_or_404(slug)
         hidden = [h.strip() for h in hide.split(",") if h.strip()]
-        result = logindex.actors_list(case_dir, search, sort, flag, hidden,
-                                      limit, offset)
-        ids = [a["ip_id"] for a in result["actors"]]
-        sparks = logindex.actor_sparklines(case_dir, ids)
         conn = db.connect(case_dir)
         try:
             box_ips = {r["value"] for r in db.rows(
@@ -2380,16 +2376,39 @@ def create_app(config: Config) -> FastAPI:
             # The decision of the client artifact, if there is one: what has
             # long been decided in Findings has to be visible in Actors --
             # otherwise one re-assesses it here in one's head.
-            triage = {r["artifact"]: r["triage"] for r in db.rows(
+            triage_map = {r["artifact"]: r["triage"] for r in db.rows(
                 conn, f"WITH art AS ({ART_SQL}) SELECT artifact, triage "
                       f"FROM art WHERE artifact_kind = 'client'")}
         finally:
             conn.close()
+        indexed_triage_ips = set(logindex.actors_by_ip(
+            case_dir, triage_map.keys()))
+        allowed_states = set(db.TRIAGE_STATES)
+        wanted_states = [state for state in (
+            part.strip() for part in triage_states.split(",")
+        ) if state in allowed_states]
+        selected_ips = ({ip for ip, state in triage_map.items()
+                         if state in wanted_states}
+                        if wanted_states else None)
+        result = logindex.actors_list(
+            case_dir, search, sort, flag, hidden,
+            max(1, min(limit, 200)), max(0, offset), selected_ips,
+        )
+        ids = [a["ip_id"] for a in result["actors"]]
+        sparks = logindex.actor_sparklines(case_dir, ids)
         for a in result["actors"]:
             a["sparkline"] = sparks["series"].get(a["ip_id"], [])
             a["in_box"] = a["ip"] in box_ips
-            a["triage"] = triage.get(a["ip"])
+            a["triage"] = triage_map.get(a["ip"])
         result["span"] = sparks["span"]
+        counts = logindex.actor_counts(case_dir)
+        counts["triage"] = {
+            state: sum(1 for ip, value in triage_map.items()
+                       if ip in indexed_triage_ips and value == state)
+            for state in db.TRIAGE_STATES
+        }
+        counts["ioc"] = len(box_ips)
+        result["facets"] = counts
         # The threshold travels with the data instead of being repeated in
         # the frontend. The badges of a row and the "inconspicuous" filter
         # are the same statement, and the filter is evaluated in SQL against
@@ -2398,6 +2417,43 @@ def create_app(config: Config) -> FastAPI:
         # itself.
         result["bf_threshold"] = logindex.BF_THRESHOLD
         return result
+
+    @app.get("/api/cases/{slug}/actor", dependencies=[auth])
+    def actor_detail(slug: str, ip: str):
+        """One client as an investigation record, whether or not a finding
+        exists for it. The artifact endpoint intentionally requires a finding;
+        this profile also serves quiet clients selected from the full log
+        population and keeps telemetry separate from the analyst decision."""
+        case_dir = case_dir_or_404(slug)
+        profile = logindex.actor_profile(case_dir, ip)
+        if profile is None:
+            raise HTTPException(404, "unknown client")
+        conn = db.connect(case_dir)
+        try:
+            aggregate = db.one(
+                conn, f"WITH art AS ({ART_SQL}) SELECT * FROM art "
+                      "WHERE artifact_kind = 'client' AND artifact = ?",
+                (ip,),
+            )
+            findings = db.rows(
+                conn, "SELECT * FROM findings WHERE artifact_kind = 'client' "
+                      "AND artifact = ? ORDER BY severity, line", (ip,),
+            )
+            in_box = bool(db.one(
+                conn, "SELECT id FROM iocs WHERE type = 'ip' AND value = ?",
+                (ip,),
+            ))
+        finally:
+            conn.close()
+        return {
+            **profile,
+            "triage": aggregate["triage"] if aggregate else None,
+            "triage_note": aggregate["triage_note"] if aggregate else "",
+            "triaged_at": aggregate["triaged_at"] if aggregate else "",
+            "worst": aggregate["worst"] if aggregate else None,
+            "findings": findings,
+            "in_box": in_box,
+        }
 
     class TraceBody(BaseModel):
         ips: list[str]
@@ -2409,6 +2465,9 @@ def create_app(config: Config) -> FastAPI:
         status: str = ""          # 2xx | 3xx | 4xx | 5xx | err
         method: str = ""
         sort: str = "time"
+        mark_exact: list[str] = Field(default_factory=list)
+        mark_contains: list[str] = Field(default_factory=list)
+        evidence_only: bool = False
 
     @app.post("/api/cases/{slug}/trace", dependencies=[auth])
     def trace(slug: str, body: TraceBody):
@@ -2418,7 +2477,8 @@ def create_app(config: Config) -> FastAPI:
         return logindex.trace(case_dir, body.ips, body.from_epoch,
                               body.to_epoch, min(body.limit, 10000),
                               body.offset, body.search, body.status,
-                              body.method, body.sort)
+                              body.method, body.sort, body.mark_exact,
+                              body.mark_contains, body.evidence_only)
 
     class TraceTimelineBody(BaseModel):
         ips: list[str]

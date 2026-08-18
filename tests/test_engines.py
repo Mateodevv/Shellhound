@@ -215,6 +215,30 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(actors[ATTACKER]["upload_php_ok"], 0,
                            "successful shell access not counted")
 
+    def test_actor_workspace_queries_the_complete_index(self):
+        counts = logindex.actor_counts(self.ev.case_dir)
+        self.assertGreater(counts["all"], counts["quiet"])
+        self.assertGreater(counts["relevant"], 0)
+
+        network = logindex.actors_list(
+            self.ev.case_dir, search="203.0.113.0/24", sort="evidence")
+        self.assertEqual([ATTACKER], [a["ip"] for a in network["actors"]])
+
+        uri = logindex.actors_list(
+            self.ev.case_dir, search="/uploads/", sort="evidence")
+        self.assertIn(ATTACKER, {a["ip"] for a in uri["actors"]})
+
+    def test_trace_can_return_only_recorded_evidence_requests(self):
+        complete = logindex.trace(self.ev.case_dir, [ATTACKER])
+        example = next(r["uri"] for r in complete["rows"]
+                       if "/uploads/" in r["uri"])
+        evidence = logindex.trace(
+            self.ev.case_dir, [ATTACKER], mark_exact=[example],
+            evidence_only=True)
+        self.assertGreater(evidence["total"], 0)
+        self.assertTrue(all(r["uri"].lower() == example.lower()
+                            for r in evidence["rows"]))
+
     def test_pattern_hunt_matches(self):
         match = logindex.match_patterns(self.ev.case_dir, ["/uploads/*.php"])
         self.assertGreater(match["hits"], 0, "pattern found nothing")

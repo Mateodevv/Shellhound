@@ -352,6 +352,8 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
         'relative flex flex-col overflow-hidden',
         'rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-2xl',
         'animate-fade-up')}
+        role="dialog"
+        aria-modal="true"
         style={{
           width: `min(${1280 - inset * 70}px, ${96 - inset * 3}vw)`,
           maxHeight: `${92 - inset * 3}vh`,
@@ -361,6 +363,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
           <button
             onClick={onClose}
             title={tr('common.closeEsc')}
+            aria-label={tr('common.closeEsc')}
             className="shrink-0 rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
           >
             <X size={16} />
