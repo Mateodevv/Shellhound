@@ -7,13 +7,14 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Box, ChevronLeft, ChevronRight, Crosshair, Download, FileSearch,
-  ListFilter, ShieldCheck, Users,
+  Activity, Box, ChevronLeft, ChevronRight, Crosshair, Download, FileSearch,
+  GitCompareArrows, Link2, ListFilter, Rows3, ShieldCheck,
+  SlidersHorizontal, Users, X,
 } from 'lucide-react'
 import { useT, type Translate } from '../i18n'
 import {
-  api, downloadUrl, post, type Actor, type ActorDetail, type ActorsResponse,
-  type CaseDetail,
+  api, downloadUrl, post, type Actor, type ActorComparison, type ActorDetail,
+  type ActorsResponse, type CaseDetail,
 } from '../api'
 import {
   formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
@@ -36,15 +37,30 @@ const PAGE_SIZE = 50
 const BF_FALLBACK = 30
 const NO_ACTORS: Actor[] = []
 
-type ActorView = 'relevant' | 'confirmed' | 'review' | 'notable' | 'scanner' | 'all'
+type ActorView = 'relevant' | 'confirmed' | 'all'
+type FocusFilter = 'any' | 'notable' | 'scanner' | 'bruteforce' | 'probes'
+type DecisionFilter = 'any' | 'new' | 'review' | 'dismissed'
+type Density = 'comfortable' | 'compact'
 
 const VIEWS: { id: ActorView; label: string; help: string }[] = [
   { id: 'relevant', label: 'actors.view.relevant', help: 'actors.view.relevant.help' },
   { id: 'confirmed', label: 'actors.view.confirmed', help: 'actors.view.confirmed.help' },
-  { id: 'review', label: 'actors.view.review', help: 'actors.view.review.help' },
+  { id: 'all', label: 'actors.view.all', help: 'actors.view.all.help' },
+]
+
+const FOCUS_FILTERS: { id: FocusFilter; label: string; help: string }[] = [
+  { id: 'any', label: 'actors.filter.anySignal', help: 'actors.filter.anySignal.help' },
   { id: 'notable', label: 'actors.view.notable', help: 'actors.view.notable.help' },
   { id: 'scanner', label: 'actors.view.scanner', help: 'actors.view.scanner.help' },
-  { id: 'all', label: 'actors.view.all', help: 'actors.view.all.help' },
+  { id: 'bruteforce', label: 'actors.flag.brute', help: 'actors.flag.brute.hint' },
+  { id: 'probes', label: 'actors.flag.probes', help: 'actors.flag.probes.hint' },
+]
+
+const DECISION_FILTERS: { id: DecisionFilter; label: string }[] = [
+  { id: 'any', label: 'actors.filter.anyDecision' },
+  { id: 'new', label: 'actors.filter.undecided' },
+  { id: 'review', label: 'actors.view.review' },
+  { id: 'dismissed', label: 'triage.dismissed' },
 ]
 
 type Signal = {
@@ -118,18 +134,19 @@ function viewCount(view: ActorView, data?: ActorsResponse) {
   const f = data?.facets
   if (!f) return undefined
   if (view === 'confirmed') return f.triage.confirmed ?? 0
-  if (view === 'review') return (f.triage.new ?? 0) + (f.triage.reviewed ?? 0)
-  if (view === 'notable') return f.alerted
   return f[view]
 }
 
-function queryFor(view: ActorView): Record<string, string> {
-  if (view === 'relevant') return { hide: 'quiet' }
-  if (view === 'confirmed') return { triage_states: 'confirmed' }
-  if (view === 'review') return { triage_states: 'new,reviewed' }
-  if (view === 'notable') return { flag: 'alerted' }
-  if (view === 'scanner') return { flag: 'scanner' }
-  return {}
+function queryFor(view: ActorView, focus: FocusFilter,
+                  decision: DecisionFilter): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (view === 'relevant') query.hide = 'quiet'
+  if (view === 'confirmed') query.triage_states = 'confirmed'
+  else if (decision === 'new') query.triage_states = 'new'
+  else if (decision === 'review') query.triage_states = 'new,reviewed'
+  else if (decision === 'dismissed') query.triage_states = 'dismissed'
+  if (focus !== 'any') query.flag = focus === 'notable' ? 'alerted' : focus
+  return query
 }
 
 export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -137,6 +154,10 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const qc = useQueryClient()
   const triage = useTriage(slug)
   const [view, setView] = useState<ActorView>('relevant')
+  const [focus, setFocus] = useState<FocusFilter>('any')
+  const [decision, setDecision] = useState<DecisionFilter>('any')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [density, setDensity] = useState<Density>('comfortable')
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('evidence')
   const [page, setPage] = useState(0)
@@ -146,13 +167,14 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [artifact, setArtifact] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
+  const [compareOpen, setCompareOpen] = useState(false)
 
-  const filters = queryFor(view)
+  const filters = queryFor(view, focus, decision)
   const query = new URLSearchParams({
     search, sort, limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE), ...filters,
   })
   const { data, isFetching } = useQuery({
-    queryKey: ['actors', slug, view, search, sort, page],
+    queryKey: ['actors', slug, view, focus, decision, search, sort, page],
     queryFn: () => api<ActorsResponse>(`/api/cases/${slug}/actors?${query}`),
   })
   const actors = data?.actors ?? NO_ACTORS
@@ -172,9 +194,9 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     kind: e.kind, path: e.path, label: e.label,
   }))
 
-  useEffect(() => { setPage(0) }, [view, search, sort])
+  useEffect(() => { setPage(0) }, [view, focus, decision, search, sort])
   useEffect(() => {
-    if (!activeIp && actors.length) setActiveIp(actors[0].ip)
+    if (!activeIp && actors.length && window.innerWidth >= 1024) setActiveIp(actors[0].ip)
   }, [activeIp, actors])
 
   const collect = useMutation({
@@ -206,6 +228,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   }
 
   const selectedActors = actors.filter((a) => checked.has(a.ip))
+  const appliedFilters = Number(focus !== 'any')
+    + Number(decision !== 'any' && view !== 'confirmed')
 
   return (
     <div className="flex flex-col gap-4">
@@ -226,22 +250,26 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+      <nav className="inline-flex w-fit max-w-full overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel)] p-1"
         aria-label={tr('actors.views')}>
         {VIEWS.map((item) => {
           const count = viewCount(item.id, data)
           return (
             <Tooltip key={item.id} hint={tr(item.help)}>
               <button type="button" aria-pressed={view === item.id}
-                onClick={() => { setView(item.id); setActiveIp(null) }}
+                onClick={() => {
+                  setView(item.id)
+                  if (item.id === 'confirmed') setDecision('any')
+                  setActiveIp(null)
+                }}
                 className={clsx(
-                  'flex min-w-0 cursor-pointer items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition-colors',
+                  'flex shrink-0 cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors',
                   view === item.id
-                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
-                    : 'border-[var(--line)] bg-[var(--panel)] hover:border-[var(--accent)]/50',
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                    : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--text)]',
                 )}>
-                <span className="truncate text-[12px] font-semibold">{tr(item.label)}</span>
-                {count != null && <span className="tabular text-[11px] opacity-75">{formatCount(count)}</span>}
+                <span className="text-[12px] font-semibold">{tr(item.label)}</span>
+                {count != null && <span className="rounded bg-[var(--panel-2)] px-1.5 py-0.5 tabular text-[10px] opacity-80">{formatCount(count)}</span>}
               </button>
             </Tooltip>
           )
@@ -250,6 +278,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2.5">
         <SearchInput value={search} onChange={setSearch} placeholder={tr('actors.searchExpanded')} />
+        <Button variant={filtersOpen || appliedFilters ? 'primary' : 'default'}
+          onClick={() => setFiltersOpen((open) => !open)}>
+          <SlidersHorizontal size={14} /> {tr('actors.filters')}
+          {appliedFilters > 0 && <span className="rounded bg-white/20 px-1.5 text-[10px] tabular">{appliedFilters}</span>}
+        </Button>
         <select value={sort} onChange={(e) => setSort(e.target.value)}
           aria-label={tr('common.sort')}
           className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-xs outline-none">
@@ -259,6 +292,13 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           <option value="errors">{tr('actors.sort.errors')}</option>
           <option value="first">{tr('actors.sort.first')}</option>
         </select>
+        <Tooltip hint={density === 'comfortable'
+          ? tr('actors.density.compact.help') : tr('actors.density.comfortable.help')}>
+          <Button variant="ghost" aria-label={tr('actors.density.toggle')}
+            onClick={() => setDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')}>
+            <Rows3 size={14} /> {tr(`actors.density.${density}`)}
+          </Button>
+        </Tooltip>
         <div className="ml-auto flex items-center gap-2 text-[12px] text-[var(--muted)]">
           {isFetching && <span>{tr('common.loading')} · </span>}
           <span className="tabular">{tr('actors.range', {
@@ -266,6 +306,47 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           })}</span>
         </div>
       </div>
+
+      {filtersOpen && (
+        <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3"
+          aria-label={tr('actors.filters')}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FilterGroup title={tr('actors.filter.signal')}>
+              {FOCUS_FILTERS.map((item) => (
+                <Tooltip key={item.id} hint={tr(item.help)}>
+                  <button type="button" aria-pressed={focus === item.id}
+                    onClick={() => setFocus(item.id)}
+                    className={clsx('rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors',
+                      focus === item.id
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                        : 'border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60')}>
+                    {tr(item.label)}
+                  </button>
+                </Tooltip>
+              ))}
+            </FilterGroup>
+            <FilterGroup title={tr('actors.filter.decision')}>
+              {DECISION_FILTERS.map((item) => (
+                <button key={item.id} type="button"
+                  disabled={view === 'confirmed' && item.id !== 'any'}
+                  aria-pressed={(view === 'confirmed' && item.id === 'any') || decision === item.id}
+                  onClick={() => setDecision(item.id)}
+                  className={clsx('rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-35',
+                    decision === item.id
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                      : 'border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60')}>
+                  {tr(item.label)}
+                </button>
+              ))}
+            </FilterGroup>
+          </div>
+          {appliedFilters > 0 && (
+            <Button className="mt-3" variant="ghost" onClick={() => { setFocus('any'); setDecision('any') }}>
+              <X size={13} /> {tr('actors.filter.reset')}
+            </Button>
+          )}
+        </section>
+      )}
 
       {checked.size > 0 && (
         <div className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--panel)] px-3 py-2 shadow-lg">
@@ -286,6 +367,13 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             href={downloadUrl(`/api/cases/${slug}/trace.csv?ips=${[...checked].join(',')}`)}>
             <Download size={14} /> {tr('actors.traceCsv')}
           </a>
+          <Tooltip hint={checked.size > 5
+            ? tr('actors.compare.tooMany') : tr('actors.compare.help')}>
+            <Button onClick={() => setCompareOpen(true)}
+              disabled={checked.size < 2 || checked.size > 5}>
+              <GitCompareArrows size={14} /> {tr('actors.compare.action')}
+            </Button>
+          </Tooltip>
           <Button variant="ghost" onClick={() => setChecked(new Set())}>
             {tr('common.clearSelection')}
           </Button>
@@ -305,7 +393,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           </div>
 
           <div className="divide-y divide-[var(--line-soft)]">
-            {actors.map((actor) => {
+            {actors.map((actor, actorIndex) => {
               const signals = actorSignals(actor, tr, data?.bf_threshold)
               const primary = signals[0]
               const analystOnly = actor.triage === 'confirmed' && !primary
@@ -317,9 +405,22 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                   onClick={() => setActiveIp(actor.ip)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') setActiveIp(actor.ip)
+                    if (e.key === 'ArrowDown' && actors[actorIndex + 1]) {
+                      e.preventDefault()
+                      setActiveIp(actors[actorIndex + 1].ip)
+                      const nextRow = e.currentTarget.nextElementSibling as HTMLElement | null
+                      nextRow?.focus()
+                    }
+                    if (e.key === 'ArrowUp' && actors[actorIndex - 1]) {
+                      e.preventDefault()
+                      setActiveIp(actors[actorIndex - 1].ip)
+                      const previousRow = e.currentTarget.previousElementSibling as HTMLElement | null
+                      previousRow?.focus()
+                    }
                   }}
                   className={clsx(
-                    'group cursor-pointer p-3 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]',
+                    'group cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]',
+                    density === 'comfortable' ? 'p-3' : 'px-3 py-2',
                     active ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--panel-2)]',
                   )}>
                   <div className="flex min-w-0 items-start gap-3">
@@ -343,7 +444,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                         )}
                       </div>
 
-                      <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_170px]">
+                      <div className={clsx('grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_170px]',
+                        density === 'comfortable' ? 'mt-2' : 'mt-1')}>
                         <div className="min-w-0">
                           <div className={clsx('text-[13px] font-semibold',
                             primary?.tone === 'danger' && 'text-[var(--danger-text)]',
@@ -358,7 +460,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                               ? tr('actors.signal.noAutomatic')
                               : tr('actors.signal.noneDetail'))}
                           </div>
-                          {signals.length > 1 && (
+                          {density === 'comfortable' && signals.length > 1 && (
                             <div className="mt-1.5 flex flex-wrap gap-1">
                               {signals.slice(1, 3).map((signal) => (
                                 <Tag key={signal.key} tone={signal.tone}>{signal.title}</Tag>
@@ -377,7 +479,8 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
                         </div>
                       </div>
 
-                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--muted)]">
+                      <div className={clsx('flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[var(--muted)]',
+                        density === 'comfortable' ? 'mt-2' : 'mt-1')}>
                         <span>{tr('actors.metric.requests', { n: formatCount(actor.requests) })}</span>
                         <span className={errors ? 'text-[var(--sev-medium)]' : undefined}>
                           {tr('actors.metric.errors', { n: formatCount(errors) })}
@@ -409,11 +512,12 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           )}
         </section>
 
-        <ActorInspector detail={detail} loading={detailLoading} threshold={data?.bf_threshold}
+        <ActorInspector key={activeIp ?? 'empty'} detail={detail} loading={detailLoading}
+          threshold={data?.bf_threshold}
           tr={tr}
-          onTrace={() => detail && openTrace(
-            [detail.actor.ip], detail.alerts.map((alert) => alert.example),
-          )}
+          onClose={() => setActiveIp(null)}
+          onTrace={(exact, ips) => detail && openTrace(ips ?? [detail.actor.ip], exact
+            ?? detail.alerts.map((alert) => alert.example))}
           onCollect={() => detail && collect.mutate([detail.actor.ip])}
           onArtifact={() => {
             if (!detail?.triage) return
@@ -425,6 +529,11 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             })
           }} />
       </div>
+
+      <ActorCompareDialog slug={slug} ips={[...checked]} open={compareOpen}
+        threshold={data?.bf_threshold} tr={tr}
+        onTrace={() => { setCompareOpen(false); openTrace([...checked]) }}
+        onClose={() => setCompareOpen(false)} />
 
       <ArtifactWindow slug={slug} artifact={artifact} roots={roots}
         collected={triage.collected}
@@ -467,18 +576,20 @@ function Pagination({ page, total, tr, onPage }: {
   )
 }
 
-function ActorInspector({ detail, loading, threshold, tr, onTrace, onCollect, onArtifact }: {
+function ActorInspector({ detail, loading, threshold, tr, onClose, onTrace, onCollect, onArtifact }: {
   detail?: ActorDetail
   loading: boolean
   threshold?: number
   tr: Translate
-  onTrace: () => void
+  onClose: () => void
+  onTrace: (exact?: string[], ips?: string[]) => void
   onCollect: () => void
   onArtifact: () => void
 }) {
+  const [tab, setTab] = useState<'overview' | 'evidence' | 'activity' | 'relations'>('overview')
   if (!detail) {
     return (
-      <aside className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[13px] text-[var(--muted)]">
+      <aside className="hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[13px] text-[var(--muted)] lg:block">
         {loading ? tr('common.loading') : tr('actors.inspector.empty')}
       </aside>
     )
@@ -488,16 +599,18 @@ function ActorInspector({ detail, loading, threshold, tr, onTrace, onCollect, on
   const primary = signals[0]
   const analystOnly = detail.triage === 'confirmed' && !primary
   return (
-    <aside className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] lg:sticky lg:top-3"
+    <aside className="fixed inset-0 z-40 min-w-0 overflow-y-auto bg-[var(--bg)] p-3 lg:sticky lg:inset-auto lg:top-3 lg:max-h-[calc(100vh-1.5rem)] lg:overflow-hidden lg:rounded-xl lg:border lg:border-[var(--line)] lg:bg-[var(--panel)] lg:p-0"
       aria-label={tr('actors.inspector.title')}>
       <div className="border-b border-[var(--line)] p-4">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 pr-9 lg:pr-0">
           <IpFlag ip={actor.ip} />
           <h2 className="mono text-base font-bold">{actor.ip}</h2>
           {detail.in_box && <Tag tone="accent" explain={tr('actors.inBox')}>IOC</Tag>}
           {detail.triage && (
             <TriageBadge state={detail.triage} label={tr(`triage.${detail.triage}`)} />
           )}
+          <Button className="absolute right-4 top-4 lg:hidden" variant="ghost"
+            title={tr('common.close')} onClick={onClose}><X size={17} /></Button>
         </div>
         <div className={clsx('mt-3 text-[14px] font-semibold',
           primary?.tone === 'danger' && 'text-[var(--danger-text)]',
@@ -511,7 +624,7 @@ function ActorInspector({ detail, loading, threshold, tr, onTrace, onCollect, on
             ? tr('actors.signal.noAutomatic') : tr('actors.signal.noneDetail'))}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="primary" onClick={onTrace}>
+          <Button variant="primary" onClick={() => onTrace()}>
             <Crosshair size={14} /> {detail.alerts.some((alert) => alert.example)
               ? tr('actors.inspectTrace') : tr('actors.inspectTraceAll')}
           </Button>
@@ -530,74 +643,309 @@ function ActorInspector({ detail, loading, threshold, tr, onTrace, onCollect, on
         <Metric label={tr('table.errors')} value={formatCount(actor.err4 + actor.err5)} />
       </div>
 
-      <div className="max-h-[calc(100vh-22rem)] min-h-[220px] overflow-y-auto p-4">
-        <InspectorSection title={tr('actors.inspector.assessment')}>
-          {detail.triage ? (
-            <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2.5">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={14} className="text-[var(--accent)]" />
-                <TriageBadge state={detail.triage} label={tr(`triage.${detail.triage}`)} />
-                {detail.triaged_at && <span className="ml-auto text-[10px] text-[var(--muted)]">{detail.triaged_at}</span>}
-              </div>
-              {detail.triage_note && <p className="mt-2 text-[12px] leading-relaxed">{detail.triage_note}</p>}
-            </div>
-          ) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noDecision')}</p>}
-        </InspectorSection>
+      <nav className="flex overflow-x-auto border-b border-[var(--line)] px-2"
+        aria-label={tr('actors.inspector.sections')}>
+        {(['overview', 'evidence', 'activity', 'relations'] as const).map((id) => (
+          <button key={id} type="button" aria-pressed={tab === id}
+            onClick={() => setTab(id)}
+            className={clsx('shrink-0 border-b-2 px-2.5 py-2 text-[11px] font-semibold transition-colors',
+              tab === id
+                ? 'border-[var(--accent)] text-[var(--accent-text)]'
+                : 'border-transparent text-[var(--muted)] hover:text-[var(--text)]')}>
+            {tr(`actors.inspector.tab.${id}`)}
+            {id === 'relations' && detail.relations.length > 0
+              && <span className="ml-1 opacity-70"> {detail.relations.length}</span>}
+          </button>
+        ))}
+      </nav>
 
-        <InspectorSection title={tr('actors.inspector.findings')} count={detail.findings.length}>
-          {detail.findings.length ? detail.findings.slice(0, 4).map((finding) => (
-            <div key={finding.id} className="rounded-lg border border-[var(--line-soft)] p-2.5">
-              <div className="flex items-center gap-2">
-                <SeverityBadge severity={finding.severity} />
-                <span className="min-w-0 truncate text-[12px] font-semibold">{finding.rule}</span>
-              </div>
-              <p className="mt-1.5 line-clamp-3 text-[11px] leading-relaxed text-[var(--muted)]">
-                {finding.evidence}
+      <div className="min-h-[220px] p-4 lg:max-h-[calc(100vh-27rem)] lg:overflow-y-auto">
+        {tab === 'overview' && <>
+          <InspectorSection title={tr('actors.inspector.why')}>
+            <div className="rounded-lg border border-[var(--accent)]/35 bg-[var(--accent-soft)] p-3">
+              <div className="text-[12px] font-semibold">{primary?.title
+                ?? (analystOnly ? tr('actors.signal.analystConfirmed') : tr('actors.signal.none'))}</div>
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+                {primary?.detail ?? (analystOnly
+                  ? tr('actors.signal.noAutomatic') : tr('actors.signal.noneDetail'))}
               </p>
             </div>
-          )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noFindings')}</p>}
-        </InspectorSection>
+          </InspectorSection>
+          <InspectorSection title={tr('actors.inspector.sources')}>
+            <SourceRow icon={<Activity size={14} />} label={tr('actors.source.measured')}
+              value={tr('actors.source.measuredValue', { n: signals.length })} />
+            <SourceRow icon={<FileSearch size={14} />} label={tr('actors.source.automatic')}
+              value={tr('actors.source.automaticValue', { n: detail.findings.length })} />
+            <SourceRow icon={<ShieldCheck size={14} />} label={tr('actors.source.analyst')}
+              value={detail.triage ? tr(`triage.${detail.triage}`) : tr('actors.source.open')} />
+          </InspectorSection>
+          <InspectorSection title={tr('actors.inspector.assessment')}>
+            <Assessment detail={detail} tr={tr} />
+          </InspectorSection>
+        </>}
 
-        <InspectorSection title={tr('actors.inspector.signals')} count={signals.length}>
-          {signals.length ? signals.map((signal) => (
-            <div key={signal.key} className="flex items-start gap-2 text-[12px]">
-              <span className={clsx('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                signal.tone === 'danger' ? 'bg-[var(--sev-high)]'
-                  : signal.tone === 'warn' ? 'bg-[var(--sev-low)]' : 'bg-[var(--muted)]')} />
-              <div><span className="font-semibold">{signal.title}</span>
-                <span className="text-[var(--muted)]"> · {signal.detail}</span></div>
+        {tab === 'evidence' && <>
+          <InspectorSection title={tr('actors.inspector.triggers')} count={detail.alerts.length}>
+            {detail.alerts.length ? detail.alerts.map((alert, index) => (
+              <div key={`${alert.kind}-${index}`} className="rounded-lg border border-[var(--line-soft)] p-2.5">
+                <div className="flex items-center gap-2">
+                  <SeverityBadge severity={alert.severity} />
+                  <span className="text-[12px] font-semibold">{tr('actors.source.measured')}</span>
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--muted)]">{alert.detail}</p>
+                {alert.example && <button type="button" onClick={() => onTrace([alert.example])}
+                  className="mono mt-2 block max-w-full cursor-pointer break-all text-left text-[11px] text-[var(--accent-text)] hover:underline">
+                  {alert.example} →
+                </button>}
+              </div>
+            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noTriggers')}</p>}
+          </InspectorSection>
+          <InspectorSection title={tr('actors.inspector.findings')} count={detail.findings.length}>
+            {detail.findings.length ? detail.findings.map((finding) => (
+              <div key={finding.id} className="rounded-lg border border-[var(--line-soft)] p-2.5">
+                <div className="flex items-center gap-2">
+                  <SeverityBadge severity={finding.severity} />
+                  <span className="min-w-0 truncate text-[12px] font-semibold">{finding.rule}</span>
+                </div>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--muted)]">{finding.evidence}</p>
+              </div>
+            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noFindings')}</p>}
+          </InspectorSection>
+          <InspectorSection title={tr('actors.inspector.signals')} count={signals.length}>
+            {signals.length ? signals.map((signal) => (
+              <div key={signal.key} className="flex items-start gap-2 text-[12px]">
+                <span className={clsx('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
+                  signal.tone === 'danger' ? 'bg-[var(--sev-high)]'
+                    : signal.tone === 'warn' ? 'bg-[var(--sev-low)]' : 'bg-[var(--muted)]')} />
+                <div><span className="font-semibold">{signal.title}</span>
+                  <span className="text-[var(--muted)]"> · {signal.detail}</span></div>
+              </div>
+            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.signal.noneDetail')}</p>}
+          </InspectorSection>
+        </>}
+
+        {tab === 'activity' && <>
+          <InspectorSection title={tr('actors.inspector.paths')}>
+            {detail.top_paths.map((path) => (
+              <button key={path.uri} type="button" onClick={() => onTrace([path.uri])}
+                className="flex min-w-0 cursor-pointer items-start gap-2 text-left text-[11px] hover:text-[var(--accent-text)]">
+                <span className="mono min-w-0 flex-1 break-all">{path.uri}</span>
+                <span className="shrink-0 tabular text-[var(--muted)]">
+                  {formatCount(path.n)} · {tr('actors.path.ok', { n: formatCount(path.ok) })}
+                </span>
+              </button>
+            ))}
+          </InspectorSection>
+          <InspectorSection title={tr('actors.inspector.agents')}>
+            {detail.top_agents.map((agent) => (
+              <div key={agent.agent} className="flex min-w-0 gap-2 text-[11px]">
+                <span className="min-w-0 flex-1 break-words text-[var(--muted)]">{agent.agent || '—'}</span>
+                <span className="shrink-0 tabular">{formatCount(agent.n)}</span>
+              </div>
+            ))}
+          </InspectorSection>
+          <div className="text-[11px] text-[var(--muted)]">
+            {tr('actors.inspector.period', {
+              first: formatLogTime(actor.first_epoch, actor.tz),
+              last: formatLogTime(actor.last_epoch, actor.tz),
+            })}
+          </div>
+        </>}
+
+        {tab === 'relations' && <>
+          <p className="mb-3 text-[11px] leading-relaxed text-[var(--muted)]">
+            {tr('actors.relations.explain')}
+          </p>
+          {detail.relations.length ? detail.relations.map((peer) => (
+            <div key={peer.ip} className="mb-2 rounded-lg border border-[var(--line-soft)] p-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Link2 size={13} className="text-[var(--accent)]" />
+                <span className="mono text-[12px] font-semibold">{peer.ip}</span>
+                {peer.in_box && <Tag tone="accent">IOC</Tag>}
+                {peer.triage && <TriageBadge state={peer.triage} label={tr(`triage.${peer.triage}`)} />}
+              </div>
+              <p className="mt-1.5 text-[11px] text-[var(--muted)]">
+                {tr('actors.relations.requests', {
+                  n: formatCount(peer.shared_requests), ok: formatCount(peer.successful),
+                })}
+              </p>
+              <div className="mt-1.5 flex flex-col gap-1">
+                {peer.shared_paths.slice(0, 3).map((path) => (
+                  <span key={path} className="mono break-all text-[10px]">{path}</span>
+                ))}
+              </div>
+              <Button className="mt-2" variant="ghost"
+                onClick={() => onTrace(peer.shared_paths, [actor.ip, peer.ip])}>
+                <Crosshair size={13} /> {tr('actors.relations.trace')}
+              </Button>
             </div>
-          )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.signal.noneDetail')}</p>}
-        </InspectorSection>
-
-        <InspectorSection title={tr('actors.inspector.paths')}>
-          {detail.top_paths.map((path) => (
-            <div key={path.uri} className="flex min-w-0 items-start gap-2 text-[11px]">
-              <span className="mono min-w-0 flex-1 break-all">{path.uri}</span>
-              <span className="shrink-0 tabular text-[var(--muted)]">
-                {formatCount(path.n)} · {tr('actors.path.ok', { n: formatCount(path.ok) })}
-              </span>
-            </div>
-          ))}
-        </InspectorSection>
-
-        <InspectorSection title={tr('actors.inspector.agents')}>
-          {detail.top_agents.map((agent) => (
-            <div key={agent.agent} className="flex min-w-0 gap-2 text-[11px]">
-              <span className="min-w-0 flex-1 break-words text-[var(--muted)]">{agent.agent || '—'}</span>
-              <span className="shrink-0 tabular">{formatCount(agent.n)}</span>
-            </div>
-          ))}
-        </InspectorSection>
-
-        <div className="text-[11px] text-[var(--muted)]">
-          {tr('actors.inspector.period', {
-            first: formatLogTime(actor.first_epoch, actor.tz),
-            last: formatLogTime(actor.last_epoch, actor.tz),
-          })}
-        </div>
+          )) : <EmptyState icon={<Link2 size={30} />} title={tr('actors.relations.empty')}
+            sub={tr('actors.relations.emptySub')} />}
+        </>}
       </div>
     </aside>
+  )
+}
+
+function Assessment({ detail, tr }: { detail: ActorDetail; tr: Translate }) {
+  return detail.triage ? (
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2.5">
+      <div className="flex items-center gap-2">
+        <ShieldCheck size={14} className="text-[var(--accent)]" />
+        <TriageBadge state={detail.triage} label={tr(`triage.${detail.triage}`)} />
+        {detail.triaged_at && <span className="ml-auto text-[10px] text-[var(--muted)]">{detail.triaged_at}</span>}
+      </div>
+      {detail.triage_note && <p className="mt-2 text-[12px] leading-relaxed">{detail.triage_note}</p>}
+    </div>
+  ) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noDecision')}</p>
+}
+
+function SourceRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-[var(--line-soft)] px-2.5 py-2 text-[11px]">
+      <span className="text-[var(--accent)]">{icon}</span>
+      <span className="font-semibold">{label}</span>
+      <span className="ml-auto text-right text-[var(--muted)]">{value}</span>
+    </div>
+  )
+}
+
+function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{title}</h3>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  )
+}
+
+function ActorCompareDialog({ slug, ips, open, threshold, tr, onTrace, onClose }: {
+  slug: string
+  ips: string[]
+  open: boolean
+  threshold?: number
+  tr: Translate
+  onTrace: () => void
+  onClose: () => void
+}) {
+  const stableIps = [...ips].sort()
+  const { data, isFetching, isError } = useQuery({
+    queryKey: ['actor-comparison', slug, stableIps.join(',')],
+    queryFn: () => post<ActorComparison>(`/api/cases/${slug}/actors/compare`, { ips: stableIps }),
+    enabled: open && stableIps.length >= 2 && stableIps.length <= 5,
+  })
+  useEffect(() => {
+    if (!open) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [open, onClose])
+  if (!open) return null
+  const zone = data?.actors[0]?.tz ?? 0
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-0 sm:items-center sm:p-5"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section role="dialog" aria-modal="true" aria-label={tr('actors.compare.title')}
+        className="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-t-2xl border border-[var(--line)] bg-[var(--bg)] shadow-2xl sm:rounded-2xl">
+        <header className="sticky top-0 z-10 flex items-start gap-3 border-b border-[var(--line)] bg-[var(--bg)] p-4">
+          <GitCompareArrows size={19} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-bold">{tr('actors.compare.title')}</h2>
+            <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+              {tr('actors.compare.sub', { n: stableIps.length })}
+            </p>
+          </div>
+          <Button variant="ghost" title={tr('common.close')} onClick={onClose}><X size={17} /></Button>
+        </header>
+
+        <div className="p-4">
+          {isFetching && <p className="text-[13px] text-[var(--muted)]">{tr('common.loading')}</p>}
+          {isError && <EmptyState icon={<GitCompareArrows size={32} />}
+            title={tr('actors.compare.error')} sub={tr('actors.compare.errorSub')} />}
+          {data && <>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+              {data.actors.map((actor) => {
+                const primary = actorSignals(actor, tr, threshold)[0]
+                return (
+                  <article key={actor.ip} className="min-w-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <IpFlag ip={actor.ip} />
+                      <span className="mono text-[12px] font-semibold">{actor.ip}</span>
+                      {actor.triage && <TriageBadge state={actor.triage} label={tr(`triage.${actor.triage}`)} />}
+                    </div>
+                    <div className="mt-2 text-[11px] font-semibold">{primary?.title ?? tr('actors.signal.none')}</div>
+                    <div className="mt-2 flex gap-3 text-[10px] text-[var(--muted)]">
+                      <span>{formatCount(actor.requests)} req.</span>
+                      <span>{formatCount(actor.err4 + actor.err5)} err.</span>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                {tr('actors.compare.time')}
+              </div>
+              <div className="mt-1 text-[13px] font-semibold">
+                {data.time_overlap
+                  ? `${formatLogTime(data.time_overlap.from_epoch, zone)} – ${formatLogTime(data.time_overlap.to_epoch, zone)}`
+                  : tr('actors.compare.noTime')}
+              </div>
+              <p className="mt-1 text-[11px] text-[var(--muted)]">{tr('actors.compare.timeHelp')}</p>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <ComparisonList title={tr('actors.compare.paths')} empty={tr('actors.compare.noPaths')}>
+                {data.shared_paths.map((path) => (
+                  <div key={path.uri} className="rounded-lg border border-[var(--line-soft)] p-2.5">
+                    <div className="mono break-all text-[11px] font-semibold">{path.uri}</div>
+                    <div className="mt-1 text-[10px] text-[var(--muted)]">
+                      {tr('actors.compare.overlap', {
+                        actors: path.actors, hits: formatCount(path.hits), ok: formatCount(path.ok),
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </ComparisonList>
+              <ComparisonList title={tr('actors.compare.agents')} empty={tr('actors.compare.noAgents')}>
+                {data.shared_agents.map((agent) => (
+                  <div key={agent.agent} className="rounded-lg border border-[var(--line-soft)] p-2.5">
+                    <div className="break-words text-[11px] font-semibold">{agent.agent}</div>
+                    <div className="mt-1 text-[10px] text-[var(--muted)]">
+                      {tr('actors.compare.overlap', {
+                        actors: agent.actors, hits: formatCount(agent.hits), ok: formatCount(agent.ok),
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </ComparisonList>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-4">
+              <Button variant="primary" onClick={onTrace}><Crosshair size={14} /> {tr('actors.compare.trace')}</Button>
+              <p className="text-[11px] text-[var(--muted)]">{tr('actors.compare.caution')}</p>
+            </div>
+          </>}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function ComparisonList({ title, empty, children }: {
+  title: string; empty: string; children: ReactNode
+}) {
+  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children)
+  return (
+    <section>
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{title}</h3>
+      <div className="flex flex-col gap-2">
+        {hasChildren ? children : <p className="text-[12px] text-[var(--muted)]">{empty}</p>}
+      </div>
+    </section>
   )
 }
 

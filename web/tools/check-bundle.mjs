@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url'
 
 const DIST = new URL('../dist/', import.meta.url)
 const ENTRY_LIMIT = 700 * 1024
-const JS_LIMIT = 1_350 * 1024
+// The actor comparison and dossier are deliberately lazy route content, but
+// this total counts every route chunk. Keep the entry ceiling unchanged and
+// allow the new investigation workspace a measured 50 KiB total-JS increase.
+const JS_LIMIT = 1_400 * 1024
 const DIST_LIMIT = 3_500 * 1024
 
 function filesBelow(path) {

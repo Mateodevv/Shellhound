@@ -2428,6 +2428,7 @@ def create_app(config: Config) -> FastAPI:
         profile = logindex.actor_profile(case_dir, ip)
         if profile is None:
             raise HTTPException(404, "unknown client")
+        relations = logindex.actor_relations(case_dir, ip)
         conn = db.connect(case_dir)
         try:
             aggregate = db.one(
@@ -2443,6 +2444,19 @@ def create_app(config: Config) -> FastAPI:
                 conn, "SELECT id FROM iocs WHERE type = 'ip' AND value = ?",
                 (ip,),
             ))
+            if relations:
+                peer_ips = [peer["ip"] for peer in relations]
+                marks = ",".join("?" * len(peer_ips))
+                peer_triage = {r["artifact"]: r["triage"] for r in db.rows(
+                    conn, f"WITH art AS ({ART_SQL}) SELECT artifact, triage "
+                          f"FROM art WHERE artifact_kind = 'client' "
+                          f"AND artifact IN ({marks})", peer_ips)}
+                peer_iocs = {r["value"] for r in db.rows(
+                    conn, f"SELECT value FROM iocs WHERE type = 'ip' "
+                          f"AND value IN ({marks})", peer_ips)}
+                for peer in relations:
+                    peer["triage"] = peer_triage.get(peer["ip"])
+                    peer["in_box"] = peer["ip"] in peer_iocs
         finally:
             conn.close()
         return {
@@ -2453,7 +2467,35 @@ def create_app(config: Config) -> FastAPI:
             "worst": aggregate["worst"] if aggregate else None,
             "findings": findings,
             "in_box": in_box,
+            "relations": relations,
         }
+
+    class CompareActorsBody(BaseModel):
+        ips: list[str]
+
+    @app.post("/api/cases/{slug}/actors/compare", dependencies=[auth])
+    def compare_actors(slug: str, body: CompareActorsBody):
+        """Exact overlaps for a small, analyst-selected set of clients."""
+        case_dir = case_dir_or_404(slug)
+        try:
+            result = logindex.compare_actors(case_dir, body.ips)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        conn = db.connect(case_dir)
+        try:
+            triage_map = {r["artifact"]: r["triage"] for r in db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact, triage "
+                      f"FROM art WHERE artifact_kind = 'client'")}
+            box_ips = {r["value"] for r in db.rows(
+                conn, "SELECT value FROM iocs WHERE type = 'ip'")}
+        finally:
+            conn.close()
+        for actor in result["actors"]:
+            actor["triage"] = triage_map.get(actor["ip"])
+            actor["in_box"] = actor["ip"] in box_ips
+        return result
 
     class TraceBody(BaseModel):
         ips: list[str]

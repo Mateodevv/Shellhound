@@ -1371,5 +1371,31 @@ class PathGuardTests(unittest.TestCase):
         self.assertTrue(any("system" in line for line in body["lines"]))
 
 
+class ActorWorkspaceEndpointTests(unittest.TestCase):
+    def test_actor_dossier_carries_evidence_relations(self):
+        status, body = get_json(
+            f"/api/cases/{CASE}/actor?ip={q(ATTACKER)}")
+        self.assertEqual(200, status, body)
+        self.assertIn("relations", body)
+        self.assertIsInstance(body["relations"], list)
+
+    def test_two_to_five_actors_can_be_compared(self):
+        status, body = post_json(
+            f"/api/cases/{CASE}/actors/compare",
+            {"ips": [ATTACKER, VISITOR]},
+        )
+        self.assertEqual(200, status, body)
+        self.assertEqual([ATTACKER, VISITOR],
+                         [actor["ip"] for actor in body["actors"]])
+        self.assertIn("shared_paths", body)
+        self.assertIn("shared_agents", body)
+        self.assertIn("time_overlap", body)
+
+    def test_actor_comparison_refuses_an_unreadable_scope(self):
+        status, body = post_json(
+            f"/api/cases/{CASE}/actors/compare", {"ips": [ATTACKER]})
+        self.assertEqual(400, status, body)
+
+
 if __name__ == "__main__":
     unittest.main()

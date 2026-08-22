@@ -1,7 +1,8 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  api, type Actor, type ActorDetail, type ActorsResponse, type CaseDetail,
+  api, post, type Actor, type ActorComparison, type ActorDetail,
+  type ActorsResponse, type CaseDetail,
 } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Actors } from './Actors'
@@ -9,6 +10,7 @@ import { Actors } from './Actors'
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
   api: vi.fn(),
+  post: vi.fn(),
 }))
 
 const ACTOR: Actor = {
@@ -64,6 +66,18 @@ const RESPONSE: ActorsResponse = {
   },
 }
 
+const SECOND_ACTOR: Actor = {
+  ...ACTOR, ip_id: 2, ip: '198.51.100.8', requests: 12,
+  triage: null, alerts: [],
+}
+
+const COMPARISON: ActorComparison = {
+  actors: [ACTOR, SECOND_ACTOR],
+  time_overlap: { from_epoch: ACTOR.first_epoch!, to_epoch: ACTOR.last_epoch! },
+  shared_paths: [{ uri: '/uploads/drop.php', actors: 2, hits: 5, ok: 4 }],
+  shared_agents: [],
+}
+
 const DETAIL: ActorDetail = {
   actor: ACTOR,
   alerts: [],
@@ -75,6 +89,10 @@ const DETAIL: ActorDetail = {
   worst: 0,
   findings: [],
   in_box: false,
+  relations: [{
+    ip: '198.51.100.8', shared_requests: 3, successful: 2,
+    shared_paths: ['/uploads/drop.php'], triage: null, in_box: false,
+  }],
 }
 
 const CASE = {
@@ -88,6 +106,12 @@ function mockApi() {
     if (path.includes('/actor?')) return DETAIL
     if (path.endsWith('/case-1')) return CASE
     throw new Error(`unexpected API call: ${path}`)
+  })
+  vi.mocked(post).mockImplementation(async (path) => {
+    if (path === '/api/geo') return {
+      available: false, source: '', why: '', results: {},
+    }
+    throw new Error(`unexpected POST call: ${path}`)
   })
 }
 
@@ -118,5 +142,44 @@ describe('actors investigation workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
     await waitFor(() => expect(vi.mocked(api).mock.calls.some(([path]) =>
       path.includes('/actors?') && path.includes('offset=50'))).toBe(true))
+  })
+
+  it('keeps secondary investigation filters out of the primary navigation', async () => {
+    mockApi()
+    renderWithProviders(<Actors slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByText('Clients & actors')
+
+    expect(screen.queryByRole('button', { name: /^Notable/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Notable' }))
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([path]) =>
+      path.includes('/actors?') && path.includes('flag=alerted'))).toBe(true))
+  })
+
+  it('compares a small selected scope and labels overlap as evidence, not attribution', async () => {
+    mockApi()
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.includes('/actors?')) return { ...RESPONSE, actors: [ACTOR, SECOND_ACTOR] }
+      if (path.includes('/actor?')) return DETAIL
+      if (path.endsWith('/case-1')) return CASE
+      throw new Error(`unexpected API call: ${path}`)
+    })
+    vi.mocked(post).mockImplementation(async (path) => {
+      if (path === '/api/geo') return {
+        available: false, source: '', why: '', results: {},
+      }
+      if (path.endsWith('/actors/compare')) return COMPARISON
+      throw new Error(`unexpected POST call: ${path}`)
+    })
+    renderWithProviders(<Actors slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByText('Clients & actors')
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select client 203.0.113.42' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select client 198.51.100.8' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Compare' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Compare actors' })).toBeInTheDocument()
+    expect(await screen.findByText('/uploads/drop.php')).toBeInTheDocument()
+    expect(screen.getByText(/not automatic campaign attribution/i)).toBeInTheDocument()
   })
 })
