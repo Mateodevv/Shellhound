@@ -319,6 +319,36 @@ export interface ActorDetail {
   worst: number | null
   findings: Finding[]
   in_box: boolean
+  /** Evidence-bearing neighbours: each one requested the exact URI that
+   * triggered an alert for this actor. */
+  relations: ActorRelation[]
+}
+
+export interface ActorRelation {
+  ip: string
+  shared_requests: number
+  successful: number
+  shared_paths: string[]
+  triage: TriageState | null
+  in_box: boolean
+}
+
+export interface ActorCompareProfile extends ActorProfile {
+  triage: TriageState | null
+  in_box: boolean
+}
+
+export interface ActorOverlap {
+  actors: number
+  hits: number
+  ok: number
+}
+
+export interface ActorComparison {
+  actors: ActorCompareProfile[]
+  time_overlap: { from_epoch: number; to_epoch: number } | null
+  shared_paths: (ActorOverlap & { uri: string })[]
+  shared_agents: (ActorOverlap & { agent: string })[]
 }
 
 /** One built-in detection rule. The id lives next to the rule that

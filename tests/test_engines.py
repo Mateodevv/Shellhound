@@ -14,7 +14,7 @@ import unittest
 
 from server import db
 from server.engines import cmsinventory, logindex, sqldump, webshell
-from tests.fixtures import ATTACKER, BRUTE, Evidence, register
+from tests.fixtures import ATTACKER, BRUTE, VISITOR, Evidence, register
 
 
 class EngineTests(unittest.TestCase):
@@ -227,6 +227,23 @@ class EngineTests(unittest.TestCase):
         uri = logindex.actors_list(
             self.ev.case_dir, search="/uploads/", sort="evidence")
         self.assertIn(ATTACKER, {a["ip"] for a in uri["actors"]})
+
+    def test_actor_comparison_reports_measurements_without_attribution(self):
+        compared = logindex.compare_actors(
+            self.ev.case_dir, [ATTACKER, VISITOR])
+        self.assertEqual([ATTACKER, VISITOR],
+                         [a["ip"] for a in compared["actors"]])
+        self.assertIsNotNone(compared["time_overlap"])
+        self.assertTrue(any(a["agent"] == "Mozilla/5.0"
+                            for a in compared["shared_agents"]))
+        self.assertEqual([], compared["shared_paths"],
+                         "generic but different paths became a relationship")
+
+    def test_actor_relations_only_use_alert_triggering_targets(self):
+        self.assertEqual([], logindex.actor_relations(
+            self.ev.case_dir, ATTACKER))
+        self.assertEqual([], logindex.actor_relations(
+            self.ev.case_dir, VISITOR))
 
     def test_trace_can_return_only_recorded_evidence_requests(self):
         complete = logindex.trace(self.ev.case_dir, [ATTACKER])

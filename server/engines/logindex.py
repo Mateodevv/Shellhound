@@ -1332,6 +1332,124 @@ def actor_profile(case_dir, ip):
         conn.close()
 
 
+def actor_relations(case_dir, ip, limit=8):
+    """Other clients that requested the *same alert-triggering URI*.
+
+    A relation in an investigation UI has to be inspectable evidence, not a
+    guess based on geography or a neighbouring address.  The alert examples
+    are exact request targets already recorded by the index, so every edge
+    returned here can be opened in the trace and verified line by line.
+    Generic top paths are deliberately not used: sharing ``/`` or
+    ``/index.php`` is normal traffic, not a campaign.
+    """
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return []
+    try:
+        row = conn.execute("SELECT ip_id FROM actors WHERE ip = ?",
+                           (str(ip).strip(),)).fetchone()
+        if row is None:
+            return []
+        examples = [r[0] for r in conn.execute(
+            "SELECT DISTINCT example FROM alerts "
+            "WHERE ip_id = ? AND trim(example) != ''", (row[0],))]
+        if not examples:
+            return []
+        marks = ",".join("?" * len(examples))
+        rows = conn.execute(
+            f"""SELECT i.ip, u.text AS uri, count(*) AS hits,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299
+                           THEN 1 ELSE 0 END) AS ok
+                FROM requests r
+                JOIN ips i ON i.id = r.ip
+                JOIN strings u ON u.id = r.uri
+                WHERE u.text IN ({marks}) AND i.ip != ?
+                GROUP BY i.ip, r.uri
+                ORDER BY ok DESC, hits DESC""",
+            examples + [str(ip).strip()],
+        ).fetchall()
+        peers = {}
+        for item in rows:
+            peer = peers.setdefault(item["ip"], {
+                "ip": item["ip"], "shared_requests": 0,
+                "successful": 0, "shared_paths": [],
+            })
+            peer["shared_requests"] += int(item["hits"] or 0)
+            peer["successful"] += int(item["ok"] or 0)
+            peer["shared_paths"].append(item["uri"])
+        return sorted(
+            peers.values(),
+            key=lambda p: (-p["successful"], -p["shared_requests"], p["ip"]),
+        )[:max(1, min(int(limit), 20))]
+    finally:
+        conn.close()
+
+
+def compare_actors(case_dir, ips):
+    """Measured overlap between two to five selected clients.
+
+    The comparison reports exact URI and user-agent intersections plus the
+    overlap of their observed time spans.  It does not call that overlap a
+    campaign: the browser presents the measurements and leaves attribution
+    to the analyst.
+    """
+    wanted = [w for w in dict.fromkeys(str(i).strip() for i in ips) if w]
+    if not 2 <= len(wanted) <= 5:
+        raise ValueError("compare requires two to five clients")
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"actors": [], "time_overlap": None,
+                "shared_paths": [], "shared_agents": []}
+    try:
+        marks = ",".join("?" * len(wanted))
+        actors = [dict(r) for r in conn.execute(
+            f"SELECT * FROM actors WHERE ip IN ({marks})", wanted)]
+        if len(actors) != len(wanted):
+            found = {a["ip"] for a in actors}
+            missing = next(ip for ip in wanted if ip not in found)
+            raise LookupError(f"unknown client: {missing}")
+        by_ip = {a["ip"]: a for a in actors}
+        actors = [by_ip[ip] for ip in wanted]
+        selected_ids = [a["ip_id"] for a in actors]
+
+        def shared(column, text_alias, extra=""):
+            return [dict(r) for r in conn.execute(
+                f"""SELECT s.text AS {text_alias},
+                           count(DISTINCT r.ip) AS actors,
+                           count(*) AS hits,
+                           sum(CASE WHEN r.status BETWEEN 200 AND 299
+                               THEN 1 ELSE 0 END) AS ok
+                    FROM requests r JOIN strings s ON s.id = r.{column}
+                    WHERE r.ip IN ({marks}) {extra}
+                    GROUP BY r.{column} HAVING count(DISTINCT r.ip) >= 2
+                    ORDER BY actors DESC, ok DESC, hits DESC LIMIT 12""",
+                selected_ids)]
+
+        starts = [a["first_epoch"] for a in actors if a["first_epoch"] is not None]
+        ends = [a["last_epoch"] for a in actors if a["last_epoch"] is not None]
+        overlap = None
+        if len(starts) == len(actors) and len(ends) == len(actors):
+            lo, hi = max(starts), min(ends)
+            if lo <= hi:
+                overlap = {"from_epoch": lo, "to_epoch": hi}
+        return {
+            "actors": actors,
+            "time_overlap": overlap,
+            # Universal landing-page traffic is an intersection but not an
+            # investigation lead. Keep it out of the comparison so a shared
+            # slash cannot visually outrank a shared exploit target.
+            "shared_paths": shared(
+                "uri", "uri",
+                "AND lower(s.text) NOT IN "
+                "('/', '/index.php', '/favicon.ico', '/robots.txt')",
+            ),
+            # Empty user agents are absence of evidence, not a relationship.
+            "shared_agents": shared("agent", "agent", "AND trim(s.text) != ''"),
+        }
+    finally:
+        conn.close()
+
+
 # Sort orders of the trace. Chronological is the default, because a trace is
 # a STORY -- the other orders answer questions ("what succeeded?", "what was
 # large?") one would otherwise have to search for in the sequence. A fixed

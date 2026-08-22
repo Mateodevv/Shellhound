@@ -9,13 +9,19 @@ All notable changes to SHELLHOUND. Format after
 ### Added — investigation workbench workflow
 
 - **Clients & Actors** is now a responsive investigation workspace rather
-  than a 200-row traffic table. Explicit Relevant, Confirmed, Needs review,
-  Notable, Scanner and All views use complete-index counts and server-side
-  pagination; search covers IPs, CIDR networks, URIs and user agents. Each
-  client opens an evidence inspector that keeps measured signals, findings,
-  IOC membership and analyst decisions visibly separate. Triggered traces
-  open on evidence requests first, with the complete request history one
-  switch away.
+  than a 200-row traffic table. Relevant, Confirmed and All are the three
+  stable work queues; behaviour and decision classes live in a secondary
+  filter panel instead of competing as navigation. Complete-index counts,
+  server-side pagination, IP/CIDR/URI/user-agent search and a compact density
+  keep cases with tens of thousands of clients workable. Each client opens a
+  four-part dossier that keeps measured signals, automatic findings and the
+  analyst's decision visibly separate. Triggered traces open on evidence
+  requests first, with the complete request history one switch away.
+- Actor relations now require an exact request target that triggered an alert,
+  so geography and address proximity never masquerade as attribution. Two to
+  five selected clients can be compared by non-trivial shared paths, user
+  agents and time overlap, then opened as one trace; the UI explicitly labels
+  every overlap as an investigation lead rather than a campaign verdict.
 - The dashboard is now a forensic case briefing rather than a workflow
   launcher: one case conclusion leads into the evidenced incident narrative
   and strictly confirmed scope. Notable clients, accounts and indicators are
