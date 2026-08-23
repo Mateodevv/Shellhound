@@ -256,6 +256,62 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(all(r["uri"].lower() == example.lower()
                             for r in evidence["rows"]))
 
+    def test_access_explorer_searches_the_whole_case_with_stable_line_refs(self):
+        first = logindex.access_search(self.ev.case_dir, {}, limit=5)
+        self.assertGreater(first["total"], 5)
+        self.assertEqual(5, len(first["rows"]))
+        self.assertTrue(first["next_cursor"])
+        self.assertTrue(all(row["line_no"] > 0 for row in first["rows"]))
+        self.assertTrue(all(":" in row["request_key"] for row in first["rows"]))
+
+        second = logindex.access_search(
+            self.ev.case_dir,
+            {"cursor": first["next_cursor"], "sort": "time_desc"}, limit=5)
+        self.assertFalse(
+            {row["request_id"] for row in first["rows"]}
+            & {row["request_id"] for row in second["rows"]},
+            "cursor pagination repeated the first page")
+
+        attacker = logindex.access_search(
+            self.ev.case_dir, {"clients": [ATTACKER]}, limit=200)
+        self.assertGreater(attacker["total"], 0)
+        self.assertTrue(all(row["client"] == ATTACKER
+                            for row in attacker["rows"]))
+
+    def test_access_explorer_explains_requests_and_returns_source_context(self):
+        signalled = logindex.access_search(
+            self.ev.case_dir,
+            {"clients": [ATTACKER], "signals_only": True}, limit=20)
+        self.assertGreater(signalled["total"], 0)
+        row = next(row for row in signalled["rows"] if row["signals"])
+        context = logindex.access_request_context(
+            self.ev.case_dir, row["request_id"], before=3, after=3)
+        self.assertEqual(row["request_key"], context["request"]["request_key"])
+        self.assertIn(ATTACKER, context["raw_line"])
+        self.assertLessEqual(len(context["before"]), 3)
+        self.assertLessEqual(len(context["after"]), 3)
+
+    def test_access_explorer_aggregates_facets_patterns_and_segments(self):
+        overview = logindex.access_overview(self.ev.case_dir, {})
+        self.assertTrue(overview["timeline"])
+        self.assertTrue(overview["facets"]["status"])
+        self.assertIn(ATTACKER,
+                      {row["value"] for row in overview["facets"]["clients"]})
+
+        patterns = logindex.access_patterns(
+            self.ev.case_dir, {"clients": [ATTACKER]})
+        self.assertTrue(patterns["patterns"])
+        self.assertTrue(all(row["requests"] > 0 for row in patterns["patterns"]))
+
+        self.assertTrue(logindex.access_segments(
+            self.ev.case_dir, {})["requires_client"])
+        segments = logindex.access_segments(
+            self.ev.case_dir, {"clients": [ATTACKER]})
+        self.assertFalse(segments["requires_client"])
+        self.assertTrue(segments["segments"])
+        self.assertTrue(all(row["client"] == ATTACKER
+                            for row in segments["segments"]))
+
     def test_pattern_hunt_matches(self):
         match = logindex.match_patterns(self.ev.case_dir, ["/uploads/*.php"])
         self.assertGreater(match["hits"], 0, "pattern found nothing")

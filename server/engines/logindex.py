@@ -24,7 +24,9 @@ stale one refuses to answer (sources fingerprint), and it is excluded from
 the case archive.
 """
 import json as _json
+import hashlib
 import ipaddress
+import itertools
 import os
 import re
 import sqlite3
@@ -45,7 +47,10 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 #    Two vhosts each with an access.log used to share one source, so the
 #    coverage check compared one file's mtime against the other's newest
 #    entry and announced forged timestamps.
-SCHEMA_VERSION = "10"
+# 11: requests.line_no makes an indexed request traceable to the exact line
+#     in its registered evidence source. A rowid is useful for paging, but it
+#     changes on every rebuild and cannot be cited in an investigation.
+SCHEMA_VERSION = "11"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -204,7 +209,8 @@ CREATE TABLE requests (
     ip INTEGER, epoch INTEGER, tz INTEGER,
     method TEXT, uri INTEGER, leaf INTEGER,
     status INTEGER, size INTEGER,
-    referrer INTEGER, agent INTEGER, source INTEGER
+    referrer INTEGER, agent INTEGER, source INTEGER,
+    line_no INTEGER
 );
 CREATE TABLE actors (
     ip_id INTEGER PRIMARY KEY,
@@ -477,7 +483,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             denom = max(1, file_size * (6 if is_compressed(file_path) else 1))
             try:
                 with open_text_auto(file_path) as fh:
-                    for line in fh:
+                    for line_no, line in enumerate(fh, start=1):
                         data = parse_line(line)
                         if data is None:
                             if line.strip():
@@ -528,7 +534,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         batch.append((ip_id, epoch, tz, method, uri_id,
                                       leaf_id, status, size,
                                       intern(data.get("referrer") or ""),
-                                      agent_id, src_id))
+                                      agent_id, src_id, line_no))
                         file_lines += 1
 
                         # --- actor accumulation (the one pass) -----------
@@ -617,7 +623,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         chars += len(line)
                         if len(batch) >= _BATCH:
                             conn.executemany(
-                                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                                 batch)
                             batch.clear()
                             if ctx is not None:
@@ -647,7 +653,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
 
         if batch:
             conn.executemany(
-                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?)", batch)
+                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", batch)
             batch.clear()
 
         if ctx is not None:
@@ -806,6 +812,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
         conn.execute("CREATE INDEX idx_req_ip ON requests(ip, epoch)")
         conn.execute("CREATE INDEX idx_req_leaf ON requests(leaf)")
         conn.execute("CREATE INDEX idx_req_epoch ON requests(epoch)")
+        conn.execute("CREATE INDEX idx_req_status_epoch ON requests(status, epoch)")
+        conn.execute("CREATE INDEX idx_req_method_epoch ON requests(method, epoch)")
+        conn.execute("CREATE INDEX idx_req_source_line ON requests(source, line_no)")
         conn.executemany("INSERT INTO meta VALUES (?,?)", [
             ("schema", SCHEMA_VERSION),
             ("targets", _json.dumps([str(t) for t in targets])),
@@ -1563,6 +1572,624 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
             item["source"] = os.path.basename(item.get("source") or "")
             out.append(item)
         return {"total": total, "rows": out, "methods": methods}
+    finally:
+        conn.close()
+
+
+# --- access-log explorer ---------------------------------------------------
+
+# The full-page explorer and the small TraceWindow deliberately share the
+# same index but not the same query contract. A trace starts with one or more
+# known clients. The explorer starts with the whole case and progressively
+# narrows it by measured fields. Keeping that distinction prevents an empty
+# client selector from accidentally turning a trace export into "all logs".
+_ACCESS_JOINS = (
+    "JOIN ips i ON i.id = r.ip "
+    "LEFT JOIN strings u ON u.id = r.uri "
+    "LEFT JOIN strings a ON a.id = r.agent "
+    "LEFT JOIN strings f ON f.id = r.referrer "
+    "LEFT JOIN sources s ON s.id = r.source"
+)
+
+_ACCESS_SIGNAL_SQL = (
+    "(r.uri IN (SELECT id FROM strings WHERE access_uri_signal(text) = 1) "
+    "OR r.agent IN (SELECT id FROM strings WHERE access_agent_signal(text) = 1) "
+    "OR access_alert_signal(r.ip, u.text) = 1)"
+)
+
+
+def _access_uri_signals(uri):
+    value = str(uri or "")
+    out = []
+    if SQLI_URI_RE.search(value):
+        out.append("sqli")
+    if TRAVERSAL_URI_RE.search(value):
+        out.append("traversal")
+    if UPLOAD_PHP_RE.search(value):
+        out.append("upload_php")
+    if CMS_DIR_PHP_RE.match(value):
+        out.append("cms_dir_php")
+    return out
+
+
+def _request_signals(uri, agent="", alerts=()):
+    """Small, explainable labels for ONE request.
+
+    These are not a new scoring engine. They are the same structural URI and
+    User-Agent observations the indexer already uses, plus an exact match to
+    an alert example. The UI can therefore say why a line is highlighted
+    without inventing a probability or attribution."""
+    out = list(_access_uri_signals(uri))
+    if agent and SCANNER_UA_RE.search(str(agent)):
+        out.append("scanner_ua")
+    out.extend(str(kind) for kind in alerts if kind)
+    return list(dict.fromkeys(out))
+
+
+def _prepare_access_conn(conn):
+    # Non-correlated subqueries invoke these functions once per DISTINCT
+    # interned string, not once per request. That preserves the indexer's core
+    # performance property even when "signal requests only" is active.
+    conn.create_function(
+        "access_uri_signal", 1,
+        lambda value: 1 if _access_uri_signals(value) else 0,
+        deterministic=True)
+    conn.create_function(
+        "access_agent_signal", 1,
+        lambda value: 1 if value and SCANNER_UA_RE.search(str(value)) else 0,
+        deterministic=True)
+    # Alert examples are tiny (one explanatory sample per alert) while the
+    # request table can contain millions of rows. A correlated SQL subquery
+    # re-read those examples for every request. Freeze them into this
+    # read-only connection instead: exact request-to-alert explanation stays
+    # the same and lookup becomes O(1).
+    alert_examples = {
+        (int(row[0]), str(row[1]).lower())
+        for row in conn.execute(
+            "SELECT ip_id, example FROM alerts WHERE example != ''")
+    }
+    conn.create_function(
+        "access_alert_signal", 2,
+        lambda ip_id, uri: 1 if (
+            int(ip_id or 0), str(uri or "").lower()) in alert_examples else 0,
+        deterministic=True)
+
+
+def _access_joins_for(filters, extra=()):
+    """Only join dimensions a particular aggregate actually reads.
+
+    The first explorer implementation attached all four string tables, IPs
+    and sources to each facet query. On a million-line case that multiplied
+    the work of even `GROUP BY method`, although method lives directly on the
+    request. Filters still bring in every alias they reference; `extra` adds
+    the dimension the result itself needs.
+    """
+    needed = set(extra)
+    filters = filters if isinstance(filters, dict) else {}
+    if _access_values(filters, "clients") \
+            or _access_values(filters, "exclude_clients"):
+        needed.add("ip")
+    if _access_values(filters, "paths") \
+            or _access_values(filters, "exclude_paths"):
+        needed.add("uri")
+    if _access_values(filters, "agents") \
+            or _access_values(filters, "exclude_agents"):
+        needed.add("agent")
+    if str(filters.get("search") or "").strip():
+        needed.update(("ip", "uri", "agent", "referrer"))
+    if filters.get("signals_only"):
+        needed.add("uri")
+    joins = []
+    if "ip" in needed:
+        joins.append("JOIN ips i ON i.id = r.ip")
+    if "uri" in needed:
+        joins.append("LEFT JOIN strings u ON u.id = r.uri")
+    if "agent" in needed:
+        joins.append("LEFT JOIN strings a ON a.id = r.agent")
+    if "referrer" in needed:
+        joins.append("LEFT JOIN strings f ON f.id = r.referrer")
+    if "source" in needed:
+        joins.append("LEFT JOIN sources s ON s.id = r.source")
+    return " ".join(joins)
+
+
+def _access_values(filters, key):
+    raw = filters.get(key, ()) if isinstance(filters, dict) else ()
+    if not isinstance(raw, (list, tuple, set)):
+        raw = [raw]
+    return list(dict.fromkeys(str(v).strip() for v in raw if str(v).strip()))
+
+
+def _access_int_values(filters, key):
+    out = []
+    for value in filters.get(key, ()) if isinstance(filters, dict) else ():
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0 and parsed not in out:
+            out.append(parsed)
+    return out
+
+
+def _access_clause(filters, cursor=False):
+    """Compile the explorer's structured filters into parameterized SQL.
+
+    Field names and operators never come from the client. Values only ever
+    travel as SQLite parameters, and sorts are selected elsewhere from a
+    fixed map."""
+    where = []
+    params = []
+
+    for key, column, negate in (
+        ("clients", "i.ip", False),
+        ("exclude_clients", "i.ip", True),
+        ("paths", "u.text", False),
+        ("exclude_paths", "u.text", True),
+        ("agents", "a.text", False),
+        ("exclude_agents", "a.text", True),
+    ):
+        values = _access_values(filters, key)
+        if not values:
+            continue
+        marks = ",".join("?" * len(values))
+        where.append(f"{column} {'NOT IN' if negate else 'IN'} ({marks})")
+        params.extend(values)
+
+    for key, negate in (("source_ids", False), ("exclude_source_ids", True)):
+        values = _access_int_values(filters, key)
+        if not values:
+            continue
+        marks = ",".join("?" * len(values))
+        where.append(f"r.source {'NOT IN' if negate else 'IN'} ({marks})")
+        params.extend(values)
+
+    from_epoch = filters.get("from_epoch")
+    to_epoch = filters.get("to_epoch")
+    if from_epoch is not None:
+        where.append("r.epoch >= ?")
+        params.append(int(from_epoch))
+    if to_epoch is not None:
+        where.append("r.epoch <= ?")
+        params.append(int(to_epoch))
+
+    status = str(filters.get("status") or "")
+    if status in _STATUS_RANGES:
+        lo, hi = _STATUS_RANGES[status]
+        where.append("r.status BETWEEN ? AND ?")
+        params.extend([lo, hi])
+    method = str(filters.get("method") or "").strip().upper()
+    if method:
+        where.append("r.method = ?")
+        params.append(method)
+    if filters.get("min_size") is not None:
+        where.append("r.size >= ?")
+        params.append(max(0, int(filters["min_size"])))
+    if filters.get("max_size") is not None:
+        where.append("r.size <= ?")
+        params.append(max(0, int(filters["max_size"])))
+
+    search = str(filters.get("search") or "").strip()
+    if search:
+        escaped = (search.replace("\\", "\\\\")
+                   .replace("%", "\\%").replace("_", "\\_"))
+        like = f"%{escaped}%"
+        where.append("(u.text LIKE ? ESCAPE '\\' OR a.text LIKE ? ESCAPE '\\' "
+                     "OR f.text LIKE ? ESCAPE '\\' OR i.ip LIKE ? ESCAPE '\\')")
+        params.extend([like, like, like, like])
+
+    if filters.get("signals_only"):
+        where.append(_ACCESS_SIGNAL_SQL)
+
+    if cursor:
+        token = str(filters.get("cursor") or "").strip()
+        if token:
+            try:
+                epoch_text, rowid_text = token.split(":", 1)
+                epoch, rowid = int(epoch_text), int(rowid_text)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("invalid access-log cursor") from exc
+            if str(filters.get("sort") or "time_desc") == "time":
+                where.append("(r.epoch > ? OR (r.epoch = ? AND r.rowid > ?))")
+            else:
+                where.append("(r.epoch < ? OR (r.epoch = ? AND r.rowid < ?))")
+            params.extend([epoch, epoch, rowid])
+
+    return (" AND ".join(where) if where else "1 = 1"), params
+
+
+def _access_select():
+    return (
+        "SELECT r.rowid AS request_id, i.ip AS client, r.epoch, r.tz, "
+        "r.method, u.text AS uri, r.status, r.size, f.text AS referrer, "
+        "a.text AS agent, s.id AS source_id, s.path AS source_path, "
+        "r.line_no FROM requests r " + _ACCESS_JOINS
+    )
+
+
+def _alerts_for_rows(conn, rows):
+    clients = list(dict.fromkeys(str(row.get("client") or "") for row in rows
+                                 if row.get("client")))
+    if not clients:
+        return {}
+    marks = ",".join("?" * len(clients))
+    mapping = {}
+    for row in conn.execute(
+            f"SELECT i.ip, lower(al.example), al.kind FROM alerts al "
+            f"JOIN ips i ON i.id = al.ip_id WHERE al.example != '' "
+            f"AND i.ip IN ({marks})", clients):
+        mapping.setdefault((row[0], row[1]), []).append(row[2])
+    return mapping
+
+
+def _public_access_rows(conn, rows):
+    mutable = [dict(row) for row in rows]
+    alert_map = _alerts_for_rows(conn, mutable)
+    out = []
+    for item in mutable:
+        internal_path = item.pop("source_path", "") or ""
+        item["source"] = os.path.basename(internal_path)
+        source_ref = hashlib.sha256(
+            os.path.normcase(os.path.abspath(internal_path)).encode(
+                "utf-8", "surrogatepass")).hexdigest()[:16] if internal_path else ""
+        item["request_key"] = (
+            f"{source_ref}:{item.get('line_no')}" if source_ref and item.get("line_no")
+            else f"row:{item.get('request_id')}")
+        item["signals"] = _request_signals(
+            item.get("uri"), item.get("agent"),
+            alert_map.get((item.get("client"),
+                           str(item.get("uri") or "").lower()), ()))
+        out.append(item)
+    return out
+
+
+def access_search(case_dir, filters=None, limit=200):
+    """Search the complete access-log index with cursor pagination."""
+    filters = dict(filters or {})
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"total": 0, "rows": [], "next_cursor": None,
+                "summary": {"ok": 0, "redirects": 0, "client_errors": 0,
+                            "server_errors": 0, "first_epoch": None,
+                            "last_epoch": None}}
+    try:
+        _prepare_access_conn(conn)
+        base_clause, base_params = _access_clause(filters, cursor=False)
+        summary_row = conn.execute(
+            f"""SELECT count(*) AS total,
+                       min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
+                       max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
+                       sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirects,
+                       sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS client_errors,
+                       sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END) AS server_errors
+                FROM requests r {_ACCESS_JOINS} WHERE {base_clause}""",
+            base_params).fetchone()
+        clause, params = _access_clause(filters, cursor=True)
+        order = ("r.epoch ASC, r.rowid ASC"
+                 if str(filters.get("sort") or "time_desc") == "time"
+                 else "r.epoch DESC, r.rowid DESC")
+        bounded = max(1, min(int(limit), 200000))
+        raw_rows = conn.execute(
+            f"{_access_select()} WHERE {clause} ORDER BY {order} LIMIT ?",
+            params + [bounded + 1]).fetchall()
+        has_more = len(raw_rows) > bounded
+        raw_rows = raw_rows[:bounded]
+        rows = _public_access_rows(conn, raw_rows)
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = f"{last['epoch']}:{last['request_id']}"
+        summary = dict(summary_row) if summary_row else {}
+        for key in ("ok", "redirects", "client_errors", "server_errors"):
+            summary[key] = int(summary.get(key) or 0)
+        return {"total": int(summary.pop("total", 0) or 0),
+                "rows": rows, "next_cursor": next_cursor,
+                "summary": summary}
+    finally:
+        conn.close()
+
+
+def _nice_bucket(span, wanted=72):
+    minimum = max(1, int(span / max(1, wanted)))
+    for width in (60, 300, 900, 3600, 21600, 43200, 86400,
+                  3 * 86400, 7 * 86400, 30 * 86400):
+        if width >= minimum:
+            return width
+    return 90 * 86400
+
+
+def access_overview(case_dir, filters=None):
+    """Histogram and exact full-scope facets for the current search."""
+    filters = dict(filters or {})
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"total": 0, "timeline": [], "bucket_seconds": 0,
+                "facets": {}}
+    try:
+        _prepare_access_conn(conn)
+        clause, params = _access_clause(filters, cursor=False)
+        base_joins = _access_joins_for(filters)
+        span = conn.execute(
+            f"SELECT count(*), "
+            f"min(CASE WHEN r.epoch > 0 THEN r.epoch END), "
+            f"max(CASE WHEN r.epoch > 0 THEN r.epoch END) "
+            f"FROM requests r {base_joins} WHERE {clause}", params).fetchone()
+        total, first, last = span if span else (0, None, None)
+        width = _nice_bucket((last or 0) - (first or 0)) if first and last else 0
+        timeline = []
+        if width:
+            timeline_joins = _access_joins_for(filters, ("uri",))
+            for row in conn.execute(
+                    f"""SELECT (r.epoch / ?) * ? AS start_epoch,
+                               count(*) AS requests,
+                               sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
+                               sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) AS errors,
+                               sum(CASE WHEN {_ACCESS_SIGNAL_SQL} THEN 1 ELSE 0 END) AS signals
+                        FROM requests r {timeline_joins}
+                        WHERE {clause} AND r.epoch > 0
+                        GROUP BY start_epoch ORDER BY start_epoch""",
+                    [width, width] + params):
+                item = dict(row)
+                item["end_epoch"] = item["start_epoch"] + width - 1
+                for key in ("requests", "ok", "errors", "signals"):
+                    item[key] = int(item.get(key) or 0)
+                timeline.append(item)
+
+        def facet(sql, sql_params=None):
+            return [dict(row) for row in conn.execute(sql, sql_params or params)]
+
+        methods = facet(
+            f"SELECT r.method AS value, count(*) AS count FROM requests r "
+            f"{base_joins} WHERE {clause} AND r.method != '' "
+            f"GROUP BY r.method ORDER BY count DESC LIMIT 12")
+        client_joins = _access_joins_for(filters, ("ip",))
+        clients = facet(
+            f"SELECT i.ip AS value, count(*) AS count FROM requests r "
+            f"{client_joins} WHERE {clause} GROUP BY r.ip "
+            f"ORDER BY count DESC LIMIT 12")
+        path_joins = _access_joins_for(filters, ("uri",))
+        paths = facet(
+            f"SELECT u.text AS value, count(*) AS count FROM requests r "
+            f"{path_joins} WHERE {clause} AND u.text != '' GROUP BY r.uri "
+            f"ORDER BY count DESC LIMIT 12")
+        agent_joins = _access_joins_for(filters, ("agent",))
+        agents = facet(
+            f"SELECT a.text AS value, count(*) AS count FROM requests r "
+            f"{agent_joins} WHERE {clause} AND a.text != '' GROUP BY r.agent "
+            f"ORDER BY count DESC LIMIT 10")
+        source_joins = _access_joins_for(filters, ("source",))
+        sources = facet(
+            f"SELECT s.id AS value, s.path AS path, count(*) AS count "
+            f"FROM requests r {source_joins} WHERE {clause} GROUP BY r.source "
+            f"ORDER BY count DESC LIMIT 12")
+        for item in sources:
+            item["label"] = os.path.basename(item.pop("path", "") or "")
+
+        status_row = conn.execute(
+            f"""SELECT
+                sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
+                sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END),
+                sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END),
+                sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END)
+                FROM requests r {base_joins} WHERE {clause}""", params).fetchone()
+        statuses = [
+            {"value": name, "count": int((status_row[index] if status_row else 0) or 0)}
+            for index, name in enumerate(("2xx", "3xx", "4xx", "5xx"))
+        ]
+        return {"total": int(total or 0), "timeline": timeline,
+                "bucket_seconds": width,
+                "facets": {"status": statuses, "methods": methods,
+                           "clients": clients, "paths": paths,
+                           "agents": agents, "sources": sources}}
+    finally:
+        conn.close()
+
+
+_UUID_SEGMENT = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+_HEX_SEGMENT = re.compile(r"(?i)^[0-9a-f]{10,}$")
+_TOKEN_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{24,}$")
+
+
+def _uri_pattern(uri):
+    """A readable path shape, not a security claim."""
+    value = str(uri or "")
+    path, marker, query = value.partition("?")
+    parts = []
+    for segment in path.split("/"):
+        if _UUID_SEGMENT.match(segment):
+            segment = ":uuid"
+        elif segment.isdigit():
+            segment = ":n"
+        elif _HEX_SEGMENT.match(segment):
+            segment = ":hex"
+        elif _TOKEN_SEGMENT.match(segment):
+            segment = ":token"
+        parts.append(segment)
+    patterned = "/".join(parts)
+    if marker and query:
+        keys = sorted(dict.fromkeys(
+            part.split("=", 1)[0] for part in query.split("&") if part))
+        if keys:
+            patterned += "?" + "&".join(f"{key}=*" for key in keys[:8])
+    return patterned or "/"
+
+
+def access_patterns(case_dir, filters=None, limit=80):
+    """Group exact URIs into readable shapes, then measure those shapes."""
+    filters = dict(filters or {})
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"patterns": [], "sampled_uris": 0, "truncated": False}
+    try:
+        _prepare_access_conn(conn)
+        clause, params = _access_clause(filters, cursor=False)
+        candidates = conn.execute(
+            f"""SELECT r.uri AS uri_id, u.text AS uri, count(*) AS requests
+                FROM requests r {_ACCESS_JOINS} WHERE {clause}
+                GROUP BY r.uri ORDER BY requests DESC LIMIT 10001""", params).fetchall()
+        truncated = len(candidates) > 10000
+        candidates = candidates[:10000]
+        if not candidates:
+            return {"patterns": [], "sampled_uris": 0, "truncated": False}
+        mapping = [(int(row["uri_id"]), _uri_pattern(row["uri"]))
+                   for row in candidates]
+        examples = {}
+        for row, (_uri_id, pattern) in zip(candidates, mapping):
+            examples.setdefault(pattern, []).append(
+                (int(row["requests"]), str(row["uri"] or "")))
+        conn.execute("CREATE TEMP TABLE access_pattern_map "
+                     "(uri_id INTEGER PRIMARY KEY, pattern TEXT)")
+        conn.executemany("INSERT INTO access_pattern_map VALUES (?,?)", mapping)
+        rows = conn.execute(
+            f"""SELECT pm.pattern, count(*) AS requests,
+                       count(DISTINCT r.ip) AS clients,
+                       sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
+                       sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) AS errors,
+                       min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
+                       max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch
+                FROM requests r {_ACCESS_JOINS}
+                JOIN access_pattern_map pm ON pm.uri_id = r.uri
+                WHERE {clause} GROUP BY pm.pattern
+                ORDER BY requests DESC LIMIT ?""", params + [max(1, min(limit, 200))]).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["examples"] = [uri for _n, uri in sorted(
+                examples.get(item["pattern"], ()), reverse=True)[:3]]
+            item["signals"] = list(dict.fromkeys(
+                signal for uri in item["examples"]
+                for signal in _access_uri_signals(uri)))
+            out.append(item)
+        return {"patterns": out, "sampled_uris": len(candidates),
+                "truncated": truncated}
+    finally:
+        conn.close()
+
+
+def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
+    """Measured activity windows for a deliberately small client scope.
+
+    They are called segments, never sessions: an access log has no authority
+    to say whether two requests share an authenticated application session."""
+    filters = dict(filters or {})
+    clients = _access_values(filters, "clients")
+    if not clients:
+        return {"segments": [], "requires_client": True, "truncated": False}
+    if len(clients) > 5:
+        raise ValueError("activity segments support at most five clients")
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"segments": [], "requires_client": False, "truncated": False}
+    try:
+        _prepare_access_conn(conn)
+        clause, params = _access_clause(filters, cursor=False)
+        raw = conn.execute(
+            f"{_access_select()} WHERE {clause} "
+            f"ORDER BY i.ip, r.epoch, r.rowid LIMIT 200001", params).fetchall()
+        truncated = len(raw) > 200000
+        rows = _public_access_rows(conn, raw[:200000])
+        segments = []
+        current = None
+
+        def finish(segment):
+            if not segment:
+                return
+            segment["top_paths"] = [
+                {"value": value, "count": count}
+                for value, count in segment.pop("_paths").most_common(5)]
+            segment["methods"] = [
+                {"value": value, "count": count}
+                for value, count in segment.pop("_methods").most_common()]
+            segment["signals"] = sorted(segment["signals"])
+            segment["duration"] = max(
+                0, (segment["last_epoch"] or 0) - (segment["first_epoch"] or 0))
+            segments.append(segment)
+
+        for row in rows:
+            epoch = int(row.get("epoch") or 0)
+            starts_new = (current is None or current["client"] != row["client"]
+                          or not epoch or not current["last_epoch"]
+                          or epoch - current["last_epoch"] > gap_seconds)
+            if starts_new:
+                finish(current)
+                current = {"client": row["client"], "first_epoch": epoch,
+                           "last_epoch": epoch, "tz": row.get("tz") or 0,
+                           "requests": 0, "ok": 0, "errors": 0,
+                           "bytes": 0, "bytes_unknown": 0,
+                           "signals": set(), "_paths": Counter(),
+                           "_methods": Counter()}
+            current["requests"] += 1
+            current["last_epoch"] = epoch or current["last_epoch"]
+            if 200 <= int(row.get("status") or 0) < 300:
+                current["ok"] += 1
+            if int(row.get("status") or 0) >= 400:
+                current["errors"] += 1
+            if row.get("size") is None:
+                current["bytes_unknown"] += 1
+            else:
+                current["bytes"] += int(row["size"])
+            current["signals"].update(row.get("signals") or ())
+            current["_paths"][row.get("uri") or "-"] += 1
+            current["_methods"][row.get("method") or "-"] += 1
+        finish(current)
+        segments.sort(key=lambda item: (item["first_epoch"] or 0), reverse=True)
+        return {"segments": segments[:max(1, min(limit, 500))],
+                "requires_client": False,
+                "truncated": truncated or len(segments) > limit}
+    finally:
+        conn.close()
+
+
+def _source_line(path, line_no):
+    if not path or not line_no:
+        return ""
+    try:
+        with open_text_auto(path) as handle:
+            line = next(itertools.islice(handle, int(line_no) - 1, int(line_no)), "")
+        return line.rstrip("\r\n")
+    except (OSError, ValueError, TypeError):
+        return ""
+
+
+def access_request_context(case_dir, request_id, before=12, after=12):
+    """One request, its exact source line and neighbouring client activity."""
+    conn = _open_ro(case_dir)
+    if conn is None:
+        raise LookupError("access-log index not found")
+    try:
+        _prepare_access_conn(conn)
+        selected = conn.execute(
+            f"{_access_select()} WHERE r.rowid = ?", (int(request_id),)).fetchone()
+        if selected is None:
+            raise LookupError("access-log request not found")
+        internal = dict(selected)
+        ip_id = conn.execute("SELECT id FROM ips WHERE ip = ?",
+                             (internal["client"],)).fetchone()[0]
+        epoch = int(internal.get("epoch") or 0)
+        rid = int(internal["request_id"])
+        bounded_before = max(0, min(int(before), 50))
+        bounded_after = max(0, min(int(after), 50))
+        previous = conn.execute(
+            f"{_access_select()} WHERE r.ip = ? AND "
+            f"(r.epoch < ? OR (r.epoch = ? AND r.rowid < ?)) "
+            f"ORDER BY r.epoch DESC, r.rowid DESC LIMIT ?",
+            (ip_id, epoch, epoch, rid, bounded_before)).fetchall()
+        following = conn.execute(
+            f"{_access_select()} WHERE r.ip = ? AND "
+            f"(r.epoch > ? OR (r.epoch = ? AND r.rowid > ?)) "
+            f"ORDER BY r.epoch ASC, r.rowid ASC LIMIT ?",
+            (ip_id, epoch, epoch, rid, bounded_after)).fetchall()
+        raw_line = _source_line(internal.get("source_path"), internal.get("line_no"))
+        raw_truncated = len(raw_line) > 16384
+        if raw_truncated:
+            raw_line = raw_line[:16384]
+        request = _public_access_rows(conn, [selected])[0]
+        return {"request": request,
+                "before": list(reversed(_public_access_rows(conn, previous))),
+                "after": _public_access_rows(conn, following),
+                "raw_line": raw_line, "raw_truncated": raw_truncated}
     finally:
         conn.close()
 

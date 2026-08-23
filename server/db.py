@@ -300,6 +300,23 @@ CREATE TABLE IF NOT EXISTS skipped (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL, path TEXT NOT NULL, reason TEXT NOT NULL DEFAULT ''
 );
+-- Analyst-owned access-log work survives rebuilding the derived log index.
+-- A saved query is the reproducible question; a clip is a snapshot of the
+-- exact request the analyst chose, including its source-line reference.
+CREATE TABLE IF NOT EXISTS access_saved_queries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    query TEXT NOT NULL DEFAULT '{}',
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS access_clips (
+    id INTEGER PRIMARY KEY,
+    request_key TEXT UNIQUE NOT NULL,
+    snapshot TEXT NOT NULL DEFAULT '{}',
+    note TEXT NOT NULL DEFAULT '',
+    added TEXT NOT NULL
+);
 """
 
 TRIAGE_STATES = ("new", "reviewed", "confirmed", "dismissed")
@@ -375,14 +392,18 @@ _ADDED_COLUMNS = {
 #    exports can describe runs rather than a flat row-id stream.
 # 7: structured IOC provenance makes generated indicators reversible, and
 #    triage_events records the analyst's decision history.
-CASE_SCHEMA_VERSION = 7
+# 8: saved access-log searches and clipped requests are analyst-owned case
+#    records, separate from the rebuildable bulk index.
+CASE_SCHEMA_VERSION = 8
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
 # later table, and a copied database can carry the marker without the complete
-# structure. These are the version-7 sentinels whose absence is safe to repair
+# structure. These are the current sentinels whose absence is safe to repair
 # with the idempotent upgrade.
-_CURRENT_SCHEMA_TABLES = {"ioc_sources", "triage_events"}
+_CURRENT_SCHEMA_TABLES = {
+    "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
+}
 
 
 def _stored_version(conn):

@@ -2619,6 +2619,316 @@ def create_app(config: Config) -> FastAPI:
             headers={"Content-Disposition": f"attachment; filename={stem}.zip",
                      "X-Content-SHA256": digest})
 
+    # --- full-case access-log explorer ------------------------------------
+
+    class AccessQueryBody(BaseModel):
+        search: str = ""
+        from_epoch: int | None = None
+        to_epoch: int | None = None
+        clients: list[str] = Field(default_factory=list)
+        exclude_clients: list[str] = Field(default_factory=list)
+        paths: list[str] = Field(default_factory=list)
+        exclude_paths: list[str] = Field(default_factory=list)
+        agents: list[str] = Field(default_factory=list)
+        exclude_agents: list[str] = Field(default_factory=list)
+        source_ids: list[int] = Field(default_factory=list)
+        exclude_source_ids: list[int] = Field(default_factory=list)
+        status: str = ""
+        method: str = ""
+        min_size: int | None = None
+        max_size: int | None = None
+        signals_only: bool = False
+        sort: str = "time_desc"
+        cursor: str = ""
+        limit: int = 200
+
+    def access_filters(body: AccessQueryBody, *, keep_page=False):
+        data = body.model_dump()
+        if body.sort not in ("time", "time_desc"):
+            raise HTTPException(400, "unsupported access-log sort")
+        for key in ("clients", "exclude_clients", "paths", "exclude_paths",
+                    "agents", "exclude_agents", "source_ids",
+                    "exclude_source_ids"):
+            if len(data[key]) > 100:
+                raise HTTPException(400, f"too many values in {key}")
+        if body.from_epoch is not None and body.to_epoch is not None \
+                and body.from_epoch > body.to_epoch:
+            raise HTTPException(400, "from_epoch is after to_epoch")
+        if not keep_page:
+            data.pop("cursor", None)
+            data.pop("limit", None)
+        return data
+
+    @app.post("/api/cases/{slug}/access/search", dependencies=[auth])
+    def access_search(slug: str, body: AccessQueryBody):
+        case_dir = case_dir_or_404(slug)
+        filters = access_filters(body, keep_page=True)
+        try:
+            return logindex.access_search(
+                case_dir, filters, limit=max(25, min(body.limit, 500)))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/cases/{slug}/access/overview", dependencies=[auth])
+    def access_overview(slug: str, body: AccessQueryBody):
+        case_dir = case_dir_or_404(slug)
+        return logindex.access_overview(case_dir, access_filters(body))
+
+    @app.post("/api/cases/{slug}/access/patterns", dependencies=[auth])
+    def access_patterns(slug: str, body: AccessQueryBody):
+        case_dir = case_dir_or_404(slug)
+        return logindex.access_patterns(case_dir, access_filters(body))
+
+    @app.post("/api/cases/{slug}/access/segments", dependencies=[auth])
+    def access_segments(slug: str, body: AccessQueryBody):
+        case_dir = case_dir_or_404(slug)
+        try:
+            return logindex.access_segments(case_dir, access_filters(body))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/cases/{slug}/access/request/{request_id}", dependencies=[auth])
+    def access_request(slug: str, request_id: int, before: int = 12,
+                       after: int = 12):
+        case_dir = case_dir_or_404(slug)
+        try:
+            return logindex.access_request_context(
+                case_dir, request_id, before=before, after=after)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    def parsed_access_export_filters(raw: str):
+        try:
+            payload = json.loads(raw or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError
+            body = AccessQueryBody(**payload)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, "invalid access-log export filters") from exc
+        return access_filters(body)
+
+    @app.get("/api/cases/{slug}/access/export", dependencies=[auth])
+    def access_export(slug: str, filters: str = "{}"):
+        """The visible access-log scope as a citable ZIP exhibit."""
+        case_dir = case_dir_or_404(slug)
+        active = parsed_access_export_filters(filters)
+        result = logindex.access_search(case_dir, active, limit=200000)
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow([
+            "Request key", "Client", "Time", "Method", "URI", "Status",
+            "Size", "Referrer", "User-Agent", "Source", "Source line",
+            "Signals",
+        ])
+        for row in result["rows"]:
+            stamp = ""
+            if row["epoch"]:
+                stamp = datetime.fromtimestamp(
+                    row["epoch"] + (row["tz"] or 0), tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            writer.writerow([
+                _csv_safe(row["request_key"]), _csv_safe(row["client"]), stamp,
+                _csv_safe(row["method"]), _csv_safe(row["uri"]), row["status"],
+                "" if row["size"] is None else row["size"],
+                _csv_safe(row["referrer"]), _csv_safe(row["agent"]),
+                _csv_safe(row["source"]), row["line_no"],
+                _csv_safe(", ".join(row.get("signals") or ())),
+            ])
+        csv_bytes = buf.getvalue().encode("utf-8")
+        digest = hashlib.sha256(csv_bytes).hexdigest()
+        info = workspace.case_info(case_dir)
+        manifest = "\n".join([
+            "SHELLHOUND access-log export",
+            f"Case: {info['name']} ({info['slug']})",
+            f"Exported: {db.now()}",
+            "",
+            "Structured filters:",
+            json.dumps(active, ensure_ascii=False, sort_keys=True, indent=2),
+            "",
+            f"Rows: {len(result['rows'])} of {result['total']}"
+            + (" — TRUNCATED at 200000" if result["total"] > len(result["rows"]) else ""),
+            "Times use the UTC offset recorded on each source line.",
+            f"SHA-256 (access-log.csv): {digest}",
+        ]) + "\n"
+        archive_buf = io.BytesIO()
+        with zipfile.ZipFile(archive_buf, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("access-log.csv", csv_bytes)
+            archive.writestr("MANIFEST.txt", manifest.encode("utf-8"))
+        return Response(
+            archive_buf.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition":
+                     f"attachment; filename=access_{info['slug']}.zip",
+                     "X-Content-SHA256": digest})
+
+    class AccessSavedBody(BaseModel):
+        name: str = Field(min_length=1, max_length=120)
+        query: dict = Field(default_factory=dict)
+
+    @app.get("/api/cases/{slug}/access/saved", dependencies=[auth])
+    def access_saved_list(slug: str):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            return [{**dict(row), "query": json.loads(row["query"] or "{}")}
+                    for row in db.rows(conn,
+                        "SELECT id, name, query, created, updated "
+                        "FROM access_saved_queries ORDER BY updated DESC, id DESC")]
+        finally:
+            conn.close()
+
+    @app.post("/api/cases/{slug}/access/saved", dependencies=[auth])
+    def access_saved_add(slug: str, body: AccessSavedBody):
+        case_dir = case_dir_or_404(slug)
+        # Validate the stored object with the same model the search uses and
+        # discard cursors: reopening a query always starts at its first page.
+        validated = access_filters(AccessQueryBody(**body.query))
+        encoded = json.dumps(validated, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > 65536:
+            raise HTTPException(400, "saved access query is too large")
+        stamp = db.now()
+        conn = db.connect(case_dir)
+        try:
+            cur = conn.execute(
+                "INSERT INTO access_saved_queries(name, query, created, updated) "
+                "VALUES (?,?,?,?)", (body.name.strip(), encoded, stamp, stamp))
+            conn.commit()
+            return {"id": cur.lastrowid, "name": body.name.strip(),
+                    "query": validated, "created": stamp, "updated": stamp}
+        finally:
+            conn.close()
+
+    @app.delete("/api/cases/{slug}/access/saved/{saved_id}", dependencies=[auth])
+    def access_saved_delete(slug: str, saved_id: int):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            cur = conn.execute("DELETE FROM access_saved_queries WHERE id = ?",
+                               (saved_id,))
+            conn.commit()
+            if not cur.rowcount:
+                raise HTTPException(404, "saved access query not found")
+            return {"ok": True}
+        finally:
+            conn.close()
+
+    class AccessClipBody(BaseModel):
+        request_id: int
+        note: str = Field(default="", max_length=2000)
+
+    @app.get("/api/cases/{slug}/access/clips", dependencies=[auth])
+    def access_clip_list(slug: str):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            return [{**dict(row), "snapshot": json.loads(row["snapshot"] or "{}")}
+                    for row in db.rows(conn,
+                        "SELECT id, request_key, snapshot, note, added "
+                        "FROM access_clips ORDER BY id DESC")]
+        finally:
+            conn.close()
+
+    @app.get("/api/cases/{slug}/access/clips/export", dependencies=[auth])
+    def access_clip_export(slug: str):
+        """Analyst-selected request lines as a citable handover archive."""
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            clips = [{**dict(row),
+                      "snapshot": json.loads(row["snapshot"] or "{}")}
+                     for row in db.rows(
+                         conn, "SELECT id, request_key, snapshot, note, added "
+                               "FROM access_clips ORDER BY id")]
+        finally:
+            conn.close()
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow([
+            "Clip", "Request key", "Client", "Time", "Method", "URI",
+            "Status", "Size", "Referrer", "User-Agent", "Source",
+            "Source line", "Signals", "Analyst note", "Raw source line",
+            "Added",
+        ])
+        for clip in clips:
+            row = clip["snapshot"]
+            stamp = ""
+            if row.get("epoch"):
+                stamp = datetime.fromtimestamp(
+                    row["epoch"] + (row.get("tz") or 0), tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            writer.writerow([
+                clip["id"], _csv_safe(clip["request_key"]),
+                _csv_safe(row.get("client", "")), stamp,
+                _csv_safe(row.get("method", "")),
+                _csv_safe(row.get("uri", "")), row.get("status", ""),
+                "" if row.get("size") is None else row.get("size"),
+                _csv_safe(row.get("referrer", "")),
+                _csv_safe(row.get("agent", "")),
+                _csv_safe(row.get("source", "")), row.get("line_no", ""),
+                _csv_safe(", ".join(row.get("signals") or ())),
+                _csv_safe(clip.get("note", "")),
+                _csv_safe(row.get("raw_line", "")), clip.get("added", ""),
+            ])
+        csv_bytes = buf.getvalue().encode("utf-8")
+        digest = hashlib.sha256(csv_bytes).hexdigest()
+        info = workspace.case_info(case_dir)
+        manifest = "\n".join([
+            "SHELLHOUND access-log evidence basket",
+            f"Case: {info['name']} ({info['slug']})",
+            f"Exported: {db.now()}",
+            f"Analyst-selected requests: {len(clips)}",
+            "Rows are snapshots retained when the analyst pinned them.",
+            f"SHA-256 (evidence-basket.csv): {digest}",
+        ]) + "\n"
+        archive_buf = io.BytesIO()
+        with zipfile.ZipFile(archive_buf, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("evidence-basket.csv", csv_bytes)
+            archive.writestr("MANIFEST.txt", manifest.encode("utf-8"))
+        return Response(
+            archive_buf.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition":
+                     f"attachment; filename=access_basket_{info['slug']}.zip",
+                     "X-Content-SHA256": digest})
+
+    @app.post("/api/cases/{slug}/access/clips", dependencies=[auth])
+    def access_clip_add(slug: str, body: AccessClipBody):
+        case_dir = case_dir_or_404(slug)
+        try:
+            context = logindex.access_request_context(case_dir, body.request_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        snapshot = dict(context["request"])
+        snapshot["raw_line"] = context.get("raw_line", "")
+        snapshot["raw_truncated"] = context.get("raw_truncated", False)
+        encoded = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+        stamp = db.now()
+        conn = db.connect(case_dir)
+        try:
+            conn.execute(
+                "INSERT INTO access_clips(request_key, snapshot, note, added) "
+                "VALUES (?,?,?,?) ON CONFLICT(request_key) DO UPDATE SET "
+                "snapshot=excluded.snapshot, note=excluded.note",
+                (snapshot["request_key"], encoded, body.note.strip(), stamp))
+            conn.commit()
+            row = conn.execute(
+                "SELECT id, request_key, snapshot, note, added FROM access_clips "
+                "WHERE request_key = ?", (snapshot["request_key"],)).fetchone()
+            return {**dict(row), "snapshot": json.loads(row["snapshot"])}
+        finally:
+            conn.close()
+
+    @app.delete("/api/cases/{slug}/access/clips/{clip_id}", dependencies=[auth])
+    def access_clip_delete(slug: str, clip_id: int):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            cur = conn.execute("DELETE FROM access_clips WHERE id = ?", (clip_id,))
+            conn.commit()
+            if not cur.rowcount:
+                raise HTTPException(404, "access clip not found")
+            return {"ok": True}
+        finally:
+            conn.close()
+
     class CollectBody(BaseModel):
         ips: list[str]
         # Where the selection comes from. On a pattern hit that is the
