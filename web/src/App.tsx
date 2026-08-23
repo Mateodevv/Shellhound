@@ -5,7 +5,8 @@ import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
-  LayoutDashboard, ListChecks, Puzzle, Radar, Search, SlidersHorizontal, Users,
+  LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
+  SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
 import { useLiveEvents } from './ws'
@@ -28,6 +29,7 @@ const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default:
 const Evidence = lazy(() => import('./views/Evidence').then((m) => ({ default: m.Evidence })))
 const Findings = lazy(() => import('./views/Findings').then((m) => ({ default: m.Findings })))
 const Actors = lazy(() => import('./views/Actors').then((m) => ({ default: m.Actors })))
+const AccessLogs = lazy(() => import('./views/AccessLogs').then((m) => ({ default: m.AccessLogs })))
 const Hunt = lazy(() => import('./views/Hunt').then((m) => ({ default: m.Hunt })))
 const Files = lazy(() => import('./views/Files').then((m) => ({ default: m.Files })))
 const IocBox = lazy(() => import('./views/IocBox').then((m) => ({ default: m.IocBox })))
@@ -38,7 +40,7 @@ const Timeline = lazy(() => import('./views/Timeline').then((m) => ({ default: m
 const Report = lazy(() => import('./views/Report').then((m) => ({ default: m.Report })))
 
 export type ViewId =
-  | 'dashboard' | 'findings' | 'actors' | 'hunt' | 'iocbox' | 'files' | 'cms'
+  | 'dashboard' | 'findings' | 'actors' | 'logs' | 'hunt' | 'iocbox' | 'files' | 'cms'
   | 'database' | 'evidence' | 'timeline' | 'report' | 'settings'
 
 export type ViewParams = Partial<Record<
@@ -47,7 +49,7 @@ export type ViewParams = Partial<Record<
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
 const VIEW_IDS = new Set<ViewId>([
-  'dashboard', 'findings', 'actors', 'hunt', 'iocbox', 'files', 'cms',
+  'dashboard', 'findings', 'actors', 'logs', 'hunt', 'iocbox', 'files', 'cms',
   'database', 'evidence', 'timeline', 'report', 'settings',
 ])
 
@@ -62,6 +64,7 @@ const NAV: { label: string; items: { id: ViewId; icon: typeof Bug }[] }[] = [
   { label: 'nav.phase.investigate', items: [
     { id: 'findings', icon: Bug },
     { id: 'actors', icon: Users },
+    { id: 'logs', icon: ScrollText },
     { id: 'hunt', icon: Radar },
     { id: 'timeline', icon: ListChecks },
     { id: 'database', icon: Database },
@@ -316,6 +319,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           {view === 'dashboard' && <Dashboard {...props} />}
           {view === 'findings' && <Findings {...props} />}
           {view === 'actors' && <Actors {...props} />}
+          {view === 'logs' && <AccessLogs {...props} />}
           {view === 'hunt' && <Hunt {...props} />}
           {view === 'iocbox' && <IocBox {...props} />}
           {view === 'files' && <Files {...props} />}

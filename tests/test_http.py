@@ -338,6 +338,11 @@ GET_ROUTES = {
     "/api/cases/{slug}/actors": "",
     "/api/cases/{slug}/actor": f"ip={ATTACKER}",
     "/api/cases/{slug}/trace.csv": f"ips={ATTACKER}",
+    "/api/cases/{slug}/access/request/{request_id}": "",
+    "/api/cases/{slug}/access/export": "",
+    "/api/cases/{slug}/access/saved": "",
+    "/api/cases/{slug}/access/clips": "",
+    "/api/cases/{slug}/access/clips/export": "",
     "/api/cases/{slug}/iocs": "",
     "/api/cases/{slug}/iocs/cross-case": "",
     "/api/cases/{slug}/iocs/export": "",
@@ -350,7 +355,8 @@ GET_ROUTES = {
 
 
 def _url(route, slug, artifact=None, file_path=None):
-    path = route.replace("{slug}", slug).replace("{name}", YARA_RULE)
+    path = (route.replace("{slug}", slug).replace("{name}", YARA_RULE)
+            .replace("{request_id}", "1"))
     query = (GET_ROUTES[route] or "")
     query = query.replace("{artifact}", q(artifact or "x"))
     query = query.replace("{file}", q(file_path or "x"))
@@ -1395,6 +1401,122 @@ class ActorWorkspaceEndpointTests(unittest.TestCase):
         status, body = post_json(
             f"/api/cases/{CASE}/actors/compare", {"ips": [ATTACKER]})
         self.assertEqual(400, status, body)
+
+
+class AccessLogExplorerEndpointTests(unittest.TestCase):
+    def search(self, slug=None, **overrides):
+        slug = slug or CASE
+        query = {"limit": 25, **overrides}
+        status, body = post_json(
+            f"/api/cases/{slug}/access/search", query)
+        self.assertEqual(200, status, body)
+        return body
+
+    def test_search_filters_full_case_and_returns_citable_source_lines(self):
+        first = self.search(clients=[ATTACKER], sort="time", limit=25)
+        self.assertGreater(first["total"], 0)
+        self.assertTrue(first["rows"])
+        for row in first["rows"]:
+            self.assertEqual(ATTACKER, row["client"])
+            self.assertGreater(row["line_no"], 0)
+            self.assertTrue(row["source"])
+            self.assertRegex(row["request_key"], r"^[0-9a-f]{16}:\d+$")
+
+        if first["next_cursor"]:
+            second = self.search(clients=[ATTACKER], sort="time",
+                                 cursor=first["next_cursor"], limit=25)
+            self.assertFalse(
+                {row["request_id"] for row in first["rows"]}
+                & {row["request_id"] for row in second["rows"]})
+
+    def test_request_context_explains_the_result_with_the_original_line(self):
+        result = self.search(clients=[ATTACKER], signals_only=True)
+        self.assertGreater(result["total"], 0)
+        row = result["rows"][0]
+        status, context = get_json(
+            f"/api/cases/{CASE}/access/request/{row['request_id']}?before=2&after=2")
+        self.assertEqual(200, status, context)
+        self.assertEqual(row["request_key"], context["request"]["request_key"])
+        self.assertIn(ATTACKER, context["raw_line"])
+        self.assertLessEqual(len(context["before"]), 2)
+        self.assertLessEqual(len(context["after"]), 2)
+
+    def test_overview_patterns_and_segments_are_query_scoped(self):
+        query = {"clients": [ATTACKER]}
+        status, overview = post_json(
+            f"/api/cases/{CASE}/access/overview", query)
+        self.assertEqual(200, status, overview)
+        self.assertGreater(overview["total"], 0)
+        self.assertTrue(overview["timeline"])
+        self.assertTrue(overview["facets"]["paths"])
+
+        status, patterns = post_json(
+            f"/api/cases/{CASE}/access/patterns", query)
+        self.assertEqual(200, status, patterns)
+        self.assertTrue(patterns["patterns"])
+
+        status, segments = post_json(
+            f"/api/cases/{CASE}/access/segments", query)
+        self.assertEqual(200, status, segments)
+        self.assertFalse(segments["requires_client"])
+        self.assertTrue(segments["segments"])
+
+    def test_saved_queries_and_clips_preserve_analyst_owned_context(self):
+        slug = case_copy("access-analyst-state")
+        status, saved = post_json(
+            f"/api/cases/{slug}/access/saved",
+            {"name": "Attacker only", "query": {"clients": [ATTACKER]}})
+        self.assertEqual(200, status, saved)
+        self.assertEqual([ATTACKER], saved["query"]["clients"])
+        status, listed = get_json(f"/api/cases/{slug}/access/saved")
+        self.assertEqual(200, status, listed)
+        self.assertEqual("Attacker only", listed[0]["name"])
+
+        result = self.search(slug=slug, clients=[ATTACKER])
+        status, clip = post_json(
+            f"/api/cases/{slug}/access/clips",
+            {"request_id": result["rows"][0]["request_id"],
+             "note": "Review with the incident lead"})
+        self.assertEqual(200, status, clip)
+        self.assertEqual("Review with the incident lead", clip["note"])
+        self.assertIn("raw_line", clip["snapshot"])
+        status, clips = get_json(f"/api/cases/{slug}/access/clips")
+        self.assertEqual(200, status, clips)
+        self.assertEqual(clip["request_key"], clips[0]["request_key"])
+
+        status, headers, archive_bytes = get(
+            f"/api/cases/{slug}/access/clips/export")
+        self.assertEqual(200, status, archive_bytes[:300])
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+            csv_bytes = archive.read("evidence-basket.csv")
+            manifest = archive.read("MANIFEST.txt").decode("utf-8")
+        digest = hashlib.sha256(csv_bytes).hexdigest()
+        self.assertEqual(digest, headers.get("x-content-sha256"))
+        self.assertIn(digest, manifest)
+        self.assertIn(b"Review with the incident lead", csv_bytes)
+
+        status, _headers, raw = request(
+            "DELETE", f"/api/cases/{slug}/access/saved/{saved['id']}")
+        self.assertEqual(200, status, raw)
+        status, _headers, raw = request(
+            "DELETE", f"/api/cases/{slug}/access/clips/{clip['id']}")
+        self.assertEqual(200, status, raw)
+
+    def test_access_export_is_a_citable_and_query_scoped_archive(self):
+        filters = q(json.dumps({"clients": [ATTACKER]}))
+        status, headers, body = get(
+            f"/api/cases/{CASE}/access/export?filters={filters}")
+        self.assertEqual(200, status, body[:300])
+        self.assertEqual("application/zip", headers["content-type"])
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            self.assertEqual({"access-log.csv", "MANIFEST.txt"},
+                             set(archive.namelist()))
+            csv_bytes = archive.read("access-log.csv")
+            manifest = archive.read("MANIFEST.txt").decode("utf-8")
+        digest = hashlib.sha256(csv_bytes).hexdigest()
+        self.assertEqual(digest, headers.get("x-content-sha256"))
+        self.assertIn(digest, manifest)
+        self.assertIn(ATTACKER, csv_bytes.decode("utf-8"))
 
 
 if __name__ == "__main__":

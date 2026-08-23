@@ -462,6 +462,139 @@ export interface TraceRow {
   source: string
 }
 
+export interface AccessLogQuery {
+  search: string
+  from_epoch: number | null
+  to_epoch: number | null
+  clients: string[]
+  exclude_clients: string[]
+  paths: string[]
+  exclude_paths: string[]
+  agents: string[]
+  exclude_agents: string[]
+  source_ids: number[]
+  exclude_source_ids: number[]
+  status: string
+  method: string
+  min_size: number | null
+  max_size: number | null
+  signals_only: boolean
+  sort: 'time' | 'time_desc'
+}
+
+export interface AccessLogRow extends TraceRow {
+  request_id: number
+  request_key: string
+  source_id: number
+  line_no: number
+  signals: string[]
+}
+
+export interface AccessSearchResponse {
+  total: number
+  rows: AccessLogRow[]
+  next_cursor: string | null
+  summary: {
+    first_epoch: number | null
+    last_epoch: number | null
+    ok: number
+    redirects: number
+    client_errors: number
+    server_errors: number
+  }
+}
+
+export interface AccessFacet {
+  value: string | number
+  label?: string
+  count: number
+}
+
+export interface AccessOverview {
+  total: number
+  bucket_seconds: number
+  timeline: {
+    start_epoch: number
+    end_epoch: number
+    requests: number
+    ok: number
+    errors: number
+    signals: number
+  }[]
+  facets: {
+    status: AccessFacet[]
+    methods: AccessFacet[]
+    clients: AccessFacet[]
+    paths: AccessFacet[]
+    agents: AccessFacet[]
+    sources: AccessFacet[]
+  }
+}
+
+export interface AccessPattern {
+  pattern: string
+  requests: number
+  clients: number
+  ok: number
+  errors: number
+  first_epoch: number | null
+  last_epoch: number | null
+  examples: string[]
+  signals: string[]
+}
+
+export interface AccessPatternsResponse {
+  patterns: AccessPattern[]
+  sampled_uris: number
+  truncated: boolean
+}
+
+export interface AccessSegment {
+  client: string
+  first_epoch: number
+  last_epoch: number
+  tz: number
+  duration: number
+  requests: number
+  ok: number
+  errors: number
+  bytes: number
+  bytes_unknown: number
+  signals: string[]
+  top_paths: AccessFacet[]
+  methods: AccessFacet[]
+}
+
+export interface AccessSegmentsResponse {
+  segments: AccessSegment[]
+  requires_client: boolean
+  truncated: boolean
+}
+
+export interface AccessRequestContext {
+  request: AccessLogRow
+  before: AccessLogRow[]
+  after: AccessLogRow[]
+  raw_line: string
+  raw_truncated: boolean
+}
+
+export interface AccessSavedQuery {
+  id: number
+  name: string
+  query: AccessLogQuery
+  created: string
+  updated: string
+}
+
+export interface AccessClip {
+  id: number
+  request_key: string
+  snapshot: AccessLogRow & { raw_line?: string; raw_truncated?: boolean }
+  note: string
+  added: string
+}
+
 /** A neighbour of this indicator, read from the perspective of THIS entry:
  *  `label` already carries the right reading direction ("has the SHA-256" at
  *  the path, "is the SHA-256 of" at the hash). */

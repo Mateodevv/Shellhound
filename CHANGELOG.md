@@ -8,6 +8,17 @@ All notable changes to SHELLHOUND. Format after
 
 ### Added — investigation workbench workflow
 
+- **Access Log Explorer** adds a request-centred investigation workspace over
+  the complete parsed case instead of another client-bound trace. Cursor
+  paging, include/exclude facets, UTC time scopes, status and method filters,
+  explainable signal-only views and a measured request histogram stay backed
+  by structured, parameterised queries. Request patterns collapse dynamic URI
+  segments without presenting them as detections; per-client activity
+  segments are explicitly time windows, not claimed authenticated sessions.
+  Every request opens its original source line and immediate client context,
+  with stable source-line references across rebuilds. Saved searches and an
+  analyst-owned evidence basket preserve investigation state; both the active
+  scope and the selected basket export as CSV/manifest ZIPs with SHA-256.
 - **Clients & Actors** is now a responsive investigation workspace rather
   than a 200-row traffic table. Relevant, Confirmed and All are the three
   stable work queues; behaviour and decision classes live in a secondary
