@@ -1388,6 +1388,9 @@ export const en: Record<string, string> = {
   'settings.rules.engine.errorlog': 'Error logs',
   'hunt.field.cve': 'CVE',
   'hunt.field.description': 'Description',
+  'hunt.condition.method': 'Method',
+  'hunt.condition.userAgent': 'User-Agent',
+  'hunt.condition.hint': 'This request condition must match in addition to the URL pattern. Values within one field are alternatives; different fields must all match.',
   'hunt.path.add': 'Add a path',
   'hunt.path.remove': 'Remove this path',
   // Combining paths is a claim about a CLIENT, not about one request: a URI

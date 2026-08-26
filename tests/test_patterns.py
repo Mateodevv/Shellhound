@@ -61,12 +61,17 @@ class BundledSetTests(unittest.TestCase):
 
 
 class Wp2ShellPatternTests(unittest.TestCase):
-    """The shipped wp2shell IOC is narrow and works on IIS W3C evidence."""
+    """The shipped wp2shell IOCs stay narrow on real IIS W3C fields."""
 
     @staticmethod
     def entry():
         return next(row for row in patterns.bundled()
                     if row["id"] == "wordpress-wp2shell-poc-webshell")
+
+    @staticmethod
+    def batch_entry():
+        return next(row for row in patterns.bundled()
+                    if row["id"] == "wordpress-wp2shell-batch-tooling")
 
     def test_the_entry_names_both_vulnerabilities_and_its_limit(self):
         entry = self.entry()
@@ -105,6 +110,56 @@ class Wp2ShellPatternTests(unittest.TestCase):
         self.assertEqual(1, match["hits"])
         self.assertEqual([attacker], [row["ip"] for row in match["clients"]])
         self.assertIn("wp2shell_79b06a80.php", match["uris"][0]["uri"])
+
+    def test_batch_rule_requires_endpoint_post_and_exploit_tool_agent(self):
+        """The batch endpoint alone is legitimate WordPress traffic.
+
+        All three dimensions must survive into the SQL matcher; otherwise a
+        browser request to the endpoint, a GET, or an explicit tool marker on
+        some unrelated URL becomes a false wp2shell hit.
+        """
+        header = (
+            "#Fields: date time c-ip cs-method cs-uri-stem cs-uri-query "
+            "sc-status sc-bytes cs(User-Agent) cs(Referer)\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="shellhound-wp2shell-") as root:
+            case = Path(root, "case")
+            logs = Path(root, "logs")
+            case.mkdir()
+            logs.mkdir()
+            Path(logs, "u_ex.log").write_text(
+                header
+                # The three public-tool forms seen in the production corpus.
+                + "2026-08-26 12:00:00 198.51.100.40 POST "
+                  "/wp-json/batch/v1 - 207 12 wp2shell -\n"
+                + "2026-08-26 12:00:01 198.51.100.41 POST / "
+                  "rest_route=%2Fbatch%2Fv1 200 12 cve-2026-63030/1.0 -\n"
+                + "2026-08-26 12:00:02 198.51.100.42 POST / "
+                  "rest_route=/batch/v1 401 12 rezwp2shell -\n"
+                # Each near miss lacks one required dimension.
+                + "2026-08-26 12:00:03 203.0.113.8 POST / "
+                  "rest_route=/batch/v1 207 12 Mozilla/5.0 -\n"
+                + "2026-08-26 12:00:04 203.0.113.9 GET "
+                  "/wp-json/batch/v1 - 200 12 wp2shell -\n"
+                + "2026-08-26 12:00:05 203.0.113.10 POST "
+                  "/unrelated - 200 12 wp2shell -\n",
+                encoding="utf-8",
+            )
+            logindex.build(case, [str(logs)])
+
+            entry = self.batch_entry()
+            match = logindex.match_patterns(
+                case, entry["patterns"], entry["match"],
+                request=entry["request"])
+
+        self.assertEqual(["POST"], entry["request"]["methods"])
+        self.assertEqual(3, match["hits"])
+        self.assertEqual(2, match["ok_hits"])
+        self.assertEqual(
+            {"198.51.100.40", "198.51.100.41", "198.51.100.42"},
+            {row["ip"] for row in match["clients"]})
+        self.assertEqual(match["hits"], sum(
+            day["requests"] for day in match["timeline"]))
 
 
 class LibraryTests(unittest.TestCase):
@@ -214,6 +269,16 @@ class ExchangeTests(unittest.TestCase):
         other = Path(tempfile.mkdtemp(prefix="shellhound-exc2-"))
         got = patterns.import_text(other, patterns.export_text(self.ws))
         self.assertEqual({"added": 2, "skipped": 0, "invalid": 0}, got)
+
+    def test_request_conditions_survive_json_exchange(self):
+        patterns.add(
+            self.ws, ["/batch/v1"], "filtered", request={
+                "methods": ["post"], "user_agents": ["tool-name*"]})
+        other = Path(tempfile.mkdtemp(prefix="shellhound-exc-filter-"))
+        patterns.import_text(other, patterns.export_text(self.ws))
+        got = patterns.load(other)[0]
+        self.assertEqual(["POST"], got["request"]["methods"])
+        self.assertEqual(["tool-name*"], got["request"]["user_agents"])
 
     def test_an_import_that_repeats_a_bundled_pattern_skips_it(self):
         # The WHOLE entry, paths and combination mode: the signature covers

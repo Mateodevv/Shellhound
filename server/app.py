@@ -2086,8 +2086,19 @@ def create_app(config: Config) -> FastAPI:
         try:
             for entry in wanted:
                 match = logindex.match_patterns(case_dir, entry["patterns"],
-                                                entry["match"])
+                                                entry["match"],
+                                                request=entry.get("request"))
                 name = entry["name"] or match["pattern"]
+                request = entry.get("request") or {}
+                conditions = []
+                if request.get("methods"):
+                    conditions.append("method=" + "/".join(
+                        request["methods"]))
+                if request.get("user_agents"):
+                    conditions.append("user-agent=" + "/".join(
+                        request["user_agents"]))
+                condition_text = (" · " + ", ".join(conditions)
+                                  if conditions else "")
                 for client in match["clients"]:
                     ok = client["ok_hits"] > 0
                     rule = (f"Request matching a stored pattern ({name}) "
@@ -2104,7 +2115,8 @@ def create_app(config: Config) -> FastAPI:
                         "client", client["ip"],
                         evidence=(f"{client['hits']}× requested, of those "
                                   f"{client['ok_hits']}× 2xx · pattern: "
-                                  f"{match['pattern']} ({origin}) · "
+                                  f"{match['pattern']}{condition_text} "
+                                  f"({origin}) · "
                                   f"e.g. {example}")[:400])
                     new_findings += 1
                 enrich_hunt_match(conn, match)

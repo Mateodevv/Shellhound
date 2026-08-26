@@ -21,9 +21,12 @@
   "look -- it costs all of them a filled work list.",
   "",
   "ids are stable strings, never regenerated: the per-workspace off-switch",
-  "refers to them across versions. '*' is a wildcard, not a regex."
+  "refers to them across versions. '*' is a wildcard, not a regex.",
+  "An optional `request` block narrows URI matches by HTTP method and/or",
+  "User-Agent. Values inside one field are alternatives; different fields",
+  "must all match."
  ],
- "version": 1,
+ "version": 2,
  "patterns": [
   {
    "id": "joomla-jce-rce",
@@ -45,6 +48,27 @@
    "name": "Joomla Helix3 unauthenticated ajax handler",
    "cve": "CVE-2026-49049",
    "description": "The Helix3 template framework registers an ajax handler that Joomla routes to without checking a session. A request that names it reached that handler. WHAT A HIT DOES NOT PROVE: that the call succeeded. com_ajax answers 200 with a JSON body whether the handler accepted the input or rejected it, so the status code settles nothing here and a hit on its own is a lead rather than a finding. Corroborate against the Helix3 version in the CMS inventory, a file in the webroot whose .php is not its last extension, or template settings that changed. ONE TOKEN, DELIBERATELY. Matching `helix3` alone selects the template's static assets -- measured on a real site that has it installed: 11,183 clients, i.e. every visitor. `plugin=helix3` selects 3. Adding `option=com_ajax` as a second path buys nothing, because `plugin=helix3` appears nowhere else, and costs robustness against reordered query strings."
+  },
+  {
+   "id": "wordpress-wp2shell-batch-tooling",
+   "patterns": [
+    "*/wp-json/batch/v1*",
+    "*rest_route=*batch*v1*"
+   ],
+   "match": "any",
+   "request": {
+    "methods": [
+     "POST"
+    ],
+    "user_agents": [
+     "wp2shell",
+     "cve-2026-63030*",
+     "rezwp2shell"
+    ]
+   },
+   "name": "wp2shell exploit-tool batch traffic",
+   "cve": "CVE-2026-63030 + CVE-2026-60137",
+   "description": "A POST request targeted a WordPress batch endpoint and its User-Agent identified public wp2shell/CVE-2026-63030 exploit tooling. Requiring the endpoint, method and tool marker together avoids classifying ordinary batch API traffic as wp2shell. WHAT A HIT DOES NOT PROVE: a 200 or 207 response only shows that the web server answered; access logs do not contain the nested batch JSON body and cannot prove that route confusion, SQL injection or plugin installation succeeded. Corroborate with the PoC shell path, an unexpected administrator account, database changes or a corresponding PHP artifact in the webroot."
   },
   {
    "id": "wordpress-wp2shell-poc-webshell",

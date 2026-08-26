@@ -916,6 +916,12 @@ export interface HuntPattern {
   /** `any` = a client that hit at least one; `all` = only clients that hit
    *  every one. The second is the claim that survives a defence lawyer. */
   match: 'any' | 'all'
+  /** Optional predicates on the matching request itself. Values within a
+   *  field are alternatives; method and user-agent must both match. */
+  request: {
+    methods: string[]
+    user_agents: string[]
+  }
   name: string
   cve: string
   description: string
@@ -953,6 +959,11 @@ export interface HuntTimelineDay {
 export interface HuntResult {
   id: string
   pattern: string
+  /** Request predicates applied in addition to the URL pattern. */
+  request: {
+    methods: string[]
+    user_agents: string[]
+  }
   /** What the analyst called it. The server sends `name` and `cve`; the type
    *  used to declare `label` and `note`, which no endpoint ever produced, so
    *  the headline silently fell back to the raw pattern. */

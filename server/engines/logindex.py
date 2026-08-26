@@ -2253,7 +2253,56 @@ def _like_from_pattern(pattern):
     return "%" + esc.replace("*", "%") + "%"
 
 
-def match_pattern(case_dir, pattern, limit=200, only_ips=None):
+def _normalise_request_filter(request):
+    """The optional request-level predicates of a hunt pattern.
+
+    URI patterns remain the indexed pre-filter.  These predicates narrow the
+    matching requests afterwards, which lets a bundled IOC say "this batch
+    endpoint AND this exploit tool's user agent" without turning every normal
+    call to a shared endpoint into evidence of an attack.
+    """
+    raw = request if isinstance(request, dict) else {}
+
+    def values(key, upper=False):
+        found = raw.get(key, [])
+        if isinstance(found, str):
+            found = [found]
+        out = []
+        for item in found if isinstance(found, list) else []:
+            value = str(item or "").strip()
+            if upper:
+                value = value.upper()
+            if value and value.lower() not in {v.lower() for v in out}:
+                out.append(value)
+        return out
+
+    return {"methods": values("methods", upper=True),
+            "user_agents": values("user_agents")}
+
+
+def _request_filter_sql(request, ips=None):
+    """Return the joins, predicates and parameters for request constraints."""
+    request = _normalise_request_filter(request)
+    clauses, params = [], []
+    wanted_ips = sorted(ips or [])
+    if wanted_ips:
+        clauses.append(f"i.ip IN ({','.join('?' * len(wanted_ips))})")
+        params.extend(wanted_ips)
+    methods = request["methods"]
+    if methods:
+        clauses.append(f"r.method IN ({','.join('?' * len(methods))})")
+        params.extend(methods)
+    agents = request["user_agents"]
+    joins = ""
+    if agents:
+        joins = "JOIN strings hunt_agent ON hunt_agent.id = r.agent"
+        clauses.append("(" + " OR ".join(
+            "hunt_agent.text LIKE ? ESCAPE '\\'" for _ in agents) + ")")
+        params.extend(_like_from_pattern(agent) for agent in agents)
+    return request, joins, clauses, params
+
+
+def match_pattern(case_dir, pattern, limit=200, only_ips=None, request=None):
     """Who requested URIs that this pattern matches?
 
     `only_ips` narrows every figure to those clients. The AND-combination in
@@ -2268,7 +2317,9 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
     # THE SAME SHAPE AS A REAL RESULT. A caller cannot know in advance which
     # of the two it is holding, so a key that exists only when something was
     # found raises where it should simply answer "no".
-    empty = {"pattern": pattern, "uris": [], "clients": [], "hits": 0,
+    request = _normalise_request_filter(request)
+    empty = {"pattern": pattern, "request": request,
+             "uris": [], "clients": [], "hits": 0,
              "ok_hits": 0, "clients_total": 0, "ok_clients": 0, "uri_total": 0,
              "first_epoch": None, "last_epoch": None, "tz": 0,
              "clients_truncated": False, "uris_truncated": False,
@@ -2301,9 +2352,9 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                 f"INSERT OR IGNORE INTO want_leaf "
                 f"SELECT id FROM strings WHERE text IN ({marks})", chunk)
 
-        ip_params = sorted(only_ips) if only_ips else []
-        ip_filter = (f"WHERE i.ip IN ({','.join('?' * len(ip_params))})"
-                     if ip_params else "")
+        request, request_join, filters, filter_params = _request_filter_sql(
+            request, only_ips)
+        where = "WHERE " + " AND ".join(filters) if filters else ""
 
         # THE FIGURES ARE COUNTED OVER EVERYTHING, THE LIST IS CAPPED.
         # `clients_total` used to be len() of the capped list, so a hunt that
@@ -2324,8 +2375,9 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                      JOIN want_leaf wl ON wl.id = r.leaf
                      JOIN want_uri wu ON wu.id = r.uri
                      JOIN ips i ON i.id = r.ip
-                     {ip_filter}
-                     GROUP BY r.ip)""", ip_params).fetchone()
+                     {request_join}
+                     {where}
+                     GROUP BY r.ip)""", filter_params).fetchone()
         clients = [dict(r) for r in conn.execute(
             f"""SELECT i.ip AS ip, count(*) AS hits,
                       sum(CASE WHEN r.status BETWEEN 200 AND 299
@@ -2336,10 +2388,11 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                JOIN want_leaf wl ON wl.id = r.leaf
                JOIN want_uri wu ON wu.id = r.uri
                JOIN ips i ON i.id = r.ip
-               {ip_filter}
+               {request_join}
+               {where}
                GROUP BY i.ip
                ORDER BY ok_hits DESC, hits DESC LIMIT ?""",
-            ip_params + [limit])]
+            filter_params + [limit])]
         uris = [dict(r) for r in conn.execute(
             f"""SELECT s.text AS uri, count(*) AS hits,
                       sum(CASE WHEN r.status BETWEEN 200 AND 299
@@ -2349,9 +2402,10 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                JOIN want_uri wu ON wu.id = r.uri
                JOIN strings s ON s.id = r.uri
                JOIN ips i ON i.id = r.ip
-               {ip_filter}
+               {request_join}
+               {where}
                GROUP BY s.text ORDER BY hits DESC LIMIT ?""",
-            ip_params + [_PATTERN_URI_SHOWN])]
+            filter_params + [_PATTERN_URI_SHOWN])]
         # How many there REALLY are. The list above is capped, and "50 URLs
         # hit" is a false statement when there were 3,000 -- that number of
         # all things is supposed to reveal that the pattern reaches too
@@ -2361,11 +2415,13 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
                JOIN want_leaf wl ON wl.id = r.leaf
                JOIN want_uri wu ON wu.id = r.uri
                JOIN ips i ON i.id = r.ip
-               {ip_filter}""", ip_params).fetchone()[0]
+               {request_join}
+               {where}""", filter_params).fetchone()[0]
         firsts = [c["first_epoch"] for c in clients if c["first_epoch"]]
         lasts = [c["last_epoch"] for c in clients if c["last_epoch"]]
         tzs = [c["tz"] for c in clients if c["tz"] is not None]
-        return {"pattern": pattern, "uris": uris, "clients": clients,
+        return {"pattern": pattern, "request": request,
+                "uris": uris, "clients": clients,
                 "hits": int(totals["hits"] or 0),
                 "ok_hits": int(totals["ok_hits"] or 0),
                 # The key figures of the search. `ok_clients` says how many
@@ -2391,7 +2447,7 @@ def match_pattern(case_dir, pattern, limit=200, only_ips=None):
         conn.close()
 
 
-def match_patterns(case_dir, patterns, mode="any", limit=200):
+def match_patterns(case_dir, patterns, mode="any", limit=200, request=None):
     """Several paths, combined OVER CLIENTS.
 
     A URI cannot be two paths at once, so combining them per REQUEST would
@@ -2410,15 +2466,15 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
     """
     paths = [p for p in (patterns or []) if str(p).strip()]
     if not paths:
-        return match_pattern(case_dir, "", limit)
+        return match_pattern(case_dir, "", limit, request=request)
     if len(paths) == 1:
-        out = match_pattern(case_dir, paths[0], limit)
+        out = match_pattern(case_dir, paths[0], limit, request=request)
         out["patterns"] = paths
         out["match"] = mode
-        out["timeline"] = _pattern_timeline(case_dir, paths)
+        out["timeline"] = _pattern_timeline(case_dir, paths, request=request)
         return out
 
-    parts = [match_pattern(case_dir, p, limit) for p in paths]
+    parts = [match_pattern(case_dir, p, limit, request=request) for p in paths]
     per_path = [{c["ip"] for c in part["clients"]} for part in parts]
     if mode == "all":
         keep = set.intersection(*per_path) if per_path else set()
@@ -2428,7 +2484,8 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
         # per-path results are recomputed against the survivors -- a second
         # pass, but only for AND patterns and only when it changes anything.
         if keep and any(keep != found for found in per_path):
-            parts = [match_pattern(case_dir, p, limit, only_ips=keep)
+            parts = [match_pattern(case_dir, p, limit, only_ips=keep,
+                                   request=request)
                      for p in paths]
     else:
         keep = set.union(*per_path) if per_path else set()
@@ -2468,10 +2525,12 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
     # shipped JCE rule reported 39 distinct URIs on a real case that had 29.
     # A figure that exists to show whether a pattern reaches too far must not
     # be the one that overstates its reach.
-    uri_total = _distinct_uris(case_dir, paths, {c["ip"] for c in clients})
+    request = _normalise_request_filter(request)
+    uri_total = _distinct_uris(case_dir, paths, {c["ip"] for c in clients},
+                               request=request)
     return {
         "pattern": (" AND " if mode == "all" else " OR ").join(paths),
-        "patterns": paths, "match": mode,
+        "patterns": paths, "match": mode, "request": request,
         "uris": uris[:_PATTERN_URI_SHOWN], "clients": clients,
         "hits": sum(c["hits"] for c in clients),
         "ok_hits": sum(c["ok_hits"] for c in clients),
@@ -2489,11 +2548,12 @@ def match_patterns(case_dir, patterns, mode="any", limit=200):
         "tz": max(tzs) if tzs else 0,
         "truncated": any(p["truncated"] for p in parts),
         "timeline": _pattern_timeline(
-            case_dir, paths, keep if mode == "all" else None),
+            case_dir, paths, keep if mode == "all" else None,
+            request=request),
     }
 
 
-def _pattern_timeline(case_dir, paths, ips=None):
+def _pattern_timeline(case_dir, paths, ips=None, request=None):
     """Daily request outcomes for a hunt, using the same plain wildcard
     semantics as the match itself.
 
@@ -2538,13 +2598,11 @@ def _pattern_timeline(case_dir, paths, ips=None):
                 f"INSERT OR IGNORE INTO timeline_leaf "
                 f"SELECT id FROM strings WHERE text IN ({marks})", chunk)
 
-        params = []
-        ip_clause = ""
         wanted = sorted(ips or [])
-        if wanted:
-            marks = ",".join("?" * len(wanted))
-            ip_clause = f"AND i.ip IN ({marks})"
-            params += wanted
+        request, request_join, filters, params = _request_filter_sql(
+            request, wanted)
+        filters.insert(0, "r.epoch IS NOT NULL")
+        where = "WHERE " + " AND ".join(filters)
         rows = conn.execute(
             f"""SELECT (r.epoch + COALESCE(r.tz, 0)) / 86400 AS d,
                        count(*) AS requests,
@@ -2556,7 +2614,8 @@ def _pattern_timeline(case_dir, paths, ips=None):
                 JOIN timeline_leaf tl ON tl.id = r.leaf
                 JOIN timeline_uri tu ON tu.id = r.uri
                 JOIN ips i ON i.id = r.ip
-                WHERE r.epoch IS NOT NULL {ip_clause}
+                {request_join}
+                {where}
                 GROUP BY d ORDER BY d""", params).fetchall()
         return [{"day": _day_iso(row["d"]), "requests": row["requests"],
                  "ok": row["ok"], "errors": row["errors"],
@@ -2565,7 +2624,7 @@ def _pattern_timeline(case_dir, paths, ips=None):
         conn.close()
 
 
-def _distinct_uris(case_dir, paths, ips):
+def _distinct_uris(case_dir, paths, ips, request=None):
     """How many distinct URIs these clients requested that any of the paths
     matches. One query, so a URI matching several paths counts once."""
     if not ips or not paths:
@@ -2574,15 +2633,17 @@ def _distinct_uris(case_dir, paths, ips):
     if conn is None:
         return 0
     try:
-        ip_list = sorted(ips)
         likes = " OR ".join("s.text LIKE ? ESCAPE '\\'" for _ in paths)
-        marks = ",".join("?" * len(ip_list))
+        request, request_join, clauses, params = _request_filter_sql(
+            request, ips)
+        clauses.append(f"({likes})")
+        params.extend(_like_from_pattern(p) for p in paths)
         return conn.execute(
             f"""SELECT count(DISTINCT r.uri) FROM requests r
                 JOIN strings s ON s.id = r.uri
                 JOIN ips i ON i.id = r.ip
-                WHERE i.ip IN ({marks}) AND ({likes})""",
-            ip_list + [_like_from_pattern(p) for p in paths]).fetchone()[0]
+                {request_join}
+                WHERE {' AND '.join(clauses)}""", params).fetchone()[0]
     except sqlite3.Error:
         return 0
     finally:

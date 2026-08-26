@@ -57,6 +57,11 @@ MATCH_MODES = (MATCH_ANY, MATCH_ALL)
 # More than a handful in one entry stops being a rule and becomes a query.
 MAX_PATHS = 8
 
+# Request predicates are intentionally a small second stage after the URL
+# pre-filter. They are useful for endpoints shared with legitimate traffic,
+# but an unbounded list would turn one hunt into an arbitrary SQL workload.
+MAX_REQUEST_VALUES = 8
+
 
 class PatternError(ValueError):
     """An input the analyst has to correct.
@@ -114,10 +119,30 @@ def disabled_ids(workspace):
     return {str(i) for i in raw} if isinstance(raw, list) else set()
 
 
-# A pattern entry has FOUR fields and one condition. The fields are what a
-# report needs: the paths, what it is called, which advisory it belongs to,
-# and what a hit proves. Earlier versions called them label/note/about;
-# `_normalise` still reads those, because a workspace file outlives a rename.
+# A pattern entry has FOUR fields and optional request conditions. The fields
+# are what a report needs: the paths, what it is called, which advisory it
+# belongs to, and what a hit proves. Earlier versions called them
+# label/note/about; `_normalise` still reads those, because a workspace file
+# outlives a rename.
+def _request_values(raw, key, upper=False):
+    value = raw.get(key, []) if isinstance(raw, dict) else []
+    if isinstance(value, str):
+        value = [value]
+    out = []
+    for item in value if isinstance(value, list) else []:
+        item = str(item or "").strip()
+        if upper:
+            item = item.upper()
+        if item and item.lower() not in {v.lower() for v in out}:
+            out.append(item)
+    return out
+
+
+def _normalise_request(value):
+    return {"methods": _request_values(value, "methods", upper=True),
+            "user_agents": _request_values(value, "user_agents")}
+
+
 def _normalise(row):
     """One stored entry in the current shape, whatever shape it was in."""
     raw = row.get("patterns")
@@ -133,6 +158,7 @@ def _normalise(row):
         "id": str(row.get("id") or uuid.uuid4().hex[:12]),
         "patterns": paths,
         "match": mode if mode in MATCH_MODES else MATCH_ANY,
+        "request": _normalise_request(row.get("request")),
         "name": str(row.get("name") or row.get("label") or "").strip(),
         "cve": str(row.get("cve") or row.get("note") or "").strip(),
         "description": str(row.get("description") or row.get("about")
@@ -244,6 +270,25 @@ def _mode(value):
     return value
 
 
+def _validate_request(value):
+    request = _normalise_request(value)
+    if len(request["methods"]) > MAX_REQUEST_VALUES:
+        raise PatternError(
+            f"At most {MAX_REQUEST_VALUES} HTTP methods in one pattern.",
+            "err.patternTooManyConditions")
+    if len(request["user_agents"]) > MAX_REQUEST_VALUES:
+        raise PatternError(
+            f"At most {MAX_REQUEST_VALUES} user-agent patterns in one pattern.",
+            "err.patternTooManyConditions")
+    for method in request["methods"]:
+        if not method.replace("-", "").isalpha():
+            raise PatternError("Invalid HTTP method.",
+                               "err.patternRequestCondition")
+    for agent in request["user_agents"]:
+        _validate_one(agent)
+    return request
+
+
 def validate_hypothesis(patterns_in, match=MATCH_ANY):
     """Validate an unsaved hunt with the same rules as a library entry.
 
@@ -258,14 +303,19 @@ def validate_hypothesis(patterns_in, match=MATCH_ANY):
 def _signature(entry):
     """What makes two entries the same rule: the same paths combined the same
     way. Order does not matter -- "/a AND /b" is "/b AND /a"."""
-    return (entry["match"], tuple(sorted(p.lower() for p in entry["patterns"])))
+    request = _normalise_request(entry.get("request"))
+    return (entry["match"], tuple(sorted(p.lower() for p in entry["patterns"])),
+            tuple(sorted(request["methods"])),
+            tuple(sorted(a.lower() for a in request["user_agents"])))
 
 
 def add(workspace, patterns_in, name="", cve="", description="",
-        match=MATCH_ANY):
+        match=MATCH_ANY, request=None):
     paths = _validate(patterns_in)
     mode = _mode(match)
+    request = _validate_request(request)
     entry = {"id": uuid.uuid4().hex[:12], "patterns": paths, "match": mode,
+             "request": request,
              "name": str(name or "").strip(), "cve": str(cve or "").strip(),
              "description": str(description or "").strip(),
              "added": datetime.now().isoformat(timespec="seconds")}
@@ -285,7 +335,7 @@ def add(workspace, patterns_in, name="", cve="", description="",
 
 
 def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
-           description=None, match=None):
+           description=None, match=None, request=None):
     if any(p["id"] == pattern_id for p in bundled()):
         # Editing it would keep the id and the CVE while changing what they
         # point at, so the same identifier would mean two things on two
@@ -301,6 +351,8 @@ def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
             entry["patterns"] = _validate(patterns_in)
         if match is not None:
             entry["match"] = _mode(match)
+        if request is not None:
+            entry["request"] = _validate_request(request)
         # THE SAME CHECK add() MAKES. It refuses a copy of something already
         # in the library because the pattern would then run twice and be
         # reported twice -- and editing an entry into that copy has exactly
@@ -355,14 +407,15 @@ def import_text(workspace, text):
             data = data.get("patterns", [])
         for row in data if isinstance(data, list) else []:
             if isinstance(row, str):
-                rows.append(([row], "", "", "", MATCH_ANY))
+                rows.append(([row], "", "", "", MATCH_ANY, {}))
             elif isinstance(row, dict):
                 paths = row.get("patterns") or row.get("pattern") or ""
                 rows.append((paths,
                              row.get("name") or row.get("label") or "",
                              row.get("cve") or row.get("note") or "",
                              row.get("description") or row.get("about") or "",
-                             row.get("match") or MATCH_ANY))
+                             row.get("match") or MATCH_ANY,
+                             row.get("request") or {}))
     else:
         for line in text.splitlines():
             line = line.strip()
@@ -375,12 +428,13 @@ def import_text(workspace, text):
             # which is what the export writes anyway.
             parts = [p.strip() for p in line.split("|", 2)]
             rows.append(([parts[0]], parts[1] if len(parts) > 1 else "",
-                         parts[2] if len(parts) > 2 else "", "", MATCH_ANY))
+                         parts[2] if len(parts) > 2 else "", "", MATCH_ANY,
+                         {}))
 
     added = skipped = invalid = 0
-    for paths, name, cve, description, mode in rows:
+    for paths, name, cve, description, mode, request in rows:
         try:
-            add(workspace, paths, name, cve, description, mode)
+            add(workspace, paths, name, cve, description, mode, request)
             added += 1
         except PatternError as e:
             if e.key == "err.patternKnown":
