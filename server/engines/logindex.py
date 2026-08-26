@@ -389,7 +389,6 @@ def build(case_dir, targets, ctx=None, workspace=None):
         days = {}             # local epoch-day -> [requests, errors, new_clients]
         batch = []
 
-        parse_line = accesslog.parse_line
         fast_epoch = accesslog.fast_epoch
 
         def intern(text):
@@ -477,6 +476,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             src_id = cur.lastrowid
             file_lines = file_unparsed = file_undated = 0
             chars = 0
+            parser = accesslog.AccessLogParser()
             # Compressed logs decompress to roughly 3-10x; the per-file
             # progress fraction is an estimate and is clamped to the file's
             # share of the total.
@@ -484,9 +484,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
             try:
                 with open_text_auto(file_path) as fh:
                     for line_no, line in enumerate(fh, start=1):
-                        data = parse_line(line)
+                        data = parser.parse(line)
                         if data is None:
-                            if line.strip():
+                            if line.strip() and not accesslog.is_metadata_line(line):
                                 file_unparsed += 1
                             continue
                         te = fast_epoch(data["time"])

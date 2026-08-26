@@ -105,11 +105,12 @@ def _log_score(directory, files):
             continue
         sampled += 1
         try:
+            parser = accesslog.AccessLogParser()
             with open_text_auto(path) as f:
                 for i, line in enumerate(f):
                     if i >= SNIFF_LINES:
                         break
-                    if accesslog.parse_line(line.rstrip("\n")):
+                    if parser.parse(line):
                         parsed += 1
                         if not example:
                             example = name

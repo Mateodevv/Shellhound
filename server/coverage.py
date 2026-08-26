@@ -112,12 +112,17 @@ def quiet_windows(case_dir):
 
 
 def _first_record_line(path):
-    """The first non-empty line of the file, and whether it parses."""
+    """The first request record in the file, and whether it parses."""
     try:
+        parser = accesslog.AccessLogParser()
         with open_text_auto(path) as fh:
             for line in fh:
-                if line.strip():
-                    return line, accesslog.parse_line(line) is not None
+                if not line.strip():
+                    continue
+                parsed = parser.parse(line)
+                if accesslog.is_metadata_line(line):
+                    continue
+                return line, parsed is not None
     except (OSError, EOFError, ValueError):
         pass
     return None, True          # unreadable is not the same as truncated

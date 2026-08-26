@@ -7,7 +7,8 @@ requests. They are ported verbatim -- every quirk removed here would silently
 drop exactly the attacker lines the index exists to answer about.
 """
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import unquote_plus
 
 _QF = r'(?:[^"\\]|\\.)*'   # content of one quoted log field
 # Apache's vhost_combined format and hosting panels such as Plesk may put the
@@ -38,6 +39,76 @@ ERROR_LOG_SIGNATURES = re.compile(
     r')')
 
 ERROR_LOG_SKIP_REASON = "Apache/Nginx error log (not an access-log format)"
+
+_W3C_FIELDS_PREFIX = "#fields:"
+
+
+def is_metadata_line(line):
+    """Return whether *line* is an IIS W3C directive/comment.
+
+    W3C metadata is evidence about the file format rather than a request.  It
+    must therefore neither be indexed nor inflate the unparsed-line count.
+    """
+    return line.lstrip("\ufeff").startswith("#")
+
+
+def _decode_w3c_text(value):
+    """Decode W3C's URL-encoded free-text fields without touching request URIs."""
+    if not value or value == "-":
+        return value or "-"
+    return unquote_plus(value)
+
+
+def parse_w3c_line(line, fields):
+    """Parse one IIS W3C data row using its preceding ``#Fields`` schema.
+
+    IIS lets administrators choose and reorder fields, so parsing a row
+    without that schema would silently assign the wrong forensic meaning to
+    columns.  Request paths and queries intentionally remain encoded exactly
+    as logged; only human-readable User-Agent and Referer fields are decoded.
+    """
+    values = line.strip().split()
+    if not fields or len(values) != len(fields):
+        return None
+    row = dict(zip((field.lower() for field in fields), values))
+    required = ("date", "time", "c-ip", "cs-method", "cs-uri-stem",
+                "sc-status")
+    if any(not row.get(field) or row[field] == "-" for field in required):
+        return None
+
+    uri = row["cs-uri-stem"]
+    query = row.get("cs-uri-query")
+    if query and query != "-":
+        uri = f"{uri}?{query}"
+
+    return {
+        "ip": row["c-ip"],
+        "time": f'{row["date"]} {row["time"]}',
+        "method": row["cs-method"],
+        "uri": uri,
+        "status": row["sc-status"],
+        "size": row.get("sc-bytes", "-"),
+        "referrer": _decode_w3c_text(row.get("cs(referer)", "-")),
+        "user_agent": _decode_w3c_text(row.get("cs(user-agent)", "-")),
+    }
+
+
+class AccessLogParser:
+    """Per-file parser for Apache/Common and stateful IIS W3C logs."""
+
+    def __init__(self):
+        self._w3c_fields = None
+
+    def parse(self, line):
+        clean = line.lstrip("\ufeff")
+        if clean.startswith("#"):
+            if clean.lower().startswith(_W3C_FIELDS_PREFIX):
+                self._w3c_fields = tuple(
+                    clean.split(":", 1)[1].strip().split())
+            return None
+        if self._w3c_fields is not None:
+            return parse_w3c_line(clean, self._w3c_fields)
+        return parse_line(clean)
 
 
 def parse_line(line):
@@ -77,6 +148,20 @@ _DATE_CACHE = {}
 
 def fast_epoch(ts):
     try:
+        # IIS W3C timestamps are always UTC and use separate ISO date/time
+        # fields.  Keep the same cached day + integer time-of-day fast path as
+        # the Apache parser instead of invoking strptime for every request.
+        if len(ts) >= 19 and ts[4:5] == "-" and ts[10:11] in (" ", "T"):
+            key = ("w3c", ts[:10])
+            cached = _DATE_CACHE.get(key)
+            if cached is None:
+                dt = datetime.strptime(ts[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc)
+                cached = _DATE_CACHE[key] = (dt.timestamp(), 0)
+            base, offset = cached
+            return (base + int(ts[11:13]) * 3600 + int(ts[14:16]) * 60
+                    + int(ts[17:19]), offset)
+
         key = (ts[:11], ts[21:])
         cached = _DATE_CACHE.get(key)
         if cached is None:

@@ -115,7 +115,7 @@ start.
 | Kind | What it is | Needed to start |
 |---|---|---|
 | Webroot | Copy of the web directory | yes |
-| Access logs | Apache or Nginx, `.gz` included | yes |
+| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | yes |
 | SQL dump | Database export of the CMS | yes |
 | Reference copy | Clean CMS release of the same version | no, enables the webroot diff |
 
