@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from server import patterns
+from server.engines import logindex
 
 
 class BundledSetTests(unittest.TestCase):
@@ -57,6 +58,53 @@ class BundledSetTests(unittest.TestCase):
     def test_they_are_marked_as_bundled(self):
         for row in self.rows:
             self.assertEqual("bundled", row["source"])
+
+
+class Wp2ShellPatternTests(unittest.TestCase):
+    """The shipped wp2shell IOC is narrow and works on IIS W3C evidence."""
+
+    @staticmethod
+    def entry():
+        return next(row for row in patterns.bundled()
+                    if row["id"] == "wordpress-wp2shell-poc-webshell")
+
+    def test_the_entry_names_both_vulnerabilities_and_its_limit(self):
+        entry = self.entry()
+        self.assertEqual("CVE-2026-63030 + CVE-2026-60137", entry["cve"])
+        self.assertIn("WHAT A HIT DOES NOT PROVE:", entry["description"])
+        self.assertIn("batch", entry["description"].lower())
+
+    def test_the_known_poc_shell_path_matches_without_selecting_static_assets(
+            self):
+        header = (
+            "#Fields: date time c-ip cs-method cs-uri-stem cs-uri-query "
+            "sc-status sc-bytes cs(User-Agent) cs(Referer)\n"
+        )
+        attacker = "198.51.100.40"
+        with tempfile.TemporaryDirectory(prefix="shellhound-wp2shell-") as root:
+            case = Path(root, "case")
+            logs = Path(root, "logs")
+            case.mkdir()
+            logs.mkdir()
+            Path(logs, "u_ex.log").write_text(
+                header
+                + "2026-08-26 12:00:00 198.51.100.40 GET "
+                  "/wp-content/plugins/wp2shell_79b06a80/"
+                  "wp2shell_79b06a80.php t=token%26c=id 200 12 wp2shell -\n"
+                + "2026-08-26 12:00:01 203.0.113.8 GET "
+                  "/wp-content/plugins/wp2shell-helper/assets/app.js "
+                  "- 200 1200 Mozilla/5.0 -\n",
+                encoding="utf-8",
+            )
+            logindex.build(case, [str(logs)])
+
+            entry = self.entry()
+            match = logindex.match_patterns(
+                case, entry["patterns"], entry["match"])
+
+        self.assertEqual(1, match["hits"])
+        self.assertEqual([attacker], [row["ip"] for row in match["clients"]])
+        self.assertIn("wp2shell_79b06a80.php", match["uris"][0]["uri"])
 
 
 class LibraryTests(unittest.TestCase):

@@ -13,6 +13,11 @@ All notable changes to SHELLHOUND. Format after
   request queries, response status and optional byte counts. W3C metadata no
   longer inflates the unparsed-line count, and guided evidence detection plus
   coverage checks understand the format as well.
+- **wp2shell Pattern Hunt** ships a high-signal access-log pattern for the
+  characteristic `wp-content/plugins/wp2shell_<suffix>/wp2shell_<suffix>.php`
+  endpoint used by public PoCs for CVE-2026-63030 and CVE-2026-60137. Its
+  explanation distinguishes an observed request from proof that the hidden
+  batch payload succeeded and names the supporting evidence to correlate.
 - **Access Log Explorer** adds a request-centred investigation workspace over
   the complete parsed case instead of another client-bound trace. Cursor
   paging, include/exclude facets, UTC time scopes, status and method filters,
