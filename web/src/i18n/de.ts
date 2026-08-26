@@ -1386,6 +1386,9 @@ export const de: Record<string, string> = {
   'settings.rules.engine.errorlog': 'Error-Logs',
   'hunt.field.cve': 'CVE',
   'hunt.field.description': 'Beschreibung',
+  'hunt.condition.method': 'Methode',
+  'hunt.condition.userAgent': 'User-Agent',
+  'hunt.condition.hint': 'Diese Request-Bedingung muss zusätzlich zum URL-Muster passen. Werte innerhalb eines Felds sind Alternativen; verschiedene Felder müssen gemeinsam zutreffen.',
   'hunt.path.add': 'Pfad hinzufügen',
   'hunt.path.remove': 'Diesen Pfad entfernen',
   // Pfade zu verknüpfen ist eine Aussage über einen CLIENT, nicht über eine

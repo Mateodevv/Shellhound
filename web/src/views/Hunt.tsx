@@ -139,7 +139,9 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
     if (libraryMode === 'active' && !pattern.enabled) return false
     if (libraryMode === 'own' && pattern.source !== 'own') return false
     const needle = librarySearch.trim().toLowerCase()
-    return !needle || [pattern.name, pattern.cve, pattern.description, ...pattern.patterns]
+    return !needle || [pattern.name, pattern.cve, pattern.description,
+      ...pattern.patterns, ...(pattern.request?.methods ?? []),
+      ...(pattern.request?.user_agents ?? [])]
       .some((value) => value.toLowerCase().includes(needle))
   })
   const selected = patterns.find((pattern) => pattern.id === selectedId)
@@ -242,6 +244,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                   <span className="mt-1.5 flex flex-wrap gap-1">
                     {pattern.cve && <Tag>{pattern.cve}</Tag>}
                     <Tag>{pattern.source === 'bundled' ? tr('hunt.bundled') : tr('hunt.own')}</Tag>
+                    <PatternConditions pattern={pattern} compact />
                     {!pattern.enabled && <Tag>{tr('hunt.disabled')}</Tag>}
                   </span>
                 </button>
@@ -270,6 +273,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                     <div className="mono mt-1 break-all text-[11px] text-[var(--muted)]">
                       {joinPaths(selected)}
                     </div>
+                    <PatternConditions pattern={selected} />
                   </div>
                   <Button variant="primary" disabled={!selected.enabled || run.isPending}
                     onClick={() => run.mutate([selected.id])}>
@@ -422,6 +426,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) =
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[12.5px] font-medium">{pattern.name || pattern.patterns[0]}</div>
                     <div className="mono truncate text-[10.5px] text-[var(--muted)]">{joinPaths(pattern)}</div>
+                    <PatternConditions pattern={pattern} compact />
                   </div>
                   {!shipped && (
                     <button aria-label={tr('hunt.edit.hint')} onClick={() => setEditing(pattern.id)}
@@ -1011,4 +1016,35 @@ function MatchPicker({ value, onChange }: {
 /** What the row shows for the paths: the combination made readable. */
 function joinPaths(p: HuntPattern): string {
   return p.patterns.join(p.match === 'all' ? ' AND ' : ' OR ')
+}
+
+/** Request predicates are part of the hypothesis, not an implementation
+ * detail. Keeping them beside the URL prevents a filtered endpoint rule from
+ * looking like a broad claim about every request to that endpoint. */
+function PatternConditions({ pattern, compact = false }: {
+  pattern: HuntPattern
+  compact?: boolean
+}) {
+  const tr = useT()
+  const methods = pattern.request?.methods ?? []
+  const agents = pattern.request?.user_agents ?? []
+  if (!methods.length && !agents.length) return null
+  return (
+    <span className="mt-1 flex flex-wrap gap-1">
+      {!!methods.length && (
+        <Tag hint={tr('hunt.condition.hint')}>
+          {compact
+            ? methods.join('/')
+            : `${tr('hunt.condition.method')}: ${methods.join(' / ')}`}
+        </Tag>
+      )}
+      {!!agents.length && (
+        <Tag hint={tr('hunt.condition.hint')}>
+          {compact
+            ? `${tr('hunt.condition.userAgent')} ×${agents.length}`
+            : `${tr('hunt.condition.userAgent')}: ${agents.join(' / ')}`}
+        </Tag>
+      )}
+    </span>
+  )
 }
