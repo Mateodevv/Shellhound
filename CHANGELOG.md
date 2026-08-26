@@ -8,6 +8,11 @@ All notable changes to SHELLHOUND. Format after
 
 ### Added — investigation workbench workflow
 
+- **IIS W3C Extended access logs** are parsed from their per-file `#Fields`
+  schema, including reordered fields, UTC timestamps, client addresses,
+  request queries, response status and optional byte counts. W3C metadata no
+  longer inflates the unparsed-line count, and guided evidence detection plus
+  coverage checks understand the format as well.
 - **Access Log Explorer** adds a request-centred investigation workspace over
   the complete parsed case instead of another client-bound trace. Cursor
   paging, include/exclude facets, UTC time scopes, status and method filters,
