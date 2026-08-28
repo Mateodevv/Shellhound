@@ -16,7 +16,8 @@ import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-q
 import clsx from 'clsx'
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleHelp, Clock, Crosshair,
-  Database, DoorOpen, FileWarning, LoaderCircle, LogIn, UserPlus,
+  Database, DoorOpen, FileClock, FileCog, FilePenLine, FileWarning,
+  LoaderCircle, LogIn, UserPlus,
 } from 'lucide-react'
 import { api, post, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
@@ -31,6 +32,9 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   alarm: AlertTriangle,
   'letzter-zugriff': LogIn,
   konto: UserPlus,
+  'datei-erstellt': FileClock,
+  'datei-geaendert': FilePenLine,
+  'metadaten-geaendert': FileCog,
 }
 
 // Keys only: the event kinds come from the server under English names and
@@ -42,11 +46,21 @@ const KIND_KEY: Record<ChainEvent['kind'], string> = {
   alarm: 'chain.kind.alert',
   'letzter-zugriff': 'chain.lastActivity',
   konto: 'chain.kind.account',
+  'datei-erstellt': 'chain.kind.fileCreated',
+  'datei-geaendert': 'chain.kind.fileModified',
+  'metadaten-geaendert': 'chain.kind.metadataChanged',
 }
 
 const SOURCE_KEY: Record<ChainEvent['source'], string> = {
   log: 'chain.source.log',
   dump: 'chain.source.dump',
+  filesystem: 'chain.source.filesystem',
+}
+
+const SOURCE_BADGE: Record<ChainEvent['source'], string> = {
+  log: 'chain.source.badge.log',
+  dump: 'chain.source.badge.dump',
+  filesystem: 'chain.source.badge.filesystem',
 }
 
 const PAGE_SIZE = 80
@@ -270,7 +284,7 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                       <SeverityBadge severity={e.severity} />
                     )}
                     <span className="rounded border border-[var(--line)] px-1 text-[10px] uppercase tracking-wide text-[var(--muted)]">
-                      {e.source === 'log' ? 'Log' : 'DB-Export'}
+                      {tr(SOURCE_BADGE[e.source])}
                     </span>
                   </div>
                   {e.detail && (

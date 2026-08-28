@@ -8,6 +8,7 @@ quietly: an artifact that vanishes from the story, a gap that is bridged
 instead of named, a clock offset that is applied but not reported.
 """
 import json
+import os
 import unittest
 
 from server import artifacts, db
@@ -64,7 +65,7 @@ class ChainTests(unittest.TestCase):
         self.assertTrue(out["events"], "confirmed artifacts produced no event")
         for e in out["events"]:
             self.assertIsInstance(e["at"], int)
-            self.assertIn(e["source"], ("log", "dump"),
+            self.assertIn(e["source"], ("log", "dump", "filesystem"),
                           "every line has to name where its time comes from")
 
     def test_events_are_ordered(self):
@@ -93,14 +94,72 @@ class ChainTests(unittest.TestCase):
             self.assertTrue(u["why"].strip(),
                             "an undated artifact without a reason is a gap")
 
-    def test_a_file_is_dated_by_its_first_successful_request(self):
-        """Not by the mtime of the copy: nobody can tell from that whether it
-        comes from the original or from the copying."""
+    def test_a_successful_file_request_remains_a_log_observation(self):
+        """Filesystem metadata must not weaken the stronger access proof."""
         self._confirm_all()
         out = case_chain(self.ev.case_dir)
         successes = [e for e in out["events"] if e["kind"] == "erfolg"]
         self.assertTrue(successes, "no file was dated by a successful request")
         self.assertTrue(all(e["source"] == "log" for e in successes))
+
+    def test_confirmed_webshell_adds_filesystem_times_but_not_access_time(self):
+        shell = str(self.ev.webroot /
+                    "wp-content/uploads/2026/01/kb-media.php")
+        measured_mtime = 1_700_000_123
+        before = os.stat(shell)
+        try:
+            os.utime(shell, (before.st_atime, measured_mtime))
+            conn = db.connect(self.ev.case_dir)
+            try:
+                conn.execute("UPDATE findings SET triage = 'confirmed' "
+                             "WHERE artifact = ? AND source = 'webshell'",
+                             (shell,))
+                conn.commit()
+            finally:
+                conn.close()
+
+            events = [e for e in case_chain(
+                self.ev.case_dir, tz_mode="utc", event_cap=None)["events"]
+                if e["artifact"] == shell and e["source"] == "filesystem"]
+            self.assertTrue(events, "confirmed webshell has no filesystem time")
+            modified = [e for e in events
+                        if e["kind"] == "datei-geaendert"]
+            self.assertEqual([measured_mtime], [e["at"] for e in modified])
+            self.assertFalse(any("access" in e["kind"] for e in events))
+            self.assertTrue(all("evidence copy" in e["detail"].lower()
+                                for e in events))
+        finally:
+            os.utime(shell, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    def test_manual_webshell_verdict_also_adds_filesystem_times(self):
+        path = str(self.ev.webroot / "wp-includes/functions.php")
+        conn = db.connect(self.ev.case_dir)
+        fingerprint = ""
+        try:
+            fingerprint = db.upsert_finding(
+                conn, "analyst", db.SEV_HIGH, "Manual file review", "file",
+                path, evidence="Analyst classified the file as a webshell.",
+                rule_id="analyst.file_review")
+            conn.execute("UPDATE findings SET triage = 'confirmed' "
+                         "WHERE fingerprint = ?", (fingerprint,))
+            conn.commit()
+        finally:
+            conn.close()
+        try:
+            events = case_chain(
+                self.ev.case_dir, tz_mode="utc", event_cap=None)["events"]
+            self.assertTrue(any(e["artifact"] == path
+                                and e["source"] == "filesystem"
+                                and e["kind"] == "datei-geaendert"
+                                for e in events))
+        finally:
+            conn = db.connect(self.ev.case_dir)
+            try:
+                conn.execute("DELETE FROM findings WHERE fingerprint = ?",
+                             (fingerprint,))
+                conn.commit()
+            finally:
+                conn.close()
 
     # --- the clock offset ---------------------------------------------------
 

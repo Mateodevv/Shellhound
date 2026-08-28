@@ -166,6 +166,27 @@ describe('the note box', () => {
 })
 
 describe('what the window states about the artifact', () => {
+  it('shows all available forensic file hashes in full', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      file: {
+        exists: true,
+        size: 42,
+        mtime: '2026-08-28T10:00:00',
+        hashes: {
+          md5: '1'.repeat(32),
+          sha1: '2'.repeat(40),
+          sha256: '3'.repeat(64),
+        },
+      },
+    }))
+
+    mount()
+
+    expect(await screen.findByText('1'.repeat(32))).toBeInTheDocument()
+    expect(screen.getByText('2'.repeat(40))).toBeInTheDocument()
+    expect(screen.getByText('3'.repeat(64))).toBeInTheDocument()
+  })
+
   it('prefers the server triage state over the stub the caller guessed', async () => {
     // Actors opens this window knowing only an IP; it guesses `new`. If the
     // window believed the guess, an artifact already ruled a false positive

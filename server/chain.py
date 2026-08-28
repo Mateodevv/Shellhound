@@ -17,9 +17,11 @@ worse than none.
 Three rules follow from that:
   1. CONFIRMED ARTIFACTS ONLY. The triage decides what belongs to the story,
      not the detection.
-  2. MEASURED TIME ONLY. The first 2xx for a file proves it was there; the
-     mtime of the copy proves nothing at all, because nobody can tell from it
-     whether it comes from the original or from the copying.
+  2. MEASURED TIME ONLY. The first 2xx for a file proves it was there. File
+     system timestamps are shown only for confirmed webshells and explicitly
+     as metadata of the evidence copy: they do not prove deployment, upload
+     or access. Access time is deliberately omitted because reading or mount
+     policy can change it.
   3. GAPS ARE NAMED, NOT BRIDGED.
 
 Both clocks stand there without a zone: the log line in its server time, the
@@ -99,6 +101,37 @@ def stamp_to_local(text):
     return None
 
 
+def filesystem_times(path):
+    """Portable file times as UTC epochs, without changing their meaning.
+
+    Windows ctime is creation time; on POSIX it is metadata-change time. Some
+    POSIX platforms additionally expose a birth time. Keeping those fields
+    separate prevents one number from receiving two incompatible labels when
+    a case moves between systems. Access time is intentionally absent: merely
+    reviewing evidence can modify it.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return {}
+
+    def epoch(value):
+        try:
+            return int(float(value)) if value is not None else None
+        except (OverflowError, TypeError, ValueError):
+            return None
+
+    birth = getattr(stat, "st_birthtime", None)
+    created = birth if birth is not None else (
+        stat.st_ctime if os.name == "nt" else None)
+    changed = None if os.name == "nt" else stat.st_ctime
+    return {
+        "created": epoch(created),
+        "modified": epoch(stat.st_mtime),
+        "changed": epoch(changed),
+    }
+
+
 def clock_offsets(conn):
     """The CLOCK OFFSET set by the analyst, per source, in seconds.
 
@@ -138,6 +171,15 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         clients = [r["artifact"] for r in confirmed
                    if r["artifact_kind"] == "client"]
         by_artifact = {r["artifact"]: r for r in confirmed}
+        # A confirmed FILE is not automatically a webshell: manual review can
+        # also dismiss files, and other scanners produce file findings. These
+        # are the two sources that make the narrower statement needed for the
+        # filesystem observations below.
+        webshell_files = {r["artifact"] for r in db.rows(
+            conn, "SELECT DISTINCT artifact FROM findings "
+                  "WHERE artifact_kind = 'file' AND triage = 'confirmed' "
+                  "AND (source = 'webshell' "
+                  "OR rule_id = 'analyst.file_review')")}
         accounts = db.rows(
             conn, "SELECT login, registered, admin, last_login, tbl "
                   "FROM db_accounts WHERE registered != ''")
@@ -202,6 +244,18 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         at = stamp_to_local(text)
         return None if at is None else at + off_dump
 
+    def filesystem_at(epoch):
+        """Put an absolute filesystem time into the active chain reading.
+
+        Filesystem epochs are UTC. In log-time mode a case with one measured
+        log offset is displayed in that wall-clock frame, so apply the same
+        display shift. Unlike log and dump clocks, there is no analyst offset
+        for the evidence filesystem.
+        """
+        if epoch is None:
+            return None
+        return int(epoch) + (span_tz if tz_mode != "utc" else 0)
+
     dated = set()
 
     def add(at, kind, title, detail, source, artifact="", artifact_kind="",
@@ -225,6 +279,21 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
     for artifact, rel in files.items():
         row = by_artifact[artifact]
         name = os.path.basename(rel)
+        if artifact in webshell_files:
+            metadata_detail = t(lang, "chain.file.fs.detail")
+            file_times = filesystem_times(artifact)
+            add(filesystem_at(file_times.get("created")), "datei-erstellt",
+                t(lang, "chain.file.fs.created", name=name),
+                metadata_detail, "filesystem", artifact, "file",
+                severity=row["worst"])
+            add(filesystem_at(file_times.get("modified")), "datei-geaendert",
+                t(lang, "chain.file.fs.modified", name=name),
+                metadata_detail, "filesystem", artifact, "file",
+                severity=row["worst"])
+            add(filesystem_at(file_times.get("changed")), "metadaten-geaendert",
+                t(lang, "chain.file.fs.changed", name=name),
+                metadata_detail, "filesystem", artifact, "file",
+                severity=row["worst"])
         hits = [h for h in facts["files"].get(name, [])
                 if uri_targets(h["uri"], rel)]
         if not hits:
