@@ -132,6 +132,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   if (!artifact) return null
   const kind = artifact.artifact_kind
   const file = ctx?.file
+  const fileHashes = file?.hashes ?? (file?.sha256 ? { sha256: file.sha256 } : {})
   const preview = file?.preview
   const actor = ctx?.actor
   const findings = ctx?.findings ?? artifact.items ?? []
@@ -270,20 +271,32 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                     ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
                     : tr('artifact.uploadDirNo')}
                 </MetaCell>
-                {file.sha256 && (
+                {Object.values(fileHashes).some(Boolean) && (
                   <div className="col-span-2">
-                    <MetaCell label="SHA-256" explain={tr('field.sha256')}>
-                      <span className="mono flex items-center gap-2 break-all text-[11px]">
-                        <span className="min-w-0 flex-1">{file.sha256}</span>
-                        <CopyButton value={file.sha256} label={tr('copy.hash')}
-                          className="shrink-0" />
-                      </span>
-                    </MetaCell>
+                    <div className="grid gap-2">
+                      {([
+                        ['MD5', fileHashes.md5],
+                        ['SHA-1', fileHashes.sha1],
+                        ['SHA-256', fileHashes.sha256],
+                      ] as const).filter(([, value]) => value).map(([label, value]) => (
+                        <MetaCell key={label} label={label}
+                          explain={label === 'SHA-256' ? tr('field.sha256') : tr('files.hashes.compatibility')}>
+                          <span className="mono flex items-center gap-2 break-all text-[11px]">
+                            <span className="min-w-0 flex-1">{value}</span>
+                            <CopyButton value={value!} label={tr('copy.hash')}
+                              className="shrink-0" />
+                          </span>
+                        </MetaCell>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[9.5px] text-[var(--muted)]">
+                      {tr('files.hashes.caution')}
+                    </p>
                     {/* The hash is the only thing about a file that may be
                         asked about outside -- a path would name the server. */}
-                    <div className="mt-2">
-                      <EnrichPanel slug={slug} kind="hash" value={file.sha256} />
-                    </div>
+                    {fileHashes.sha256 && <div className="mt-2">
+                      <EnrichPanel slug={slug} kind="hash" value={fileHashes.sha256} />
+                    </div>}
                   </div>
                 )}
               </div>

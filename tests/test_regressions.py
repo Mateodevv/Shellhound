@@ -1424,13 +1424,21 @@ class ChainUndatedTests(unittest.TestCase):
         chain = case_chain(self.case, "en", "log")     # used to raise
         self.assertIsInstance(chain["events"], list)
 
-    def test_the_file_is_named_as_undated_rather_than_dropped(self):
-        """Every confirmed artifact has to show up somewhere -- one that
-        quietly disappears is the more dangerous half of a lie."""
+    def test_the_file_is_accounted_for_by_explicit_filesystem_metadata(self):
+        """Unreadable log time must not become a fabricated access event.
+
+        Confirmed webshells now carry the separately labelled timestamps of
+        the evidence copy, so this file is dated without claiming the broken
+        log line supplied a usable time.
+        """
         from server.chain import case_chain
         chain = case_chain(self.case, "en", "log")
-        self.assertTrue(any("kb-media" in u["artifact"]
-                            for u in chain["undated"]))
+        self.assertTrue(any("kb-media" in e["artifact"]
+                            and e["source"] == "filesystem"
+                            for e in chain["events"]))
+        self.assertFalse(any("kb-media" in e["artifact"]
+                             and e["source"] == "log"
+                             for e in chain["events"]))
 
 
 class SigmaTranslationTests(unittest.TestCase):

@@ -46,6 +46,10 @@ const PREVIEW: FileContent = {
   mode: 'raw', window: 65_536, binary: false,
   created_at: FIRST.created_at, modified_at: FIRST.modified_at,
   accessed_at: FIRST.accessed_at, changed_at: FIRST.changed_at,
+  hashes: {
+    md5: '1'.repeat(32), sha1: '2'.repeat(40), sha256: '3'.repeat(64),
+  },
+  hashes_limited: false,
   from_line: 1, lines: ['<?php', 'echo "synthetic";', ''],
 }
 
@@ -92,6 +96,10 @@ describe('manual file review workspace', () => {
     expect(screen.getByText('Modified')).toBeInTheDocument()
     expect(screen.getByText('Accessed')).toBeInTheDocument()
     expect(screen.getAllByText(/UTC/).length).toBeGreaterThanOrEqual(3)
+    expect(screen.getByText('File hashes')).toBeInTheDocument()
+    expect(await screen.findByText('1'.repeat(32))).toBeInTheDocument()
+    expect(screen.getByText('2'.repeat(40))).toBeInTheDocument()
+    expect(screen.getByText('3'.repeat(64))).toBeInTheDocument()
     expect(await screen.findByText('echo "synthetic";')).toBeInTheDocument()
 
     const confirm = screen.getByRole('button', { name: 'Mark as webshell' })

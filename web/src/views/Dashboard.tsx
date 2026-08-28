@@ -209,7 +209,11 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
                   <span className="flex items-start justify-between gap-2">
                     <span className="block text-[12.5px] font-semibold">{event.title}</span>
                     <span className="shrink-0 rounded border border-[var(--line)] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[var(--muted)]">
-                      {event.source === 'log' ? tr('dashboard.source.log') : tr('dashboard.source.dump')}
+                      {event.source === 'log'
+                        ? tr('dashboard.source.log')
+                        : event.source === 'filesystem'
+                          ? tr('dashboard.source.filesystem')
+                          : tr('dashboard.source.dump')}
                     </span>
                   </span>
                   {event.detail && <span className="mt-0.5 block truncate text-[10.5px] text-[var(--muted)]">{event.detail}</span>}

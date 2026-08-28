@@ -847,6 +847,12 @@ export interface ImportResult {
   name: string
 }
 
+export interface FileHashes {
+  md5?: string
+  sha1?: string
+  sha256?: string
+}
+
 export interface FileContent {
   path: string
   size: number
@@ -860,6 +866,10 @@ export interface FileContent {
   modified_at: string | null
   accessed_at: string | null
   changed_at: string | null
+  /** MD5/SHA-1 are forensic comparison identifiers; SHA-256 is the strong
+   *  integrity digest. Empty when the file exceeds the bounded hash limit. */
+  hashes: FileHashes
+  hashes_limited: boolean
   from_line?: number | null
   lines?: string[]
   rows?: { offset: number; hex: string; ascii: string }[]
@@ -1017,17 +1027,18 @@ export interface HuntResult {
   timeline: HuntTimelineDay[]
 }
 
-/** An event of the case chronology. `at` is a NAIVE LOCAL TIME in seconds --
- *  the log line carries its server time, the account timestamp that of the
- *  database server, and both are compared as they stand. Always format it
- *  with tz = 0 for that reason. */
+/** An event of the case chronology. `at` is already in the active timeline
+ *  reading. Log and dump values retain their measured wall-clock meaning;
+ *  absolute filesystem epochs are shifted into that reading by the server.
+ *  Always format it with tz = 0 for that reason. */
 export interface ChainEvent {
   at: number
   kind: 'erstkontakt' | 'versuch' | 'erfolg' | 'alarm' | 'letzter-zugriff' | 'konto'
+    | 'datei-erstellt' | 'datei-geaendert' | 'metadaten-geaendert'
   title: string
   detail: string
-  /** Where the time comes from: the access log or the SQL export. */
-  source: 'log' | 'dump'
+  /** Where the time comes from: access log, SQL export, or evidence copy. */
+  source: 'log' | 'dump' | 'filesystem'
   artifact: string
   artifact_kind: '' | 'file' | 'table' | 'client' | 'dump'
   ip: string
@@ -1150,6 +1161,12 @@ export interface ArtifactContext {
     size?: number
     mtime?: string
     sha256?: string
+    hashes?: FileHashes
+    hashes_limited?: boolean
+    created_at?: string | null
+    modified_at?: string | null
+    accessed_at?: string | null
+    changed_at?: string | null
     in_upload_dir?: boolean
     cms_guard?: boolean | null
     preview?: FilePreview

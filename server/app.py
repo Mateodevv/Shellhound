@@ -1450,15 +1450,53 @@ def create_app(config: Config) -> FastAPI:
     # leaves the request hanging. The same limit as in the detail view.
     _HASH_MAX_BYTES = 32 * 1024 * 1024
 
+    _file_hash_cache = {}
+
+    def _hashes_of(path):
+        """Forensic comparison hashes in one bounded read of the file.
+
+        MD5 and SHA-1 are compatibility identifiers, not security claims.
+        The cache key includes size and nanosecond modification/metadata time,
+        so an ordinarily changed file cannot keep the previous digest merely
+        because its path stayed put.
+        """
+        try:
+            if not os.path.isfile(path):
+                return {}
+            stat = os.stat(path)
+            if stat.st_size > _HASH_MAX_BYTES:
+                return {}
+            key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            cached = _file_hash_cache.get(key)
+            if cached is not None:
+                return dict(cached)
+
+            hashers = {}
+            for name in ("md5", "sha1", "sha256"):
+                try:
+                    try:
+                        hasher = hashlib.new(name, usedforsecurity=False)
+                    except TypeError:  # Python/OpenSSL without the keyword
+                        hasher = hashlib.new(name)
+                except ValueError:  # Algorithm disabled by the local provider
+                    continue
+                hashers[name] = hasher
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    for hasher in hashers.values():
+                        hasher.update(chunk)
+            answer = {name: hasher.hexdigest()
+                      for name, hasher in hashers.items()}
+            if len(_file_hash_cache) >= 256:
+                _file_hash_cache.clear()
+            _file_hash_cache[key] = answer
+            return dict(answer)
+        except (OSError, ValueError):
+            return {}
+
     def _sha256_of(path):
         """SHA-256 of an evidence file, or '' when too large/unreadable."""
-        try:
-            if not os.path.isfile(path) or os.path.getsize(path) > _HASH_MAX_BYTES:
-                return ""
-            from server.engines.fsutil import sha256_of
-            return sha256_of(path) or ""
-        except OSError:
-            return ""
+        return _hashes_of(path).get("sha256", "")
 
     # --- what hangs on an artifact ---------------------------------------
     #
@@ -1814,12 +1852,21 @@ def create_app(config: Config) -> FastAPI:
                         info["size"] = st.st_size
                         info["mtime"] = datetime.fromtimestamp(
                             st.st_mtime).isoformat(timespec="seconds")
+                        info.update(_file_metadata(st))
                     except OSError:
                         pass
                     meta = db.one(conn, "SELECT value FROM meta "
                                         "WHERE key = 'webshell_hashes'")
                     hashes = json.loads(meta["value"] or "{}") if meta else {}
-                    info["sha256"] = hashes.get(path) or _sha256_of(path)
+                    file_hashes = _hashes_of(path)
+                    stored_sha256 = hashes.get(path)
+                    if stored_sha256:
+                        file_hashes["sha256"] = stored_sha256
+                    info["hashes"] = file_hashes
+                    info["hashes_limited"] = info.get("size", 0) > _HASH_MAX_BYTES
+                    # Kept for archives and clients from before the grouped
+                    # hash response existed.
+                    info["sha256"] = file_hashes.get("sha256", "")
                     info["in_upload_dir"] = webshell.in_upload_dir(path)
                     try:
                         with open(path, "rb") as fh:
@@ -1944,7 +1991,9 @@ def create_app(config: Config) -> FastAPI:
         out = {"path": str(target), "size": size, "offset": offset,
                "length": len(chunk), "eof": offset + len(chunk) >= size,
                "mode": mode, "window": window,
-               "binary": b"\x00" in chunk[:8192], **_file_metadata(stat)}
+               "binary": b"\x00" in chunk[:8192], **_file_metadata(stat),
+               "hashes": _hashes_of(str(target)),
+               "hashes_limited": size > _HASH_MAX_BYTES}
 
         if mode == "hex":
             rows = []

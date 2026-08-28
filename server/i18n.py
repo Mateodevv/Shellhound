@@ -61,6 +61,24 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "en": "{n} request(s) in total, {ok}× of them 2xx",
         "de": "insgesamt {n} Anfrage(n), davon {ok}× 2xx",
     },
+    "chain.file.fs.created": {
+        "en": "Evidence copy of {name} created",
+        "de": "Evidence-Kopie von {name} erstellt",
+    },
+    "chain.file.fs.modified": {
+        "en": "Content timestamp of {name}",
+        "de": "Inhaltszeitstempel von {name}",
+    },
+    "chain.file.fs.changed": {
+        "en": "Metadata timestamp of {name}",
+        "de": "Metadatenzeitstempel von {name}",
+    },
+    "chain.file.fs.detail": {
+        "en": "Filesystem metadata of the evidence copy; it does not prove "
+              "when the webshell was uploaded, deployed or accessed.",
+        "de": "Dateisystem-Metadatum der Evidence-Kopie; es belegt nicht, "
+              "wann die Webshell hochgeladen, abgelegt oder aufgerufen wurde.",
+    },
     "chain.client.first": {
         "en": "First request from {ip}",
         "de": "Erste Anfrage von {ip}",

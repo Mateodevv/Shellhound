@@ -5,8 +5,8 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRight, Bug, CheckCircle2, ChevronRight, Clock3, Eye,
-  FileCode2, FileSearch, FileText, FolderOpen, FolderTree, HardDrive, Home,
-  ShieldAlert, X,
+  FileCode2, FileSearch, FileText, Fingerprint, FolderOpen, FolderTree,
+  HardDrive, Home, ShieldAlert, X,
 } from 'lucide-react'
 import {
   api, post, type BrowseFile, type BrowseResponse, type CaseDetail,
@@ -14,7 +14,7 @@ import {
 } from '../api'
 import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../format'
 import { useT } from '../i18n'
-import { Button, Card, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui'
+import { Button, Card, CopyButton, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui'
 import { FileViewer } from '../components/FileViewer'
 import { WebrootDiff } from '../components/WebrootDiff'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
@@ -324,6 +324,22 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
       </section>
 
       <section>
+        <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+          <Fingerprint size={13} /> {tr('files.hashes.title')}
+        </div>
+        <div className="grid gap-2 xl:grid-cols-3">
+          <HashFact label="MD5" value={preview.data?.hashes.md5} tr={tr} />
+          <HashFact label="SHA-1" value={preview.data?.hashes.sha1} tr={tr} />
+          <HashFact label="SHA-256" value={preview.data?.hashes.sha256} tr={tr} />
+        </div>
+        <p className="mt-2 text-[9.5px] text-[var(--muted)]">
+          {preview.data?.hashes_limited
+            ? tr('files.hashes.tooLarge')
+            : tr('files.hashes.caution')}
+        </p>
+      </section>
+
+      <section>
         <div className="mb-2 flex items-center justify-between gap-2">
           <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
             {tr('files.preview.title')}
@@ -391,5 +407,17 @@ function Fact({ label, value }: { label: string; value: string }) {
   return <div className="rounded-lg bg-[var(--panel-2)] px-2.5 py-2">
     <div className="text-[8.5px] font-bold uppercase tracking-wider text-[var(--muted)]">{label}</div>
     <div className="mono mt-1 break-all text-[10px]">{value}</div>
+  </div>
+}
+
+function HashFact({ label, value, tr }: {
+  label: string; value?: string; tr: Tr
+}) {
+  return <div className="rounded-lg bg-[var(--panel-2)] px-2.5 py-2">
+    <div className="text-[8.5px] font-bold uppercase tracking-wider text-[var(--muted)]">{label}</div>
+    <div className="mt-1 flex min-w-0 items-center gap-2">
+      <span className="mono min-w-0 flex-1 break-all text-[10px]">{value || '—'}</span>
+      {value && <CopyButton value={value} label={tr('copy.hash')} className="shrink-0" />}
+    </div>
   </div>
 }

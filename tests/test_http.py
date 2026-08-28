@@ -1417,6 +1417,14 @@ class FileReviewEndpointTests(unittest.TestCase):
             self.assertTrue(answer["created_at"] is not None
                             or answer["changed_at"] is not None)
 
+        raw = self.file.read_bytes()
+        self.assertEqual({
+            "md5": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+            "sha1": hashlib.sha1(raw, usedforsecurity=False).hexdigest(),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }, detail["hashes"])
+        self.assertFalse(detail["hashes_limited"])
+
     def test_a_final_verdict_requires_a_reason_and_evidence_scope(self):
         status, body = self.review("confirmed")
         self.assertEqual(400, status, body)
