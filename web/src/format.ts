@@ -204,4 +204,5 @@ export const SOURCE_KEYS: Record<string, string> = {
   webshell: 'source.webshell',
   sqldb: 'source.sqldb',
   logs: 'source.logs',
+  analyst: 'source.analyst',
 }

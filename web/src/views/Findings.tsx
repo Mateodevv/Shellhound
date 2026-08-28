@@ -115,7 +115,7 @@ function toggleHidden(set: Set<string>, value: string): Set<string> {
 const LIST_CAP = 2000
 const ALL_SEVERITIES = ['0', '1', '2', '3']
 const ALL_TRIAGE = ['new', 'reviewed', 'confirmed', 'dismissed']
-const ALL_SOURCES = ['webshell', 'sqldb', 'logs', 'yara']
+const ALL_SOURCES = ['webshell', 'sqldb', 'logs', 'yara', 'analyst']
 
 function hiddenFromUrl(key: string, all: string[], fallback: string[]): Set<string> {
   const raw = new URLSearchParams(location.search).get(key)
@@ -482,7 +482,7 @@ export function Findings({ slug, gotoView }: {
             never included it, so both chips looked active and filtered
             nothing. A dead switch in a filter is worse than a missing one:
             it reads as "I have excluded these". */}
-        {['webshell', 'sqldb', 'logs', 'yara'].map((key) => {
+        {ALL_SOURCES.map((key) => {
           const label = tr(`source.${key}`)
           return (
           <Tooltip key={key}

@@ -65,6 +65,42 @@ def _csv_safe(value):
     return "'" + text if text[:1] in ("=", "+", "-", "@") else text
 
 
+def _fs_time(value):
+    """One filesystem timestamp in explicit UTC, or None when unavailable."""
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def _file_metadata(st):
+    """Portable filesystem facts without inventing a creation timestamp.
+
+    POSIX ctime is metadata-change time, while Windows ctime is creation
+    time. Keep those meanings in separate fields so the UI never labels the
+    same number differently merely because the case moved platforms.
+    """
+    if st is None:
+        return {"created_at": None, "modified_at": None,
+                "accessed_at": None, "changed_at": None}
+    birth = getattr(st, "st_birthtime", None)
+    created = birth if birth is not None else (st.st_ctime if os.name == "nt" else None)
+    changed = None if os.name == "nt" else st.st_ctime
+    return {
+        "created_at": _fs_time(created),
+        "modified_at": _fs_time(st.st_mtime),
+        "accessed_at": _fs_time(st.st_atime),
+        "changed_at": _fs_time(changed),
+    }
+
+
+def _filesystem_key(value):
+    """Match filesystem paths without collapsing distinct POSIX names."""
+    normalized = str(value).replace("\\", "/")
+    return normalized.casefold() if os.name == "nt" else normalized
+
+
 def _find_web_dist():
     """The built interface -- under web/dist in the repository, under
     server/static in an installed package. Both routes, so that `pip install`
@@ -642,11 +678,14 @@ def create_app(config: Config) -> FastAPI:
                             dirs.append({"name": entry.name, "path": entry.path})
                         elif entry.is_file(follow_symlinks=False):
                             try:
-                                size = entry.stat().st_size
+                                stat = entry.stat(follow_symlinks=False)
+                                size = stat.st_size
+                                metadata = _file_metadata(stat)
                             except OSError:
                                 size = 0
+                                metadata = _file_metadata(None)
                             files.append({"name": entry.name, "path": entry.path,
-                                          "size": size})
+                                          "size": size, **metadata})
                     except OSError:
                         continue
         except OSError as e:
@@ -1123,7 +1162,8 @@ def create_app(config: Config) -> FastAPI:
         if triages:
             where.append(f"triage NOT IN ({','.join('?' * len(triages))})")
             params += triages
-        allowed_sources = {"webshell", "sqldb", "logs", "yara", "errorlog"}
+        allowed_sources = {"webshell", "sqldb", "logs", "yara", "errorlog",
+                           "analyst"}
         sources = csv_values(hide_source, allowed_sources)
         if sources:
             where.append(f"source NOT IN ({','.join('?' * len(sources))})")
@@ -1625,7 +1665,9 @@ def create_app(config: Config) -> FastAPI:
         origin = f"confirmed: {rules}"
         if kind == "file":
             tags = [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED]
-            if "webshell" in sources:
+            manual_webshell = any(
+                f.get("rule_id") == "analyst.file_review" for f in findings)
+            if "webshell" in sources or manual_webshell:
                 tags.append(ioclib.TAG_WEBSHELL)
             # The path IN THE WEBROOT, never the absolute one. Where the
             # copy sits on the forensic machine is nobody's business outside
@@ -1889,7 +1931,8 @@ def create_app(config: Config) -> FastAPI:
         if not target.is_file():
             raise HTTPException(400, _t(lang, "err.notRegularFile"))
         try:
-            size = target.stat().st_size
+            stat = target.stat()
+            size = stat.st_size
             window = _HEX_WINDOW if mode == "hex" else _RAW_WINDOW
             offset = max(0, min(int(offset), size))
             with open(target, "rb") as fh:
@@ -1901,7 +1944,7 @@ def create_app(config: Config) -> FastAPI:
         out = {"path": str(target), "size": size, "offset": offset,
                "length": len(chunk), "eof": offset + len(chunk) >= size,
                "mode": mode, "window": window,
-               "binary": b"\x00" in chunk[:8192]}
+               "binary": b"\x00" in chunk[:8192], **_file_metadata(stat)}
 
         if mode == "hex":
             rows = []
@@ -2189,6 +2232,13 @@ def create_app(config: Config) -> FastAPI:
                            conn, f"WITH art AS ({ART_SQL}) SELECT artifact, worst,"
                                  f" triage, findings FROM art "
                                  f"WHERE artifact_kind = 'file'")}
+            reviewed = {_filesystem_key(r["artifact"]): r
+                        for r in db.rows(
+                            conn, "SELECT artifact, triage AS state, "
+                                  "triage_note AS note, triaged_at AS at "
+                                  "FROM findings WHERE artifact_kind = 'file' "
+                                  "AND source = 'analyst' "
+                                  "AND rule_id = 'analyst.file_review'")}
         finally:
             conn.close()
 
@@ -2215,6 +2265,7 @@ def create_app(config: Config) -> FastAPI:
             entry["flagged"] = hit["findings"] if hit else 0
             entry["worst"] = hit["worst"] if hit else None
             entry["triage"] = hit["triage"] if hit else None
+            entry["review"] = reviewed.get(_filesystem_key(entry["path"]))
             return entry
 
         # Within a root you may go up -- but only as far as the root.
@@ -2230,6 +2281,58 @@ def create_app(config: Config) -> FastAPI:
     class FlagBody(BaseModel):
         paths: list[str]
         note: str = ""
+
+    class FileReviewBody(BaseModel):
+        path: str = Field(min_length=1)
+        state: str
+        note: str = Field(default="", max_length=4000)
+
+    @app.post("/api/cases/{slug}/files/review", dependencies=[auth])
+    def review_file(slug: str, body: FileReviewBody, lang: str = lang_dep):
+        """Record a manual file decision through the ordinary audit chain.
+
+        The analyst observation is its own unmanaged finding: a later scanner
+        run can neither claim nor retire it. Triage remains the decision axis,
+        so a confirmed manual webshell appears in reports and produces the
+        same path/hash provenance as a scanner-backed confirmation.
+        """
+        if body.state not in ("reviewed", "confirmed", "dismissed"):
+            raise HTTPException(400, "state must be reviewed, confirmed or dismissed")
+        note = body.note.strip()
+        if body.state in ("confirmed", "dismissed") and not note:
+            raise HTTPException(400, "a reason is required for a final file decision")
+
+        case_dir = case_dir_or_404(slug)
+        target = _within_evidence(case_dir, body.path, lang)
+        if not target.is_file():
+            raise HTTPException(400, _t(lang, "err.notRegularFile"))
+        artifact = str(target)
+        statements = {
+            "reviewed": "Analyst reviewed the file; the decision remains open.",
+            "confirmed": "Analyst classified the file as a webshell.",
+            "dismissed": "Analyst reviewed the file and found no webshell evidence.",
+        }
+        conn = db.connect(case_dir)
+        try:
+            db.upsert_finding(
+                conn, "analyst",
+                db.SEV_HIGH if body.state == "confirmed" else db.SEV_INFO,
+                "Manual file review", "file", artifact,
+                evidence=statements[body.state], rule_id="analyst.file_review")
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = set_triage(slug, TriageBody(
+            artifacts=[artifact], state=body.state, note=note,
+            # The file-review panel has no propagation receipt. Keep the
+            # decision scoped to the file instead of silently deciding linked
+            # artifacts the analyst cannot see in that workflow.
+            propagate=False))
+        return {**result, "review": {
+            "state": body.state, "note": note,
+            "at": db.now(),
+        }}
 
     @app.post("/api/cases/{slug}/files/flag", dependencies=[auth])
     def flag_files(slug: str, body: FlagBody, lang: str = lang_dep):

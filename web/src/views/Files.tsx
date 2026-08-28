@@ -1,35 +1,20 @@
-// Files.tsx -- click through the evidence and take files in as indicators by
-// hand.
-//
-// The rules find what they know. This view is for everything else: the file
-// that catches one's eye while looking through, because it sits in the wrong
-// place, because its name does not fit, because the modification date falls
-// into the night of the incident. A human sees that -- a rule was not
-// looking for it.
-//
-// One starts at the registered evidence roots, not at the file system: what
-// belongs to the case is the selection. Going deeper only happens within
-// those roots (the same fence as in the file viewer, on the resolved path).
-//
-// Every entry shows right away what the case already knows about it --
-// already in the IOC box, findings on it -- so that one does not mark by
-// hand what has long been recorded.
-import { plural, useT } from '../i18n'
+// Files.tsx -- manual review of the registered evidence, one file at a time.
+// Scanner observations and analyst decisions stay visibly separate.
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Box, ChevronRight, FileSearch, FileText, FolderOpen, FolderTree, HardDrive,
-  Home,
+  ArrowLeft, ArrowRight, Bug, CheckCircle2, ChevronRight, Clock3, Eye,
+  FileCode2, FileSearch, FileText, FolderOpen, FolderTree, HardDrive, Home,
+  ShieldAlert, X,
 } from 'lucide-react'
-import { api, post, type BrowseResponse, type CaseDetail } from '../api'
 import {
-  formatBytes, formatCount, type EvidenceRoot,
-} from '../format'
-import {
-  Button, Card, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge,
-} from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
+  api, post, type BrowseFile, type BrowseResponse, type CaseDetail,
+  type FileContent, type FileReviewResult,
+} from '../api'
+import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../format'
+import { useT } from '../i18n'
+import { Button, Card, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui'
 import { FileViewer } from '../components/FileViewer'
 import { WebrootDiff } from '../components/WebrootDiff'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
@@ -40,284 +25,371 @@ import type { ViewId } from '../App'
 
 export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
-  const qc = useQueryClient()
   const [path, setPath] = useState('')
-  const [checked, setChecked] = useState<Set<string>>(new Set())
-  const [note, setNote] = useState('')
   const [filter, setFilter] = useState('')
-  const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
-  const [selected, setSelected] = useState<ArtifactStub | null>(null)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
+  const [artifact, setArtifact] = useState<ArtifactStub | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
-  // What the trace should mark red -- comes from the artifact window, which
-  // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
-  const t = useTriage(slug)
+  const triage = useTriage(slug)
 
-  const { data, isError, error } = useQuery({
+  const browse = useQuery({
     queryKey: ['browse', slug, path],
     queryFn: () => api<BrowseResponse>(
       `/api/cases/${slug}/browse?path=${encodeURIComponent(path)}`),
   })
-  const { data: caseInfo } = useQuery({
+  const caseQuery = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
-  const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
-    kind: e.kind, path: e.path, label: e.label,
+  const roots: EvidenceRoot[] = (caseQuery.data?.evidence_items ?? []).map((item) => ({
+    kind: item.kind, path: item.path, label: item.label,
   }))
 
-  // Changing directory discards the selection: a check one can no longer
-  // see would later get flagged along by accident.
-  useEffect(() => { setChecked(new Set()); setFilter('') }, [path])
+  useEffect(() => {
+    setFilter('')
+    setSelectedPath(null)
+  }, [path])
 
-  const flag = useMutation({
-    mutationFn: (paths: string[]) =>
-      post<{ added: { value: string; type: string }[] }>(
-        `/api/cases/${slug}/files/flag`, { paths, note }),
-    onSuccess: () => {
-      setChecked(new Set())
-      setNote('')
-      qc.invalidateQueries({ queryKey: ['browse'] })
-      qc.invalidateQueries({ queryKey: ['iocs'] })
-      qc.invalidateQueries({ queryKey: ['dashboard'] })
-    },
-  })
-
-  const files = useMemo(() => (data?.files ?? []).filter((f) =>
-    !filter || f.name.toLowerCase().includes(filter.toLowerCase())),
-    [data, filter])
-  const dirs = useMemo(() => (data?.dirs ?? []).filter((d) =>
-    !filter || d.name.toLowerCase().includes(filter.toLowerCase())),
-    [data, filter])
-
+  const files = useMemo(() => (browse.data?.files ?? []).filter((file) =>
+    !filter || file.name.toLowerCase().includes(filter.toLowerCase())),
+  [browse.data, filter])
+  const dirs = useMemo(() => (browse.data?.dirs ?? []).filter((dir) =>
+    !filter || dir.name.toLowerCase().includes(filter.toLowerCase())),
+  [browse.data, filter])
+  const selected = browse.data?.files.find((file) => file.path === selectedPath) ?? null
+  const fileRoots = browse.data?.roots.filter((root) => root.kind === 'webroot') ?? []
+  const selectedIndex = files.findIndex((file) => file.path === selectedPath)
   const atRoot = !path
-  const toggleAll = () => {
-    if (checked.size === files.length) setChecked(new Set())
-    else setChecked(new Set(files.map((f) => f.path)))
+  const reviewed = (browse.data?.files ?? []).filter((file) => file.review).length
+  const webshells = (browse.data?.files ?? []).filter(
+    (file) => file.review?.state === 'confirmed').length
+
+  const chooseFile = (file: BrowseFile) => {
+    setSelectedPath(file.path)
+    triage.clearCollected()
+  }
+  const move = (delta: number) => {
+    const next = files[selectedIndex + delta]
+    if (next) chooseFile(next)
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title={tr('nav.files')}
-          body={tr('files.title.body')}
-          hint={tr('files.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">{tr('nav.files')}</h1>
-        </Tooltip>
-        {!atRoot && (
-          <Button variant="ghost" onClick={() => setPath('')}>
-            <Home size={14} /> {tr('files.roots')}
-          </Button>
-        )}
-        {data?.parent != null && (
-          <Button variant="ghost" onClick={() => setPath(data.parent!)}>
-            {tr('evidence.parentDir')}
-          </Button>
-        )}
-        {!atRoot && (
-          <div className="ml-auto">
-            <SearchInput value={filter} onChange={setFilter}
-              placeholder={tr('files.filter')} />
-          </div>
-        )}
+  return <div className="flex flex-col gap-3">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <div className="flex items-center gap-2">
+          <FileSearch size={18} className="text-[var(--accent-text)]" />
+          <h1 className="text-lg font-bold">{tr('files.review.title')}</h1>
+        </div>
+        <p className="mt-0.5 max-w-3xl text-[12.5px] text-[var(--muted)]">
+          {tr('files.review.sub')}
+        </p>
       </div>
+      {!atRoot && <div className="flex items-center gap-5">
+        <Metric value={(browse.data?.files ?? []).length} label={tr('files.metric.files')} />
+        <Metric value={reviewed} label={tr('files.metric.reviewed')} />
+        <Metric value={webshells} label={tr('files.metric.webshells')} danger={webshells > 0} />
+      </div>}
+    </header>
 
-      {!atRoot && (
-        <div className="mono truncate rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[11.5px] text-[var(--muted)]"
-          title={data?.path}>
-          {data?.path}
-        </div>
-      )}
-
-      {checked.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
-          <span className="text-[13px] font-semibold">
-            {plural(tr, checked.size, 'files.marked.one', 'files.marked.many',
-                    { n: checked.size })}
-          </span>
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={tr('files.note.placeholder')}
-            className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
-          />
-          <Button variant="primary" disabled={flag.isPending}
-            onClick={() => flag.mutate([...checked])}>
-            <Box size={14} /> {tr('files.toIocBox')}
-          </Button>
-          <Button variant="ghost" onClick={() => setChecked(new Set())}>
-            {tr('common.clearSelection')}
-          </Button>
-        </div>
-      )}
-
-      {flag.data && (
-        <div className="rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 text-[12px] animate-fade-up">
-          <span className="font-semibold text-[var(--ok)]">
-            {tr('files.flagged.count', { n: formatCount(flag.data.added.length) })}
-          </span>
-          <span className="ml-2 text-[var(--muted)]">
-            {tr('files.flagged.hashes', {
-              n: flag.data.added.filter((a) => a.type === 'hash').length,
-            })}
-          </span>
-        </div>
-      )}
-
-      {isError && (
-        <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)]">
-          {String((error as Error)?.message ?? error)}
-        </div>
-      )}
-
-      {/* ---- entry point: the roots of the case ---- */}
-      {atRoot && (
-        <div className="grid gap-3 md:grid-cols-2">
-          {data?.roots.map((r) => (
-            <Card key={r.path}
-              className="px-4 py-3 transition-colors hover:border-[var(--accent)]/60">
-              <button
-                className="flex w-full cursor-pointer items-center gap-3 text-left"
-                onClick={() => setPath(r.path)}>
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-                  <HardDrive size={16} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-semibold">
-                    {r.label?.trim() || tr(`evidence.${r.kind}`) || r.kind}
-                  </div>
-                  <div className="mono truncate text-[11px] text-[var(--muted)]" title={r.path}>
-                    {r.path}
-                  </div>
-                </div>
-                <ChevronRight size={16} className="shrink-0 text-[var(--muted)]" />
-              </button>
-            </Card>
-          ))}
-          {data && !data.roots.length && (
-            <div className="md:col-span-2">
-              <EmptyState icon={<FolderTree size={36} />} title={tr('files.empty.title')}
-                sub={tr('files.empty.sub')} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ---- webroot against a reference copy ---- */}
-      {atRoot && (caseInfo?.evidence_items?.length ?? 0) > 0 && (
-        <WebrootDiff slug={slug} evidence={caseInfo!.evidence_items}
-          onView={(p) => setViewing({ path: p, line: null })} />
-      )}
-
-      {/* ---- the content of a directory ---- */}
-      {!atRoot && (
-        <Card className="overflow-hidden">
-          {files.length > 0 && (
-            <div className="flex items-center gap-2 border-b border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5">
-              <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-                checked={checked.size > 0 && checked.size === files.length}
-                onChange={toggleAll} />
-              <span className="text-[11px] uppercase tracking-wider text-[var(--muted)]">
-                {tr('files.count', {
-                  dirs: formatCount(dirs.length), files: formatCount(files.length),
-                })}
-              </span>
-            </div>
-          )}
-          {dirs.map((d) => (
-            <button key={d.path}
-              onClick={() => setPath(d.path)}
-              className="group flex w-full cursor-pointer items-center gap-2.5 border-b border-[var(--line-soft)] px-3 py-1.5 text-left last:border-0 hover:bg-[var(--panel-2)]">
-              <span className="w-4" />
-              <FolderOpen size={15} className="shrink-0 text-[var(--muted)]" />
-              <span className="min-w-0 flex-1 truncate text-[13px]">{d.name}</span>
-              <ChevronRight size={14} className="shrink-0 text-[var(--muted)] opacity-0 group-hover:opacity-100" />
-            </button>
-          ))}
-          {files.map((f) => (
-            <div key={f.path}
-              className={clsx(
-                'group flex items-center gap-2.5 border-b border-[var(--line-soft)] px-3 py-1.5 last:border-0',
-                'transition-colors hover:bg-[var(--panel-2)]',
-                checked.has(f.path) && 'bg-[var(--accent-soft)]')}>
-              <input type="checkbox" className="cursor-pointer accent-[var(--accent)]"
-                checked={checked.has(f.path)}
-                onChange={(e) => {
-                  const next = new Set(checked)
-                  if (e.target.checked) next.add(f.path)
-                  else next.delete(f.path)
-                  setChecked(next)
-                }} />
-              <FileText size={15} className="shrink-0 text-[var(--muted)]" />
-              <span className="min-w-0 flex-1 truncate text-[13px]" title={f.name}>
-                {f.name}
-              </span>
-              {/* What the case already knows about this file. */}
-              {f.flagged > 0 && f.worst != null && (
-                <Tooltip hint={tr('files.flagged.hint')}>
-                  <button
-                    className="shrink-0 cursor-pointer"
-                    onClick={() => {
-                      t.clearCollected()
-                      setSelected({
-                        artifact: f.path, artifact_kind: 'file',
-                        worst: f.worst!, triage: f.triage ?? 'new',
-                        triage_note: '',
-                      })
-                    }}>
-                    <SeverityBadge severity={f.worst} />
-                  </button>
-                </Tooltip>
-              )}
-              {f.triage && f.triage !== 'new' && (
-                <TriageBadge state={f.triage} label={tr(`triage.${f.triage}`)} />
-              )}
-              {f.in_box && (
-                <Tag tone="accent" explain={tr('files.inBox')}>IOC</Tag>
-              )}
-              <span className="w-20 shrink-0 text-right tabular text-[11px] text-[var(--muted)]">
-                {formatBytes(f.size)}
-              </span>
-              <Tooltip hint={tr('findings.viewFile.hint')}>
-                <button
-                  aria-label={tr('findings.viewFile.hint')}
-                  className="shrink-0 cursor-pointer rounded p-1 text-[var(--muted)] opacity-0 transition-opacity hover:text-[var(--accent)] group-hover:opacity-100"
-                  onClick={() => setViewing({ path: f.path, line: null })}>
-                  <FileSearch size={15} />
-                </button>
-              </Tooltip>
-            </div>
-          ))}
-          {!dirs.length && !files.length && (
-            <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
-              {filter ? tr('files.noMatch') : tr('files.emptyDir')}
-            </div>
-          )}
-          {data?.truncated && (
-            <div className="border-t border-[var(--line)] px-4 py-2 text-[12px] text-[var(--sev-low)]">
-              {tr('files.truncated')}
-            </div>
-          )}
-        </Card>
-      )}
-
-      <FileViewer slug={slug} path={viewing?.path ?? null}
-        focusLine={viewing?.line} layer={2} onClose={() => setViewing(null)} />
-      <ArtifactWindow
-        slug={slug}
-        artifact={selected}
-        roots={roots}
-        collected={t.collected}
-        onView={(p, line) => setViewing({ path: p, line })}
-        onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
-        onClose={() => { setSelected(null); t.clearCollected() }}
-        onTriage={(state, n) => {
-          if (selected) t.decide([selected.artifact], state, n)
-        }}
-      />
-      <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
-        onClose={() => setTraceIps(null)} />
-      <TriageFollowUp t={t} roots={roots} />
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2.5">
+      {!atRoot && <Button variant="ghost" onClick={() => setPath('')}>
+        <Home size={14} /> {tr('files.roots')}
+      </Button>}
+      {browse.data?.parent != null && <Button variant="ghost" onClick={() => setPath(browse.data!.parent!)}>
+        <ArrowLeft size={14} /> {tr('evidence.parentDir')}
+      </Button>}
+      {!atRoot && <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]"
+        title={browse.data?.path}>{browse.data?.path}</span>}
+      {!atRoot && <div className="ml-auto min-w-64">
+        <SearchInput value={filter} onChange={setFilter} placeholder={tr('files.filter')} />
+      </div>}
     </div>
-  )
+
+    {browse.isError && <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)]">
+      {String((browse.error as Error)?.message ?? browse.error)}
+    </div>}
+
+    {atRoot && <>
+      <div className="grid gap-3 md:grid-cols-2">
+        {fileRoots.map((root) => <Card key={root.path}
+          className="px-4 py-3 transition-colors hover:border-[var(--accent)]/60">
+          <button type="button" className="flex w-full cursor-pointer items-center gap-3 text-left"
+            onClick={() => setPath(root.path)}>
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)]">
+              <HardDrive size={16} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold">
+                {root.label?.trim() || tr(`evidence.${root.kind}`) || root.kind}
+              </span>
+              <span className="mono block truncate text-[11px] text-[var(--muted)]" title={root.path}>
+                {root.path}
+              </span>
+            </span>
+            <ChevronRight size={16} className="text-[var(--muted)]" />
+          </button>
+        </Card>)}
+        {browse.data && !fileRoots.length && <div className="md:col-span-2">
+          <EmptyState icon={<FolderTree size={36} />} title={tr('files.empty.title')}
+            sub={tr('files.empty.sub')} />
+        </div>}
+      </div>
+      {(caseQuery.data?.evidence_items?.length ?? 0) > 0 && <WebrootDiff
+        slug={slug} evidence={caseQuery.data!.evidence_items}
+        onView={(file) => setViewing(file)} />}
+    </>}
+
+    {!atRoot && <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(360px,0.78fr)_minmax(520px,1.22fr)]">
+      <Card className="min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--panel-2)] px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+            {tr('files.queue.title')}
+          </span>
+          <span className="tabular text-[10px] text-[var(--muted)]">
+            {tr('files.count', { dirs: formatCount(dirs.length), files: formatCount(files.length) })}
+          </span>
+        </div>
+        <div className="max-h-[calc(100vh-245px)] overflow-y-auto">
+          {dirs.map((dir) => <button key={dir.path} type="button" onClick={() => setPath(dir.path)}
+            className="group flex w-full cursor-pointer items-center gap-2.5 border-b border-[var(--line-soft)] px-3 py-2.5 text-left hover:bg-[var(--panel-2)]">
+            <FolderOpen size={15} className="shrink-0 text-[var(--muted)]" />
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{dir.name}</span>
+            <ChevronRight size={14} className="text-[var(--muted)] opacity-0 group-hover:opacity-100" />
+          </button>)}
+          {files.map((file) => <FileRow key={file.path} file={file}
+            active={selectedPath === file.path} onClick={() => chooseFile(file)} tr={tr} />)}
+          {!dirs.length && !files.length && <div className="px-4 py-8 text-center text-[13px] text-[var(--muted)]">
+            {filter ? tr('files.noMatch') : tr('files.emptyDir')}
+          </div>}
+        </div>
+        {browse.data?.truncated && <div className="border-t border-[var(--line)] px-4 py-2 text-[11px] text-[var(--sev-low)]">
+          {tr('files.truncated')}
+        </div>}
+      </Card>
+
+      <FileReviewPanel key={selected?.path ?? 'no-file'} slug={slug} file={selected}
+        position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={files.length}
+        canPrevious={selectedIndex > 0} canNext={selectedIndex >= 0 && selectedIndex < files.length - 1}
+        onPrevious={() => move(-1)} onNext={() => move(1)}
+        onResult={triage.recordResult}
+        onView={() => selected && setViewing(selected.path)}
+        onOpenArtifact={() => selected && selected.worst != null && setArtifact({
+          artifact: selected.path, artifact_kind: 'file', worst: selected.worst,
+          triage: selected.triage ?? 'new', triage_note: selected.review?.note ?? '',
+        })} />
+    </div>}
+
+    <FileViewer slug={slug} path={viewing} layer={2} onClose={() => setViewing(null)} />
+    <ArtifactWindow slug={slug} artifact={artifact} roots={roots}
+      collected={triage.collected} onView={(file) => setViewing(file)}
+      onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
+      onClose={() => { setArtifact(null); triage.clearCollected() }}
+      onTriage={(state, note) => artifact && triage.decide([artifact.artifact], state, note)} />
+    <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
+      onClose={() => setTraceIps(null)} />
+    <TriageFollowUp t={triage} roots={roots} />
+  </div>
+}
+
+type Tr = ReturnType<typeof useT>
+
+function Metric({ value, label, danger = false }: { value: number; label: string; danger?: boolean }) {
+  return <div className="text-right">
+    <div className={clsx('text-base font-bold tabular', danger ? 'text-[var(--danger-text)]' : 'text-[var(--fg)]')}>
+      {formatCount(value)}
+    </div>
+    <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">{label}</div>
+  </div>
+}
+
+function forensicTime(value: string | null) {
+  return value ? `${absoluteTime(value)} UTC` : '—'
+}
+
+function reviewLabel(file: BrowseFile, tr: Tr) {
+  if (!file.review) return tr('files.review.unreviewed')
+  if (file.review.state === 'confirmed') return tr('files.review.webshell')
+  if (file.review.state === 'dismissed') return tr('files.review.notWebshell')
+  return tr('files.review.reviewed')
+}
+
+function FileRow({ file, active, onClick, tr }: {
+  file: BrowseFile; active: boolean; onClick: () => void; tr: Tr
+}) {
+  const webshell = file.review?.state === 'confirmed'
+  return <button type="button" onClick={onClick}
+    aria-label={tr('files.queue.open', { name: file.name, state: reviewLabel(file, tr) })}
+    aria-pressed={active}
+    className={clsx(
+      'grid w-full cursor-pointer grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--line-soft)] px-3 py-2.5 text-left transition-colors last:border-0',
+      active ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--panel-2)]',
+    )}>
+    <FileText size={15} className={webshell ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]'} />
+    <span className="min-w-0">
+      <span className="flex items-center gap-2">
+        <span className="mono min-w-0 flex-1 truncate text-[11.5px] font-semibold">{file.name}</span>
+        {file.flagged > 0 && file.worst != null && <SeverityBadge severity={file.worst} plain />}
+      </span>
+      <span className="mt-1 flex items-center gap-2 text-[9.5px] text-[var(--muted)]">
+        <span>{formatBytes(file.size)}</span><span>·</span>
+        <span>{tr('files.time.modified.short')} {forensicTime(file.modified_at)}</span>
+      </span>
+    </span>
+    <Tag tone={webshell ? 'danger' : file.review ? 'accent' : undefined}>
+      {reviewLabel(file, tr)}
+    </Tag>
+  </button>
+}
+
+function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
+  onPrevious, onNext, onView, onOpenArtifact, onResult }: {
+  slug: string
+  file: BrowseFile | null
+  position: number
+  total: number
+  canPrevious: boolean
+  canNext: boolean
+  onPrevious: () => void
+  onNext: () => void
+  onView: () => void
+  onOpenArtifact: () => void
+  onResult: (result: FileReviewResult) => void
+}) {
+  const tr = useT()
+  const [note, setNote] = useState('')
+  const preview = useQuery({
+    queryKey: ['file-review-preview', slug, file?.path],
+    queryFn: () => api<FileContent>(
+      `/api/cases/${slug}/file?path=${encodeURIComponent(file!.path)}&mode=raw&offset=0`),
+    enabled: !!file,
+  })
+  useEffect(() => setNote(file?.review?.note ?? ''), [file?.path, file?.review?.note])
+
+  const review = useMutation({
+    mutationFn: (state: 'reviewed' | 'confirmed' | 'dismissed') =>
+      post<FileReviewResult>(`/api/cases/${slug}/files/review`, {
+        path: file!.path, state, note,
+      }),
+    onSuccess: onResult,
+  })
+
+  if (!file) return <Card className="flex min-h-[560px] items-center justify-center p-8">
+    <EmptyState icon={<FileCode2 size={36} />} title={tr('files.review.select')}
+      sub={tr('files.review.select.sub')} />
+  </Card>
+
+  const facts = preview.data ?? file
+  const finalNeedsNote = !note.trim()
+  return <Card className="min-w-0 overflow-hidden">
+    <header className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] px-4 py-3">
+      <span className={clsx('flex size-9 items-center justify-center rounded-lg',
+        file.review?.state === 'confirmed'
+          ? 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
+          : 'bg-[var(--panel-2)] text-[var(--accent-text)]')}>
+        {file.review?.state === 'confirmed' ? <ShieldAlert size={17} /> : <FileCode2 size={17} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="mono block truncate text-[13px] font-bold">{file.name}</span>
+        <span className="mono block truncate text-[9.5px] text-[var(--muted)]" title={file.path}>{file.path}</span>
+      </span>
+      <Tag tone={file.review?.state === 'confirmed' ? 'danger' : file.review ? 'accent' : undefined}>
+        {reviewLabel(file, tr)}
+      </Tag>
+      <span className="tabular text-[10px] text-[var(--muted)]">{position} / {formatCount(total)}</span>
+      <div className="flex gap-1">
+        <Button variant="ghost" disabled={!canPrevious} onClick={onPrevious} title={tr('files.review.previous')}>
+          <ArrowLeft size={14} />
+        </Button>
+        <Button variant="ghost" disabled={!canNext} onClick={onNext} title={tr('files.review.next')}>
+          <ArrowRight size={14} />
+        </Button>
+      </div>
+    </header>
+
+    <div className="space-y-4 p-4">
+      <section>
+        <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+          <Clock3 size={13} /> {tr('files.metadata.title')}
+        </div>
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-5">
+          <Fact label={tr('files.metadata.size')} value={formatBytes(facts.size)} />
+          <Fact label={tr('files.time.created')} value={forensicTime(facts.created_at)} />
+          <Fact label={tr('files.time.modified')} value={forensicTime(facts.modified_at)} />
+          <Fact label={tr('files.time.accessed')} value={forensicTime(facts.accessed_at)} />
+          <Fact label={tr('files.time.changed')} value={forensicTime(facts.changed_at)} />
+        </div>
+        <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.metadata.caution')}</p>
+      </section>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+            {tr('files.preview.title')}
+          </span>
+          <Button variant="ghost" onClick={onView}><FileSearch size={13} /> {tr('files.preview.open')}</Button>
+        </div>
+        <div className="min-h-40 overflow-hidden rounded-lg bg-[var(--code-bg)]">
+          {preview.isPending && <div className="p-6 text-center text-[11px] text-[#8993a4]">{tr('common.loading')}</div>}
+          {preview.isError && <div className="p-4 text-[11px] text-[#ff8b8b]">{String(preview.error)}</div>}
+          {preview.data?.binary && <div className="flex min-h-40 items-center justify-center p-5 text-center text-[11px] text-[#8993a4]">
+            {tr('files.preview.binary')}
+          </div>}
+          {preview.data?.lines && !preview.data.binary && <pre className="mono max-h-64 overflow-auto py-2 text-[10.5px] leading-relaxed text-[#e6edf3]">
+            {preview.data.lines.slice(0, 80).map((line, index) => <div key={index} className="flex px-3">
+              <span className="w-10 shrink-0 select-none pr-3 text-right text-[#4b5566]">{index + 1}</span>
+              <span className="whitespace-pre-wrap break-all">{line || ' '}</span>
+            </div>)}
+          </pre>}
+        </div>
+      </section>
+
+      {file.flagged > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2.5">
+        <Bug size={14} className="text-[var(--sev-medium)]" />
+        <span className="min-w-0 flex-1 text-[11px] text-[var(--muted)]">
+          {tr('files.detected', { n: formatCount(file.flagged) })}
+        </span>
+        {file.worst != null && <SeverityBadge severity={file.worst} />}
+        {file.triage && <TriageBadge state={file.triage} label={tr(`triage.${file.triage}`)} />}
+        <Button variant="ghost" onClick={onOpenArtifact}>{tr('files.detected.open')}</Button>
+      </div>}
+
+      <section className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] p-3">
+        <div className="mb-2">
+          <h2 className="text-[12.5px] font-bold">{tr('files.decision.title')}</h2>
+          <p className="text-[10.5px] text-[var(--muted)]">{tr('files.decision.sub')}</p>
+        </div>
+        <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={3}
+          placeholder={tr('files.decision.note')}
+          className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70" />
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button disabled={review.isPending} onClick={() => review.mutate('reviewed')}>
+            <Eye size={14} /> {tr('files.decision.reviewed')}
+          </Button>
+          <Button variant="danger" disabled={review.isPending || finalNeedsNote}
+            onClick={() => review.mutate('dismissed')}>
+            <X size={14} /> {tr('files.decision.notWebshell')}
+          </Button>
+          <Button variant="primary" disabled={review.isPending || finalNeedsNote}
+            onClick={() => review.mutate('confirmed')}>
+            <ShieldAlert size={14} /> {tr('files.decision.webshell')}
+          </Button>
+        </div>
+        {finalNeedsNote && <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.decision.reasonRequired')}</p>}
+        {review.isError && <p className="mt-2 text-[10.5px] text-[var(--danger-text)]">{String(review.error)}</p>}
+        {review.data && <div role="status" className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--ok)]/35 bg-[rgba(12,163,12,.08)] px-3 py-2 text-[10.5px] text-[var(--ok)]">
+          <CheckCircle2 size={14} />
+          {tr('files.decision.saved', { n: formatCount(review.data.collected.length) })}
+        </div>}
+      </section>
+    </div>
+  </Card>
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg bg-[var(--panel-2)] px-2.5 py-2">
+    <div className="text-[8.5px] font-bold uppercase tracking-wider text-[var(--muted)]">{label}</div>
+    <div className="mono mt-1 break-all text-[10px]">{value}</div>
+  </div>
 }

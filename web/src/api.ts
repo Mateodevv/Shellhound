@@ -146,13 +146,13 @@ export interface CaseActivity {
     hits: number; clients: number }[]
 }
 
-export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog'
+export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog' | 'analyst'
 
 export interface Finding {
   id: number
   fingerprint: string
   source: FindingSource
-  severity: 0 | 1 | 2
+  severity: 0 | 1 | 2 | 3
   rule: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
   artifact: string
@@ -856,6 +856,10 @@ export interface FileContent {
   mode: 'raw' | 'hex'
   window: number
   binary: boolean
+  created_at: string | null
+  modified_at: string | null
+  accessed_at: string | null
+  changed_at: string | null
   from_line?: number | null
   lines?: string[]
   rows?: { offset: number; hex: string; ascii: string }[]
@@ -880,10 +884,27 @@ export interface BrowseFile {
    *  form the IOC box carries it in. */
   relative: string
   size: number
+  created_at: string | null
+  modified_at: string | null
+  accessed_at: string | null
+  changed_at: string | null
   in_box: boolean
   flagged: number
   worst: number | null
   triage: TriageState | null
+  /** Present only after this file was explicitly handled in the manual
+   *  review workflow; scanner-backed triage remains distinguishable. */
+  review: FileReview | null
+}
+
+export interface FileReview {
+  state: Exclude<TriageState, 'new'>
+  note: string
+  at: string
+}
+
+export interface FileReviewResult extends TriageResult {
+  review: FileReview
 }
 
 export interface BrowseResponse {
