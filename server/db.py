@@ -203,6 +203,10 @@ CREATE TABLE IF NOT EXISTS db_dumps (
     statements INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0,
     cms TEXT NOT NULL DEFAULT '',
+    -- Bounded, derived CMS semantics from this snapshot: extension state,
+    -- access metadata, persistence and content observations.  It contains
+    -- no password hash, session verifier or complete content value.
+    intelligence TEXT NOT NULL DEFAULT '{}',
     -- export = a real database export (mysqldump/phpMyAdmin).
     -- schema = a SQL file SHIPPED with an extension
     --          (install/uninstall/updates). It contains no data and no
@@ -366,7 +370,10 @@ _ADDED_COLUMNS = {
         ("blocked", "INTEGER NOT NULL DEFAULT 0"),
         ("sessions", "INTEGER NOT NULL DEFAULT 0"),
     ],
-    "db_dumps": [("kind", "TEXT NOT NULL DEFAULT 'export'")],
+    "db_dumps": [
+        ("kind", "TEXT NOT NULL DEFAULT 'export'"),
+        ("intelligence", "TEXT NOT NULL DEFAULT '{}'"),
+    ],
     "hunt_runs": [
         ("ok_clients", "INTEGER NOT NULL DEFAULT 0"),
         ("uris", "INTEGER NOT NULL DEFAULT 0"),
@@ -394,7 +401,9 @@ _ADDED_COLUMNS = {
 #    triage_events records the analyst's decision history.
 # 8: saved access-log searches and clipped requests are analyst-owned case
 #    records, separate from the rebuildable bulk index.
-CASE_SCHEMA_VERSION = 8
+# 9: SQL dumps gain a bounded CMS-intelligence snapshot for WordPress and
+#     Joomla.  Sensitive raw credentials and full content stay in evidence.
+CASE_SCHEMA_VERSION = 9
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a

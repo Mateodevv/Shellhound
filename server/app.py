@@ -3523,6 +3523,286 @@ def create_app(config: Config) -> FastAPI:
     _SIGNAL_WEIGHT = {"admin": 4, "young": 3, "never": 2, "session": 2,
                       "weak_hash": 1, "blocked": 0}
 
+    def _database_intelligence(dumps, accounts, installs, items, file_artifacts):
+        """Join dump semantics with the independently measured webroot.
+
+        A row in ``wp_options`` or ``#__extensions`` says what the CMS was
+        configured to load.  The CMS inventory says what was actually present
+        in the supplied file evidence.  Keeping both measurements separate and
+        joining them here makes disagreements visible without turning a
+        missing backup directory into a finding.
+        """
+        categories = ("configuration", "extensions", "access",
+                      "persistence", "content")
+        out = {name: [] for name in categories}
+        cms_seen = set()
+        truncated = {name: False for name in categories}
+
+        account_by_user = {}
+        for account in accounts:
+            key = (account["dump_id"], account["cms"], str(account["user_id"] or ""))
+            account_by_user[key] = account
+
+        for dump in dumps:
+            raw = dump.pop("intelligence", "{}")
+            try:
+                snapshot = json.loads(raw or "{}") if isinstance(raw, str) else (raw or {})
+            except (TypeError, ValueError, json.JSONDecodeError):
+                snapshot = {}
+            if not isinstance(snapshot, dict):
+                snapshot = {}
+            cms_seen.update(snapshot.get("cms") or [])
+            for category in categories:
+                rows = snapshot.get(category) or []
+                if not isinstance(rows, list):
+                    continue
+                for value in rows:
+                    if not isinstance(value, dict):
+                        continue
+                    row = dict(value)
+                    row["dump_id"] = dump["id"]
+                    row["dump_name"] = os.path.basename(dump["path"])
+                    if category == "access" and row.get("user_id"):
+                        account = account_by_user.get((
+                            dump["id"], row.get("cms", ""), str(row["user_id"])))
+                        if account:
+                            row["account_login"] = account["login"]
+                            row["account_email"] = account["email"]
+                            row["account_admin"] = bool(account["admin"])
+                            row["account_signals"] = [
+                                signal["id"] for signal in account.get("signals", [])]
+                    out[category].append(row)
+                truncated[category] = bool(
+                    truncated[category] or (snapshot.get("truncated") or {}).get(category))
+
+        # WordPress stores the parent template and active stylesheet as two
+        # options.  For a non-child theme both values are identical; showing
+        # that as two active themes would inflate the summary and create a
+        # fake discrepancy.  A child theme remains two distinct rows because
+        # the slugs differ.
+        merged_extensions = []
+        wp_themes = {}
+        for extension in out["extensions"]:
+            if (extension.get("cms") == "WordPress" and
+                    extension.get("type") == "theme"):
+                identity = (extension.get("dump_id"), extension.get("key"))
+                existing = wp_themes.get(identity)
+                if existing:
+                    if extension.get("scope") == "active":
+                        existing.update(extension)
+                    continue
+                wp_themes[identity] = extension
+            merged_extensions.append(extension)
+        out["extensions"] = merged_extensions
+
+        install_by_id = {row["id"]: row for row in installs}
+        installs_by_cms = {}
+        for install in installs:
+            installs_by_cms.setdefault(install["cms"], []).append(install)
+
+        def norm_slug(value):
+            slug = str(value or "").strip().lower().replace("\\", "/")
+            slug = slug.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            for prefix in ("com_", "mod_", "plg_", "tpl_"):
+                if slug.startswith(prefix):
+                    slug = slug[len(prefix):]
+            return slug.replace("-", "_")
+
+        def item_matches(extension, item):
+            install = install_by_id.get(item["install_id"])
+            if not install or install["cms"] != extension.get("cms"):
+                return False
+            ext_type = str(extension.get("type") or "").lower()
+            item_type = str(item["type"] or "").lower()
+            if extension.get("cms") == "WordPress":
+                if ext_type == "plugin" and "plugin" not in item_type:
+                    return False
+                if ext_type == "theme" and "theme" not in item_type:
+                    return False
+            elif ext_type and ext_type not in item_type and item_type not in ext_type:
+                # Joomla labels carry detail such as ``Plugin (system)`` and
+                # ``Component (Site)``; comparing their base class prevents a
+                # module and component with the same suffix from colliding.
+                base = item_type.split(" ", 1)[0].split("(", 1)[0]
+                if ext_type != base:
+                    return False
+            candidates = {
+                norm_slug(extension.get("name")),
+                norm_slug(extension.get("element")),
+                norm_slug(str(extension.get("key") or "").split(":")[-1]),
+            }
+            candidates.discard("")
+            return norm_slug(item["slug"]) in candidates
+
+        artifact_rows = []
+        for artifact in file_artifacts:
+            artifact_rows.append((
+                str(artifact["artifact"] or "").replace("\\", "/").lower(),
+                artifact))
+
+        def item_findings(item):
+            kind, scope = _ext_scope(item)
+            hits = []
+            for path, artifact in artifact_rows:
+                belongs = (path == scope) if kind == "file" else (
+                    path == scope or path.startswith(scope + "/"))
+                if belongs:
+                    hits.append({"artifact": artifact["artifact"],
+                                 "worst": artifact["worst"],
+                                 "triage": artifact["triage"],
+                                 "findings": artifact["findings"]})
+            return hits[:8]
+
+        matched_item_ids = set()
+        for extension in out["extensions"]:
+            matches = [item for item in items if item_matches(extension, item)]
+            matches.sort(key=lambda item: (
+                0 if norm_slug(item["slug"]) == norm_slug(
+                    extension.get("element") or extension.get("name")) else 1,
+                item["id"]))
+            match = matches[0] if matches else None
+            signals = []
+            if match:
+                matched_item_ids.add(match["id"])
+                fs_version = str(match["version"] or "")
+                db_version = str(extension.get("version") or "")
+                findings = item_findings(match)
+                extension["filesystem"] = {
+                    "status": "present", "path": match["path"],
+                    "version": fs_version, "type": match["type"],
+                    "findings": findings,
+                }
+                if (db_version and fs_version and
+                        "unknown" not in db_version.lower() and
+                        "unknown" not in fs_version.lower() and
+                        db_version != fs_version):
+                    signals.append("version_mismatch")
+                if findings:
+                    signals.append("flagged_files")
+            else:
+                cms_installs = installs_by_cms.get(extension.get("cms"), [])
+                extension["filesystem"] = {
+                    "status": "missing" if len(cms_installs) == 1 else "unknown",
+                    "path": "", "version": "", "type": "", "findings": [],
+                }
+                if extension.get("enabled") and len(cms_installs) == 1:
+                    signals.append("active_missing_files")
+            extension["signals"] = signals
+            extension["review"] = bool(signals)
+
+        # Also show what exists only in the file evidence.  WordPress
+        # must-use plugins and drop-ins are executable even though no DB row
+        # can exist for them; ordinary plugins/themes are explicitly shown as
+        # inactive.  Joomla filesystem-only entries remain "unknown" because
+        # one extension can legitimately have several client-side parts.
+        for item in items:
+            install = install_by_id.get(item["install_id"])
+            if not install or item["id"] in matched_item_ids:
+                continue
+            cms = install["cms"]
+            if cms not in cms_seen:
+                continue
+            low_type = str(item["type"] or "").lower()
+            always_on = cms == "WordPress" and (
+                low_type == "must-use plugin" or low_type == "drop-in")
+            findings = item_findings(item)
+            out["extensions"].append({
+                "cms": cms, "key": f"filesystem:{item['id']}",
+                "name": item["name"], "element": item["slug"],
+                "type": item["type"], "scope": "filesystem",
+                "enabled": True if always_on else False if cms == "WordPress" else None,
+                "version": "", "folder": "", "source_table": "",
+                "source_row": 0, "dump_id": None, "dump_name": "",
+                "filesystem_only": True,
+                "filesystem": {"status": "present", "path": item["path"],
+                               "version": item["version"], "type": item["type"],
+                               "findings": findings},
+                "signals": (["flagged_files"] if findings else []),
+                "review": bool(findings),
+            })
+
+        for row in out["configuration"]:
+            signals = []
+            if row.get("key") == "users_can_register" and str(row.get("value")) == "1":
+                signals.append("open_registration")
+            if row.get("key") == "default_role" and str(row.get("value")).lower() in (
+                    "administrator", "editor"):
+                signals.append("privileged_default_role")
+            row["signals"] = signals
+            row["review"] = bool(signals)
+
+        privileged_groups = ("administrator", "super user", "super users")
+        for row in out["access"]:
+            signals = []
+            label = str(row.get("label") or "").lower()
+            roles = [str(role).lower() for role in row.get("roles") or []]
+            if row.get("account_admin") or any(
+                    role in privileged_groups for role in [label, *roles]):
+                signals.append("privileged_access")
+            if row.get("kind") == "application_password":
+                signals.append("application_password")
+            elif row.get("kind") == "session":
+                signals.append("active_session")
+            recent_privileged = (row.get("account_admin") and
+                                 "young" in row.get("account_signals", []))
+            if recent_privileged:
+                signals.append("recent_privileged_account")
+            row["signals"] = signals
+            # Ordinary administrator roles and existing sessions belong in
+            # the access lens, not automatically in the top review queue.
+            # Otherwise a healthy site with many editors would bury actual
+            # contradictions.  New privileged accounts and application
+            # passwords remain explicit review work.
+            row["review"] = bool(
+                recent_privileged or row.get("kind") == "application_password")
+
+        for row in out["persistence"]:
+            signals = ["external_target"] if row.get("domains") else []
+            row["signals"] = signals
+            row["review"] = bool(signals)
+
+        for row in out["content"]:
+            row["signals"] = list(dict.fromkeys(row.get("signals") or []))
+            row["review"] = bool(row["signals"])
+
+        review_queue = []
+        access_review_seen = set()
+        for category in categories:
+            for row in out[category]:
+                if row.get("review"):
+                    if category == "access":
+                        # One recent privileged account can have a role row,
+                        # several sessions and an application-password row.
+                        # It is one account review, not four queue items.  An
+                        # application password remains its own review because
+                        # the analyst may revoke it independently.
+                        if row.get("kind") == "application_password":
+                            identity = (row.get("dump_id"), row.get("user_id"),
+                                        "application_password", row.get("key"))
+                        else:
+                            identity = (row.get("dump_id"), row.get("user_id"),
+                                        "recent_privileged_account")
+                        if identity in access_review_seen:
+                            continue
+                        access_review_seen.add(identity)
+                    review_queue.append({"category": category, **row})
+        review_queue.sort(key=lambda row: (
+            0 if "active_missing_files" in row.get("signals", []) else
+            1 if "flagged_files" in row.get("signals", []) else
+            2 if row.get("category") == "content" else 3,
+            str(row.get("name") or row.get("label") or row.get("title") or "")))
+
+        summary = {
+            "needs_review": len(review_queue),
+            "active_extensions": sum(
+                1 for row in out["extensions"] if row.get("enabled") is True),
+            "access_records": len(out["access"]),
+            "persistence_records": len(out["persistence"]),
+            "content_signals": sum(1 for row in out["content"] if row.get("signals")),
+        }
+        return {**out, "cms": sorted(cms_seen), "truncated": truncated,
+                "review_queue": review_queue, "summary": summary}
+
     def _database_data(case_dir, lang="en"):
         conn = db.connect(case_dir)
         try:
@@ -3545,6 +3825,11 @@ def create_app(config: Config) -> FastAPI:
                               f"WITH art AS ({ART_SQL}) "
                               f"SELECT artifact, worst, triage, findings FROM art "
                               f"WHERE artifact_kind = 'table'")
+            installs = db.rows(conn, "SELECT * FROM cms_installs ORDER BY root")
+            cms_items = db.rows(conn, "SELECT * FROM cms_items ORDER BY type, name")
+            file_artifacts = db.rows(
+                conn, f"WITH art AS ({ART_SQL}) SELECT artifact, worst, triage, findings "
+                      f"FROM art WHERE artifact_kind = 'file'")
         finally:
             conn.close()
 
@@ -3587,11 +3872,15 @@ def create_app(config: Config) -> FastAPI:
                 by_dump[t["dump_id"]] = by_dump.get(t["dump_id"], 0) + t["flagged"]
         for d in schema_files:
             d["flagged"] = by_dump.get(d["id"], 0)
+            d.pop("intelligence", None)
+        intelligence = _database_intelligence(
+            dumps, accounts, installs, cms_items, file_artifacts)
         return {"dumps": dumps, "schema_files": schema_files,
                 "tables": [t for t in tables if t["dump_kind"] != "schema"],
                 "schema_tables": sum(1 for t in tables if t["dump_kind"] == "schema"),
                 "accounts": accounts, "findings": findings,
-                "reference": reference.isoformat(sep=" ") if reference else ""}
+                "reference": reference.isoformat(sep=" ") if reference else "",
+                "intelligence": intelligence}
 
     @app.get("/api/cases/{slug}/database", dependencies=[auth])
     def database_view(slug: str, lang: str = lang_dep):

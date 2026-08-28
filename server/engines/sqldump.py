@@ -10,7 +10,7 @@ import os
 import re
 from collections import namedtuple
 
-from server import db, ruleswitch
+from server import cmsintelligence, db, ruleswitch
 from server.engines.fsutil import iter_target_files, open_text_auto
 
 _STREAM_CHUNK = 1 << 20
@@ -764,10 +764,13 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                              (old["id"],))
             conn.execute("DELETE FROM db_dumps WHERE path = ?", (abs_path,))
             cur = conn.execute(
-                "INSERT INTO db_dumps (path, meta, statements, size, cms, kind) "
-                "VALUES (?,?,?,?,?,?)",
+                "INSERT INTO db_dumps (path, meta, statements, size, cms, "
+                "intelligence, kind) VALUES (?,?,?,?,?,?,?)",
                 (abs_path, _json.dumps(result["meta"]), result["statements"],
-                 size, cms_label, result["kind"]))
+                 size, cms_label,
+                 _json.dumps(result["intelligence"], ensure_ascii=False,
+                             separators=(",", ":")),
+                 result["kind"]))
             dump_id = cur.lastrowid
             for name, t in sorted(result["tables"].items()):
                 conn.execute(
@@ -832,6 +835,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     row_offsets = {}
     inv = {}
     findings = []
+    intelligence = cmsintelligence.Collector()
     statements = 0
     name = os.path.basename(path)
     read_bytes = 0
@@ -887,6 +891,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
             base = row_offsets.get(table, 0)
             row_offsets[table] = base + len(rows)
             suf = _suffix(table)
+            intelligence.collect(table, entry["columns"], rows, row_offset=base)
             for ridx, row in enumerate(rows):
                 for col in row:
                     if not isinstance(col, str) or len(col) < 4:
@@ -947,6 +952,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
 
     return {"meta": meta, "tables": inv, "statements": statements,
             "findings": findings, "accounts": accounts, "cms": cms,
+            "intelligence": intelligence.finish(cms),
             "kind": classify_dump(path, meta, placeholder_seen, data_rows)}
 
 
