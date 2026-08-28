@@ -22,6 +22,9 @@ export interface TriageController {
   undo: (links: TriageLink[]) => Promise<void>
   collected: TriageResult['collected']
   clearCollected: () => void
+  /** Feed a decision made by a specialised workflow through the same
+   * receipt, stale-IOC and refresh handling as an ordinary triage call. */
+  recordResult: (result: TriageResult) => void
   /** For TriageFollowUp. */
   notice: { linked: TriageLink[]; suggested: TriageLink[] } | null
   dismissNotice: () => void
@@ -57,6 +60,18 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     }
   }
 
+  const recordResult = (result: TriageResult) => {
+    setNothingToDecide(result.updated === 0)
+    setCollected(result.collected)
+    setRetained(result.retained_iocs?.length ? result.retained_iocs : null)
+    setNotice(
+      (result.linked?.length || result.suggested?.length)
+        ? { linked: result.linked ?? [], suggested: result.suggested ?? [] }
+        : null)
+    refresh()
+    onDecided?.()
+  }
+
   const mutation = useMutation({
     mutationFn: (v: {
       artifacts: string[]; state: string; note?: string; propagate?: boolean
@@ -67,9 +82,6 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
       // an actor picked out of the search, say, which exists in the log
       // index but not in the work list. The interface reported that as
       // success and the analyst walked away believing it was filed.
-      setNothingToDecide(result.updated === 0)
-      setCollected(result.collected)
-      setRetained(result.retained_iocs?.length ? result.retained_iocs : null)
       // What was decided along and what is suggested are a MESSAGE, not a
       // question: the analyst has just decided and should learn what
       // followed from it without being torn out of their flow.
@@ -78,12 +90,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
       // reverts the artifacts THAT decision pulled along, which are not the
       // ones the analyst has just decided. An undo that takes back something
       // else is worse than no undo.
-      setNotice(
-        (result.linked?.length || result.suggested?.length)
-          ? { linked: result.linked ?? [], suggested: result.suggested ?? [] }
-          : null)
-      refresh()
-      onDecided?.()
+      recordResult(result)
     },
   })
 
@@ -113,6 +120,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     },
     collected,
     clearCollected: () => setCollected([]),
+    recordResult,
     notice,
     dismissNotice: () => setNotice(null),
     reviewing,

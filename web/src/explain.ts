@@ -134,6 +134,7 @@ const CATEGORY_RULES: [string | null, string, string][] = [
   ['logs', 'Scanner tool User-Agent', 'scanner'],
   ['logs', 'SQL injection', 'probes'],
   ['logs', 'Path traversal', 'probes'],
+  ['analyst', 'Manual file review', 'webshell'],
   ['yara', '', 'yara'],
   ['errorlog', '', 'errorlog'],
 ]

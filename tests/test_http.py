@@ -1377,6 +1377,117 @@ class PathGuardTests(unittest.TestCase):
         self.assertTrue(any("system" in line for line in body["lines"]))
 
 
+class FileReviewEndpointTests(unittest.TestCase):
+    """A manual file verdict is a case fact, not a scanner impersonation."""
+
+    def setUp(self):
+        self.slug = case_copy(f"file-review-{self._testMethodName[:34]}")
+        self.file = EVIDENCE.webroot / "wp-includes" / "functions.php"
+
+    def browse_file(self):
+        status, body = get_json(
+            f"/api/cases/{self.slug}/browse?path={q(str(self.file.parent))}")
+        self.assertEqual(200, status, body)
+        return next(row for row in body["files"]
+                    if row["path"] == str(self.file))
+
+    def review(self, state, note=""):
+        return post_json(f"/api/cases/{self.slug}/files/review", {
+            "path": str(self.file), "state": state, "note": note,
+        })
+
+    def test_browse_and_file_detail_expose_portable_utc_timestamps(self):
+        listed = self.browse_file()
+        status, detail = get_json(
+            f"/api/cases/{self.slug}/file?path={q(str(self.file))}")
+        self.assertEqual(200, status, detail)
+
+        keys = ("created_at", "modified_at", "accessed_at", "changed_at")
+        for answer in (listed, detail):
+            for key in keys:
+                self.assertIn(key, answer)
+                if answer[key] is not None:
+                    self.assertTrue(answer[key].endswith("Z"),
+                                    f"{key} is not explicit UTC: {answer[key]}")
+            self.assertIsNotNone(answer["modified_at"])
+            self.assertIsNotNone(answer["accessed_at"])
+            # Windows exposes creation time; POSIX exposes metadata-change
+            # time. The API never gives the same ctime two incompatible
+            # labels merely to fill every card.
+            self.assertTrue(answer["created_at"] is not None
+                            or answer["changed_at"] is not None)
+
+    def test_a_final_verdict_requires_a_reason_and_evidence_scope(self):
+        status, body = self.review("confirmed")
+        self.assertEqual(400, status, body)
+
+        outside = WORKSPACE / "not-registered-evidence.txt"
+        outside.write_text("synthetic", encoding="utf-8")
+        status, body = post_json(f"/api/cases/{self.slug}/files/review", {
+            "path": str(outside), "state": "confirmed", "note": "test",
+        })
+        self.assertEqual(403, status, body)
+
+    def test_manual_webshell_verdict_is_audited_filterable_and_collects_iocs(self):
+        note = "Manual review: unexpected executable in a core directory."
+        status, result = self.review("confirmed", note)
+        self.assertEqual(200, status, result)
+        self.assertEqual({"path", "hash"},
+                         {row["type"] for row in result["collected"]})
+
+        listed = self.browse_file()
+        self.assertEqual({"state": "confirmed", "note": note}, {
+            "state": listed["review"]["state"],
+            "note": listed["review"]["note"],
+        })
+        self.assertTrue(listed["review"]["at"])
+
+        status, findings = get_json(
+            f"/api/cases/{self.slug}/findings?source=analyst")
+        self.assertEqual(200, status, findings)
+        self.assertEqual([str(self.file)],
+                         [row["artifact"] for row in findings["artifacts"]])
+        self.assertEqual(1, findings["counts"]["source"]["analyst"])
+
+        conn = db.connect(workspace.resolve_case(WORKSPACE, self.slug))
+        try:
+            finding = db.one(
+                conn, "SELECT * FROM findings WHERE artifact = ? "
+                      "AND rule_id = 'analyst.file_review'", (str(self.file),))
+            self.assertEqual("analyst", finding["source"])
+            self.assertEqual("", finding["engine"])
+            self.assertEqual("confirmed", finding["triage"])
+            self.assertEqual(note, finding["triage_note"])
+            event = db.one(
+                conn, "SELECT * FROM triage_events WHERE artifact = ? "
+                      "ORDER BY id DESC LIMIT 1", (str(self.file),))
+            self.assertEqual(("new", "confirmed"),
+                             (event["from_state"], event["to_state"]))
+
+            path_ioc = db.one(
+                conn, "SELECT * FROM iocs WHERE type = 'path' AND value = ?",
+                ("wp-includes/functions.php",))
+            self.assertIsNotNone(path_ioc)
+            tags = set(json.loads(path_ioc["tags"]))
+            self.assertTrue({"finding", "confirmed", "webshell"} <= tags)
+            # It was generated from a reversible decision. The `analyst` tag
+            # is reserved for IOCs entered by hand and would make this one
+            # impossible to remove after a corrected verdict.
+            self.assertNotIn("analyst", tags)
+        finally:
+            conn.close()
+
+    def test_correcting_a_webshell_verdict_exposes_removable_generated_iocs(self):
+        self.review("confirmed", "Initial manual classification.")
+        status, result = self.review(
+            "dismissed", "Second review proved this is the vendor original.")
+        self.assertEqual(200, status, result)
+        self.assertTrue(result["retained_iocs"])
+        self.assertTrue(all(ioc["removable"]
+                            for ioc in result["retained_iocs"]))
+        self.assertEqual("dismissed", self.browse_file()["review"]["state"])
+
+
 class ActorWorkspaceEndpointTests(unittest.TestCase):
     def test_actor_dossier_carries_evidence_relations(self):
         status, body = get_json(
