@@ -755,6 +755,80 @@ export interface DbAccount {
   in_box: boolean
 }
 
+export interface DbIntelligenceItem {
+  category?: 'configuration' | 'extensions' | 'access' | 'persistence' | 'content'
+  cms: string
+  key: string
+  name?: string
+  element?: string
+  type?: string
+  kind?: string
+  scope?: string
+  enabled?: boolean | null
+  protected?: boolean
+  version?: string
+  value?: string
+  autoload?: string
+  label?: string
+  user_id?: string
+  account_login?: string
+  account_email?: string
+  account_admin?: boolean
+  account_signals?: string[]
+  roles?: string[]
+  created?: string
+  modified?: string
+  expires?: string
+  last_used?: string
+  last_run?: string
+  next_run?: string
+  last_ip?: string
+  user_agent?: string
+  client?: string
+  state?: string
+  task_type?: string
+  schedule?: string
+  interval?: number
+  priority?: number
+  title?: string
+  status?: string
+  author?: string
+  path?: string
+  domains?: string[]
+  source_table: string
+  source_row: number
+  dump_id: number | null
+  dump_name: string
+  filesystem_only?: boolean
+  filesystem?: {
+    status: 'present' | 'missing' | 'unknown'
+    path: string
+    version: string
+    type: string
+    findings: { artifact: string; worst: number; triage: TriageState; findings: number }[]
+  }
+  signals: string[]
+  review: boolean
+}
+
+export interface DatabaseIntelligence {
+  cms: string[]
+  configuration: DbIntelligenceItem[]
+  extensions: DbIntelligenceItem[]
+  access: DbIntelligenceItem[]
+  persistence: DbIntelligenceItem[]
+  content: DbIntelligenceItem[]
+  review_queue: DbIntelligenceItem[]
+  truncated: Record<string, boolean>
+  summary: {
+    needs_review: number
+    active_extensions: number
+    access_records: number
+    persistence_records: number
+    content_signals: number
+  }
+}
+
 export interface DashboardObservation extends ChainEvent {
   role: 'first' | 'first_success' | 'account' | 'first_alert' | 'last'
 }

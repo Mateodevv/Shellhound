@@ -133,6 +133,32 @@ def inventory_wordpress(root):
                 if header is None:
                     yield "Plugin", entry.name, entry.name, "(unknown)", entry, None
 
+    # Must-use plugins are always loaded and therefore have no activation
+    # row in wp_options. WordPress itself only loads PHP files in the base
+    # mu-plugins directory; subdirectories require a loader file and are
+    # consequently attributed through that base file rather than guessed.
+    mu_dir = root / "wp-content" / "mu-plugins"
+    if mu_dir.is_dir():
+        for entry in sorted(mu_dir.glob("*.php")):
+            header = _wp_plugin_header(entry)
+            yield ("Must-use plugin", header[0] if header else entry.stem,
+                   entry.stem, header[1] if header else "(unknown)", entry,
+                   entry if header else None)
+
+    # Drop-ins are executable integration points loaded by core without the
+    # Plugins screen. Their fixed names are the evidence; a Plugin Name
+    # header is optional and does not decide whether core loads them.
+    for name in ("advanced-cache.php", "db.php", "db-error.php", "install.php",
+                 "maintenance.php", "object-cache.php", "php-error.php",
+                 "sunrise.php"):
+        entry = root / "wp-content" / name
+        if not entry.is_file():
+            continue
+        header = _wp_plugin_header(entry)
+        yield ("Drop-in", header[0] if header else name,
+               entry.stem, header[1] if header else "(unknown)", entry,
+               entry if header else None)
+
     themes_dir = root / "wp-content" / "themes"
     if themes_dir.is_dir():
         for entry in sorted(themes_dir.iterdir()):
