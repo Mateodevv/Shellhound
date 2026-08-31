@@ -1,10 +1,9 @@
 import clsx from 'clsx'
 import {
-  Archive, ChevronLeft, Copy, Download, MoreHorizontal, PencilLine, Play, Plus,
-  Search, ScrollText, ToggleLeft, ToggleRight, Upload, X,
+  Archive, ChevronLeft, Copy, PencilLine, Play, Plus, Search, ScrollText, ToggleLeft,
+  ToggleRight, X,
 } from 'lucide-react'
 import type { HuntPattern, HuntTechnology, HuntTest, Job } from '../../api'
-import { downloadUrl } from '../../api'
 import { formatCount } from '../../format'
 import { useT } from '../../i18n'
 import { Button, Tag } from '../../components/ui'
@@ -14,8 +13,7 @@ const TECHNOLOGIES: HuntTechnology[] = ['wordpress', 'joomla', 'generic', 'other
 export function PatternLibrary({
   patterns, tests, selectedId, search, filter, collapsed, busy,
   onSearch, onFilter, onSelect, onEdit, onNew, onDuplicate, onToggle, onArchive,
-  onBatch, onFromLogs, onCollapse, importText, onImportText, onImport,
-  batchJob, onCancelBatch,
+  onBatch, onFromLogs, onCollapse, batchJob, onCancelBatch,
 }: {
   patterns: HuntPattern[]
   tests: HuntTest[]
@@ -35,9 +33,6 @@ export function PatternLibrary({
   onBatch: () => void
   onFromLogs: () => void
   onCollapse: () => void
-  importText: string
-  onImportText: (value: string) => void
-  onImport: () => void
   batchJob: Job | null
   onCancelBatch: () => void
 }) {
@@ -87,26 +82,6 @@ export function PatternLibrary({
         <Button disabled={busy || !patterns.some((pattern) => pattern.enabled)} onClick={onBatch}>
           <Play size={13} /> {tr('hunt.workbench.testAll')}
         </Button>
-        <details className="relative">
-          <summary className="flex h-full cursor-pointer list-none items-center rounded-lg border border-[var(--line)] px-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
-            <MoreHorizontal size={15} />
-          </summary>
-          <div className="absolute right-0 z-30 mt-1 w-72 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3 shadow-2xl">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              {tr('hunt.manageLibrary')}
-            </div>
-            <textarea value={importText} onChange={(event) => onImportText(event.target.value)} rows={4}
-              placeholder="/path/*.php | Name | CVE"
-              className="mono w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[11px] outline-none focus:border-[var(--accent)]" />
-            <div className="mt-2 flex gap-2">
-              <Button disabled={!importText.trim()} onClick={onImport}><Upload size={12} /> {tr('hunt.import')}</Button>
-              <a href={downloadUrl('/api/patterns/export')}
-                className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] px-2 py-1.5 text-[11px] hover:bg-[var(--panel-2)]">
-                <Download size={12} /> {tr('hunt.backup')}
-              </a>
-            </div>
-          </div>
-        </details>
       </div>
       {batchJob && ['queued', 'running'].includes(batchJob.state) && <div
         className="mt-2 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2">

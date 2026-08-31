@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Columns3, Library, PanelRight, type LucideIcon } from 'lucide-react'
 import {
-  api, del, post, type AccessRequestContext, type HuntPattern, type HuntRuleV2, type HuntTest,
+  api, del, patch, post, type AccessRequestContext, type HuntPattern, type HuntRuleV2, type HuntTest,
   type Job,
   type HuntTestResponse,
 } from '../api'
@@ -39,7 +39,6 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const [cleanHash, setCleanHash] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [importText, setImportText] = useState('')
   const [confirmVariant, setConfirmVariant] = useState(false)
   const [disableOriginal, setDisableOriginal] = useState(true)
   const [batchJobId, setBatchJobId] = useState<number | null>(null)
@@ -190,7 +189,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       if (!draft) return
       const next = { ...draft, rule: response.test.rule, dsl: response.test.dsl }
       mutateSession({ draft: next, testedHash: draftHash(next), testId: response.test.id,
-        selectedClusters: [] })
+        selectedClusters: [], resultCollapsed: false })
       setFocus('results')
       setError('')
       qc.setQueryData<{ tests: HuntTest[] }>(['hunt-tests', slug], (old) => ({
@@ -200,15 +199,52 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     onError: (cause: Error) => setError(cause.message),
   })
 
+  const saveRule = useMutation({
+    mutationFn: async (disableOriginal: boolean) => {
+      if (!draft) throw new Error(tr('hunt.workbench.selectRule'))
+      const metadata = {
+        name: draft.name, cve: draft.cve, technology: draft.technology,
+        description: joinDescription(draft.means, draft.notMeans),
+        ...(draft.textMode ? { dsl: draft.dsl } : { rule: draft.rule }),
+      }
+      if (draft.source === 'bundled') {
+        return post<HuntPattern>(`/api/patterns/${draft.sourceId}/clone`, {
+          ...metadata, disable_original: disableOriginal,
+        })
+      }
+      if (draft.source === 'own') {
+        return patch<HuntPattern>(`/api/patterns/${draft.sourceId}`, {
+          ...metadata, expected_version: draft.expectedVersion,
+        })
+      }
+      const response = await post<{ entry: HuntPattern }>('/api/patterns', metadata)
+      return response.entry
+    },
+    onSuccess: (pattern) => {
+      const wasTested = Boolean(draft && session.testedHash === draftHash(draft))
+      const next = patternDraft(pattern)
+      const hash = draftHash(next)
+      setCleanHash(hash)
+      mutateSession({ selectedId: pattern.id, draft: next, editorOpen: true,
+        testedHash: wasTested ? hash : session.testedHash })
+      setConfirmVariant(false)
+      setNotice(tr('hunt.workbench.saveSuccess'))
+      setError('')
+      void qc.invalidateQueries({ queryKey: ['patterns'] })
+      void qc.invalidateQueries({ queryKey: ['pattern-versions', pattern.id] })
+    },
+    onError: (cause: Error) => { setConfirmVariant(false); setError(cause.message) },
+  })
+
   const applyRule = useMutation({
-    mutationFn: (disable: boolean) => {
+    mutationFn: () => {
       if (!draft || !activeTest) throw new Error(tr('hunt.workbench.testFirst'))
+      if (draft.source === 'new' || !draft.sourceId) {
+        throw new Error(tr('hunt.workbench.saveBeforeApply'))
+      }
       return post<ApplyResponse>(`/api/cases/${slug}/hunt/tests/${activeTest.id}/apply`, {
         cluster_keys: [...selected], pattern_id: draft.sourceId,
         expected_version: draft.expectedVersion,
-        disable_original: disable,
-        pattern: { name: draft.name, cve: draft.cve, technology: draft.technology,
-          description: joinDescription(draft.means, draft.notMeans), rule: draft.rule },
       })
     },
     onSuccess: (response) => {
@@ -253,16 +289,6 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['patterns'] }),
     onError: (cause: Error) => setError(cause.message),
   })
-  const importPatterns = useMutation({
-    mutationFn: () => post<{ added: number; skipped: number; invalid: number }>(
-      '/api/patterns', { text: importText }),
-    onSuccess: (result) => {
-      setImportText('')
-      setNotice(tr('hunt.import.result', result))
-      void qc.invalidateQueries({ queryKey: ['patterns'] })
-    },
-    onError: (cause: Error) => setError(cause.message),
-  })
   const batch = useMutation({
     mutationFn: () => post<{ job_id: number; batch_id: string; patterns: number }>(
       `/api/cases/${slug}/hunt/batch-tests`, {}),
@@ -297,7 +323,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const tested = Boolean(activeTest && session.testedHash && session.testedHash === currentHash)
   const stale = Boolean(activeTest && session.testedHash && session.testedHash !== currentHash)
   const pending = validate.isPending || testRule.isPending || applyRule.isPending
-    || clone.isPending || restore.isPending
+    || saveRule.isPending || clone.isPending || restore.isPending
 
   const beginResize = (which: 'library' | 'editor') =>
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -321,8 +347,10 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const editorOpen = session.editorOpen && Boolean(draft)
   const resultsCollapsed = editorOpen && session.resultCollapsed
   const resultColumn = resultsCollapsed ? '48px' : 'minmax(420px,1fr)'
+  const editorColumn = resultsCollapsed
+    ? `minmax(${session.editorWidth}px,1fr)` : `${session.editorWidth}px`
   const grid = editorOpen
-    ? `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${session.editorWidth}px 5px ${resultColumn}`
+    ? `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${editorColumn} 5px ${resultColumn}`
     : `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${resultColumn}`
   const focusTabs: Array<['library' | 'editor' | 'results', LucideIcon]> = editorOpen
     ? [['library', Library], ['editor', Columns3], ['results', PanelRight]]
@@ -347,9 +375,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
           onArchive={(pattern) => archive.mutate(pattern)} onBatch={() => batch.mutate()}
           onFromLogs={() => gotoView('logs')}
           onCollapse={() => mutateSession({ libraryCollapsed: !session.libraryCollapsed })}
-          importText={importText} onImportText={setImportText}
-          onImport={() => importPatterns.mutate()} batchJob={batchJob}
-          onCancelBatch={() => cancelBatch.mutate()} />
+          batchJob={batchJob} onCancelBatch={() => cancelBatch.mutate()} />
       </div>
       <div onPointerDown={beginResize('library')}
         className="cursor-col-resize bg-[var(--line)] transition-colors hover:bg-[var(--accent)] max-[1399px]:hidden" />
@@ -359,8 +385,9 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
           versions={versions.data?.versions ?? []}
           onChange={(next) => mutateSession({ draft: next })}
           onTest={() => testRule.mutate()}
-          onApply={() => draft?.source === 'bundled' && dirty
-            ? setConfirmVariant(true) : applyRule.mutate(false)}
+          onSave={() => draft?.source === 'bundled'
+            ? setConfirmVariant(true) : saveRule.mutate(false)}
+          onApply={() => applyRule.mutate()}
           onValidateDsl={() => validate.mutate()}
           onRestore={(version) => restore.mutate(version)} onClose={closeEditor} />
       </div>
@@ -370,6 +397,13 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         <HuntResults slug={slug} test={activeTest} selected={selected}
           collapsed={resultsCollapsed}
           ruleName={draft?.name}
+          sort={session.resultSort} direction={session.resultDirection}
+          onSort={(resultSort) => mutateSession({
+            resultSort,
+            resultDirection: resultSort === session.resultSort
+              ? session.resultDirection === 'asc' ? 'desc' : 'asc'
+              : ['requests', 'first_hit'].includes(resultSort) ? 'desc' : 'asc',
+          })}
           onSelected={(value) => mutateSession({ selectedClusters: [...value] })}
           onCollapse={editorOpen
             ? () => mutateSession({ resultCollapsed: !session.resultCollapsed })
@@ -391,8 +425,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       </label>
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="ghost" onClick={() => setConfirmVariant(false)}>{tr('common.cancel')}</Button>
-        <Button variant="primary" disabled={applyRule.isPending}
-          onClick={() => applyRule.mutate(disableOriginal)}>{tr('hunt.workbench.createVariant')}</Button>
+        <Button variant="primary" disabled={saveRule.isPending}
+          onClick={() => saveRule.mutate(disableOriginal)}>{tr('hunt.workbench.createVariant')}</Button>
       </div>
     </Modal>
     <Toast open={Boolean(notice)} onClose={() => setNotice('')} tone="ok"

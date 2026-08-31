@@ -2462,7 +2462,8 @@ def match_rule(case_dir, rule, limit=200):
         conn.close()
 
 
-def rule_clusters(case_dir, rule, cursor="", limit=200):
+def rule_clusters(case_dir, rule, cursor="", limit=200,
+                  sort="requests", direction="desc"):
     """Cursor page of stable, explainable request clusters for a v2 rule."""
     try:
         offset = int(str(cursor or "0").removeprefix("o:"))
@@ -2470,6 +2471,23 @@ def rule_clusters(case_dir, rule, cursor="", limit=200):
         raise ValueError("invalid hunt cluster cursor") from exc
     offset = max(0, offset)
     bounded = max(1, min(int(limit), 200))
+    order_fields = {
+        "client": "client COLLATE NOCASE",
+        "method": "method COLLATE NOCASE",
+        "uri": "uri_pattern COLLATE NOCASE",
+        "status": "status_class",
+        "requests": "requests",
+        "first_hit": "first_epoch",
+    }
+    sort_key = str(sort or "requests").lower()
+    if sort_key not in order_fields:
+        raise ValueError("invalid hunt cluster sort field")
+    sort_direction = str(direction or "desc").lower()
+    if sort_direction not in {"asc", "desc"}:
+        raise ValueError("invalid hunt cluster sort direction")
+    order = (f"{order_fields[sort_key]} {sort_direction.upper()},"
+             "client COLLATE NOCASE,method COLLATE NOCASE,"
+             "uri_pattern COLLATE NOCASE,status_class")
     conn = _open_ro(case_dir)
     if conn is None:
         return {"clusters": [], "total": 0, "next_cursor": None}
@@ -2492,7 +2510,7 @@ def rule_clusters(case_dir, rule, cursor="", limit=200):
             "max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch,max(r.tz) tz,"
             "min(r.rowid) request_id,min(u.text) example_uri " + base +
             "GROUP BY i.ip,r.method,uri_pattern,r.status/100 "
-            "ORDER BY ok_hits DESC,requests DESC,client,method,uri_pattern "
+            "ORDER BY " + order + " "
             "LIMIT ? OFFSET ?", (bounded + 1, offset))]
         has_more = len(rows) > bounded
         rows = rows[:bounded]

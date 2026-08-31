@@ -365,6 +365,16 @@ class EngineTests(unittest.TestCase):
             self.ev.case_dir, rule, first["next_cursor"], limit=1)
         self.assertNotEqual(first["clusters"][0]["cluster_key"],
                             second["clusters"][0]["cluster_key"])
+        by_client = logindex.rule_clusters(
+            self.ev.case_dir, rule, limit=200, sort="client", direction="asc")
+        clients = [row["client"].lower() for row in by_client["clusters"]]
+        self.assertEqual(sorted(clients), clients)
+        by_requests = logindex.rule_clusters(
+            self.ev.case_dir, rule, limit=200, sort="requests", direction="desc")
+        counts = [row["requests"] for row in by_requests["clusters"]]
+        self.assertEqual(sorted(counts, reverse=True), counts)
+        with self.assertRaisesRegex(ValueError, "sort field"):
+            logindex.rule_clusters(self.ev.case_dir, rule, sort="DROP TABLE requests")
 
     def test_v2_host_gap_is_explicit_and_sql_text_stays_a_value(self):
         host_rule = {"client_match": "any", "requests": [{"clauses": [

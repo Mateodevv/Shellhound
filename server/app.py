@@ -2113,13 +2113,24 @@ def create_app(config: Config) -> FastAPI:
 
     class ClonePattern(BaseModel):
         disable_original: bool = False
+        rule: dict | None = None
+        dsl: str = ""
+        name: str | None = None
+        cve: str | None = None
+        description: str | None = None
+        technology: str | None = None
 
     @app.post("/api/patterns/{pattern_id}/clone", dependencies=[auth])
     def patterns_clone(pattern_id: str, body: ClonePattern,
                        lang: str = lang_dep):
         try:
+            canonical = (parsed_hunt_rule(body.rule, body.dsl)
+                         if body.rule is not None or body.dsl.strip() else None)
             return patternlib.clone(config.workspace, pattern_id,
-                                    disable_original=body.disable_original)
+                                    disable_original=body.disable_original,
+                                    rule=canonical, name=body.name, cve=body.cve,
+                                    description=body.description,
+                                    technology=body.technology)
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 
@@ -2310,6 +2321,8 @@ def create_app(config: Config) -> FastAPI:
     class HuntClusterBody(BaseModel):
         cursor: str = ""
         limit: int = 200
+        sort: str = "requests"
+        direction: str = "desc"
 
     def hunt_test_or_404(case_dir, test_id):
         conn = db.connect(case_dir)
@@ -2334,7 +2347,7 @@ def create_app(config: Config) -> FastAPI:
         require_fresh_hunt_test(case_dir, test)
         try:
             return logindex.rule_clusters(case_dir, test["rule"], body.cursor,
-                                          body.limit)
+                                          body.limit, body.sort, body.direction)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -2400,8 +2413,15 @@ def create_app(config: Config) -> FastAPI:
                     "findings": 0, "already_applied": True}
         source = patternlib.find(config.workspace, body.pattern_id) \
             if body.pattern_id else None
+        if source and body.expected_version is not None \
+                and int(body.expected_version) != int(source["version"]):
+            raise HTTPException(409, "the pattern version changed; reload it")
         try:
-            if source and source["source"] == "own":
+            if source and not metadata:
+                if test["rule_hash"] != source["rule_hash"]:
+                    raise HTTPException(409, "the saved pattern differs from this test")
+                saved = source
+            elif source and source["source"] == "own":
                 saved = patternlib.update(
                     config.workspace, source["id"],
                     name=metadata.get("name", source["name"]),
