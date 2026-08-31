@@ -182,4 +182,17 @@ describe('actors investigation workspace', () => {
     expect(await screen.findByText('/uploads/drop.php')).toBeInTheDocument()
     expect(screen.getByText(/not automatic campaign attribution/i)).toBeInTheDocument()
   })
+
+  it('opens a deep-linked client directly in its activity detail', async () => {
+    history.replaceState(null, '', '/?case=case-1&view=actors&search=203.0.113.42'
+      + '&actor=203.0.113.42&section=activity')
+    mockApi()
+    renderWithProviders(<Actors slug="case-1" gotoView={vi.fn()} />)
+
+    expect(await screen.findByRole('button', { name: 'Activity' })).toHaveAttribute(
+      'aria-pressed', 'true')
+    expect(await screen.findByText('/index.php')).toBeInTheDocument()
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([path]) =>
+      path.includes('/actors?') && path.includes('search=203.0.113.42'))).toBe(true))
+  })
 })

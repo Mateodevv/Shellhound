@@ -4,10 +4,10 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import clsx from 'clsx'
 import {
   AlertTriangle, ChevronRight, ExternalLink,
-  FileSearch, LoaderCircle, Network, PencilLine, Search,
+  FileSearch, LoaderCircle, PencilLine, Search,
 } from 'lucide-react'
 import {
-  api, post, type AccessRequestContext, type ActorDetail, type HuntCluster,
+  api, post, type AccessRequestContext, type HuntCluster,
   type HuntClusterPage, type HuntTest,
 } from '../../api'
 import type { Navigate } from '../../App'
@@ -70,13 +70,6 @@ export function HuntResults({
       `/api/cases/${slug}/access/request/${inspected!.request_id}`),
     enabled: Boolean(inspected?.request_id),
   })
-  const actor = useQuery({
-    queryKey: ['actor-detail', slug, inspected?.client],
-    queryFn: () => api<ActorDetail>(
-      `/api/cases/${slug}/actor?ip=${encodeURIComponent(inspected!.client)}`),
-    enabled: Boolean(inspected?.client),
-  })
-
   if (collapsed) return <aside className="flex h-full w-12 flex-col items-center border-l border-[var(--line)] bg-[var(--panel)] py-2">
     <button type="button" onClick={onCollapse} title={tr('hunt.workbench.results')}
       className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
@@ -142,7 +135,9 @@ export function HuntResults({
                   if (checked) next.delete(cluster.cluster_key); else next.add(cluster.cluster_key)
                   onSelected(next)
                 }} />
-              <button type="button" onClick={() => setInspectedKey(cluster.cluster_key)}
+              <button type="button" onClick={() => gotoView('actors', {
+                search: cluster.client, actor: cluster.client, section: 'activity',
+              })}
                 className="mono inline-flex min-w-0 cursor-pointer items-center gap-1.5 truncate text-left font-semibold">
                 <IpFlag ip={cluster.client} />{cluster.client}
               </button>
@@ -163,18 +158,17 @@ export function HuntResults({
         </div>}
       </div>
 
-      <RequestInspector cluster={inspected} context={context.data} actor={actor.data}
-        loading={context.isFetching || actor.isFetching} gotoView={gotoView} />
+      <RequestInspector cluster={inspected} context={context.data}
+        loading={context.isFetching} gotoView={gotoView} />
 
       <CoverageFooter test={test} />
     </>}
   </section>
 }
 
-function RequestInspector({ cluster, context, actor, loading, gotoView }: {
+function RequestInspector({ cluster, context, loading, gotoView }: {
   cluster: HuntCluster | null
   context?: AccessRequestContext
-  actor?: ActorDetail
   loading: boolean
   gotoView: Navigate
 }) {
@@ -192,12 +186,13 @@ function RequestInspector({ cluster, context, actor, loading, gotoView }: {
         <Button variant="ghost" onClick={() => gotoView('logs', {
           search: cluster.example_uri, request: String(cluster.request_id),
         })}><ExternalLink size={11} />{tr('hunt.workbench.openLogs')}</Button>
-        <Button variant="ghost" onClick={() => gotoView('actors', { search: cluster.client })}>
+        <Button variant="ghost" onClick={() => gotoView('actors', {
+          search: cluster.client, actor: cluster.client, section: 'activity',
+        })}>
           <ExternalLink size={11} />{tr('hunt.workbench.openActor')}</Button>
       </span>
     </div>
-    <div className="mt-2 grid gap-2 2xl:grid-cols-[minmax(0,1.5fr)_minmax(230px,0.75fr)]">
-      <div className="min-w-0">
+    <div className="mt-2 min-w-0">
         <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[9.5px] leading-relaxed">
           {context?.raw_line || `${cluster.method} ${cluster.example_uri}`}
         </pre>
@@ -213,18 +208,6 @@ function RequestInspector({ cluster, context, actor, loading, gotoView }: {
             <span className="text-right">{row.status}</span>
           </div>)}
         </div>}
-      </div>
-      <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2">
-        <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
-          <Network size={11} />{tr('hunt.workbench.caseContext')}
-        </div>
-        {actor ? <div className="mt-2 space-y-1.5 text-[10px]">
-          <div>{actor.findings.length} {tr('nav.findings')} · {actor.in_box ? tr('hunt.workbench.inIocBox') : tr('hunt.workbench.notInIocBox')}</div>
-          <div>{actor.alerts.length} {tr('hunt.workbench.actorSignals')} · {actor.triage || tr('triage.new')}</div>
-          {actor.findings.slice(0, 3).map((finding) => <div key={finding.id}
-            className="truncate rounded bg-[var(--panel)] px-2 py-1" title={finding.evidence}>{finding.rule}</div>)}
-        </div> : <div className="mt-3 text-[10px] text-[var(--muted)]">{tr('hunt.workbench.noCaseContext')}</div>}
-      </div>
     </div>
   </div>
 }

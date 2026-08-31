@@ -102,7 +102,8 @@ describe('Pattern Hunt forensic workbench', () => {
     sessionStorage.clear()
     history.replaceState(null, '', '/?case=case-1&view=hunt')
     mocks()
-    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    const gotoView = vi.fn()
+    renderWithProviders(<Hunt slug="case-1" gotoView={gotoView} />)
 
     expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
@@ -113,6 +114,10 @@ describe('Pattern Hunt forensic workbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
       path.endsWith('/hunt/tests'))).toBe(true))
+    fireEvent.click(await screen.findByRole('button', { name: '203.0.113.42' }))
+    expect(gotoView).toHaveBeenCalledWith('actors', {
+      search: '203.0.113.42', actor: '203.0.113.42', section: 'activity',
+    })
     const checkbox = await screen.findByLabelText('Select request cluster')
     fireEvent.click(checkbox)
     fireEvent.click(screen.getByRole('button', { name: /Save and apply/ }))
