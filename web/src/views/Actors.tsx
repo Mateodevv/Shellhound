@@ -31,7 +31,7 @@ import { FileViewer } from '../components/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
-import type { ViewId } from '../App'
+import type { Navigate } from '../App'
 
 const PAGE_SIZE = 50
 const BF_FALLBACK = 30
@@ -41,6 +41,18 @@ type ActorView = 'relevant' | 'confirmed' | 'all'
 type FocusFilter = 'any' | 'notable' | 'scanner' | 'bruteforce' | 'probes'
 type DecisionFilter = 'any' | 'new' | 'review' | 'dismissed'
 type Density = 'comfortable' | 'compact'
+type ActorInspectorTab = 'overview' | 'evidence' | 'activity' | 'relations'
+
+function actorDeepLink() {
+  const params = new URLSearchParams(location.search)
+  const section = params.get('section')
+  return {
+    ip: params.get('actor'),
+    search: params.get('search') ?? '',
+    section: section === 'evidence' || section === 'activity' || section === 'relations'
+      ? section : 'overview',
+  } as const
+}
 
 const VIEWS: { id: ActorView; label: string; help: string }[] = [
   { id: 'relevant', label: 'actors.view.relevant', help: 'actors.view.relevant.help' },
@@ -149,20 +161,21 @@ function queryFor(view: ActorView, focus: FocusFilter,
   return query
 }
 
-export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
   const tr = useT()
   const qc = useQueryClient()
   const triage = useTriage(slug)
+  const deepLink = actorDeepLink()
   const [view, setView] = useState<ActorView>('relevant')
   const [focus, setFocus] = useState<FocusFilter>('any')
   const [decision, setDecision] = useState<DecisionFilter>('any')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [density, setDensity] = useState<Density>('comfortable')
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(deepLink.search)
   const [sort, setSort] = useState('evidence')
   const [page, setPage] = useState(0)
   const [checked, setChecked] = useState<Set<string>>(new Set())
-  const [activeIp, setActiveIp] = useState<string | null>(null)
+  const [activeIp, setActiveIp] = useState<string | null>(deepLink.ip)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [artifact, setArtifact] = useState<ArtifactStub | null>(null)
@@ -513,6 +526,7 @@ export function Actors({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </section>
 
         <ActorInspector key={activeIp ?? 'empty'} detail={detail} loading={detailLoading}
+          initialTab={deepLink.section}
           threshold={data?.bf_threshold}
           tr={tr}
           onClose={() => setActiveIp(null)}
@@ -576,17 +590,18 @@ function Pagination({ page, total, tr, onPage }: {
   )
 }
 
-function ActorInspector({ detail, loading, threshold, tr, onClose, onTrace, onCollect, onArtifact }: {
+function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, onTrace, onCollect, onArtifact }: {
   detail?: ActorDetail
   loading: boolean
   threshold?: number
   tr: Translate
+  initialTab: ActorInspectorTab
   onClose: () => void
   onTrace: (exact?: string[], ips?: string[]) => void
   onCollect: () => void
   onArtifact: () => void
 }) {
-  const [tab, setTab] = useState<'overview' | 'evidence' | 'activity' | 'relations'>('overview')
+  const [tab, setTab] = useState<ActorInspectorTab>(initialTab)
   if (!detail) {
     return (
       <aside className="hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[13px] text-[var(--muted)] lg:block">
