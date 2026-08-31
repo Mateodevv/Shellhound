@@ -488,6 +488,8 @@ export interface AccessLogRow extends TraceRow {
   source_id: number
   line_no: number
   signals: string[]
+  /** Present only when the source format recorded a virtual host/cs-host. */
+  host?: string
 }
 
 export interface AccessSearchResponse {
@@ -1041,6 +1043,104 @@ export interface HuntPattern {
   /** Switched off for this workspace. Only ever false for a bundled entry:
    *  an own pattern is deleted rather than disabled. */
   enabled: boolean
+  rule: HuntRuleV2
+  rule_hash: string
+  dsl: string
+  technology: HuntTechnology
+  version: number
+  archived: boolean
+  own_enabled: boolean
+  created_at: string
+  updated_at: string
+  derived_from: {
+    id: string
+    version: number
+    source: 'bundled' | 'own'
+  } | null
+}
+
+export type HuntField =
+  | 'uri' | 'path' | 'query' | 'method' | 'status'
+  | 'user_agent' | 'referrer' | 'host'
+
+export type HuntOperator = 'equals' | 'contains' | 'wildcard' | 'in'
+export type HuntTechnology = 'wordpress' | 'joomla' | 'generic' | 'other'
+
+export interface HuntClause {
+  field: HuntField
+  operator: HuntOperator
+  values: string[]
+}
+
+export interface HuntRequestStep {
+  clauses: HuntClause[]
+}
+
+export interface HuntRuleV2 {
+  client_match: 'any' | 'all'
+  requests: HuntRequestStep[]
+}
+
+export interface HuntCoverage {
+  requests: number
+  fields: Partial<Record<HuntField, {
+    present: number
+    total: number
+    ratio: number
+  }>>
+}
+
+export interface HuntTest {
+  id: number
+  pattern_id: string
+  pattern_version: number
+  rule_hash: string
+  rule: HuntRuleV2
+  dsl: string
+  tested_at: string
+  index_fingerprint: string
+  hits?: number
+  ok_hits?: number
+  clients?: number
+  ok_clients?: number
+  uris?: number
+  first_epoch?: number | null
+  last_epoch?: number | null
+  tz?: number
+  truncated?: boolean
+  coverage: HuntCoverage
+  batch_id: string
+  legacy?: boolean
+}
+
+export interface HuntCluster {
+  cluster_key: string
+  client: string
+  method: string
+  uri_pattern: string
+  status_class: string
+  requests: number
+  ok_hits: number
+  first_epoch: number | null
+  last_epoch: number | null
+  tz: number
+  request_id: number
+  example_uri: string
+}
+
+export interface HuntClusterPage {
+  clusters: HuntCluster[]
+  total: number
+  next_cursor: string | null
+}
+
+export interface HuntTestResponse {
+  test: HuntTest
+  result: HuntResult & {
+    rule: HuntRuleV2
+    rule_hash: string
+    coverage: HuntCoverage
+  }
 }
 
 export interface HuntClient {

@@ -12,6 +12,7 @@ Connections are opened per operation in WAL mode: API threads and job worker
 threads read and write concurrently without hand-rolled file locking.
 """
 import json
+import hashlib
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -268,6 +269,57 @@ CREATE TABLE IF NOT EXISTS hunt_runs (
     tz INTEGER NOT NULL DEFAULT 0,
     UNIQUE(pattern)
 );
+-- Append-only Pattern-Hunt audit.  Unlike hunt_runs this keeps every test,
+-- including an unsaved draft and a test without hits.  It stores the
+-- question and measured summary, never the bulk access-log rows.
+CREATE TABLE IF NOT EXISTS hunt_tests (
+    id INTEGER PRIMARY KEY,
+    pattern_id TEXT NOT NULL DEFAULT '',
+    pattern_version INTEGER NOT NULL DEFAULT 0,
+    rule_hash TEXT NOT NULL,
+    rule_json TEXT NOT NULL,
+    dsl TEXT NOT NULL DEFAULT '',
+    tested_at TEXT NOT NULL,
+    index_fingerprint TEXT NOT NULL DEFAULT '',
+    hits INTEGER NOT NULL DEFAULT 0,
+    ok_hits INTEGER NOT NULL DEFAULT 0,
+    clients INTEGER NOT NULL DEFAULT 0,
+    ok_clients INTEGER NOT NULL DEFAULT 0,
+    uris INTEGER NOT NULL DEFAULT 0,
+    first_epoch INTEGER,
+    last_epoch INTEGER,
+    tz INTEGER NOT NULL DEFAULT 0,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    coverage_json TEXT NOT NULL DEFAULT '{}',
+    batch_id TEXT NOT NULL DEFAULT '',
+    legacy INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_hunt_tests_pattern
+    ON hunt_tests(pattern_id, tested_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS hunt_applications (
+    id INTEGER PRIMARY KEY,
+    test_id INTEGER NOT NULL,
+    pattern_id TEXT NOT NULL,
+    pattern_version INTEGER NOT NULL,
+    rule_hash TEXT NOT NULL,
+    applied_at TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hunt_application_clusters (
+    id INTEGER PRIMARY KEY,
+    application_id INTEGER NOT NULL,
+    cluster_key TEXT NOT NULL,
+    client TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT '',
+    uri_pattern TEXT NOT NULL DEFAULT '',
+    status_class TEXT NOT NULL DEFAULT '',
+    requests INTEGER NOT NULL DEFAULT 0,
+    ok_hits INTEGER NOT NULL DEFAULT 0,
+    first_epoch INTEGER,
+    last_epoch INTEGER,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(application_id, cluster_key)
+);
 -- WHAT A THIRD PARTY SAYS -- kept apart from what the case measured.
 -- A reputation score is somebody else's conclusion about somebody else's
 -- data. It never becomes a finding, never moves a severity and never
@@ -403,7 +455,9 @@ _ADDED_COLUMNS = {
 #    records, separate from the rebuildable bulk index.
 # 9: SQL dumps gain a bounded CMS-intelligence snapshot for WordPress and
 #     Joomla.  Sensitive raw credentials and full content stay in evidence.
-CASE_SCHEMA_VERSION = 9
+# 10: Pattern Hunt keeps immutable draft-test audits and the analyst's
+#     selected cluster applications separately from generated findings.
+CASE_SCHEMA_VERSION = 10
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -412,6 +466,7 @@ CASE_SCHEMA_VERSION = 9
 # with the idempotent upgrade.
 _CURRENT_SCHEMA_TABLES = {
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
+    "hunt_tests", "hunt_applications", "hunt_application_clusters",
 }
 
 
@@ -449,6 +504,7 @@ def _has_current_schema(conn):
 def _upgrade(conn):
     """Create the schema and bring data corrections along -- the ONLY path on
     which a connection writes before the caller wants anything."""
+    previous_version = _stored_version(conn)
     conn.executescript(SCHEMA)
     for table, columns in _ADDED_COLUMNS.items():
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -491,6 +547,30 @@ def _upgrade(conn):
     conn.execute("UPDATE findings SET engine = 'sigmascan' "
                  "WHERE engine = '' AND source = 'logs' "
                  "AND rule_id != '' AND rule_id NOT LIKE 'logs.%'")
+    if previous_version < 10:
+        # hunt_runs retained only the latest summary per textual pattern.
+        # Preserve those rows as explicitly legacy audits rather than making
+        # a schema upgrade look as though the analyst never ran them.
+        for row in conn.execute(
+                "SELECT id, pattern, label, ran_at, hits, ok_hits, clients, "
+                "ok_clients, uris, first_epoch, last_epoch, tz FROM hunt_runs"):
+            rule = {"client_match": "any", "requests": [{"clauses": [{
+                "field": "uri", "operator": "wildcard",
+                "values": [row[1]],
+            }]}]}
+            encoded = json.dumps(rule, ensure_ascii=False, sort_keys=True,
+                                 separators=(",", ":"))
+            digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            conn.execute(
+                "INSERT INTO hunt_tests(pattern_id, pattern_version, rule_hash,"
+                " rule_json, dsl, tested_at, hits, ok_hits, clients, ok_clients,"
+                " uris, first_epoch, last_epoch, tz, coverage_json, legacy) "
+                "SELECT '',0,?,?,?,?,?,?,?,?,?,?,?,?,?,1 "
+                "WHERE NOT EXISTS (SELECT 1 FROM hunt_tests "
+                "WHERE legacy=1 AND tested_at=? AND rule_hash=?)",
+                (digest, encoded, row[1], row[3], row[4], row[5], row[6],
+                 row[7], row[8], row[9], row[10], row[11], row[12], "{}",
+                 row[3], digest))
     _relativize_ioc_paths(conn)
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "

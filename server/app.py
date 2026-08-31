@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from server import case_report, correlation, coverage, db, enrich, geoip
+from server import case_report, correlation, coverage, db, enrich, geoip, huntrules
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
@@ -2025,7 +2025,8 @@ def create_app(config: Config) -> FastAPI:
     def patterns_list():
         """Both halves, switched-off entries included so the interface can
         offer them back. Each row says which half it came from."""
-        rows = patternlib.library(config.workspace, include_disabled=True)
+        rows = patternlib.library(config.workspace, include_disabled=True,
+                                  include_archived=True)
         return {"patterns": rows,
                 "path": str(patternlib.library_path(config.workspace)),
                 "bundled": sum(1 for p in rows if p["source"] == "bundled"),
@@ -2041,6 +2042,29 @@ def create_app(config: Config) -> FastAPI:
         cve: str = ""
         description: str = ""
         text: str = ""          # several at once (lines or JSON)
+        rule: dict | None = None
+        dsl: str = ""
+        technology: str = ""
+
+    class ValidatePattern(BaseModel):
+        rule: dict | None = None
+        dsl: str = ""
+
+    def parsed_hunt_rule(rule=None, dsl=""):
+        try:
+            return (huntrules.parse_dsl(dsl) if str(dsl or "").strip()
+                    else huntrules.normalise_rule(rule))
+        except huntrules.RuleError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/patterns/validate", dependencies=[auth])
+    def patterns_validate(body: ValidatePattern):
+        rule = parsed_hunt_rule(body.rule, body.dsl)
+        legacy = huntrules.legacy_projection(rule)
+        return {"rule": rule, "rule_hash": huntrules.rule_hash(rule),
+                "dsl": huntrules.to_dsl(rule), **legacy,
+                "technology": huntrules.suggest_technology(
+                    huntrules.to_dsl(rule))}
 
     @app.post("/api/patterns", dependencies=[auth])
     def patterns_add(body: NewPattern, lang: str = lang_dep):
@@ -2051,7 +2075,11 @@ def create_app(config: Config) -> FastAPI:
                     "entry": patternlib.add(
                         config.workspace,
                         body.patterns or [body.pattern],
-                        body.name, body.cve, body.description, body.match)}
+                        body.name, body.cve, body.description, body.match,
+                        rule=(parsed_hunt_rule(body.rule, body.dsl)
+                              if body.rule is not None or body.dsl.strip()
+                              else None),
+                        technology=body.technology)}
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
 
@@ -2061,16 +2089,61 @@ def create_app(config: Config) -> FastAPI:
         name: str | None = None
         cve: str | None = None
         description: str | None = None
+        rule: dict | None = None
+        dsl: str = ""
+        technology: str | None = None
+        expected_version: int | None = None
+        archived: bool | None = None
 
     @app.patch("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_patch(pattern_id: str, body: PatchPattern,
                        lang: str = lang_dep):
         try:
-            return patternlib.update(config.workspace, pattern_id,
-                                     body.patterns, body.name, body.cve,
-                                     body.description, body.match)
+            canonical = (parsed_hunt_rule(body.rule, body.dsl)
+                         if body.rule is not None or body.dsl.strip() else None)
+            return patternlib.update(
+                config.workspace, pattern_id, body.patterns, body.name,
+                body.cve, body.description, body.match, rule=canonical,
+                technology=body.technology,
+                expected_version=body.expected_version,
+                archived=body.archived)
+        except patternlib.PatternError as e:
+            status = 409 if e.key == "err.patternVersionConflict" else 400
+            raise HTTPException(status, _pattern_error(e, lang)) from e
+
+    class ClonePattern(BaseModel):
+        disable_original: bool = False
+
+    @app.post("/api/patterns/{pattern_id}/clone", dependencies=[auth])
+    def patterns_clone(pattern_id: str, body: ClonePattern,
+                       lang: str = lang_dep):
+        try:
+            return patternlib.clone(config.workspace, pattern_id,
+                                    disable_original=body.disable_original)
         except patternlib.PatternError as e:
             raise HTTPException(400, _pattern_error(e, lang)) from e
+
+    @app.get("/api/patterns/{pattern_id}/versions", dependencies=[auth])
+    def patterns_versions(pattern_id: str, lang: str = lang_dep):
+        try:
+            return {"versions": patternlib.versions(config.workspace,
+                                                     pattern_id)}
+        except patternlib.PatternError as e:
+            raise HTTPException(404, _pattern_error(e, lang)) from e
+
+    class RestorePattern(BaseModel):
+        expected_version: int | None = None
+
+    @app.post("/api/patterns/{pattern_id}/versions/{version}/restore",
+              dependencies=[auth])
+    def patterns_restore(pattern_id: str, version: int, body: RestorePattern,
+                         lang: str = lang_dep):
+        try:
+            return patternlib.restore(config.workspace, pattern_id, version,
+                                      body.expected_version)
+        except patternlib.PatternError as e:
+            status = 409 if e.key == "err.patternVersionConflict" else 400
+            raise HTTPException(status, _pattern_error(e, lang)) from e
 
     @app.delete("/api/patterns/{pattern_id}", dependencies=[auth])
     def patterns_delete(pattern_id: str):
@@ -2138,6 +2211,312 @@ def create_app(config: Config) -> FastAPI:
             client["finding_count"] = state.get("findings", 0)
             client["in_box"] = client["ip"] in boxed
         return match
+
+    class HuntTestBody(BaseModel):
+        pattern_id: str = ""
+        rule: dict | None = None
+        dsl: str = ""
+        batch_id: str = ""
+
+    def test_rule_from_body(body: HuntTestBody):
+        entry = patternlib.find(config.workspace, body.pattern_id) \
+            if body.pattern_id else None
+        if body.rule is None and not body.dsl.strip():
+            if not entry:
+                raise HTTPException(400, "a hunt test needs a rule")
+            return entry["rule"], entry
+        return parsed_hunt_rule(body.rule, body.dsl), entry
+
+    def store_hunt_test(case_dir, rule, entry=None, batch_id=""):
+        match = logindex.match_rule(case_dir, rule)
+        stamp = db.now()
+        fingerprint = logindex.index_fingerprint(case_dir)
+        encoded = json.dumps(match["rule"], ensure_ascii=False,
+                             sort_keys=True, separators=(",", ":"))
+        conn = db.connect(case_dir)
+        try:
+            enrich_hunt_match(conn, match)
+            cur = conn.execute(
+                "INSERT INTO hunt_tests(pattern_id,pattern_version,rule_hash,"
+                "rule_json,dsl,tested_at,index_fingerprint,hits,ok_hits,clients,"
+                "ok_clients,uris,first_epoch,last_epoch,tz,truncated,coverage_json,"
+                "batch_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ((entry or {}).get("id", ""), int((entry or {}).get("version", 0)),
+                 match["rule_hash"], encoded, huntrules.to_dsl(match["rule"]),
+                 stamp, fingerprint, match["hits"], match["ok_hits"],
+                 match["clients_total"], match["ok_clients"], match["uri_total"],
+                 match["first_epoch"], match["last_epoch"], match["tz"],
+                 int(bool(match.get("truncated") or match.get("clients_truncated")
+                          or match.get("uris_truncated"))),
+                 json.dumps(match["coverage"], separators=(",", ":")),
+                 str(batch_id or "")))
+            test_id = cur.lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+        test = {"id": test_id, "pattern_id": (entry or {}).get("id", ""),
+                "pattern_version": int((entry or {}).get("version", 0)),
+                "rule_hash": match["rule_hash"], "rule": match["rule"],
+                "dsl": huntrules.to_dsl(match["rule"]), "tested_at": stamp,
+                "index_fingerprint": fingerprint, "coverage": match["coverage"],
+                "hits": match["hits"], "ok_hits": match["ok_hits"],
+                "clients": match["clients_total"],
+                "ok_clients": match["ok_clients"],
+                "uris": match["uri_total"],
+                "first_epoch": match["first_epoch"],
+                "last_epoch": match["last_epoch"], "tz": match["tz"],
+                "truncated": bool(match.get("truncated")
+                                  or match.get("clients_truncated")
+                                  or match.get("uris_truncated")),
+                "batch_id": str(batch_id or "")}
+        return {"test": test, "result": match}
+
+    @app.post("/api/cases/{slug}/hunt/tests", dependencies=[auth])
+    def hunt_test_create(slug: str, body: HuntTestBody):
+        case_dir = case_dir_or_404(slug)
+        rule, entry = test_rule_from_body(body)
+        return store_hunt_test(case_dir, rule, entry, body.batch_id)
+
+    def public_hunt_test(row):
+        item = dict(row)
+        try:
+            item["rule"] = json.loads(item.pop("rule_json"))
+        except (ValueError, TypeError):
+            item["rule"] = {}
+            item.pop("rule_json", None)
+        try:
+            item["coverage"] = json.loads(item.pop("coverage_json"))
+        except (ValueError, TypeError):
+            item["coverage"] = {}
+            item.pop("coverage_json", None)
+        for key in ("truncated", "legacy"):
+            item[key] = bool(item.get(key))
+        return item
+
+    @app.get("/api/cases/{slug}/hunt/tests", dependencies=[auth])
+    def hunt_test_list(slug: str, pattern_id: str = "", limit: int = 100):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            where = "WHERE pattern_id = ?" if pattern_id else ""
+            params = [pattern_id] if pattern_id else []
+            rows = db.rows(
+                conn, "SELECT * FROM hunt_tests " + where +
+                " ORDER BY id DESC LIMIT ?", params + [max(1, min(limit, 500))])
+            return {"tests": [public_hunt_test(row) for row in rows]}
+        finally:
+            conn.close()
+
+    class HuntClusterBody(BaseModel):
+        cursor: str = ""
+        limit: int = 200
+
+    def hunt_test_or_404(case_dir, test_id):
+        conn = db.connect(case_dir)
+        try:
+            row = db.one(conn, "SELECT * FROM hunt_tests WHERE id = ?", (test_id,))
+        finally:
+            conn.close()
+        if not row:
+            raise HTTPException(404, "hunt test not found")
+        return public_hunt_test(row)
+
+    def require_fresh_hunt_test(case_dir, test):
+        current = logindex.index_fingerprint(case_dir)
+        if not current or current != test.get("index_fingerprint"):
+            raise HTTPException(409, "the access-log index changed; test again")
+
+    @app.post("/api/cases/{slug}/hunt/tests/{test_id}/clusters",
+              dependencies=[auth])
+    def hunt_test_clusters(slug: str, test_id: int, body: HuntClusterBody):
+        case_dir = case_dir_or_404(slug)
+        test = hunt_test_or_404(case_dir, test_id)
+        require_fresh_hunt_test(case_dir, test)
+        try:
+            return logindex.rule_clusters(case_dir, test["rule"], body.cursor,
+                                          body.limit)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    class HuntApplyBody(BaseModel):
+        cluster_keys: list[str] = Field(default_factory=list)
+        pattern_id: str = ""
+        expected_version: int | None = None
+        pattern: dict = Field(default_factory=dict)
+        disable_original: bool = True
+        idempotency_key: str = ""
+
+    def selected_hunt_clusters(case_dir, rule, wanted):
+        wanted = set(wanted)
+        found, cursor = {}, ""
+        for _page in range(50):
+            page = logindex.rule_clusters(case_dir, rule, cursor, 200)
+            for cluster in page["clusters"]:
+                if cluster["cluster_key"] in wanted:
+                    found[cluster["cluster_key"]] = cluster
+            if len(found) == len(wanted) or not page["next_cursor"]:
+                break
+            cursor = page["next_cursor"]
+        if set(found) != wanted:
+            raise HTTPException(409, "the selected request clusters changed; test again")
+        return [found[key] for key in wanted]
+
+    @app.post("/api/cases/{slug}/hunt/tests/{test_id}/apply",
+              dependencies=[auth])
+    def hunt_test_apply(slug: str, test_id: int, body: HuntApplyBody,
+                        lang: str = lang_dep):
+        if not body.cluster_keys or len(body.cluster_keys) > 200:
+            raise HTTPException(400, "select between one and 200 request clusters")
+        if len(set(body.cluster_keys)) != len(body.cluster_keys):
+            raise HTTPException(400, "duplicate request cluster")
+        case_dir = case_dir_or_404(slug)
+        test = hunt_test_or_404(case_dir, test_id)
+        require_fresh_hunt_test(case_dir, test)
+        rule = huntrules.normalise_rule(test["rule"])
+        metadata = body.pattern if isinstance(body.pattern, dict) else {}
+        submitted = metadata.get("rule")
+        if submitted is not None and huntrules.rule_hash(submitted) != test["rule_hash"]:
+            raise HTTPException(409, "the pattern changed after this test")
+        raw_key = body.idempotency_key.strip() or hashlib.sha256(
+            json.dumps({"test": test_id, "source": body.pattern_id,
+                        "version": body.expected_version,
+                        "disable": body.disable_original,
+                        "clusters": sorted(body.cluster_keys),
+                        "pattern": metadata}, ensure_ascii=False,
+                       sort_keys=True, separators=(",", ":"))
+            .encode("utf-8")).hexdigest()
+        conn = db.connect(case_dir)
+        try:
+            existing = db.one(
+                conn, "SELECT id,pattern_id FROM hunt_applications "
+                      "WHERE idempotency_key = ?", (raw_key,))
+        finally:
+            conn.close()
+        if existing:
+            saved = patternlib.find(config.workspace, existing["pattern_id"])
+            if not saved:
+                raise HTTPException(409, "the applied pattern no longer exists")
+            return {"application_id": existing["id"], "pattern": saved,
+                    "findings": 0, "already_applied": True}
+        source = patternlib.find(config.workspace, body.pattern_id) \
+            if body.pattern_id else None
+        try:
+            if source and source["source"] == "own":
+                saved = patternlib.update(
+                    config.workspace, source["id"],
+                    name=metadata.get("name", source["name"]),
+                    cve=metadata.get("cve", source["cve"]),
+                    description=metadata.get("description", source["description"]),
+                    rule=rule,
+                    technology=metadata.get("technology", source["technology"]),
+                    expected_version=body.expected_version)
+            elif source:
+                changed = (
+                    test["rule_hash"] != source["rule_hash"]
+                    or metadata.get("name", source["name"]) != source["name"]
+                    or metadata.get("cve", source["cve"]) != source["cve"]
+                    or metadata.get("description", source["description"])
+                    != source["description"]
+                    or metadata.get("technology", source["technology"])
+                    != source["technology"])
+                if changed:
+                    saved = patternlib.clone(
+                        config.workspace, source["id"], rule=rule,
+                        name=metadata.get("name", source["name"]),
+                        cve=metadata.get("cve", source["cve"]),
+                        description=metadata.get("description",
+                                                 source["description"]),
+                        technology=metadata.get("technology",
+                                                source["technology"]),
+                        disable_original=body.disable_original)
+                else:
+                    saved = source
+            else:
+                saved = patternlib.add(
+                    config.workspace, [], metadata.get("name") or
+                    ((source or {}).get("name") or "Hunt pattern"),
+                    metadata.get("cve", (source or {}).get("cve", "")),
+                    metadata.get("description",
+                                 (source or {}).get("description", "")),
+                    rule=rule,
+                    technology=metadata.get("technology",
+                                            (source or {}).get("technology", "")),
+                    derived_from=None)
+        except patternlib.PatternError as exc:
+            status = 409 if exc.key == "err.patternVersionConflict" else 400
+            raise HTTPException(status, _pattern_error(exc, lang)) from exc
+        clusters = selected_hunt_clusters(case_dir, rule, body.cluster_keys)
+        conn = db.connect(case_dir)
+        try:
+            cur = conn.execute(
+                "INSERT INTO hunt_applications(test_id,pattern_id,pattern_version,"
+                "rule_hash,applied_at,idempotency_key) VALUES (?,?,?,?,?,?)",
+                (test_id, saved["id"], saved["version"], test["rule_hash"],
+                 db.now(), raw_key))
+            application_id = cur.lastrowid
+            by_client = {}
+            for cluster in clusters:
+                evidence = [{"request_id": cluster["request_id"],
+                             "uri": cluster["example_uri"]}]
+                conn.execute(
+                    "INSERT INTO hunt_application_clusters(application_id,"
+                    "cluster_key,client,method,uri_pattern,status_class,requests,"
+                    "ok_hits,first_epoch,last_epoch,evidence_json) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (application_id, cluster["cluster_key"], cluster["client"],
+                     cluster["method"], cluster["uri_pattern"],
+                     cluster["status_class"], cluster["requests"],
+                     cluster["ok_hits"], cluster["first_epoch"],
+                     cluster["last_epoch"], json.dumps(evidence,
+                                                        separators=(",", ":"))))
+                by_client.setdefault(cluster["client"], []).append(cluster)
+            for client, selected in by_client.items():
+                requests = sum(row["requests"] for row in selected)
+                ok_hits = sum(row["ok_hits"] for row in selected)
+                examples = ", ".join(row["example_uri"] for row in selected[:3])
+                label = saved["name"] or saved["dsl"].splitlines()[0]
+                db.upsert_finding(
+                    conn, "logs", db.SEV_HIGH if ok_hits else db.SEV_LOW,
+                    f"Selected Pattern Hunt evidence ({label}, v{saved['version']})",
+                    "client", client,
+                    evidence=(f"{requests} selected requests, {ok_hits} answered 2xx; "
+                              f"test #{test_id}; examples: {examples}")[:400],
+                    rule_id=f"hunt.{saved['id']}.v{saved['version']}")
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "findings"})
+        return {"application_id": application_id, "pattern": saved,
+                "findings": len(by_client), "already_applied": False}
+
+    class HuntBatchBody(BaseModel):
+        ids: list[str] = Field(default_factory=list)
+
+    @app.post("/api/cases/{slug}/hunt/batch-tests", dependencies=[auth])
+    def hunt_batch_tests(slug: str, body: HuntBatchBody):
+        case_dir = case_dir_or_404(slug)
+        available = patternlib.library(config.workspace)
+        wanted = ([entry for entry in available if entry["id"] in set(body.ids)]
+                  if body.ids else available)
+        if not wanted:
+            raise HTTPException(400, "no active patterns selected")
+        batch_id = uuid.uuid4().hex[:12]
+
+        def work(ctx):
+            hits = tests = 0
+            for index, entry in enumerate(wanted):
+                if ctx.cancelled():
+                    break
+                ctx.progress(index / len(wanted),
+                             f"Testing {entry['name'] or entry['id']}")
+                result = store_hunt_test(case_dir, entry["rule"], entry, batch_id)
+                tests += 1
+                hits += result["result"]["hits"]
+            return {"tests": tests, "hits": hits, "batch_id": batch_id}
+
+        job_id = manager.submit(case_dir, "hunt", work, run_id=batch_id)
+        return {"job_id": job_id, "batch_id": batch_id,
+                "patterns": len(wanted)}
 
     @app.post("/api/cases/{slug}/hunt/preview", dependencies=[auth])
     def hunt_preview(slug: str, body: PreviewHunt, lang: str = lang_dep):

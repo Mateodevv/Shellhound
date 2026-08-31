@@ -35,7 +35,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from server import huntrules
+
 LIBRARY_FILE = "hunt_patterns.json"
+LIBRARY_SCHEMA = 2
 
 # Shipped alongside the code, so `pip install` carries it -- see the
 # package-data entry in pyproject.toml.
@@ -150,36 +153,66 @@ def _normalise(row):
         raw = [raw]
     if not isinstance(raw, list):
         raw = [row.get("pattern", "")]
-    paths = [str(p).strip() for p in raw if str(p or "").strip()]
-    if not paths:
-        return None
     mode = str(row.get("match") or MATCH_ANY).lower()
-    return {
+    paths = [str(p).strip() for p in raw if str(p or "").strip()]
+    try:
+        rule = huntrules.normalise_rule(row.get("rule")) \
+            if row.get("rule") else huntrules.legacy_rule(
+                paths, mode, row.get("request"))
+    except huntrules.RuleError:
+        return None
+    legacy = huntrules.legacy_projection(rule)
+    name = str(row.get("name") or row.get("label") or "").strip()
+    cve = str(row.get("cve") or row.get("note") or "").strip()
+    description = str(row.get("description") or row.get("about")
+                      or "").strip()
+    stamp = str(row.get("updated_at") or row.get("added") or "")
+    technology = str(row.get("technology") or "").lower()
+    if technology not in huntrules.TECHNOLOGIES:
+        technology = huntrules.suggest_technology(
+            name, cve, description, *legacy["patterns"])
+    try:
+        version = max(1, int(row.get("version") or 1))
+    except (TypeError, ValueError):
+        version = 1
+    entry = {
         "id": str(row.get("id") or uuid.uuid4().hex[:12]),
-        "patterns": paths,
-        "match": mode if mode in MATCH_MODES else MATCH_ANY,
-        "request": _normalise_request(row.get("request")),
-        "name": str(row.get("name") or row.get("label") or "").strip(),
-        "cve": str(row.get("cve") or row.get("note") or "").strip(),
-        "description": str(row.get("description") or row.get("about")
-                           or "").strip(),
+        **legacy,
+        "rule": rule,
+        "rule_hash": huntrules.rule_hash(rule),
+        "dsl": huntrules.to_dsl(rule),
+        "technology": technology,
+        "name": name,
+        "cve": cve,
+        "description": description,
         "added": str(row.get("added") or ""),
+        "created_at": str(row.get("created_at") or row.get("added") or stamp),
+        "updated_at": stamp,
+        "version": version,
+        "archived": bool(row.get("archived", False)),
+        "own_enabled": bool(row.get("own_enabled", True)),
+        "derived_from": row.get("derived_from") \
+            if isinstance(row.get("derived_from"), dict) else None,
     }
+    history = row.get("history")
+    entry["history"] = history if isinstance(history, list) and history \
+        else [_snapshot(entry)]
+    return entry
 
 
-def load(workspace):
+def load(workspace, include_archived=True):
     """The analyst's OWN patterns. Not the bundled ones -- see `library`."""
     out = []
     for row in _read(workspace).get("patterns", []) or []:
         if not isinstance(row, dict):
             continue
         entry = _normalise(row)
-        if entry:
+        if entry and (include_archived or not entry["archived"]):
             out.append({**entry, "source": "own"})
     return out
 
 
-def library(workspace, include_disabled=False):
+def library(workspace, include_disabled=False, include_archived=False):
     """What the hunt runs: the enabled bundled patterns, then the analyst's
     own. Bundled first because they are the same everywhere and therefore the
     part a reader of the report can check."""
@@ -193,11 +226,20 @@ def library(workspace, include_disabled=False):
         else:
             entry = {**entry, "enabled": True}
         rows.append(entry)
-    return rows + [{**p, "enabled": True} for p in load(workspace)]
+    own = []
+    for pattern in load(workspace, include_archived=True):
+        enabled = pattern["own_enabled"] and not pattern["archived"]
+        if pattern["archived"] and not include_archived:
+            continue
+        if not enabled and not include_disabled:
+            continue
+        own.append({**pattern, "enabled": enabled})
+    return rows + own
 
 
 def find(workspace, pattern_id):
-    for entry in library(workspace, include_disabled=True):
+    for entry in library(workspace, include_disabled=True,
+                         include_archived=True):
         if entry["id"] == pattern_id:
             return entry
     return None
@@ -210,7 +252,8 @@ def save(workspace, patterns, disabled=None):
         disabled = disabled_ids(workspace)
     # `source` is derived, not stored: it says which half of the library an
     # entry came from, and everything in this file came from the same half.
-    body = {"patterns": [{k: v for k, v in p.items()
+    body = {"schema": LIBRARY_SCHEMA,
+            "patterns": [{k: v for k, v in p.items()
                           if k not in ("source", "enabled")}
                          for p in patterns],
             "disabled": sorted(disabled)}
@@ -224,14 +267,20 @@ def save(workspace, patterns, disabled=None):
 
 
 def set_enabled(workspace, pattern_id, enabled):
-    """Switch a bundled pattern off or on for this workspace."""
+    """Switch a bundled or own pattern off or on for this workspace."""
     ids = {p["id"] for p in bundled()}
-    if pattern_id not in ids:
-        raise PatternError("Not a bundled pattern.", "err.patternUnknown")
-    off = disabled_ids(workspace)
-    off.discard(pattern_id) if enabled else off.add(pattern_id)
-    save(workspace, load(workspace), off)
-    return {"id": pattern_id, "enabled": bool(enabled)}
+    if pattern_id in ids:
+        off = disabled_ids(workspace)
+        off.discard(pattern_id) if enabled else off.add(pattern_id)
+        save(workspace, load(workspace), off)
+        return {"id": pattern_id, "enabled": bool(enabled)}
+    own = load(workspace)
+    for entry in own:
+        if entry["id"] == pattern_id:
+            entry["own_enabled"] = bool(enabled)
+            save(workspace, own)
+            return {"id": pattern_id, "enabled": bool(enabled)}
+    raise PatternError("Unknown pattern.", "err.patternUnknown")
 
 
 def _validate_one(pattern):
@@ -301,41 +350,70 @@ def validate_hypothesis(patterns_in, match=MATCH_ANY):
 
 
 def _signature(entry):
-    """What makes two entries the same rule: the same paths combined the same
-    way. Order does not matter -- "/a AND /b" is "/b AND /a"."""
-    request = _normalise_request(entry.get("request"))
-    return (entry["match"], tuple(sorted(p.lower() for p in entry["patterns"])),
-            tuple(sorted(request["methods"])),
-            tuple(sorted(a.lower() for a in request["user_agents"])))
+    """The canonical rule, independent from display metadata and order."""
+    rule = entry.get("rule") or huntrules.legacy_rule(
+        entry.get("patterns"), entry.get("match"), entry.get("request"))
+    return huntrules.rule_hash(rule)
+
+
+def _snapshot(entry):
+    return {key: entry.get(key) for key in (
+        "version", "technology", "name", "cve", "description", "rule",
+        "created_at", "updated_at", "archived", "own_enabled",
+        "derived_from",
+    )}
+
+
+def _stamp():
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def add(workspace, patterns_in, name="", cve="", description="",
-        match=MATCH_ANY, request=None):
-    paths = _validate(patterns_in)
-    mode = _mode(match)
-    request = _validate_request(request)
-    entry = {"id": uuid.uuid4().hex[:12], "patterns": paths, "match": mode,
-             "request": request,
+        match=MATCH_ANY, request=None, *, rule=None, technology="",
+        derived_from=None):
+    try:
+        canonical = (huntrules.normalise_rule(rule) if rule is not None
+                     else huntrules.legacy_rule(
+                         _validate(patterns_in), _mode(match),
+                         _validate_request(request)))
+    except huntrules.RuleError as exc:
+        raise PatternError(str(exc), exc.key) from exc
+    legacy = huntrules.legacy_projection(canonical)
+    technology = str(technology or "").lower()
+    if technology not in huntrules.TECHNOLOGIES:
+        technology = huntrules.suggest_technology(
+            name, cve, description, *legacy["patterns"])
+    stamp = _stamp()
+    entry = {"id": uuid.uuid4().hex[:12], **legacy, "rule": canonical,
+             "rule_hash": huntrules.rule_hash(canonical),
+             "dsl": huntrules.to_dsl(canonical),
+             "technology": technology,
              "name": str(name or "").strip(), "cve": str(cve or "").strip(),
              "description": str(description or "").strip(),
-             "added": datetime.now().isoformat(timespec="seconds")}
+             "added": stamp, "created_at": stamp, "updated_at": stamp,
+             "version": 1, "archived": False, "own_enabled": True,
+             "derived_from": derived_from if isinstance(derived_from, dict)
+             else None, "history": []}
+    entry["history"] = [_snapshot(entry)]
     # Checked against BOTH halves, including switched-off bundled entries: a
     # copy of something the tool already ships would run twice and be
     # reported twice, and switching the bundled one back on later would then
     # silently duplicate every hit.
     sig = _signature(entry)
-    for existing in library(workspace, include_disabled=True):
+    for existing in library(workspace, include_disabled=True,
+                            include_archived=True):
         if _signature(existing) == sig:
             raise PatternError("This pattern is already in the library.",
                                "err.patternKnown")
-    stored = load(workspace)
+    stored = load(workspace, include_archived=True)
     stored.append(entry)
     save(workspace, stored)
     return {**entry, "source": "own", "enabled": True}
 
 
 def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
-           description=None, match=None, request=None):
+           description=None, match=None, request=None, *, rule=None,
+           technology=None, expected_version=None, archived=None):
     if any(p["id"] == pattern_id for p in bundled()):
         # Editing it would keep the id and the CVE while changing what they
         # point at, so the same identifier would mean two things on two
@@ -343,24 +421,37 @@ def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
         raise PatternError(
             "A bundled pattern cannot be edited. Switch it off and add your "
             "own version.", "err.patternBundled")
-    patterns = load(workspace)
+    patterns = load(workspace, include_archived=True)
     for entry in patterns:
         if entry["id"] != pattern_id:
             continue
-        if patterns_in is not None:
-            entry["patterns"] = _validate(patterns_in)
-        if match is not None:
-            entry["match"] = _mode(match)
-        if request is not None:
-            entry["request"] = _validate_request(request)
+        if expected_version is not None and int(expected_version) != entry["version"]:
+            raise PatternError("Pattern version conflict.",
+                               "err.patternVersionConflict")
+        try:
+            if rule is not None:
+                entry["rule"] = huntrules.normalise_rule(rule)
+            elif patterns_in is not None or match is not None or request is not None:
+                entry["rule"] = huntrules.legacy_rule(
+                    patterns_in if patterns_in is not None else entry["patterns"],
+                    match if match is not None else entry["match"],
+                    request if request is not None else entry["request"])
+        except huntrules.RuleError as exc:
+            raise PatternError(str(exc), exc.key) from exc
+        entry.update(huntrules.legacy_projection(entry["rule"]))
+        entry["rule_hash"] = huntrules.rule_hash(entry["rule"])
+        entry["dsl"] = huntrules.to_dsl(entry["rule"])
         # THE SAME CHECK add() MAKES. It refuses a copy of something already
         # in the library because the pattern would then run twice and be
         # reported twice -- and editing an entry into that copy has exactly
         # the same effect. Checked against BOTH halves and against every
         # OTHER entry, so saving an unchanged pattern stays allowed.
         sig = _signature(entry)
-        for other in library(workspace, include_disabled=True):
-            if other["id"] != pattern_id and _signature(other) == sig:
+        parent_id = (entry.get("derived_from") or {}).get("id")
+        for other in library(workspace, include_disabled=True,
+                             include_archived=True):
+            if other["id"] not in (pattern_id, parent_id) \
+                    and _signature(other) == sig:
                 raise PatternError("This pattern is already in the library.",
                                    "err.patternKnown")
         if name is not None:
@@ -369,13 +460,26 @@ def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
             entry["cve"] = str(cve).strip()
         if description is not None:
             entry["description"] = str(description).strip()
+        if technology is not None:
+            value = str(technology).lower()
+            if value not in huntrules.TECHNOLOGIES:
+                raise PatternError("Unknown technology.", "err.patternTechnology")
+            entry["technology"] = value
+        if archived is not None:
+            entry["archived"] = bool(archived)
+            if archived:
+                entry["own_enabled"] = False
+        entry["version"] += 1
+        entry["updated_at"] = _stamp()
+        entry.setdefault("history", []).append(_snapshot(entry))
         save(workspace, patterns)
-        return {**entry, "source": "own", "enabled": True}
+        return {**entry, "source": "own",
+                "enabled": entry["own_enabled"] and not entry["archived"]}
     raise PatternError("Unknown pattern.", "err.patternUnknown")
 
 
 def remove(workspace, pattern_id):
-    """Delete an own pattern; switch off a bundled one.
+    """Archive an own pattern; switch off a bundled one.
 
     A bundled pattern cannot be deleted -- it lives in the package, so the
     delete would last until the next start and then quietly undo itself.
@@ -384,10 +488,94 @@ def remove(workspace, pattern_id):
     if any(p["id"] == pattern_id for p in bundled()):
         set_enabled(workspace, pattern_id, False)
         return {"removed": 0, "disabled": 1}
-    patterns = load(workspace)
-    kept = [p for p in patterns if p["id"] != pattern_id]
-    save(workspace, kept)
-    return {"removed": len(patterns) - len(kept), "disabled": 0}
+    patterns = load(workspace, include_archived=True)
+    for entry in patterns:
+        if entry["id"] == pattern_id:
+            if not entry["archived"]:
+                entry["archived"] = True
+                entry["own_enabled"] = False
+                entry["version"] += 1
+                entry["updated_at"] = _stamp()
+                entry.setdefault("history", []).append(_snapshot(entry))
+                save(workspace, patterns)
+                return {"removed": 1, "disabled": 0, "archived": 1}
+            return {"removed": 0, "disabled": 0, "archived": 0}
+    return {"removed": 0, "disabled": 0, "archived": 0}
+
+
+def versions(workspace, pattern_id):
+    entry = find(workspace, pattern_id)
+    if not entry:
+        raise PatternError("Unknown pattern.", "err.patternUnknown")
+    if entry["source"] == "bundled":
+        return [_snapshot(entry)]
+    return list(entry.get("history") or [_snapshot(entry)])
+
+
+def restore(workspace, pattern_id, version, expected_version=None):
+    entry = find(workspace, pattern_id)
+    if not entry or entry["source"] != "own":
+        raise PatternError("Unknown own pattern.", "err.patternUnknown")
+    wanted = next((row for row in versions(workspace, pattern_id)
+                   if int(row.get("version") or 0) == int(version)), None)
+    if not wanted:
+        raise PatternError("Unknown pattern version.", "err.patternVersion")
+    return update(
+        workspace, pattern_id, name=wanted.get("name"), cve=wanted.get("cve"),
+        description=wanted.get("description"), rule=wanted.get("rule"),
+        technology=wanted.get("technology"),
+        expected_version=expected_version,
+        archived=bool(wanted.get("archived", False)))
+
+
+def clone(workspace, pattern_id, *, disable_original=False, rule=None,
+          name=None, cve=None, description=None, technology=None):
+    source = find(workspace, pattern_id)
+    if not source:
+        raise PatternError("Unknown pattern.", "err.patternUnknown")
+    # A variant intentionally starts equal to its source and is edited next;
+    # bypass the duplicate guard only for this explicit provenance-aware path.
+    stamp = _stamp()
+    try:
+        canonical = huntrules.normalise_rule(
+            source["rule"] if rule is None else rule)
+    except huntrules.RuleError as exc:
+        raise PatternError(str(exc), exc.key) from exc
+    value_technology = str(source["technology"] if technology is None
+                           else technology).lower()
+    if value_technology not in huntrules.TECHNOLOGIES:
+        raise PatternError("Unknown technology.", "err.patternTechnology")
+    legacy = huntrules.legacy_projection(canonical)
+    entry = {"id": uuid.uuid4().hex[:12], **legacy, "rule": canonical,
+             "rule_hash": huntrules.rule_hash(canonical),
+             "dsl": huntrules.to_dsl(canonical),
+             "technology": value_technology,
+             "name": (f"{source['name']} — variant".strip(" —")
+                      if name is None else str(name).strip()),
+             "cve": source["cve"] if cve is None else str(cve).strip(),
+             "description": (source["description"] if description is None
+                             else str(description).strip()),
+             "added": stamp, "created_at": stamp, "updated_at": stamp,
+             "version": 1, "archived": False, "own_enabled": True,
+             "derived_from": {"id": source["id"],
+                              "version": source.get("version", 1),
+                              "source": source["source"]}, "history": []}
+    entry["history"] = [_snapshot(entry)]
+    customised = any(value is not None for value in (
+        rule, name, cve, description, technology))
+    if customised:
+        sig = _signature(entry)
+        for existing in library(workspace, include_disabled=True,
+                                include_archived=True):
+            if existing["id"] != source["id"] and _signature(existing) == sig:
+                raise PatternError("This pattern is already in the library.",
+                                   "err.patternKnown")
+    stored = load(workspace, include_archived=True)
+    stored.append(entry)
+    save(workspace, stored)
+    if disable_original:
+        set_enabled(workspace, source["id"], False)
+    return {**entry, "source": "own", "enabled": True}
 
 
 def import_text(workspace, text):
@@ -407,15 +595,20 @@ def import_text(workspace, text):
             data = data.get("patterns", [])
         for row in data if isinstance(data, list) else []:
             if isinstance(row, str):
-                rows.append(([row], "", "", "", MATCH_ANY, {}))
+                rows.append({"patterns": [row]})
             elif isinstance(row, dict):
                 paths = row.get("patterns") or row.get("pattern") or ""
-                rows.append((paths,
-                             row.get("name") or row.get("label") or "",
-                             row.get("cve") or row.get("note") or "",
-                             row.get("description") or row.get("about") or "",
-                             row.get("match") or MATCH_ANY,
-                             row.get("request") or {}))
+                rows.append({
+                    "patterns": paths,
+                    "name": row.get("name") or row.get("label") or "",
+                    "cve": row.get("cve") or row.get("note") or "",
+                    "description": row.get("description") or row.get("about") or "",
+                    "match": row.get("match") or MATCH_ANY,
+                    "request": row.get("request") or {},
+                    "rule": row.get("rule"),
+                    "technology": row.get("technology") or "",
+                    "derived_from": row.get("derived_from"),
+                })
     else:
         for line in text.splitlines():
             line = line.strip()
@@ -427,14 +620,18 @@ def import_text(workspace, text):
             # would run into the separator; whoever wants one exports JSON,
             # which is what the export writes anyway.
             parts = [p.strip() for p in line.split("|", 2)]
-            rows.append(([parts[0]], parts[1] if len(parts) > 1 else "",
-                         parts[2] if len(parts) > 2 else "", "", MATCH_ANY,
-                         {}))
+            rows.append({"patterns": [parts[0]],
+                         "name": parts[1] if len(parts) > 1 else "",
+                         "cve": parts[2] if len(parts) > 2 else ""})
 
     added = skipped = invalid = 0
-    for paths, name, cve, description, mode, request in rows:
+    for row in rows:
         try:
-            add(workspace, paths, name, cve, description, mode, request)
+            add(workspace, row.get("patterns") or [], row.get("name") or "",
+                row.get("cve") or "", row.get("description") or "",
+                row.get("match") or MATCH_ANY, row.get("request") or {},
+                rule=row.get("rule"), technology=row.get("technology") or "",
+                derived_from=row.get("derived_from"))
             added += 1
         except PatternError as e:
             if e.key == "err.patternKnown":
@@ -452,6 +649,7 @@ def export_text(workspace):
     colleague who imports this file already has them; including them would
     land as duplicates that `add` then rejects one by one, and the import
     would report a pile of skips that says nothing."""
-    own = [{k: v for k, v in p.items() if k != "source"}
-           for p in load(workspace)]
-    return json.dumps({"patterns": own}, indent=2, ensure_ascii=False) + "\n"
+    own = [{k: v for k, v in p.items() if k not in ("source", "enabled")}
+           for p in load(workspace, include_archived=True)]
+    return json.dumps({"schema": LIBRARY_SCHEMA, "patterns": own}, indent=2,
+                      ensure_ascii=False) + "\n"

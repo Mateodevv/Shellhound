@@ -159,4 +159,14 @@ describe('access-log investigation workspace', () => {
       path.endsWith('/access/search')
       && (body as { search: string }).search === '/api/users/123')).toBe(true))
   })
+
+  it('seeds Pattern Hunt from the inspected original request', async () => {
+    mockApi()
+    const gotoView = vi.fn()
+    renderWithProviders(<AccessLogs slug="case-1" gotoView={gotoView} />)
+    await screen.findByText('Access Log Explorer')
+    fireEvent.click(await screen.findByText(ROW.uri, { selector: 'span' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Use as pattern' }))
+    expect(gotoView).toHaveBeenCalledWith('hunt', { request: '7' })
+  })
 })

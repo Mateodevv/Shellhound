@@ -33,7 +33,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from server import db, ruleswitch
+from server import db, huntrules, ruleswitch
 from server.engines import accesslog
 from server.i18n import t
 from server.engines.fsutil import (get_files_recursive, is_compressed,
@@ -50,7 +50,9 @@ from server.engines.fsutil import (get_files_recursive, is_compressed,
 # 11: requests.line_no makes an indexed request traceable to the exact line
 #     in its registered evidence source. A rowid is useful for paging, but it
 #     changes on every rebuild and cannot be cited in an investigation.
-SCHEMA_VERSION = "11"
+# 12: optional virtual host from Apache vhost_combined or IIS cs-host. Empty
+#     means the source did not record it; it is never inferred.
+SCHEMA_VERSION = "12"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -209,7 +211,7 @@ CREATE TABLE requests (
     ip INTEGER, epoch INTEGER, tz INTEGER,
     method TEXT, uri INTEGER, leaf INTEGER,
     status INTEGER, size INTEGER,
-    referrer INTEGER, agent INTEGER, source INTEGER,
+    referrer INTEGER, agent INTEGER, host INTEGER, source INTEGER,
     line_no INTEGER
 );
 CREATE TABLE actors (
@@ -534,7 +536,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         batch.append((ip_id, epoch, tz, method, uri_id,
                                       leaf_id, status, size,
                                       intern(data.get("referrer") or ""),
-                                      agent_id, src_id, line_no))
+                                      agent_id, intern(
+                                          "" if data.get("host") in (None, "-")
+                                          else data.get("host")),
+                                      src_id, line_no))
                         file_lines += 1
 
                         # --- actor accumulation (the one pass) -----------
@@ -623,7 +628,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         chars += len(line)
                         if len(batch) >= _BATCH:
                             conn.executemany(
-                                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                 batch)
                             batch.clear()
                             if ctx is not None:
@@ -653,7 +658,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
 
         if batch:
             conn.executemany(
-                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
             batch.clear()
 
         if ctx is not None:
@@ -1591,6 +1596,7 @@ _ACCESS_JOINS = (
     "LEFT JOIN strings u ON u.id = r.uri "
     "LEFT JOIN strings a ON a.id = r.agent "
     "LEFT JOIN strings f ON f.id = r.referrer "
+    "LEFT JOIN strings h ON h.id = r.host "
     "LEFT JOIN sources s ON s.id = r.source"
 )
 
@@ -1805,7 +1811,7 @@ def _access_select():
     return (
         "SELECT r.rowid AS request_id, i.ip AS client, r.epoch, r.tz, "
         "r.method, u.text AS uri, r.status, r.size, f.text AS referrer, "
-        "a.text AS agent, s.id AS source_id, s.path AS source_path, "
+        "a.text AS agent, h.text AS host, s.id AS source_id, s.path AS source_path, "
         "r.line_no FROM requests r " + _ACCESS_JOINS
     )
 
@@ -2254,6 +2260,250 @@ def _like_from_pattern(pattern):
     esc = (str(pattern).replace("\\", "\\\\")
            .replace("%", "\\%").replace("_", "\\_"))
     return "%" + esc.replace("*", "%") + "%"
+
+
+def index_fingerprint(case_dir):
+    """Stable identity of the current derived index and its source set."""
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return ""
+    try:
+        meta = dict(conn.execute("SELECT key, value FROM meta"))
+        sources = [tuple(row) for row in conn.execute(
+            "SELECT path, size, mtime, lines, unparsed, skipped_reason "
+            "FROM sources ORDER BY path")]
+        payload = _json.dumps({"schema": meta.get("schema"),
+                               "partial": meta.get("partial"),
+                               "sources": sources},
+                              ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+    finally:
+        conn.close()
+
+
+_RULE_FIELD_SQL = {
+    "uri": "COALESCE(u.text, '')",
+    "path": ("CASE WHEN instr(COALESCE(u.text,''), '?') = 0 "
+             "THEN COALESCE(u.text,'') ELSE substr(u.text,1,instr(u.text,'?')-1) END"),
+    "query": ("CASE WHEN instr(COALESCE(u.text,''), '?') = 0 THEN '' "
+              "ELSE substr(u.text,instr(u.text,'?')+1) END"),
+    "method": "COALESCE(r.method, '')",
+    "status": "COALESCE(r.status, 0)",
+    "user_agent": "COALESCE(a.text, '')",
+    "referrer": "COALESCE(f.text, '')",
+    "host": "COALESCE(h.text, '')",
+}
+
+
+def _literal_like(value):
+    return "%" + (str(value).replace("\\", "\\\\")
+                  .replace("%", "\\%").replace("_", "\\_")) + "%"
+
+
+def _rule_clause_sql(clause):
+    field = clause["field"]
+    operator = clause["operator"]
+    values = clause["values"]
+    column = _RULE_FIELD_SQL[field]
+    bits, params = [], []
+    for value in values:
+        if field == "status":
+            low = str(value).lower()
+            if low.endswith("xx"):
+                start = int(low[0]) * 100
+                bits.append(f"{column} BETWEEN ? AND ?")
+                params.extend([start, start + 99])
+            else:
+                bits.append(f"{column} = ?")
+                params.append(int(low))
+        elif operator in ("equals", "in"):
+            bits.append(f"lower({column}) = lower(?)")
+            params.append(value)
+        elif operator == "contains":
+            bits.append(f"{column} LIKE ? ESCAPE '\\'")
+            params.append(_literal_like(value))
+        else:
+            bits.append(f"{column} LIKE ? ESCAPE '\\'")
+            params.append(_like_from_pattern(value))
+    return "(" + " OR ".join(bits) + ")", params
+
+
+def _prepare_rule_match(conn, rule):
+    """Materialise matching request ids once for summaries and clustering."""
+    rule = huntrules.normalise_rule(rule)
+    conn.execute("CREATE TEMP TABLE hunt_step "
+                 "(step INTEGER, request_id INTEGER, ip INTEGER, "
+                 "PRIMARY KEY(step, request_id)) WITHOUT ROWID")
+    for index, request in enumerate(rule["requests"]):
+        clauses, params = [], []
+        for clause in request["clauses"]:
+            sql, values = _rule_clause_sql(clause)
+            clauses.append(sql)
+            params.extend(values)
+        conn.execute(
+            "INSERT INTO hunt_step "
+            f"SELECT ?, r.rowid, r.ip FROM requests r {_ACCESS_JOINS} "
+            f"WHERE {' AND '.join(clauses)}",
+            [index] + params)
+    conn.execute("CREATE TEMP TABLE hunt_keep (ip INTEGER PRIMARY KEY)")
+    needed = len(rule["requests"])
+    if rule["client_match"] == "all":
+        conn.execute(
+            "INSERT INTO hunt_keep SELECT ip FROM hunt_step GROUP BY ip "
+            "HAVING count(DISTINCT step) = ?", (needed,))
+    else:
+        conn.execute("INSERT INTO hunt_keep SELECT DISTINCT ip FROM hunt_step")
+    conn.execute("CREATE TEMP TABLE hunt_request (request_id INTEGER PRIMARY KEY)")
+    conn.execute(
+        "INSERT INTO hunt_request SELECT DISTINCT hs.request_id FROM hunt_step hs "
+        "JOIN hunt_keep hk ON hk.ip = hs.ip")
+    return rule
+
+
+def _rule_coverage(conn, rule):
+    fields = {clause["field"] for request in rule["requests"]
+              for clause in request["clauses"]}
+    total = int(conn.execute("SELECT count(*) FROM requests").fetchone()[0] or 0)
+    coverage = {"requests": total, "fields": {}}
+    field_sql = {
+        "host": "r.host", "referrer": "r.referrer", "user_agent": "r.agent",
+        "uri": "r.uri", "path": "r.uri", "query": "r.uri",
+        "method": "r.method", "status": "r.status",
+    }
+    for field in sorted(fields):
+        column = field_sql[field]
+        if field == "method":
+            present = conn.execute(
+                f"SELECT count(*) FROM requests r "
+                f"WHERE trim(COALESCE({column},'')) != ''"
+            ).fetchone()[0]
+        elif field == "status":
+            present = conn.execute(
+                "SELECT count(*) FROM requests WHERE status > 0").fetchone()[0]
+        elif field == "query":
+            present = conn.execute(
+                "SELECT count(*) FROM requests r JOIN strings cv ON cv.id=r.uri "
+                "WHERE instr(cv.text,'?') > 0 "
+                "AND length(cv.text) > instr(cv.text,'?')").fetchone()[0]
+        else:
+            present = conn.execute(
+                f"SELECT count(*) FROM requests r LEFT JOIN strings cv ON cv.id={column} "
+                "WHERE trim(COALESCE(cv.text,'')) NOT IN ('','-')"
+            ).fetchone()[0]
+        coverage["fields"][field] = {
+            "present": int(present or 0), "total": total,
+            "ratio": (float(present) / total if total else 0.0),
+        }
+    return coverage
+
+
+def match_rule(case_dir, rule, limit=200):
+    """Evaluate a canonical v2 rule and return a bounded forensic summary."""
+    canonical = huntrules.normalise_rule(rule)
+    empty = {"rule": canonical, "rule_hash": huntrules.rule_hash(canonical),
+             "hits": 0, "ok_hits": 0, "clients_total": 0,
+             "ok_clients": 0, "uri_total": 0, "clients": [], "uris": [],
+             "first_epoch": None, "last_epoch": None, "tz": 0,
+             "timeline": [], "truncated": False,
+             "clients_truncated": False, "uris_truncated": False,
+             "coverage": {"requests": 0, "fields": {}}}
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return empty
+    try:
+        canonical = _prepare_rule_match(conn, canonical)
+        totals = conn.execute(
+            "SELECT count(*) AS hits, "
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits, "
+            "count(DISTINCT r.ip) clients, "
+            "count(DISTINCT CASE WHEN r.status BETWEEN 200 AND 299 THEN r.ip END) ok_clients, "
+            "count(DISTINCT r.uri) uris, "
+            "min(CASE WHEN r.epoch > 0 THEN r.epoch END) first_epoch, "
+            "max(CASE WHEN r.epoch > 0 THEN r.epoch END) last_epoch, max(r.tz) tz "
+            "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid"
+        ).fetchone()
+        clients = [dict(row) for row in conn.execute(
+            "SELECT i.ip, count(*) hits, "
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits, "
+            "min(CASE WHEN r.epoch > 0 THEN r.epoch END) first_epoch, "
+            "max(CASE WHEN r.epoch > 0 THEN r.epoch END) last_epoch, max(r.tz) tz "
+            "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
+            "JOIN ips i ON i.id=r.ip GROUP BY r.ip "
+            "ORDER BY ok_hits DESC, hits DESC LIMIT ?", (max(1, min(limit, 500)),))]
+        uris = [dict(row) for row in conn.execute(
+            "SELECT u.text uri, count(*) hits, "
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits "
+            "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
+            "JOIN strings u ON u.id=r.uri GROUP BY r.uri "
+            "ORDER BY hits DESC LIMIT ?", (_PATTERN_URI_SHOWN,))]
+        timeline = [dict(row) for row in conn.execute(
+            "SELECT (r.epoch+COALESCE(r.tz,0))/86400 day_key, count(*) requests, "
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok, "
+            "sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) errors, "
+            "count(DISTINCT r.ip) clients FROM requests r "
+            "JOIN hunt_request hr ON hr.request_id=r.rowid WHERE r.epoch>0 "
+            "GROUP BY day_key ORDER BY day_key")]
+        for row in timeline:
+            row["day"] = _day_iso(row.pop("day_key"))
+        total_clients = int(totals["clients"] or 0)
+        uri_total = int(totals["uris"] or 0)
+        return {**empty, "hits": int(totals["hits"] or 0),
+                "ok_hits": int(totals["ok_hits"] or 0),
+                "clients_total": total_clients,
+                "ok_clients": int(totals["ok_clients"] or 0),
+                "uri_total": uri_total, "clients": clients, "uris": uris,
+                "first_epoch": totals["first_epoch"],
+                "last_epoch": totals["last_epoch"], "tz": totals["tz"] or 0,
+                "timeline": timeline,
+                "clients_truncated": len(clients) < total_clients,
+                "uris_truncated": len(uris) < uri_total,
+                "coverage": _rule_coverage(conn, canonical)}
+    finally:
+        conn.close()
+
+
+def rule_clusters(case_dir, rule, cursor="", limit=200):
+    """Cursor page of stable, explainable request clusters for a v2 rule."""
+    try:
+        offset = int(str(cursor or "0").removeprefix("o:"))
+    except ValueError as exc:
+        raise ValueError("invalid hunt cluster cursor") from exc
+    offset = max(0, offset)
+    bounded = max(1, min(int(limit), 200))
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return {"clusters": [], "total": 0, "next_cursor": None}
+    try:
+        _prepare_rule_match(conn, rule)
+        conn.create_function("hunt_uri_pattern", 1, _uri_pattern,
+                             deterministic=True)
+        base = (
+            "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
+            "JOIN ips i ON i.id=r.ip JOIN strings u ON u.id=r.uri ")
+        total = conn.execute(
+            "SELECT count(*) FROM (SELECT 1 " + base +
+            "GROUP BY i.ip,r.method,hunt_uri_pattern(u.text),r.status/100)"
+        ).fetchone()[0]
+        rows = [dict(row) for row in conn.execute(
+            "SELECT i.ip client,r.method,hunt_uri_pattern(u.text) uri_pattern,"
+            "printf('%dxx',r.status/100) status_class,count(*) requests,"
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits,"
+            "min(CASE WHEN r.epoch>0 THEN r.epoch END) first_epoch,"
+            "max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch,max(r.tz) tz,"
+            "min(r.rowid) request_id,min(u.text) example_uri " + base +
+            "GROUP BY i.ip,r.method,uri_pattern,r.status/100 "
+            "ORDER BY ok_hits DESC,requests DESC,client,method,uri_pattern "
+            "LIMIT ? OFFSET ?", (bounded + 1, offset))]
+        has_more = len(rows) > bounded
+        rows = rows[:bounded]
+        for row in rows:
+            raw = "\x1f".join(str(row.get(key) or "") for key in (
+                "client", "method", "uri_pattern", "status_class"))
+            row["cluster_key"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+        return {"clusters": rows, "total": int(total or 0),
+                "next_cursor": f"o:{offset + bounded}" if has_more else None}
+    finally:
+        conn.close()
 
 
 def _normalise_request_filter(request):
