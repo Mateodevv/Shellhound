@@ -104,6 +104,8 @@ describe('Pattern Hunt forensic workbench', () => {
     mocks()
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
 
+    expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
     const name = await screen.findByDisplayValue('Bundled sample')
     fireEvent.change(name, { target: { value: 'Edited sample' } })
     expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
@@ -120,6 +122,7 @@ describe('Pattern Hunt forensic workbench', () => {
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>
       path.endsWith('/apply')
       && (body as { cluster_keys: string[] }).cluster_keys.join() === 'cluster-1')).toBe(true))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument())
   })
 
   it('restores the open draft when the analyst leaves and returns', async () => {
@@ -127,6 +130,7 @@ describe('Pattern Hunt forensic workbench', () => {
     history.replaceState(null, '', '/?case=case-state&view=hunt')
     mocks()
     const first = renderWithProviders(<Hunt slug="case-state" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
     const name = await screen.findByDisplayValue('Bundled sample')
     fireEvent.change(name, { target: { value: 'Draft kept across tabs' } })
     await waitFor(() => expect(JSON.parse(

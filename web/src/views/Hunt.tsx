@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Columns3, Library, PanelRight } from 'lucide-react'
+import { Columns3, Library, PanelRight, type LucideIcon } from 'lucide-react'
 import {
   api, del, post, type AccessRequestContext, type HuntPattern, type HuntRuleV2, type HuntTest,
   type Job,
@@ -43,7 +43,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const [confirmVariant, setConfirmVariant] = useState(false)
   const [disableOriginal, setDisableOriginal] = useState(true)
   const [batchJobId, setBatchJobId] = useState<number | null>(null)
-  const [focus, setFocus] = useState<'library' | 'editor' | 'results'>('editor')
+  const [focus, setFocus] = useState<'library' | 'editor' | 'results'>('results')
 
   const library = useQuery({
     queryKey: ['patterns'],
@@ -100,7 +100,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       technology, means: tr('hunt.workbench.seedMeaning'), rule, dsl: toDsl(rule) })
     setCleanHash('')
     setFocus('editor')
-    setSession((state) => ({ ...state, selectedId: '', draft: next, testId: null,
+    setSession((state) => ({ ...state, selectedId: '', draft: next, editorOpen: true, testId: null,
       testedHash: '', selectedClusters: [] }))
     const url = new URL(location.href)
     url.searchParams.delete('request')
@@ -122,7 +122,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     const last = audits.find((test) => test.pattern_id === initial.id) ?? null
     const hash = draftHash(next)
     setCleanHash(hash)
-    setSession((state) => ({ ...state, selectedId: initial.id, draft: next,
+    setSession((state) => ({ ...state, selectedId: initial.id, draft: next, editorOpen: false,
       testId: last?.id ?? null, testedHash: last?.rule_hash === initial.rule_hash ? hash : '',
       selectedClusters: [] }))
   }, [audits, patterns, session.draft, session.selectedId])
@@ -135,21 +135,34 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
 
   const mutateSession = (update: Partial<HuntSessionState>) =>
     setSession((state) => ({ ...state, ...update }))
-  const choose = (pattern: HuntPattern) => {
+  const loadPattern = (pattern: HuntPattern, edit: boolean) => {
     const next = patternDraft(pattern)
     const last = audits.find((test) => test.pattern_id === pattern.id) ?? null
     const hash = draftHash(next)
     setCleanHash(hash)
     setError('')
-    mutateSession({ selectedId: pattern.id, draft: next, testId: last?.id ?? null,
+    mutateSession({ selectedId: pattern.id, draft: next, editorOpen: edit, testId: last?.id ?? null,
       testedHash: last?.rule_hash === pattern.rule_hash ? hash : '', selectedClusters: [] })
+    setFocus(edit ? 'editor' : 'results')
+  }
+  const choose = (pattern: HuntPattern) => loadPattern(pattern, false)
+  const beginEdit = (pattern: HuntPattern) => loadPattern(pattern, true)
+  const resumeEdit = () => {
+    if (!draft) return
+    mutateSession({ editorOpen: true })
+    setFocus('editor')
+  }
+  const closeEditor = () => {
+    mutateSession({ editorOpen: false })
+    setFocus('results')
   }
   const create = () => {
     const next = emptyDraft()
     setCleanHash('')
     setError('')
     setFocus('editor')
-    mutateSession({ selectedId: '', draft: next, testId: null, testedHash: '', selectedClusters: [] })
+    mutateSession({ selectedId: '', draft: next, editorOpen: true, testId: null,
+      testedHash: '', selectedClusters: [] })
   }
 
   const validate = useMutation({
@@ -202,8 +215,9 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       const next = patternDraft(response.pattern)
       const hash = draftHash(next)
       setCleanHash(hash)
-      mutateSession({ selectedId: response.pattern.id, draft: next, testedHash: hash,
+      mutateSession({ selectedId: response.pattern.id, draft: next, editorOpen: false, testedHash: hash,
         selectedClusters: [] })
+      setFocus('results')
       setConfirmVariant(false)
       setNotice(response.already_applied
         ? tr('hunt.workbench.alreadyApplied')
@@ -222,8 +236,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     onSuccess: (pattern) => {
       qc.setQueryData<{ patterns: HuntPattern[]; path: string }>(['patterns'], (old) =>
         old ? { ...old, patterns: [...old.patterns, pattern] } : old)
-      choose(pattern)
-      setFocus('editor')
+      beginEdit(pattern)
     },
     onError: (cause: Error) => setError(cause.message),
   })
@@ -272,7 +285,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       })
     },
     onSuccess: (pattern) => {
-      choose(pattern)
+      beginEdit(pattern)
       void qc.invalidateQueries({ queryKey: ['patterns'] })
       void qc.invalidateQueries({ queryKey: ['pattern-versions', pattern.id] })
     },
@@ -305,10 +318,17 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       window.addEventListener('pointerup', up)
     }
 
-  const grid = `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${session.editorWidth}px 5px ${session.resultCollapsed ? '48px' : 'minmax(420px,1fr)'}`
+  const editorOpen = session.editorOpen && Boolean(draft)
+  const resultColumn = session.resultCollapsed ? '48px' : 'minmax(420px,1fr)'
+  const grid = editorOpen
+    ? `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${session.editorWidth}px 5px ${resultColumn}`
+    : `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${resultColumn}`
+  const focusTabs: Array<['library' | 'editor' | 'results', LucideIcon]> = editorOpen
+    ? [['library', Library], ['editor', Columns3], ['results', PanelRight]]
+    : [['library', Library], ['results', PanelRight]]
   return <>
     <div className="mb-2 flex items-center rounded-lg border border-[var(--line)] bg-[var(--panel)] p-1 min-[1400px]:hidden">
-      {([['library', Library], ['editor', Columns3], ['results', PanelRight]] as const).map(([value, Icon]) => <button
+      {focusTabs.map(([value, Icon]) => <button
         key={value} type="button" onClick={() => setFocus(value)}
         className={clsx('flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold',
           focus === value ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'text-[var(--muted)]')}>
@@ -321,7 +341,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         <PatternLibrary patterns={patterns} tests={audits} selectedId={session.selectedId}
           search={session.search} filter={session.filter} collapsed={session.libraryCollapsed}
           busy={batch.isPending} onSearch={(search) => mutateSession({ search })}
-          onFilter={(filter) => mutateSession({ filter })} onSelect={choose} onNew={create}
+          onFilter={(filter) => mutateSession({ filter })} onSelect={choose} onEdit={beginEdit} onNew={create}
           onDuplicate={(pattern) => clone.mutate(pattern)} onToggle={(pattern) => toggle.mutate(pattern)}
           onArchive={(pattern) => archive.mutate(pattern)} onBatch={() => batch.mutate()}
           onFromLogs={() => gotoView('logs')}
@@ -332,7 +352,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       </div>
       <div onPointerDown={beginResize('library')}
         className="cursor-col-resize bg-[var(--line)] transition-colors hover:bg-[var(--accent)] max-[1399px]:hidden" />
-      <div className={clsx('min-h-0 min-w-0 max-[1399px]:col-span-full', focus !== 'editor' && 'max-[1399px]:hidden')}>
+      {editorOpen && <><div className={clsx('min-h-0 min-w-0 max-[1399px]:col-span-full', focus !== 'editor' && 'max-[1399px]:hidden')}>
         <RuleEditor draft={draft} dirty={dirty} tested={tested} stale={stale}
           selectedClusters={selected.size} pending={pending} error={error}
           versions={versions.data?.versions ?? []}
@@ -341,15 +361,18 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
           onApply={() => draft?.source === 'bundled' && dirty
             ? setConfirmVariant(true) : applyRule.mutate(false)}
           onValidateDsl={() => validate.mutate()}
-          onRestore={(version) => restore.mutate(version)} />
+          onRestore={(version) => restore.mutate(version)} onClose={closeEditor} />
       </div>
       <div onPointerDown={beginResize('editor')}
-        className="cursor-col-resize bg-[var(--line)] transition-colors hover:bg-[var(--accent)] max-[1399px]:hidden" />
+        className="cursor-col-resize bg-[var(--line)] transition-colors hover:bg-[var(--accent)] max-[1399px]:hidden" /></>}
       <div className={clsx('min-h-0 min-w-0 max-[1399px]:col-span-full', focus !== 'results' && 'max-[1399px]:hidden')}>
         <HuntResults slug={slug} test={activeTest} selected={selected}
           collapsed={session.resultCollapsed}
+          ruleName={draft?.name}
           onSelected={(value) => mutateSession({ selectedClusters: [...value] })}
           onCollapse={() => mutateSession({ resultCollapsed: !session.resultCollapsed })}
+          onEdit={draft ? resumeEdit : undefined}
+          editLabel={draft?.source === 'new' ? tr('hunt.workbench.resumeDraft') : tr('hunt.workbench.editRule')}
           gotoView={gotoView} />
       </div>
     </div>

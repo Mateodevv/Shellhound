@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import {
   AlertTriangle, Braces, Check, ChevronRight, FlaskConical, GitCompare,
-  Plus, RotateCcw, Save, Trash2,
+  Plus, RotateCcw, Save, Trash2, X,
 } from 'lucide-react'
 import type {
   HuntClause, HuntField, HuntOperator, HuntTechnology,
@@ -34,7 +34,7 @@ function changedFields(current: Record<string, unknown>, previous?: Record<strin
 
 export function RuleEditor({
   draft, dirty, tested, stale, selectedClusters, pending, error, versions,
-  onChange, onTest, onApply, onValidateDsl, onRestore,
+  onChange, onTest, onApply, onValidateDsl, onRestore, onClose,
 }: {
   draft: HuntDraft | null
   dirty: boolean
@@ -49,6 +49,7 @@ export function RuleEditor({
   onApply: () => void
   onValidateDsl: () => void
   onRestore: (version: number) => void
+  onClose: () => void
 }) {
   const tr = useT()
   if (!draft) return <section className="flex h-full min-w-0 items-center justify-center border-r border-[var(--line)] bg-[var(--panel)] p-8 text-center">
@@ -96,6 +97,11 @@ export function RuleEditor({
             {draft.source === 'bundled' ? tr('hunt.workbench.variantHint') : tr('hunt.edit.note')}
           </div>
         </div>
+        <button type="button" onClick={onClose} title={tr('hunt.workbench.closeEditor')}
+          aria-label={tr('hunt.workbench.closeEditor')}
+          className="cursor-pointer rounded p-1.5 text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
+          <X size={14} />
+        </button>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <Button disabled={pending} onClick={onTest}>
