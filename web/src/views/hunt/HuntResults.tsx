@@ -27,7 +27,7 @@ export function HuntResults({
   collapsed: boolean
   ruleName?: string
   onSelected: (value: Set<string>) => void
-  onCollapse: () => void
+  onCollapse?: () => void
   onEdit?: () => void
   editLabel?: string
   gotoView: Navigate
@@ -106,10 +106,10 @@ export function HuntResults({
       </div>
       {selected.size > 0 && <Tag tone="accent">{selected.size} {tr('hunt.workbench.selected')}</Tag>}
       {onEdit && <Button onClick={onEdit}><PencilLine size={12} /> {editLabel || tr('hunt.workbench.editRule')}</Button>}
-      <button type="button" onClick={onCollapse} title={tr('common.close')}
+      {onCollapse && <button type="button" onClick={onCollapse} title={tr('common.close')}
         className="cursor-pointer rounded p-1.5 text-[var(--muted)] hover:bg-[var(--panel-2)]">
         <ChevronRight size={15} />
-      </button>
+      </button>}
     </header>
 
     {!test ? <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center">

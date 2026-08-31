@@ -141,4 +141,17 @@ describe('Pattern Hunt forensic workbench', () => {
     renderWithProviders(<Hunt slug="case-state" gotoView={vi.fn()} />)
     expect(await screen.findByDisplayValue('Draft kept across tabs')).toBeInTheDocument()
   })
+
+  it('always expands results when the editor is closed, even with an old collapsed session', async () => {
+    sessionStorage.clear()
+    sessionStorage.setItem('shellhound:hunt-workbench:case-collapsed', JSON.stringify({
+      resultCollapsed: true,
+    }))
+    history.replaceState(null, '', '/?case=case-collapsed&view=hunt')
+    mocks()
+    renderWithProviders(<Hunt slug="case-collapsed" gotoView={vi.fn()} />)
+
+    expect(await screen.findByText('No audited test selected')).toBeInTheDocument()
+    expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
+  })
 })

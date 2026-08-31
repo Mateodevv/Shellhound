@@ -319,7 +319,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     }
 
   const editorOpen = session.editorOpen && Boolean(draft)
-  const resultColumn = session.resultCollapsed ? '48px' : 'minmax(420px,1fr)'
+  const resultsCollapsed = editorOpen && session.resultCollapsed
+  const resultColumn = resultsCollapsed ? '48px' : 'minmax(420px,1fr)'
   const grid = editorOpen
     ? `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${session.editorWidth}px 5px ${resultColumn}`
     : `${session.libraryCollapsed ? 48 : session.libraryWidth}px 5px ${resultColumn}`
@@ -367,10 +368,12 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         className="cursor-col-resize bg-[var(--line)] transition-colors hover:bg-[var(--accent)] max-[1399px]:hidden" /></>}
       <div className={clsx('min-h-0 min-w-0 max-[1399px]:col-span-full', focus !== 'results' && 'max-[1399px]:hidden')}>
         <HuntResults slug={slug} test={activeTest} selected={selected}
-          collapsed={session.resultCollapsed}
+          collapsed={resultsCollapsed}
           ruleName={draft?.name}
           onSelected={(value) => mutateSession({ selectedClusters: [...value] })}
-          onCollapse={() => mutateSession({ resultCollapsed: !session.resultCollapsed })}
+          onCollapse={editorOpen
+            ? () => mutateSession({ resultCollapsed: !session.resultCollapsed })
+            : undefined}
           onEdit={draft ? resumeEdit : undefined}
           editLabel={draft?.source === 'new' ? tr('hunt.workbench.resumeDraft') : tr('hunt.workbench.editRule')}
           gotoView={gotoView} />
