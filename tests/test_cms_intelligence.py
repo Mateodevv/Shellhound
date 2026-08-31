@@ -94,6 +94,8 @@ class CmsIntelligenceTests(unittest.TestCase):
         self.assertEqual("control.example", result["persistence"][0]["domains"][0])
         self.assertEqual("2026/05/invoice.php", result["content"][0]["path"])
         self.assertIn("executable_attachment", result["content"][0]["signals"])
+        self.assertIn("<script", result["content"][0]["content"])
+        self.assertFalse(result["content"][0]["content_truncated"])
         serialized = json.dumps(result)
         self.assertNotIn("verifier-is-not-retained", serialized)
         self.assertNotIn("hash-is-not-retained", serialized)
@@ -134,10 +136,20 @@ class CmsIntelligenceTests(unittest.TestCase):
         self.assertEqual("*/5 * * * *", result["persistence"][0]["schedule"])
         self.assertEqual(["tasks.example"], result["persistence"][0]["domains"])
         self.assertIn("iframe", result["content"][0]["signals"])
+        self.assertIn("<iframe", result["content"][0]["content"])
         serialized = json.dumps(result)
         self.assertNotIn("secret-session-id", serialized)
         self.assertNotIn("private session body", serialized)
         self.assertNotIn('"token": "secret"', serialized)
+
+    def test_content_body_is_bounded_and_marked(self):
+        collector = cmsintelligence.Collector()
+        body = "x" * (cmsintelligence._CONTENT_BODY_LIMIT + 100)
+        collector.collect("wp_posts", ["ID", "post_content", "post_title"],
+                          [[1, body, "Large post"]])
+        item = collector.finish(["WordPress"])["content"][0]
+        self.assertEqual(cmsintelligence._CONTENT_BODY_LIMIT, len(item["content"]))
+        self.assertTrue(item["content_truncated"])
 
     def test_scanner_persists_a_bounded_snapshot_on_the_dump(self):
         with tempfile.TemporaryDirectory() as tmp:

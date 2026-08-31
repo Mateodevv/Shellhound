@@ -8,9 +8,10 @@
 // incident?") is asked once.
 //
 // Hence: what gets checked, counted and decided as a true/false positive is
-// the artifact. The list has two levels -- category ("Web shells &
-// backdoors") and below it the artifacts. The findings of an artifact stand
-// expanded below it and in the detail window, which gathers everything
+// the artifact. The list starts with the category ("Web shells &
+// backdoors"); file artifacts keep their evidence-directory hierarchy below
+// it, while non-file artifacts remain direct children. Individual findings
+// expand below their artifact and in the detail window, which gathers everything
 // needed for the assessment: metadata, file content, actor profile and every
 // IP that hangs on it -- each of them openable directly as a trace.
 //
@@ -25,7 +26,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
   Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
-  KeyRound, Radar, X,
+  Folder, FolderOpen, KeyRound, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
@@ -93,11 +94,22 @@ interface SavedView {
   showRetired: boolean
 }
 
+interface DirectoryNode {
+  key: string
+  name: string
+  path: string
+  artifacts: Artifact[]
+  children: DirectoryNode[]
+  count: number
+  worst: number
+}
+
 // Row types of the virtualised list.
 type Item =
   | { t: 'c'; c: CatGroup }
-  | { t: 'a'; a: Artifact; c: CatGroup }
-  | { t: 'f'; f: Finding; a: Artifact }
+  | { t: 'd'; d: DirectoryNode; depth: number }
+  | { t: 'a'; a: Artifact; c: CatGroup; depth: number }
+  | { t: 'f'; f: Finding; a: Artifact; depth: number }
 
 const isArtifactRow = (i?: Item) => i?.t === 'a'
 
@@ -122,6 +134,59 @@ function hiddenFromUrl(key: string, all: string[], fallback: string[]): Set<stri
   if (raw == null) return new Set(fallback)
   const visible = new Set(raw.split(',').filter((value) => all.includes(value)))
   return new Set(all.filter((value) => !visible.has(value)))
+}
+
+/** Build the directory levels that are actually present in the evidence.
+ *  The filename stays an artifact row; only its parent path becomes tree
+ *  structure. Non-file findings remain directly below the category. */
+function directoryForest(artifacts: Artifact[], roots: EvidenceRoot[], category: string) {
+  const direct: Artifact[] = []
+  const top: DirectoryNode[] = []
+  const nodes = new Map<string, DirectoryNode>()
+
+  for (const artifact of artifacts) {
+    if (artifact.artifact_kind !== 'file') {
+      direct.push(artifact)
+      continue
+    }
+    const located = relativeToRoot(artifact.artifact, roots)
+    const relative = located.rel.replace(/\\/g, '/')
+    const parts = relative.split('/').filter(Boolean).slice(0, -1)
+    if (!parts.length) {
+      direct.push(artifact)
+      continue
+    }
+    let parent: DirectoryNode | null = null
+    let path = ''
+    const windowsPath = /^[A-Za-z]:/.test(artifact.artifact) || artifact.artifact.includes('\\')
+    const source = located.root?.path ?? 'unregistered-root'
+    for (const name of parts) {
+      path = path ? `${path}/${name}` : name
+      const identity = `${source}:${path}`
+      const key = `${category}:${windowsPath ? identity.toLowerCase() : identity}`
+      let node = nodes.get(key)
+      if (!node) {
+        node = { key, name, path, artifacts: [], children: [], count: 0, worst: 3 }
+        nodes.set(key, node)
+        if (parent) parent.children.push(node)
+        else top.push(node)
+      }
+      node.count += 1
+      node.worst = Math.min(node.worst, artifact.worst)
+      parent = node
+    }
+    parent!.artifacts.push(artifact)
+  }
+
+  const sort = (rows: DirectoryNode[]) => {
+    rows.sort((a, b) => a.name.localeCompare(b.name))
+    for (const row of rows) {
+      row.artifacts.sort((a, b) => a.artifact.localeCompare(b.artifact))
+      sort(row.children)
+    }
+  }
+  sort(top)
+  return { direct, directories: top }
 }
 
 export function Findings({ slug, gotoView }: {
@@ -155,6 +220,7 @@ export function Findings({ slug, gotoView }: {
   // exception the analyst set themselves.
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
@@ -223,8 +289,7 @@ export function Findings({ slug, gotoView }: {
     return () => window.removeEventListener('popstate', restore)
   }, [])
 
-  // Two levels: category ("Web shells & backdoors") -> the artifacts in
-  // it.
+  // Category -> evidence directory (for files) -> artifact -> observations.
   const categories = useMemo(() => {
     const byArtifact = new Map<string, Finding[]>()
     for (const f of data?.findings ?? []) {
@@ -314,19 +379,35 @@ export function Findings({ slug, gotoView }: {
 
   const items = useMemo(() => {
     const out: Item[] = []
+    const addArtifact = (a: Artifact, c: CatGroup, depth: number) => {
+      out.push({ t: 'a', a, c, depth })
+      if (expanded.has(a.artifact)) {
+        for (const f of a.items) out.push({ t: 'f', f, a, depth })
+      }
+    }
+    const addDirectory = (directory: DirectoryNode, c: CatGroup, depth: number) => {
+      out.push({ t: 'd', d: directory, depth })
+      if (collapsedDirs.has(directory.key)) return
+      for (const a of directory.artifacts) addArtifact(a, c, depth + 1)
+      for (const child of directory.children) addDirectory(child, c, depth + 1)
+    }
     for (const c of categories) {
       out.push({ t: 'c', c })
       const catOpen = filtering ? !collapsedCats.has(c.cat.id) : expandedCats.has(c.cat.id)
       if (!catOpen) continue
-      for (const a of c.artifacts) {
-        out.push({ t: 'a', a, c })
-        if (expanded.has(a.artifact)) {
-          for (const f of a.items) out.push({ t: 'f', f, a })
+      const tree = directoryForest(c.artifacts, roots, c.cat.id)
+      for (const a of tree.directories.length
+        ? tree.direct.filter((artifact) => artifact.artifact_kind !== 'file')
+        : tree.direct) addArtifact(a, c, 0)
+      for (const directory of tree.directories) addDirectory(directory, c, 0)
+      if (tree.directories.length) {
+        for (const a of tree.direct.filter((artifact) => artifact.artifact_kind === 'file')) {
+          addArtifact(a, c, 0)
         }
       }
     }
     return out
-  }, [categories, expanded, collapsedCats, expandedCats, filtering])
+  }, [categories, roots, expanded, collapsedCats, collapsedDirs, expandedCats, filtering])
 
 
   /** Checked artifacts, otherwise the one under the cursor. */
@@ -344,7 +425,7 @@ export function Findings({ slug, gotoView }: {
     getScrollElement: () => parentRef.current,
     estimateSize: (i) => {
       const kind = items[i]?.t
-      return kind === 'c' ? 62 : kind === 'a' ? 68 : 34
+      return kind === 'c' ? 62 : kind === 'd' ? 42 : kind === 'a' ? 68 : 34
     },
     overscan: 20,
   })
@@ -756,7 +837,44 @@ export function Findings({ slug, gotoView }: {
               )
             }
 
-            // ---- level 2: the artifact -- the unit decisions are about ----
+            // ---- level 2: evidence directory ----
+            if (item.t === 'd') {
+              const open = !collapsedDirs.has(item.d.key)
+              const tint = SEVERITY_VAR[item.d.worst]
+              return (
+                <div key={'d' + item.d.key}
+                  className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-4 text-[12px] hover:bg-[var(--panel-2)]"
+                  style={style}>
+                  <span className="h-full w-1 shrink-0 opacity-25" style={{ background: tint }} />
+                  <span className="shrink-0" style={{ width: `${item.depth * 18 + 32}px` }} />
+                  <button
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded py-1 text-left"
+                    aria-label={open
+                      ? tr('findings.folder.collapse', { name: item.d.name })
+                      : tr('findings.folder.expand', { name: item.d.name })}
+                    onClick={() => setCollapsedDirs((previous) => {
+                      const next = new Set(previous)
+                      if (next.has(item.d.key)) next.delete(item.d.key)
+                      else next.add(item.d.key)
+                      return next
+                    })}>
+                    {open ? <ChevronDown size={13} className="shrink-0 text-[var(--muted)]" />
+                      : <ChevronRight size={13} className="shrink-0 text-[var(--muted)]" />}
+                    {open ? <FolderOpen size={15} className="shrink-0 text-[var(--accent)]" />
+                      : <Folder size={15} className="shrink-0 text-[var(--muted)]" />}
+                    <span className="mono truncate font-medium">{item.d.name}</span>
+                    {item.d.path !== item.d.name && (
+                      <span className="truncate text-[10.5px] text-[var(--muted)]">{item.d.path}</span>
+                    )}
+                    <span className="ml-auto shrink-0 text-[10.5px] text-[var(--muted)] tabular">
+                      {tr('findings.folder.files', { n: formatCount(item.d.count) })}
+                    </span>
+                  </button>
+                </div>
+              )
+            }
+
+            // ---- next level: the artifact -- the unit decisions are about ----
             if (item.t === 'a') {
               const a = item.a
               const Icon = KIND_ICON[a.artifact_kind] ?? Bug
@@ -777,6 +895,7 @@ export function Findings({ slug, gotoView }: {
                     a.findings === 0 && a.retired > 0 && 'opacity-35')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
+                  <span className="shrink-0" style={{ width: `${item.depth * 18}px` }} />
                   <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
                     checked={checked.has(a.artifact)}
                     onChange={(e) => {
@@ -853,7 +972,7 @@ export function Findings({ slug, gotoView }: {
               )
             }
 
-            // ---- level 3: a finding as REASONING, not as a decision ----
+            // ---- final level: a finding as REASONING, not as a decision ----
             const f = item.f
             return (
               <div key={f.fingerprint}
@@ -863,6 +982,7 @@ export function Findings({ slug, gotoView }: {
                 style={style}>
                 {/* The guide line keeps the findings visibly attached to
                     their artifact -- indented text alone loses the tie. */}
+                <span className="shrink-0" style={{ width: `${item.depth * 18}px` }} />
                 <span className="ml-[3.25rem] h-full w-px shrink-0 bg-[var(--line)]" />
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ background: SEVERITY_VAR[f.severity] }} />

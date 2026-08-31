@@ -196,13 +196,11 @@ class TimelineOrderTests(unittest.TestCase):
     """Where the two coverage blocks sit in the investigation flow.
 
     This is a layout decision with a forensic reason, so it is guarded like
-    one. Both blocks describe the LOGS -- the chart the period they cover,
-    the notes what is missing from it -- and both must be read before the
-    chronology, which is assembled out of those same logs. The dashboard
-    gives the quick coverage summary and links into the dedicated timeline;
-    that workbench repeats the context before the full chronology. An analyst
-    who reads the sequence first and learns only afterwards that fourteen
-    hours are absent has already formed the wrong picture.
+    one. The analyst opens these pages for their primary forensic content;
+    coverage gaps and other qualifications therefore follow the chronology
+    and scope instead of blocking the path to them. The dashboard gives a
+    quick evidence summary and links into the dedicated timeline; detailed
+    coverage remains available at the bottom of both workspaces.
 
     A source-text check, because the ordering lives in JSX and there is no
     frontend test runner here. Crude, but it fails when someone moves a
@@ -221,32 +219,30 @@ class TimelineOrderTests(unittest.TestCase):
         self.assertNotEqual(-1, i, f"{needle} is gone from {view}")
         return i
 
-    def test_the_timeline_workbench_puts_context_before_chronology(self):
+    def test_the_timeline_workbench_puts_coverage_after_chronology(self):
         self.assertLess(
             self._at(self.timeline, "<TimelineChart", "the timeline"),
             self._at(self.timeline, "<CaseChain", "the timeline"))
         self.assertLess(
-            self._at(self.timeline, "<LogCoverage", "the timeline"),
-            self._at(self.timeline, "<CaseChain", "the timeline"))
+            self._at(self.timeline, "<CaseChain", "the timeline"),
+            self._at(self.timeline, "<LogCoverage", "the timeline"))
 
     def test_the_dashboard_links_to_the_full_timeline(self):
         self._at(self.dashboard, "gotoView('timeline')", "the dashboard")
 
-    def test_the_chart_comes_before_the_gaps_it_has_holes_in(self):
-        """Period first, then what is missing from it. The other way round
-        names holes in something the reader has not been shown yet."""
-        self.assertLess(
-            self._at(self.dashboard, "<TimelineChart", "the dashboard"),
-            self._at(self.dashboard, "<LogCoverage", "the dashboard"))
+    def test_primary_content_comes_before_coverage_gaps(self):
         self.assertLess(
             self._at(self.timeline, "<TimelineChart", "the timeline"),
             self._at(self.timeline, "<LogCoverage", "the timeline"))
-
-    def test_the_evidence_charts_stand_after_the_forensic_scope(self):
-        """Scope and entities are the case at a glance and stay at the top."""
         self.assertLess(
-            self._at(self.dashboard, "dashboard.entities.title", "the dashboard"),
-            self._at(self.dashboard, "<TimelineChart", "the dashboard"))
+            self._at(self.dashboard, "dashboard.brief.limits", "the dashboard"),
+            self._at(self.dashboard, "<LogCoverage", "the dashboard"))
+
+    def test_the_evidence_summary_stands_after_the_forensic_scope(self):
+        """Confirmed scope stays above evidence basis and limitations."""
+        self.assertLess(
+            self._at(self.dashboard, "dashboard.brief.scope", "the dashboard"),
+            self._at(self.dashboard, "dashboard.brief.evidence", "the dashboard"))
 
 
 class MeasuredNumbersTests(unittest.TestCase):

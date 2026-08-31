@@ -37,7 +37,7 @@ const OFFSETS = [0, 7200, -18000, 19800, -12600, 3600 * 14]
 const EPOCH = Date.UTC(2024, 2, 17, 22, 45, 10) / 1000
 
 afterEach(() => {
-  setActiveTimeMode('log')
+  setActiveTimeMode('utc')
 })
 
 describe('formatLogTime', () => {
@@ -224,7 +224,7 @@ describe('formatSpan', () => {
 
 describe('storedTimeMode', () => {
   it('defaults to the log reading when nothing is remembered', () => {
-    expect(storedTimeMode()).toBe('log')
+    expect(storedTimeMode()).toBe('utc')
   })
 
   it('returns a remembered choice', () => {
@@ -236,6 +236,6 @@ describe('storedTimeMode', () => {
     // The key is in a storage the analyst can edit, and an unknown value
     // must not become a third rendering mode by accident.
     localStorage.setItem(TIME_KEY, 'local')
-    expect(storedTimeMode()).toBe('log')
+    expect(storedTimeMode()).toBe('utc')
   })
 })

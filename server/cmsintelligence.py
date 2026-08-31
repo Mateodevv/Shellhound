@@ -25,6 +25,7 @@ _LIMITS = {
 }
 _CONTENT_CANDIDATES = 500
 _CONTENT_LIMIT = 250
+_CONTENT_BODY_LIMIT = 64 * 1024
 _URL_RE = re.compile(r"(?i)https?://([a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?)(?::\d+)?(?:[/\s'\"<]|$)")
 _CODE_SIGNALS = (
     ("script", re.compile(r"(?i)<script[\s>]")),
@@ -384,6 +385,10 @@ class Collector:
             "author": _text(_first(row, "post_author"), 40),
             "created": _text(_first(row, "post_date_gmt", "post_date"), 40),
             "modified": _text(_first(row, "post_modified_gmt", "post_modified"), 40),
+            # Bounded source text lets the analyst inspect the post without
+            # opening the SQL dump.  The UI renders this strictly as text.
+            "content": _text(body, _CONTENT_BODY_LIMIT),
+            "content_truncated": len(body) > _CONTENT_BODY_LIMIT,
             "path": "", "signals": signals, "domains": domains,
             "source_table": table, "source_row": row_no,
         })
@@ -478,6 +483,8 @@ class Collector:
             "author": _text(_first(row, "created_by"), 40),
             "created": _text(_first(row, "created"), 40),
             "modified": _text(_first(row, "modified"), 40),
+            "content": _text(body, _CONTENT_BODY_LIMIT),
+            "content_truncated": len(body) > _CONTENT_BODY_LIMIT,
             "path": "", "signals": signals, "domains": domains,
             "source_table": table, "source_row": row_no,
         })

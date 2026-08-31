@@ -184,9 +184,16 @@ class EngineTests(unittest.TestCase):
         self.assert_rule_fired("upload/cache directory", "logs")
 
     def test_bruteforce_alert(self):
-        rules = " ".join(f["rule"] for f in self.findings("logs"))
-        self.assertTrue("brute-force" in rules or "login POST flood" in rules,
-                        f"no brute-force signal; got {rules!r}")
+        findings = self.findings("logs")
+        brute = [f for f in findings if "login POST flood" in f["rule"]]
+        success = [f for f in findings if "successful brute-force" in f["rule"]]
+        self.assertTrue(brute, f"no brute-force signal; got {findings!r}")
+        self.assertTrue(all(f["severity"] == db.SEV_INFO for f in brute))
+        # This fixture contains failed login attempts only.  A successful
+        # login after a flood is still a separate high-severity finding when
+        # it occurs; do not manufacture one here just to test the mapping.
+        self.assertTrue(all(f["severity"] == db.SEV_HIGH for f in success))
+        self.assertEqual(db.SEV_HIGH, logindex._ALERT_FINDING["login_success"][0])
 
     def test_sqli_and_traversal_alerts(self):
         self.assert_rule_fired("SQL injection", "logs")

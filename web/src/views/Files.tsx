@@ -1,16 +1,15 @@
-// Files.tsx -- manual review of the registered evidence, one file at a time.
-// Scanner observations and analyst decisions stay visibly separate.
+// Files.tsx -- manual inspection of registered evidence, one file at a time.
+// Scanner observations remain available, while case decisions live in the
+// shared Findings workflow instead of being duplicated here.
 import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRight, Bug, CheckCircle2, ChevronRight, Clock3, Eye,
+  ArrowLeft, ArrowRight, Bug, ChevronRight, Clock3,
   FileCode2, FileSearch, FileText, Fingerprint, FolderOpen, FolderTree,
-  ShieldAlert, X,
 } from 'lucide-react'
 import {
-  api, post, type BrowseFile, type BrowseResponse, type CaseDetail,
-  type FileContent, type FileReviewResult,
+  api, type BrowseFile, type BrowseResponse, type CaseDetail, type FileContent,
 } from '../api'
 import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../format'
 import { useT } from '../i18n'
@@ -73,9 +72,6 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
   const selected = browse.data?.files.find((file) => file.path === selectedPath) ?? null
   const selectedIndex = files.findIndex((file) => file.path === selectedPath)
   const atRoot = !path
-  const reviewed = (browse.data?.files ?? []).filter((file) => file.review).length
-  const webshells = (browse.data?.files ?? []).filter(
-    (file) => file.review?.state === 'confirmed').length
 
   const chooseFile = (file: BrowseFile) => {
     setSelectedPath(file.path)
@@ -97,11 +93,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           {tr('files.review.sub')}
         </p>
       </div>
-      {!atRoot && <div className="flex items-center gap-5">
-        <Metric value={(browse.data?.files ?? []).length} label={tr('files.metric.files')} />
-        <Metric value={reviewed} label={tr('files.metric.reviewed')} />
-        <Metric value={webshells} label={tr('files.metric.webshells')} danger={webshells > 0} />
-      </div>}
+      {!atRoot && <Metric value={(browse.data?.files ?? []).length} label={tr('files.metric.files')} />}
     </header>
 
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2.5">
@@ -170,7 +162,6 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
         position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={files.length}
         canPrevious={selectedIndex > 0} canNext={selectedIndex >= 0 && selectedIndex < files.length - 1}
         onPrevious={() => move(-1)} onNext={() => move(1)}
-        onResult={triage.recordResult}
         onView={() => selected && setViewing(selected.path)}
         onOpenArtifact={() => selected && selected.worst != null && setArtifact({
           artifact: selected.path, artifact_kind: 'file', worst: selected.worst,
@@ -211,25 +202,17 @@ function forensicTime(value: string | null) {
   return value ? `${absoluteTime(value)} UTC` : '—'
 }
 
-function reviewLabel(file: BrowseFile, tr: Tr) {
-  if (!file.review) return tr('files.review.unreviewed')
-  if (file.review.state === 'confirmed') return tr('files.review.webshell')
-  if (file.review.state === 'dismissed') return tr('files.review.notWebshell')
-  return tr('files.review.reviewed')
-}
-
 function FileRow({ file, active, onClick, tr }: {
   file: BrowseFile; active: boolean; onClick: () => void; tr: Tr
 }) {
-  const webshell = file.review?.state === 'confirmed'
   return <button type="button" onClick={onClick}
-    aria-label={tr('files.queue.open', { name: file.name, state: reviewLabel(file, tr) })}
+    aria-label={tr('files.queue.openSimple', { name: file.name })}
     aria-pressed={active}
     className={clsx(
       'grid w-full cursor-pointer grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--line-soft)] px-3 py-2.5 text-left transition-colors last:border-0',
       active ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--panel-2)]',
     )}>
-    <FileText size={15} className={webshell ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]'} />
+    <FileText size={15} className={file.flagged ? 'text-[var(--sev-medium)]' : 'text-[var(--muted)]'} />
     <span className="min-w-0">
       <span className="flex items-center gap-2">
         <span className="mono min-w-0 flex-1 truncate text-[11.5px] font-semibold">{file.name}</span>
@@ -240,14 +223,12 @@ function FileRow({ file, active, onClick, tr }: {
         <span>{tr('files.time.modified.short')} {forensicTime(file.modified_at)}</span>
       </span>
     </span>
-    <Tag tone={webshell ? 'danger' : file.review ? 'accent' : undefined}>
-      {reviewLabel(file, tr)}
-    </Tag>
+    {file.flagged > 0 && <Tag tone="warn">{formatCount(file.flagged)}</Tag>}
   </button>
 }
 
 function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
-  onPrevious, onNext, onView, onOpenArtifact, onResult }: {
+  onPrevious, onNext, onView, onOpenArtifact }: {
   slug: string
   file: BrowseFile | null
   position: number
@@ -258,24 +239,13 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
   onNext: () => void
   onView: () => void
   onOpenArtifact: () => void
-  onResult: (result: FileReviewResult) => void
 }) {
   const tr = useT()
-  const [note, setNote] = useState('')
   const preview = useQuery({
     queryKey: ['file-review-preview', slug, file?.path],
     queryFn: () => api<FileContent>(
       `/api/cases/${slug}/file?path=${encodeURIComponent(file!.path)}&mode=raw&offset=0`),
     enabled: !!file,
-  })
-  useEffect(() => setNote(file?.review?.note ?? ''), [file?.path, file?.review?.note])
-
-  const review = useMutation({
-    mutationFn: (state: 'reviewed' | 'confirmed' | 'dismissed') =>
-      post<FileReviewResult>(`/api/cases/${slug}/files/review`, {
-        path: file!.path, state, note,
-      }),
-    onSuccess: onResult,
   })
 
   if (!file) return <Card className="flex min-h-[560px] items-center justify-center p-8">
@@ -284,22 +254,22 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
   </Card>
 
   const facts = preview.data ?? file
-  const finalNeedsNote = !note.trim()
+  const copyableContent = preview.data?.binary ? '' : preview.data?.lines?.join('\n') ?? ''
   return <Card className="min-w-0 overflow-hidden">
     <header className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] px-4 py-3">
-      <span className={clsx('flex size-9 items-center justify-center rounded-lg',
-        file.review?.state === 'confirmed'
-          ? 'bg-[var(--danger-soft)] text-[var(--danger-text)]'
-          : 'bg-[var(--panel-2)] text-[var(--accent-text)]')}>
-        {file.review?.state === 'confirmed' ? <ShieldAlert size={17} /> : <FileCode2 size={17} />}
+      <span className="flex size-9 items-center justify-center rounded-lg bg-[var(--panel-2)] text-[var(--accent-text)]">
+        <FileCode2 size={17} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="mono block truncate text-[13px] font-bold">{file.name}</span>
-        <span className="mono block truncate text-[9.5px] text-[var(--muted)]" title={file.path}>{file.path}</span>
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="mono min-w-0 truncate text-[13px] font-bold">{file.name}</span>
+          <CopyButton value={file.name} label={tr('copy.name')} className="shrink-0" />
+        </span>
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="mono min-w-0 truncate text-[9.5px] text-[var(--muted)]" title={file.path}>{file.path}</span>
+          <CopyButton value={file.path} label={tr('copy.path')} className="shrink-0" />
+        </span>
       </span>
-      <Tag tone={file.review?.state === 'confirmed' ? 'danger' : file.review ? 'accent' : undefined}>
-        {reviewLabel(file, tr)}
-      </Tag>
       <span className="tabular text-[10px] text-[var(--muted)]">{position} / {formatCount(total)}</span>
       <div className="flex gap-1">
         <Button variant="ghost" disabled={!canPrevious} onClick={onPrevious} title={tr('files.review.previous')}>
@@ -317,11 +287,11 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
           <Clock3 size={13} /> {tr('files.metadata.title')}
         </div>
         <div className="grid grid-cols-2 gap-2 xl:grid-cols-5">
-          <Fact label={tr('files.metadata.size')} value={formatBytes(facts.size)} />
-          <Fact label={tr('files.time.created')} value={forensicTime(facts.created_at)} />
-          <Fact label={tr('files.time.modified')} value={forensicTime(facts.modified_at)} />
-          <Fact label={tr('files.time.accessed')} value={forensicTime(facts.accessed_at)} />
-          <Fact label={tr('files.time.changed')} value={forensicTime(facts.changed_at)} />
+          <Fact label={tr('files.metadata.size')} value={formatBytes(facts.size)} tr={tr} />
+          <Fact label={tr('files.time.created')} value={forensicTime(facts.created_at)} tr={tr} />
+          <Fact label={tr('files.time.modified')} value={forensicTime(facts.modified_at)} tr={tr} />
+          <Fact label={tr('files.time.accessed')} value={forensicTime(facts.accessed_at)} tr={tr} />
+          <Fact label={tr('files.time.changed')} value={forensicTime(facts.changed_at)} tr={tr} />
         </div>
         <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.metadata.caution')}</p>
       </section>
@@ -347,7 +317,11 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
           <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
             {tr('files.preview.title')}
           </span>
-          <Button variant="ghost" onClick={onView}><FileSearch size={13} /> {tr('files.preview.open')}</Button>
+          <span className="flex items-center gap-1">
+            {!!copyableContent && <CopyButton value={copyableContent}
+              label={preview.data?.eof ? tr('copy.content') : tr('copy.loadedContent')} />}
+            <Button variant="ghost" onClick={onView}><FileSearch size={13} /> {tr('files.preview.open')}</Button>
+          </span>
         </div>
         <div className="min-h-40 overflow-hidden rounded-lg bg-[var(--code-bg)]">
           {preview.isPending && <div className="p-6 text-center text-[11px] text-[#8993a4]">{tr('common.loading')}</div>}
@@ -374,42 +348,17 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
         <Button variant="ghost" onClick={onOpenArtifact}>{tr('files.detected.open')}</Button>
       </div>}
 
-      <section className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] p-3">
-        <div className="mb-2">
-          <h2 className="text-[12.5px] font-bold">{tr('files.decision.title')}</h2>
-          <p className="text-[10.5px] text-[var(--muted)]">{tr('files.decision.sub')}</p>
-        </div>
-        <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={3}
-          placeholder={tr('files.decision.note')}
-          className="w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70" />
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button disabled={review.isPending} onClick={() => review.mutate('reviewed')}>
-            <Eye size={14} /> {tr('files.decision.reviewed')}
-          </Button>
-          <Button variant="danger" disabled={review.isPending || finalNeedsNote}
-            onClick={() => review.mutate('dismissed')}>
-            <X size={14} /> {tr('files.decision.notWebshell')}
-          </Button>
-          <Button variant="primary" disabled={review.isPending || finalNeedsNote}
-            onClick={() => review.mutate('confirmed')}>
-            <ShieldAlert size={14} /> {tr('files.decision.webshell')}
-          </Button>
-        </div>
-        {finalNeedsNote && <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.decision.reasonRequired')}</p>}
-        {review.isError && <p className="mt-2 text-[10.5px] text-[var(--danger-text)]">{String(review.error)}</p>}
-        {review.data && <div role="status" className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--ok)]/35 bg-[rgba(12,163,12,.08)] px-3 py-2 text-[10.5px] text-[var(--ok)]">
-          <CheckCircle2 size={14} />
-          {tr('files.decision.saved', { n: formatCount(review.data.collected.length) })}
-        </div>}
-      </section>
     </div>
   </Card>
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, tr }: { label: string; value: string; tr: Tr }) {
   return <div className="rounded-lg bg-[var(--panel-2)] px-2.5 py-2">
     <div className="text-[8.5px] font-bold uppercase tracking-wider text-[var(--muted)]">{label}</div>
-    <div className="mono mt-1 break-all text-[10px]">{value}</div>
+    <div className="mt-1 flex min-w-0 items-center gap-1">
+      <span className="mono min-w-0 flex-1 break-all text-[10px]">{value}</span>
+      <CopyButton value={value} label={tr('copy.value', { what: label })} className="shrink-0" />
+    </div>
   </div>
 }
 

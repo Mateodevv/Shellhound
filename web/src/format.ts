@@ -49,10 +49,10 @@ export function storedTimeMode(): TimeMode {
     const stored = localStorage.getItem(TIME_KEY)
     if (stored === 'log' || stored === 'utc') return stored
   } catch { /* storage blocked */ }
-  return 'log'
+  return 'utc'
 }
 
-let currentMode: TimeMode = 'log'
+let currentMode: TimeMode = 'utc'
 
 /** The active mode outside React -- exports and the API layer need it and
  *  cannot use a hook, the same arrangement as the language. */

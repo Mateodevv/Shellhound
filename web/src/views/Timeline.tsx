@@ -48,7 +48,6 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
           })}>
           <Card className="p-4"><TimelineChart data={data.timeline} /></Card>
         </Section>
-        <LogCoverage slug={slug} />
       </> : (
         <EmptyState icon={<CalendarClock size={36} />} title={tr('timeline.empty.title')}
           sub={tr('timeline.empty.sub')} />
@@ -62,6 +61,7 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
           triage_note: '',
         })}
         onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
+      {data.logs && <LogCoverage slug={slug} />}
       <ArtifactWindow slug={slug} artifact={selected} roots={roots}
         collected={triage.collected}
         onView={(path, line) => setViewing({ path, line })}
