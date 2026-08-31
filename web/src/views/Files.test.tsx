@@ -53,7 +53,12 @@ const PREVIEW: FileContent = {
   from_line: 1, lines: ['<?php', 'echo "synthetic";', ''],
 }
 
-const CASE = { evidence_items: [] } as unknown as CaseDetail
+const CASE = {
+  evidence_items: [{
+    id: 1, kind: 'webroot', path: ROOT, label: 'Synthetic site',
+    added: '2026-08-20T07:00:00Z', scanned_at: '', stats: {},
+  }],
+} as unknown as CaseDetail
 
 const RESULT: FileReviewResult = {
   updated: 1, artifacts: 1,
@@ -88,7 +93,8 @@ describe('manual file review workspace', () => {
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />)
 
     await screen.findByText('Manual file review')
-    fireEvent.click(await screen.findByRole('button', { name: /Synthetic site/ }))
+    expect(await screen.findByRole('button', { name: /Review index\.php/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Synthetic site/ })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: /Review index\.php/ }))
 
     expect(await screen.findByText('Filesystem metadata')).toBeInTheDocument()

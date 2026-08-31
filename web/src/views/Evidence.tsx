@@ -21,7 +21,6 @@ const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
   access_logs: FileText,
   sql_dump: HardDrive,
-  reference: Server,
 }
 
 export function Evidence({ slug }: {
@@ -40,7 +39,9 @@ export function Evidence({ slug }: {
     refetchInterval: 4000,
   })
 
-  const [browsing, setBrowsing] = useState<null | 'webroot' | 'access_logs' | 'sql_dump' | 'reference'>(null)
+  const [browsing, setBrowsing] = useState<null | 'webroot' | 'access_logs' | 'sql_dump'>(null)
+  const [preferredPath, setPreferredPath] = useState('')
+  const [pathSeededFor, setPathSeededFor] = useState('')
   const [detectFolder, setDetectFolder] = useState('')
   const [detected, setDetected] = useState<DetectResult | null>(null)
 
@@ -88,7 +89,18 @@ export function Evidence({ slug }: {
     onSuccess: setDetected,
   })
 
-  const evidence = caseInfo?.evidence_items ?? []
+  // Reference copies belonged to the retired webroot-comparison workflow.
+  // Keep old records readable by the backend, but do not expose them as
+  // evidence or offer new ones in the current analyst workflow.
+  const evidence = useMemo(() =>
+    (caseInfo?.evidence_items ?? []).filter((item) => item.kind !== 'reference'),
+  [caseInfo?.evidence_items])
+  useEffect(() => {
+    if (!caseInfo || pathSeededFor === slug) return
+    const seed = evidence.find((item) => item.kind === 'webroot') ?? evidence[0]
+    setPreferredPath(seed?.path ?? '')
+    setPathSeededFor(slug)
+  }, [caseInfo, evidence, pathSeededFor, slug])
   const index = caseInfo?.log_index
   const runs = useMemo(() => groupJobs(jobs ?? []), [jobs])
   const registered = new Set(evidence.map((item) =>
@@ -130,7 +142,7 @@ export function Evidence({ slug }: {
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {(['webroot', 'access_logs', 'sql_dump', 'reference'] as const).map((kind) => (
+          {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) => (
             <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
               hint={explain(tr, `evidence.${kind}`)?.why} wide>
               <Button onClick={() => setBrowsing(kind)}>
@@ -171,7 +183,10 @@ export function Evidence({ slug }: {
         <div className="flex gap-2">
           <input
             value={detectFolder}
-            onChange={(e) => setDetectFolder(e.target.value)}
+            onChange={(e) => {
+              setDetectFolder(e.target.value)
+              setPreferredPath(e.target.value)
+            }}
             placeholder={tr('evidence.detect.placeholder')}
             className="mono flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
@@ -235,9 +250,11 @@ export function Evidence({ slug }: {
       {browsing && (
         <PathBrowser
           kind={browsing}
+          initialPath={preferredPath}
           onClose={() => setBrowsing(null)}
-          onPick={(path) => {
+          onPick={(path, browsedPath) => {
             addEvidence.mutate({ kind: browsing, path })
+            setPreferredPath(browsedPath)
             setBrowsing(null)
           }}
         />
@@ -549,13 +566,14 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
   )
 }
 
-function PathBrowser({ kind, onClose, onPick }: {
+function PathBrowser({ kind, initialPath, onClose, onPick }: {
   kind: string
+  initialPath: string
   onClose: () => void
-  onPick: (path: string) => void
+  onPick: (path: string, browsedPath: string) => void
 }) {
   const tr = useT()
-  const [path, setPath] = useState('')
+  const [path, setPath] = useState(initialPath)
   // A clicked file wins against the directory it sits in -- otherwise one
   // would have to type the path for a SQL dump after all.
   const [picked, setPicked] = useState('')
@@ -629,7 +647,7 @@ function PathBrowser({ kind, onClose, onPick }: {
           />
           <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
           <Button variant="primary" disabled={!picked && !data?.path && !path.trim()}
-            onClick={() => onPick(picked || path || data!.path)}>
+            onClick={() => onPick(picked || path || data!.path, data?.path || path)}>
             {picked ? tr('evidence.useFile') : tr('evidence.useFolder')}
           </Button>
         </div>

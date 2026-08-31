@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRight, Bug, CheckCircle2, ChevronRight, Clock3, Eye,
   FileCode2, FileSearch, FileText, Fingerprint, FolderOpen, FolderTree,
-  HardDrive, Home, ShieldAlert, X,
+  ShieldAlert, X,
 } from 'lucide-react'
 import {
   api, post, type BrowseFile, type BrowseResponse, type CaseDetail,
@@ -16,7 +16,6 @@ import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../fo
 import { useT } from '../i18n'
 import { Button, Card, CopyButton, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui'
 import { FileViewer } from '../components/FileViewer'
-import { WebrootDiff } from '../components/WebrootDiff'
 import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
@@ -38,14 +37,27 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
     queryKey: ['browse', slug, path],
     queryFn: () => api<BrowseResponse>(
       `/api/cases/${slug}/browse?path=${encodeURIComponent(path)}`),
+    enabled: Boolean(path),
   })
   const caseQuery = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
-  const roots: EvidenceRoot[] = (caseQuery.data?.evidence_items ?? []).map((item) => ({
-    kind: item.kind, path: item.path, label: item.label,
-  }))
+  const roots: EvidenceRoot[] = useMemo(() =>
+    (caseQuery.data?.evidence_items ?? []).map((item) => ({
+      kind: item.kind, path: item.path, label: item.label,
+    })), [caseQuery.data?.evidence_items])
+  const fileRoots = useMemo(() => roots.filter((root) => root.kind === 'webroot'), [roots])
+
+  // The first registered webroot is the useful default. A separate landing
+  // screen added a click without adding information; multiple roots remain
+  // directly switchable in the toolbar.
+  useEffect(() => {
+    setPath('')
+  }, [slug])
+  useEffect(() => {
+    if (!path && fileRoots[0]?.path) setPath(fileRoots[0].path)
+  }, [path, fileRoots])
 
   useEffect(() => {
     setFilter('')
@@ -59,7 +71,6 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
     !filter || dir.name.toLowerCase().includes(filter.toLowerCase())),
   [browse.data, filter])
   const selected = browse.data?.files.find((file) => file.path === selectedPath) ?? null
-  const fileRoots = browse.data?.roots.filter((root) => root.kind === 'webroot') ?? []
   const selectedIndex = files.findIndex((file) => file.path === selectedPath)
   const atRoot = !path
   const reviewed = (browse.data?.files ?? []).filter((file) => file.review).length
@@ -94,9 +105,20 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
     </header>
 
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2.5">
-      {!atRoot && <Button variant="ghost" onClick={() => setPath('')}>
-        <Home size={14} /> {tr('files.roots')}
-      </Button>}
+      {!atRoot && fileRoots.length > 1 && (
+        <select
+          aria-label={tr('files.roots')}
+          value={fileRoots.find((root) => pathWithinRoot(path, root.path))?.path ?? fileRoots[0].path}
+          onChange={(event) => setPath(event.target.value)}
+          className="max-w-72 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
+        >
+          {fileRoots.map((root) => (
+            <option key={root.path} value={root.path}>
+              {root.label?.trim() || root.path}
+            </option>
+          ))}
+        </select>
+      )}
       {browse.data?.parent != null && <Button variant="ghost" onClick={() => setPath(browse.data!.parent!)}>
         <ArrowLeft size={14} /> {tr('evidence.parentDir')}
       </Button>}
@@ -111,35 +133,10 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       {String((browse.error as Error)?.message ?? browse.error)}
     </div>}
 
-    {atRoot && <>
-      <div className="grid gap-3 md:grid-cols-2">
-        {fileRoots.map((root) => <Card key={root.path}
-          className="px-4 py-3 transition-colors hover:border-[var(--accent)]/60">
-          <button type="button" className="flex w-full cursor-pointer items-center gap-3 text-left"
-            onClick={() => setPath(root.path)}>
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)]">
-              <HardDrive size={16} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold">
-                {root.label?.trim() || tr(`evidence.${root.kind}`) || root.kind}
-              </span>
-              <span className="mono block truncate text-[11px] text-[var(--muted)]" title={root.path}>
-                {root.path}
-              </span>
-            </span>
-            <ChevronRight size={16} className="text-[var(--muted)]" />
-          </button>
-        </Card>)}
-        {browse.data && !fileRoots.length && <div className="md:col-span-2">
-          <EmptyState icon={<FolderTree size={36} />} title={tr('files.empty.title')}
-            sub={tr('files.empty.sub')} />
-        </div>}
-      </div>
-      {(caseQuery.data?.evidence_items?.length ?? 0) > 0 && <WebrootDiff
-        slug={slug} evidence={caseQuery.data!.evidence_items}
-        onView={(file) => setViewing(file)} />}
-    </>}
+    {atRoot && caseQuery.isSuccess && !fileRoots.length && (
+      <EmptyState icon={<FolderTree size={36} />} title={tr('files.empty.title')}
+        sub={tr('files.empty.sub')} />
+    )}
 
     {!atRoot && <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(360px,0.78fr)_minmax(520px,1.22fr)]">
       <Card className="min-w-0 overflow-hidden">
@@ -202,6 +199,12 @@ function Metric({ value, label, danger = false }: { value: number; label: string
     </div>
     <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">{label}</div>
   </div>
+}
+
+function pathWithinRoot(path: string, root: string) {
+  const normalizedPath = path.replace(/\\/g, '/').toLowerCase()
+  const normalizedRoot = root.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)
 }
 
 function forensicTime(value: string | null) {
