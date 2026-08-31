@@ -167,7 +167,7 @@ def create_app(config: Config) -> FastAPI:
         sentence cannot be re-rendered in the browser. What is STORED is
         untouched -- an epoch in UTC plus the offset from the log line."""
         raw = (request.headers.get("x-tz")
-               or request.query_params.get("tz") or "log").lower()
+               or request.query_params.get("tz") or "utc").lower()
         return "utc" if raw == "utc" else "log"
 
     tz_dep = Depends(request_tz)

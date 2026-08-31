@@ -1,8 +1,7 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  api, post, type BrowseFile, type BrowseResponse, type CaseDetail,
-  type FileContent, type FileReviewResult,
+  api, type BrowseFile, type BrowseResponse, type CaseDetail, type FileContent,
 } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Files } from './Files'
@@ -10,7 +9,6 @@ import { Files } from './Files'
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
   api: vi.fn(),
-  post: vi.fn(),
 }))
 
 const ROOT = 'C:\\Synthetic\\Evidence'
@@ -28,12 +26,6 @@ const FIRST: BrowseFile = {
 const SECOND: BrowseFile = {
   ...FIRST, name: 'readme.txt', path: SECOND_PATH, relative: 'readme.txt',
   size: 18, modified_at: '2026-08-19T06:00:00Z',
-}
-
-const ROOT_RESPONSE: BrowseResponse = {
-  path: '', parent: null,
-  roots: [{ kind: 'webroot', path: ROOT, label: 'Synthetic site' }],
-  dirs: [], files: [], truncated: false,
 }
 
 const DIRECTORY_RESPONSE: BrowseResponse = {
@@ -60,36 +52,18 @@ const CASE = {
   }],
 } as unknown as CaseDetail
 
-const RESULT: FileReviewResult = {
-  updated: 1, artifacts: 1,
-  collected: [
-    { type: 'path', value: 'index.php' },
-    { type: 'hash', value: 'a'.repeat(64) },
-  ],
-  linked: [], suggested: [], retained_iocs: [],
-  review: {
-    state: 'confirmed', note: 'Unexpected executable in the document root.',
-    at: '2026-08-28T10:00:00Z',
-  },
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(api).mockImplementation(async (path) => {
     if (path === '/api/cases/case-1') return CASE
-    if (path.endsWith('/browse?path=')) return ROOT_RESPONSE
     if (path.includes('/browse?path=')) return DIRECTORY_RESPONSE
     if (path.includes('/file?path=')) return PREVIEW
     throw new Error(`unexpected API call: ${path}`)
   })
-  vi.mocked(post).mockImplementation(async (path) => {
-    if (path === '/api/cases/case-1/files/review') return RESULT
-    throw new Error(`unexpected POST call: ${path}`)
-  })
 })
 
 describe('manual file review workspace', () => {
-  it('shows forensic timestamps and records a reasoned webshell verdict', async () => {
+  it('shows copyable forensic facts and no analyst-decision form', async () => {
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />)
 
     await screen.findByText('Manual file review')
@@ -107,21 +81,10 @@ describe('manual file review workspace', () => {
     expect(screen.getByText('2'.repeat(40))).toBeInTheDocument()
     expect(screen.getByText('3'.repeat(64))).toBeInTheDocument()
     expect(await screen.findByText('echo "synthetic";')).toBeInTheDocument()
-
-    const confirm = screen.getByRole('button', { name: 'Mark as webshell' })
-    expect(confirm).toBeDisabled()
-    fireEvent.change(screen.getByPlaceholderText('Reason and observed evidence…'), {
-      target: { value: 'Unexpected executable in the document root.' },
-    })
-    expect(confirm).toBeEnabled()
-    fireEvent.click(confirm)
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      '/api/cases/case-1/files/review', {
-        path: FIRST_PATH, state: 'confirmed',
-        note: 'Unexpected executable in the document root.',
-      }))
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Decision saved; 2 indicators were recorded.')
+    expect(screen.getByRole('button', { name: 'Copy file name' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy path' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy file content' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy Created' })).toBeInTheDocument()
+    expect(screen.queryByText('Analyst decision')).not.toBeInTheDocument()
   })
 })

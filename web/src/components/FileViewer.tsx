@@ -45,6 +45,11 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
   const name = path.replace(/\\/g, '/').split('/').pop()
   const pages = data ? Math.max(1, Math.ceil(data.size / data.window)) : 1
   const page = data ? Math.floor(data.offset / data.window) + 1 : 1
+  const copyableContent = data?.mode === 'raw'
+    ? data.lines?.join('\n')
+    : data?.rows?.map((row) =>
+      `${row.offset.toString(16).padStart(8, '0')}  ${row.hex.padEnd(47, ' ')}  ${row.ascii}`)
+      .join('\n')
 
   return (
     <Modal open onClose={onClose} layer={layer}
@@ -101,7 +106,13 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           )}
 
           <span className="ml-auto">
-            <CopyButton value={path} label={tr('copy.path')} />
+            <span className="flex items-center gap-1">
+              {copyableContent != null && (
+                <CopyButton value={copyableContent}
+                  label={data?.eof && data.offset === 0 ? tr('copy.content') : tr('copy.loadedContent')} />
+              )}
+              <CopyButton value={path} label={tr('copy.path')} />
+            </span>
           </span>
         </div>
 

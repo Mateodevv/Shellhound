@@ -53,7 +53,7 @@ const VIEW_IDS = new Set<ViewId>([
   'database', 'evidence', 'timeline', 'report', 'settings',
 ])
 
-const NAV: { label: string; items: { id: ViewId; icon: typeof Bug }[] }[] = [
+const NAV: { label: string; items: { id: ViewId; icon: typeof Bug; experimental?: boolean }[] }[] = [
   { label: 'nav.phase.overview', items: [
     { id: 'dashboard', icon: LayoutDashboard },
   ] },
@@ -64,11 +64,11 @@ const NAV: { label: string; items: { id: ViewId; icon: typeof Bug }[] }[] = [
   { label: 'nav.phase.investigate', items: [
     { id: 'findings', icon: Bug },
     { id: 'actors', icon: Users },
-    { id: 'logs', icon: ScrollText },
     { id: 'hunt', icon: Radar },
     { id: 'timeline', icon: ListChecks },
     { id: 'database', icon: Database },
     { id: 'cms', icon: Puzzle },
+    { id: 'logs', icon: ScrollText, experimental: true },
   ] },
   { label: 'nav.phase.finish', items: [
     { id: 'iocbox', icon: Box },
@@ -198,7 +198,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
               <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)] opacity-70">
                 {tr(section.label)}
               </div>
-              {section.items.map(({ id, icon: Icon }) => (
+              {section.items.map(({ id, icon: Icon, experimental }) => (
                 <button
                   key={id}
                   onClick={() => gotoView(id)}
@@ -212,6 +212,11 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
                 >
                   <Icon size={15} />
                   {tr(`nav.${id}`)}
+                  {experimental && (
+                    <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
+                      {tr('common.experimental')}
+                    </span>
+                  )}
                   {id === 'findings' && openArtifacts > 0 && (
                     <span className="ml-auto rounded-full bg-[var(--panel-2)] px-1.5 text-[10px] tabular">
                       {openArtifacts}
@@ -278,7 +283,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             aria-label={tr('nav.currentView')}
             className="w-full bg-transparent text-[11px] text-[var(--muted)] outline-none">
             {NAV.flatMap((section) => section.items).map((item) => (
-              <option key={item.id} value={item.id}>{tr(`nav.${item.id}`)}</option>
+              <option key={item.id} value={item.id}>
+                {tr(`nav.${item.id}`)}{item.experimental ? ` · ${tr('common.experimental')}` : ''}
+              </option>
             ))}
             <option value="settings">{tr('nav.settings')}</option>
           </select>

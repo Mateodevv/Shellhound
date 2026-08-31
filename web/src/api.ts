@@ -791,6 +791,9 @@ export interface DbIntelligenceItem {
   interval?: number
   priority?: number
   title?: string
+  /** Bounded CMS post/article body. It is always rendered as inert text. */
+  content?: string
+  content_truncated?: boolean
   status?: string
   author?: string
   path?: string

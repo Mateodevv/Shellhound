@@ -919,7 +919,10 @@ _ALERT_FINDING = {
     "login_success": (0, "Possible successful brute-force (redirect after login flood)"),
     "upload_php": (0, "Requested PHP in upload/cache directory answered 2xx"),
     "cms_dir_php": (0, "Requested PHP directly in a CMS extension directory answered 2xx"),
-    "login_flood": (1, "CMS login POST flood"),
+    # A burst of failed attempts is context, not evidence of compromise.
+    # The separate login_success rule remains HIGH when the client reaches a
+    # backend response an unauthenticated session cannot obtain.
+    "login_flood": (3, "CMS login POST flood"),
     "sqli": (1, "SQL injection patterns in URIs answered 2xx"),
     "traversal": (1, "Path traversal patterns answered 2xx"),
     "scanner_ua": (3, "Scanner tool User-Agent"),
