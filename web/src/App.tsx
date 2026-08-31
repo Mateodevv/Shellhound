@@ -44,7 +44,7 @@ export type ViewId =
   | 'database' | 'evidence' | 'timeline' | 'report' | 'settings'
 
 export type ViewParams = Partial<Record<
-  'severity' | 'triage' | 'source' | 'search' | 'artifact' | 'retired', string
+  'severity' | 'triage' | 'source' | 'search' | 'artifact' | 'retired' | 'request', string
 >>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
@@ -137,7 +137,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     const url = new URL(location.href)
     url.searchParams.set('case', slug)
     url.searchParams.set('view', next)
-    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired'] as const) {
+    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired', 'request'] as const) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)
       else url.searchParams.delete(key)
@@ -322,7 +322,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             )}
           </div>
         </header>
-        <div key={view} className="mx-auto max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5">
+        <div key={view} className={clsx('mx-auto', view === 'hunt'
+          ? 'max-w-none p-2 sm:p-3'
+          : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
           {view === 'dashboard' && <Dashboard {...props} />}
           {view === 'findings' && <Findings {...props} />}
           {view === 'actors' && <Actors {...props} />}

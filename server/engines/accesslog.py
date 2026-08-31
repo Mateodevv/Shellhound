@@ -12,10 +12,11 @@ from urllib.parse import unquote_plus
 
 _QF = r'(?:[^"\\]|\\.)*'   # content of one quoted log field
 # Apache's vhost_combined format and hosting panels such as Plesk may put the
-# virtual-host name before the client address. Keep it non-capturing: the
-# index is about the requesting client, while the source file already records
-# which log the request came from.
-_VHOST_PREFIX = r'(?:\S+ )?'
+# virtual-host name before the client address. It used to be discarded; the
+# Pattern Hunt rule builder can now deliberately constrain a host, so retain
+# it when the log format actually carries it. Absence stays absence -- a file
+# name is not evidence of the HTTP Host header.
+_VHOST_PREFIX = r'(?:(?P<host>\S+) )?'
 
 LOG_PATTERN = re.compile(
     r'^' + _VHOST_PREFIX + r'(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
@@ -90,6 +91,7 @@ def parse_w3c_line(line, fields):
         "size": row.get("sc-bytes", "-"),
         "referrer": _decode_w3c_text(row.get("cs(referer)", "-")),
         "user_agent": _decode_w3c_text(row.get("cs(user-agent)", "-")),
+        "host": _decode_w3c_text(row.get("cs-host", "-")),
     }
 
 

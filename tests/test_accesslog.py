@@ -43,6 +43,7 @@ class VhostAccessLogTests(unittest.TestCase):
         self.assertEqual("POST", parsed["method"])
         self.assertEqual("/", parsed["uri"])
         self.assertEqual("Go-http-client/1.1", parsed["user_agent"])
+        self.assertEqual("www.sample-sample.de", parsed["host"])
 
     def test_vhost_prefix_is_supported_by_common_format_too(self):
         parsed = accesslog.parse_line(
@@ -61,10 +62,18 @@ class VhostAccessLogTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 stats = logindex.build(Path(case), [logs])
+                host_match = logindex.match_rule(Path(case), {
+                    "client_match": "any", "requests": [{"clauses": [
+                        {"field": "host", "operator": "equals",
+                         "values": ["www.sample-sample.de"]},
+                    ]}],
+                })
 
         self.assertEqual(2, stats["lines"])
         self.assertEqual(0, stats["unparsed"])
         self.assertEqual(2, stats["clients"])
+        self.assertEqual(2, host_match["hits"])
+        self.assertEqual(1, host_match["coverage"]["fields"]["host"]["ratio"])
 
     def test_standard_combined_format_still_keeps_its_first_field(self):
         parsed = accesslog.parse_line(
@@ -110,6 +119,16 @@ class IisW3CAccessLogTests(unittest.TestCase):
         self.assertEqual("203.0.113.8", parsed["ip"])
         self.assertEqual("42", parsed["size"])
         self.assertEqual("HEAD", parsed["method"])
+
+    def test_optional_cs_host_is_retained(self):
+        parser = accesslog.AccessLogParser()
+        parser.parse(
+            "#Fields: date time c-ip cs-method cs-uri-stem sc-status cs-host"
+        )
+        parsed = parser.parse(
+            "2026-02-10 13:14:15 203.0.113.8 GET /health 200 admin.example.test"
+        )
+        self.assertEqual("admin.example.test", parsed["host"])
 
     def test_repeated_fields_directive_changes_the_active_schema(self):
         parser = accesslog.AccessLogParser()

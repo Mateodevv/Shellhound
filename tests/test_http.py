@@ -319,6 +319,7 @@ GET_ROUTES = {
     "/api/pickpath": "",
     "/api/patterns": "",
     "/api/patterns/export": "",
+    "/api/patterns/{pattern_id}/versions": "",
     "/api/cases/{slug}": "",
     "/api/cases/{slug}/summary": "",
     "/api/cases/{slug}/coverage": "",
@@ -333,6 +334,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/artifact": "artifact={artifact}",
     "/api/cases/{slug}/file": "path={file}",
     "/api/cases/{slug}/hunt/runs": "",
+    "/api/cases/{slug}/hunt/tests": "",
     "/api/cases/{slug}/browse": "",
     "/api/cases/{slug}/diff": "",
     "/api/cases/{slug}/actors": "",
@@ -356,7 +358,8 @@ GET_ROUTES = {
 
 def _url(route, slug, artifact=None, file_path=None):
     path = (route.replace("{slug}", slug).replace("{name}", YARA_RULE)
-            .replace("{request_id}", "1"))
+            .replace("{request_id}", "1")
+            .replace("{pattern_id}", "joomla-jce-rce"))
     query = (GET_ROUTES[route] or "")
     query = query.replace("{artifact}", q(artifact or "x"))
     query = query.replace("{file}", q(file_path or "x"))
@@ -462,6 +465,117 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual(200, status, after_runs)
         self.assertEqual(before_findings["total"], after_findings["total"])
         self.assertEqual(before_runs, after_runs)
+
+    def test_hunt_workbench_audits_then_applies_only_selected_clusters(self):
+        slug = case_copy("hunt-workbench-api")
+        uri = "/" + EVIDENCE.shell_rel
+        rule = {"client_match": "any", "requests": [{"clauses": [
+            {"field": "uri", "operator": "equals", "values": [uri]},
+            {"field": "method", "operator": "equals", "values": ["GET"]},
+        ]}]}
+        status, before = get_json(f"/api/cases/{slug}/findings")
+        self.assertEqual(200, status, before)
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            before_rows = case_conn.execute("SELECT count(*) FROM findings").fetchone()[0]
+        finally:
+            case_conn.close()
+
+        status, audited = post_json(
+            f"/api/cases/{slug}/hunt/tests", {"rule": rule})
+        self.assertEqual(200, status, audited)
+        self.assertGreater(audited["test"]["hits"], 0)
+        self.assertEqual(before["total"], get_json(
+            f"/api/cases/{slug}/findings")[1]["total"],
+            "an audit test wrote a finding")
+
+        test_id = audited["test"]["id"]
+        status, page = post_json(
+            f"/api/cases/{slug}/hunt/tests/{test_id}/clusters",
+            {"cursor": "", "limit": 1})
+        self.assertEqual(200, status, page)
+        self.assertEqual(1, len(page["clusters"]))
+        self.assertGreater(page["total"], 1)
+        cluster = page["clusters"][0]
+        status, second_page = post_json(
+            f"/api/cases/{slug}/hunt/tests/{test_id}/clusters",
+            {"cursor": page["next_cursor"], "limit": 1})
+        self.assertEqual(200, status, second_page)
+        self.assertEqual(1, len(second_page["clusters"]))
+        second_cluster = second_page["clusters"][0]
+        self.assertNotEqual(cluster["cluster_key"], second_cluster["cluster_key"])
+        apply_body = {
+            "cluster_keys": [cluster["cluster_key"], second_cluster["cluster_key"]],
+            "pattern": {"name": "HTTP workbench synthetic rule",
+                        "technology": "wordpress", "rule": rule},
+            "idempotency_key": f"synthetic-{slug}-{test_id}",
+        }
+        status, applied = post_json(
+            f"/api/cases/{slug}/hunt/tests/{test_id}/apply", apply_body)
+        self.assertEqual(200, status, applied)
+        expected_clients = len({cluster["client"], second_cluster["client"]})
+        self.assertEqual(expected_clients, applied["findings"])
+        self.assertFalse(applied["already_applied"])
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            self.assertEqual(before_rows + expected_clients,
+                             case_conn.execute("SELECT count(*) FROM findings").fetchone()[0])
+        finally:
+            case_conn.close()
+
+        status, repeated = post_json(
+            f"/api/cases/{slug}/hunt/tests/{test_id}/apply", apply_body)
+        self.assertEqual(200, status, repeated)
+        self.assertTrue(repeated["already_applied"])
+        self.assertEqual(applied["application_id"], repeated["application_id"])
+        self.assertEqual(applied["pattern"]["version"],
+                         repeated["pattern"]["version"])
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            self.assertEqual(before_rows + expected_clients,
+                             case_conn.execute("SELECT count(*) FROM findings").fetchone()[0])
+        finally:
+            case_conn.close()
+
+        status, versions = get_json(
+            f"/api/patterns/{applied['pattern']['id']}/versions")
+        self.assertEqual(200, status, versions)
+        self.assertEqual([1], [row["version"] for row in versions["versions"]])
+
+        # Batch tests use the normal job channel and remain audit-only too.
+        status, started = post_json(
+            f"/api/cases/{slug}/hunt/batch-tests",
+            {"ids": [applied["pattern"]["id"]]})
+        self.assertEqual(200, status, started)
+        deadline = time.monotonic() + 5
+        job = None
+        while time.monotonic() < deadline:
+            status, rows = get_json(f"/api/cases/{slug}/jobs")
+            self.assertEqual(200, status, rows)
+            job = next((row for row in rows if row["id"] == started["job_id"]), None)
+            if job and job["state"] not in ("queued", "running"):
+                break
+            time.sleep(0.02)
+        self.assertIsNotNone(job)
+        self.assertEqual("done", job["state"])
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            self.assertEqual(before_rows + expected_clients,
+                             case_conn.execute("SELECT count(*) FROM findings").fetchone()[0])
+        finally:
+            case_conn.close()
+
+        # A source/index fingerprint change makes the audit evidence stale.
+        conn = sqlite3.connect(str(db.log_db_path(WORKSPACE / slug)))
+        try:
+            conn.execute("UPDATE sources SET mtime=mtime+1 WHERE id=(SELECT min(id) FROM sources)")
+            conn.commit()
+        finally:
+            conn.close()
+        status, stale = post_json(
+            f"/api/cases/{slug}/hunt/tests/{test_id}/clusters",
+            {"cursor": "", "limit": 10})
+        self.assertEqual(409, status, stale)
 
     def test_the_dashboard_summarises_confirmed_evidence_and_measured_time(self):
         status, body = get_json(f"/api/cases/{CASE}/dashboard")

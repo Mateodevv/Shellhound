@@ -335,6 +335,51 @@ class EngineTests(unittest.TestCase):
         self.assertEqual([], match["clients"])
         self.assertEqual([], match["timeline"])
 
+    def test_v2_rule_combines_unordered_requests_for_the_same_client(self):
+        rule = {"client_match": "all", "requests": [
+            {"clauses": [
+                {"field": "path", "operator": "contains", "values": ["/uploads/"]},
+                {"field": "method", "operator": "equals", "values": ["get"]},
+                {"field": "status", "operator": "in", "values": ["2xx"]},
+            ]},
+            {"clauses": [
+                {"field": "query", "operator": "contains", "values": ["../../"]},
+                {"field": "status", "operator": "equals", "values": ["200"]},
+            ]},
+        ]}
+        match = logindex.match_rule(self.ev.case_dir, rule)
+        self.assertEqual([ATTACKER], [client["ip"] for client in match["clients"]])
+        self.assertGreaterEqual(match["hits"], 7)
+        self.assertEqual(match["hits"], sum(day["requests"]
+                                             for day in match["timeline"]))
+        self.assertLess(match["coverage"]["fields"]["query"]["ratio"], 1)
+
+    def test_v2_clusters_are_cursor_paged_without_repeating(self):
+        rule = {"client_match": "any", "requests": [{"clauses": [
+            {"field": "uri", "operator": "contains", "values": ["index.php"]},
+        ]}]}
+        first = logindex.rule_clusters(self.ev.case_dir, rule, limit=1)
+        self.assertEqual(1, len(first["clusters"]))
+        self.assertTrue(first["next_cursor"])
+        second = logindex.rule_clusters(
+            self.ev.case_dir, rule, first["next_cursor"], limit=1)
+        self.assertNotEqual(first["clusters"][0]["cluster_key"],
+                            second["clusters"][0]["cluster_key"])
+
+    def test_v2_host_gap_is_explicit_and_sql_text_stays_a_value(self):
+        host_rule = {"client_match": "any", "requests": [{"clauses": [
+            {"field": "host", "operator": "contains", "values": ["example.test"]},
+        ]}]}
+        host = logindex.match_rule(self.ev.case_dir, host_rule)
+        self.assertEqual(0, host["hits"])
+        self.assertEqual(0, host["coverage"]["fields"]["host"]["present"])
+        attack = {"client_match": "any", "requests": [{"clauses": [
+            {"field": "uri", "operator": "equals",
+             "values": ["x%' OR 1=1; DROP TABLE requests; --"]},
+        ]}]}
+        self.assertEqual(0, logindex.match_rule(self.ev.case_dir, attack)["hits"])
+        self.assertGreater(logindex.overview(self.ev.case_dir)["lines"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

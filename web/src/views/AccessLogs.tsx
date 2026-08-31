@@ -5,12 +5,12 @@
 // narrow the case by time, field, path shape and measured signal. Every
 // operation remains a structured server query; no SQL or query-language text
 // from the browser is ever executed.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, Bookmark, ChevronLeft, ChevronRight, Clock3, Download,
-  Filter, Minus, Pin, Plus, Save, Search, ShieldAlert, Trash2, X,
+  Filter, Minus, Pin, Plus, Radar, Save, Search, ShieldAlert, Trash2, X,
 } from 'lucide-react'
 import {
   api, del, downloadUrl, post,
@@ -77,15 +77,19 @@ function SignalChips({ signals }: { signals: string[] }) {
   </div>
 }
 
-export function AccessLogs({ slug }: { slug: string; gotoView: Navigate }) {
+export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const tr = useT()
   const qc = useQueryClient()
+  const initial = new URLSearchParams(location.search)
+  const initialSearch = initial.get('search') ?? ''
+  const initialRequest = Number(initial.get('request')) || null
   const [tab, setTab] = useState<AccessTab>('requests')
-  const [query, setQuery] = useState<AccessLogQuery>(EMPTY_QUERY)
-  const [searchDraft, setSearchDraft] = useState('')
+  const [query, setQuery] = useState<AccessLogQuery>({ ...EMPTY_QUERY, search: initialSearch })
+  const [searchDraft, setSearchDraft] = useState(initialSearch)
   const [cursor, setCursor] = useState('')
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
-  const [selectedRequest, setSelectedRequest] = useState<number | null>(null)
+  const [selectedRequest, setSelectedRequest] = useState<number | null>(initialRequest)
+  const mountedQuery = useRef(false)
   const [traceRow, setTraceRow] = useState<AccessLogRow | null>(null)
   const [saveOpen, setSaveOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
@@ -109,7 +113,8 @@ export function AccessLogs({ slug }: { slug: string; gotoView: Navigate }) {
   useEffect(() => {
     setCursor('')
     setCursorHistory([])
-    setSelectedRequest(null)
+    if (mountedQuery.current) setSelectedRequest(null)
+    else mountedQuery.current = true
   }, [query])
 
   const searchQuery = useQuery({
@@ -377,6 +382,7 @@ export function AccessLogs({ slug }: { slug: string; gotoView: Navigate }) {
         onFilterPath={(value) => includeValue('paths', value)}
         onFilterAgent={(value) => includeValue('agents', value)}
         onTrace={(row) => setTraceRow(row)}
+        onCreatePattern={(id) => gotoView('hunt', { request: String(id) })}
         clipNote={clipNote} setClipNote={setClipNote}
         onClip={(id) => clipMutation.mutate(id)} clipping={clipMutation.isPending} />
     </div>
@@ -712,6 +718,7 @@ function SegmentList({ result, loading, onInspect }: {
 
 function RequestInspector({ context, loading, visible, onClose, onSelect,
   onFilterClient, onFilterPath, onFilterAgent, onTrace,
+  onCreatePattern,
   clipNote, setClipNote, onClip, clipping }: {
   context?: AccessRequestContext
   loading: boolean
@@ -722,6 +729,7 @@ function RequestInspector({ context, loading, visible, onClose, onSelect,
   onFilterPath: (value: string) => void
   onFilterAgent: (value: string) => void
   onTrace: (row: AccessLogRow) => void
+  onCreatePattern: (id: number) => void
   clipNote: string
   setClipNote: (value: string) => void
   onClip: (id: number) => void
@@ -768,6 +776,9 @@ function RequestInspector({ context, loading, visible, onClose, onSelect,
           <Button variant="ghost" onClick={() => onFilterPath(context.request.uri)}><Plus size={12} />URI</Button>
           {context.request.agent && <Button variant="ghost" onClick={() => onFilterAgent(context.request.agent)}><Plus size={12} />UA</Button>}
           <Button variant="ghost" onClick={() => onTrace(context.request)}><Activity size={12} />Trace</Button>
+          <Button variant="ghost" onClick={() => onCreatePattern(context.request.request_id)}>
+            <Radar size={12} />{tr('logs.inspector.createPattern')}
+          </Button>
         </div>
 
         <section className="mt-3">
