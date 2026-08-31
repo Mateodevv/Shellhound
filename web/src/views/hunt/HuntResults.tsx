@@ -3,12 +3,10 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useVirtualizer } from '@tanstack/react-virtual'
 import clsx from 'clsx'
 import {
-  AlertTriangle, ChevronRight, ExternalLink,
-  FileSearch, LoaderCircle, PencilLine, Search,
+  AlertTriangle, ArrowDown, ArrowUp, ChevronRight, LoaderCircle, PencilLine, Search,
 } from 'lucide-react'
 import {
-  api, post, type AccessRequestContext, type ActorDetail, type HuntCluster,
-  type HuntClusterPage, type HuntTest,
+  api, post, type ActorDetail, type HuntClusterPage, type HuntTest,
 } from '../../api'
 import type { Navigate } from '../../App'
 import { formatCount, formatLogTime, formatSpan } from '../../format'
@@ -19,16 +17,21 @@ import { TraceWindow, type TraceMarks } from '../../components/TraceWindow'
 import { ActorInspector } from '../Actors'
 
 const PAGE_SIZE = 200
+export type HuntResultSort = 'client' | 'method' | 'uri' | 'status' | 'requests' | 'first_hit'
 
 export function HuntResults({
-  slug, test, selected, collapsed, ruleName, onSelected, onCollapse, onEdit, editLabel, gotoView,
+  slug, test, selected, collapsed, ruleName, sort, direction, onSelected, onSort,
+  onCollapse, onEdit, editLabel, gotoView,
 }: {
   slug: string
   test: HuntTest | null
   selected: Set<string>
   collapsed: boolean
   ruleName?: string
+  sort: HuntResultSort
+  direction: 'asc' | 'desc'
   onSelected: (value: Set<string>) => void
+  onSort: (field: HuntResultSort) => void
   onCollapse?: () => void
   onEdit?: () => void
   editLabel?: string
@@ -37,24 +40,21 @@ export function HuntResults({
   const tr = useT()
   const qc = useQueryClient()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [inspectedKey, setInspectedKey] = useState('')
   const [actorIp, setActorIp] = useState<string | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const pages = useInfiniteQuery({
-    queryKey: ['hunt-clusters', slug, test?.id],
+    queryKey: ['hunt-clusters', slug, test?.id, sort, direction],
     initialPageParam: '',
     enabled: Boolean(test?.id),
     queryFn: ({ pageParam }) => post<HuntClusterPage>(
       `/api/cases/${slug}/hunt/tests/${test!.id}/clusters`,
-      { cursor: pageParam, limit: PAGE_SIZE }),
+      { cursor: pageParam, limit: PAGE_SIZE, sort, direction }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   })
   const clusters = useMemo(
     () => pages.data?.pages.flatMap((page) => page.clusters) ?? [], [pages.data])
   const total = pages.data?.pages[0]?.total ?? 0
-  const inspected = clusters.find((cluster) => cluster.cluster_key === inspectedKey)
-    ?? clusters[0] ?? null
   const virtualizer = useVirtualizer({
     count: clusters.length,
     getScrollElement: () => scrollRef.current,
@@ -70,12 +70,6 @@ export function HuntResults({
     }
   }, [clusters.length, fetchNextPage, hasNextPage, isFetchingNextPage, lastVirtualIndex])
 
-  const context = useQuery({
-    queryKey: ['access-request', slug, inspected?.request_id],
-    queryFn: () => api<AccessRequestContext>(
-      `/api/cases/${slug}/access/request/${inspected!.request_id}`),
-    enabled: Boolean(inspected?.request_id),
-  })
   const actor = useQuery({
     queryKey: ['actor-detail', slug, actorIp],
     queryFn: () => api<ActorDetail>(
@@ -134,12 +128,25 @@ export function HuntResults({
         <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <div className="grid shrink-0 grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px] items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
             <span />
-            <span>{tr('hunt.workbench.client')}</span>
-            <span>{tr('hunt.field.method')}</span><span>{tr('hunt.field.uri')}</span>
-            <span>{tr('hunt.field.status')}</span>
-            <span className="text-right">{tr('hunt.requests')}</span><span>{tr('hunt.firstHit')}</span>
+            <SortHeader field="client" active={sort} direction={direction} onSort={onSort}>
+              {tr('hunt.workbench.client')}
+            </SortHeader>
+            <SortHeader field="method" active={sort} direction={direction} onSort={onSort}>
+              {tr('hunt.field.method')}
+            </SortHeader>
+            <SortHeader field="uri" active={sort} direction={direction} onSort={onSort}>
+              {tr('hunt.field.uri')}
+            </SortHeader>
+            <SortHeader field="status" active={sort} direction={direction} onSort={onSort}>
+              {tr('hunt.field.status')}
+            </SortHeader>
+            <SortHeader field="requests" active={sort} direction={direction} onSort={onSort}
+              className="justify-end">{tr('hunt.requests')}</SortHeader>
+            <SortHeader field="first_hit" active={sort} direction={direction} onSort={onSort}>
+              {tr('hunt.firstHit')}
+            </SortHeader>
           </div>
-          <div ref={scrollRef} className="min-h-[150px] flex-[1.15] overflow-y-auto border-b border-[var(--line)]">
+          <div ref={scrollRef} className="min-h-[150px] flex-1 overflow-y-auto">
         {pages.isLoading ? <Loading /> : clusters.length ? <div className="relative w-full"
           style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((item) => {
@@ -149,7 +156,7 @@ export function HuntResults({
               ref={virtualizer.measureElement}
               className={clsx(
                 'absolute left-0 top-0 grid w-full grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px] items-center gap-2 border-b border-[var(--line-soft)] px-2 py-1.5 text-[10.5px] hover:bg-[var(--panel-2)]',
-                inspected?.cluster_key === cluster.cluster_key && 'bg-[var(--accent-soft)]')}
+                checked && 'bg-[var(--accent-soft)]')}
               style={{ transform: `translateY(${item.start}px)` }}>
               <input type="checkbox" checked={checked} aria-label={tr('hunt.workbench.selectCluster')}
                 onChange={() => {
@@ -158,15 +165,13 @@ export function HuntResults({
                   onSelected(next)
                 }} />
               <button type="button" onClick={() => {
-                setInspectedKey(cluster.cluster_key)
                 setActorIp(cluster.client)
               }}
                 className="mono inline-flex min-w-0 cursor-pointer items-center gap-1.5 truncate text-left font-semibold">
                 <IpFlag ip={cluster.client} />{cluster.client}
               </button>
               <span className="mono">{cluster.method}</span>
-              <button type="button" onClick={() => setInspectedKey(cluster.cluster_key)}
-                title={cluster.example_uri} className="mono cursor-pointer truncate text-left">{cluster.uri_pattern}</button>
+              <span title={cluster.example_uri} className="mono truncate">{cluster.uri_pattern}</span>
               <span className={clsx('tabular font-semibold', cluster.ok_hits && 'text-[var(--sev-high)]')}>{cluster.status_class}</span>
               <span className="text-right tabular">{formatCount(cluster.requests)}</span>
               <span className="truncate text-[9.5px] text-[var(--muted)]">{formatLogTime(cluster.first_epoch, cluster.tz)}</span>
@@ -180,8 +185,6 @@ export function HuntResults({
           {clusters.length} / {total}
         </div>}
           </div>
-          <RequestInspector cluster={inspected} context={context.data}
-            loading={context.isFetching} gotoView={gotoView} />
         </div>
       </div>
 
@@ -212,50 +215,27 @@ export function HuntResults({
   </section>
 }
 
-function RequestInspector({ cluster, context, loading, gotoView }: {
-  cluster: HuntCluster | null
-  context?: AccessRequestContext
-  loading: boolean
-  gotoView: Navigate
+function SortHeader({ field, active, direction, onSort, className, children }: {
+  field: HuntResultSort
+  active: HuntResultSort
+  direction: 'asc' | 'desc'
+  onSort: (field: HuntResultSort) => void
+  className?: string
+  children: React.ReactNode
 }) {
   const tr = useT()
-  if (!cluster) return null
-  return <div className="min-h-[190px] flex-1 overflow-y-auto p-3">
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
-        <FileSearch size={12} />{tr('hunt.workbench.inspector')}
-      </span>
-      <span className="mono text-[11px] font-semibold">{cluster.client}</span>
-      <span className="mono text-[10px] text-[var(--muted)]">{cluster.method} {cluster.example_uri}</span>
-      {loading && <LoaderCircle size={12} className="animate-spin text-[var(--muted)]" />}
-      <span className="ml-auto flex gap-1.5">
-        <Button variant="ghost" onClick={() => gotoView('logs', {
-          search: cluster.example_uri, request: String(cluster.request_id),
-        })}><ExternalLink size={11} />{tr('hunt.workbench.openLogs')}</Button>
-        <Button variant="ghost" onClick={() => gotoView('actors', {
-          search: cluster.client, actor: cluster.client, section: 'activity',
-        })}>
-          <ExternalLink size={11} />{tr('hunt.workbench.openActor')}</Button>
-      </span>
-    </div>
-    <div className="mt-2 min-w-0">
-        <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[9.5px] leading-relaxed">
-          {context?.raw_line || `${cluster.method} ${cluster.example_uri}`}
-        </pre>
-        {context && <div className="mt-1 text-[9.5px] text-[var(--muted)]">
-          {context.request.source}:{context.request.line_no} · {formatLogTime(context.request.epoch, context.request.tz, { withZone: true })}
-        </div>}
-        {context && <div className="mt-2 flex max-h-24 flex-col overflow-y-auto rounded-lg border border-[var(--line-soft)]">
-          {[...context.before.slice(-3), context.request, ...context.after.slice(0, 3)].map((row) => <div key={row.request_id}
-            className={clsx('grid grid-cols-[64px_38px_minmax(0,1fr)_34px] gap-1 border-b border-[var(--line-soft)] px-2 py-1 text-[9.5px] last:border-0',
-              row.request_id === context.request.request_id && 'bg-[var(--accent-soft)]')}>
-            <span className="text-[var(--muted)]">{formatLogTime(row.epoch, row.tz).slice(11)}</span>
-            <span>{row.method}</span><span className="mono truncate">{row.uri}</span>
-            <span className="text-right">{row.status}</span>
-          </div>)}
-        </div>}
-    </div>
-  </div>
+  const selected = field === active
+  const nextDirection = selected
+    ? direction === 'asc' ? 'desc' : 'asc'
+    : ['requests', 'first_hit'].includes(field) ? 'desc' : 'asc'
+  return <button type="button" onClick={() => onSort(field)}
+    aria-label={`${children} · ${tr(nextDirection === 'asc'
+      ? 'hunt.workbench.sortAsc' : 'hunt.workbench.sortDesc')}`}
+    className={clsx('flex cursor-pointer items-center gap-0.5 text-left hover:text-[var(--fg)]',
+      selected && 'text-[var(--accent-text)]', className)}>
+    <span className="truncate">{children}</span>
+    {selected && (direction === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)}
+  </button>
 }
 
 function CoverageFooter({ test }: { test: HuntTest }) {

@@ -1,14 +1,14 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  api, del, post, type ActorDetail, type HuntPattern, type HuntRuleV2, type HuntTest,
+  api, del, patch, post, type ActorDetail, type HuntPattern, type HuntRuleV2, type HuntTest,
 } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Hunt } from './Hunt'
 
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
-  api: vi.fn(), post: vi.fn(), del: vi.fn(),
+  api: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -106,17 +106,22 @@ function mocks() {
       coverage: TEST.coverage,
     } }
     if (path.endsWith('/clusters')) return { clusters: [CLUSTER], total: 1, next_cursor: null }
+    if (path.endsWith('/clone')) return OWN
     if (path.endsWith('/apply')) return {
       application_id: 5, pattern: OWN, findings: 1, already_applied: false,
     }
     throw new Error(`unexpected POST call: ${path}`)
   })
+  vi.mocked(patch).mockResolvedValue(OWN)
   vi.mocked(del).mockResolvedValue({})
 }
 
 describe('Pattern Hunt forensic workbench', () => {
   it('does not query while editing and applies only an explicitly selected cluster', async () => {
     sessionStorage.clear()
+    sessionStorage.setItem('shellhound:hunt-workbench:case-1', JSON.stringify({
+      resultCollapsed: true,
+    }))
     history.replaceState(null, '', '/?case=case-1&view=hunt')
     mocks()
     const gotoView = vi.fn()
@@ -127,10 +132,27 @@ describe('Pattern Hunt forensic workbench', () => {
     const name = await screen.findByDisplayValue('Bundled sample')
     fireEvent.change(name, { target: { value: 'Edited sample' } })
     expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
+    expect(screen.getByRole('button', { name: 'Save rule' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
       path.endsWith('/hunt/tests'))).toBe(true))
+    expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
+    expect(screen.getByText(/Save the rule first/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(await screen.findByText('Create an own variant')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save own variant' }))
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
+      path.endsWith('/clone'))).toBe(true))
+    expect(screen.getByText(/Select at least one request cluster on the right/)).toBeInTheDocument()
+    expect(screen.queryByText('Request inspector')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Requests · Sort ascending' }))
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>
+      path.endsWith('/clusters')
+      && (body as { sort: string; direction: string }).sort === 'requests'
+      && (body as { sort: string; direction: string }).direction === 'asc')).toBe(true))
     fireEvent.click(await screen.findByRole('button', { name: '203.0.113.42' }))
     expect(await screen.findByRole('button', { name: 'Activity' })).toHaveAttribute(
       'aria-pressed', 'true')
@@ -141,13 +163,13 @@ describe('Pattern Hunt forensic workbench', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const checkbox = await screen.findByLabelText('Select request cluster')
     fireEvent.click(checkbox)
-    fireEvent.click(screen.getByRole('button', { name: /Save and apply/ }))
-    expect(await screen.findByText('Create an own variant')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Create variant and apply' }))
+    expect(screen.getByRole('button', { name: 'Apply selected (1)' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
 
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>
       path.endsWith('/apply')
-      && (body as { cluster_keys: string[] }).cluster_keys.join() === 'cluster-1')).toBe(true))
+      && (body as { cluster_keys: string[]; pattern_id: string }).cluster_keys.join() === 'cluster-1'
+      && (body as { pattern_id: string }).pattern_id === OWN.id)).toBe(true))
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument())
   })
 

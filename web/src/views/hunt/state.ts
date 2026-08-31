@@ -29,6 +29,8 @@ export interface HuntSessionState {
   resultCollapsed: boolean
   search: string
   filter: 'active' | 'all' | 'own' | 'bundled' | 'archived' | 'hit'
+  resultSort: 'client' | 'method' | 'uri' | 'status' | 'requests' | 'first_hit'
+  resultDirection: 'asc' | 'desc'
 }
 
 const DEFAULT_RULE: HuntRuleV2 = {
@@ -42,7 +44,7 @@ export const DEFAULT_SESSION: HuntSessionState = {
   selectedId: '', draft: null, testedHash: '', testId: null,
   selectedClusters: [], libraryWidth: 340, editorWidth: 560, editorOpen: false,
   libraryCollapsed: false, resultCollapsed: false,
-  search: '', filter: 'active',
+  search: '', filter: 'active', resultSort: 'requests', resultDirection: 'desc',
 }
 
 export function splitDescription(description: string) {

@@ -8,6 +8,7 @@ import type {
 } from '../../api'
 import { useT } from '../../i18n'
 import { Button, Tag } from '../../components/ui'
+import { Tooltip } from '../../components/Tooltip'
 import type { HuntDraft } from './state'
 import { toDsl, updateClause } from './state'
 
@@ -34,7 +35,7 @@ function changedFields(current: Record<string, unknown>, previous?: Record<strin
 
 export function RuleEditor({
   draft, dirty, tested, stale, selectedClusters, pending, error, versions,
-  onChange, onTest, onApply, onValidateDsl, onRestore, onClose,
+  onChange, onTest, onSave, onApply, onValidateDsl, onRestore, onClose,
 }: {
   draft: HuntDraft | null
   dirty: boolean
@@ -46,6 +47,7 @@ export function RuleEditor({
   versions: Array<Record<string, unknown>>
   onChange: (draft: HuntDraft) => void
   onTest: () => void
+  onSave: () => void
   onApply: () => void
   onValidateDsl: () => void
   onRestore: (version: number) => void
@@ -80,6 +82,11 @@ export function RuleEditor({
     rule.requests[requestIndex].clauses.splice(clauseIndex, 1)
     setRule(rule)
   }
+  const applyHint = dirty || draft.source === 'new'
+    ? tr('hunt.workbench.saveBeforeApply')
+    : !tested || stale
+      ? tr('hunt.workbench.testBeforeApply')
+      : selectedClusters === 0 ? tr('hunt.workbench.selectToApply') : undefined
 
   return <section className="flex h-full min-w-0 flex-col border-r border-[var(--line)] bg-[var(--panel)]">
     <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--panel)] p-3">
@@ -103,14 +110,26 @@ export function RuleEditor({
           <X size={14} />
         </button>
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid grid-cols-3 gap-2">
         <Button disabled={pending} onClick={onTest}>
           <FlaskConical size={13} /> {pending ? tr('hunt.searching') : tr('hunt.workbench.test')}
         </Button>
-        <Button variant="primary" disabled={pending || !tested || stale || selectedClusters === 0} onClick={onApply}>
-          <Save size={13} /> {tr('hunt.workbench.saveApply')} ({selectedClusters})
+        <Button disabled={pending || !dirty} onClick={onSave}>
+          <Save size={13} /> {tr('hunt.workbench.saveRule')}
         </Button>
+        <Tooltip className="w-full" hint={applyHint}>
+          <Button className="w-full justify-center" variant="primary"
+            disabled={pending || dirty || draft.source === 'new' || !tested || stale
+              || selectedClusters === 0} onClick={onApply}>
+            <Check size={13} /> {tr('hunt.workbench.applySelected')} ({selectedClusters})
+          </Button>
+        </Tooltip>
       </div>
+      {applyHint && (
+        <div className="mt-2 text-[10.5px] leading-snug text-[var(--muted)]">
+          {applyHint}
+        </div>
+      )}
       {error && <div className="mt-2 rounded-lg border border-[var(--sev-high)]/30 bg-[var(--danger-soft)] px-2.5 py-2 text-[11px] text-[var(--danger-text)]">{error}</div>}
     </header>
 

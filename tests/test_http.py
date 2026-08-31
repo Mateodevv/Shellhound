@@ -504,10 +504,23 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual(1, len(second_page["clusters"]))
         second_cluster = second_page["clusters"][0]
         self.assertNotEqual(cluster["cluster_key"], second_cluster["cluster_key"])
+        status, saved_response = post_json("/api/patterns", {
+            "name": "HTTP workbench synthetic rule",
+            "technology": "wordpress", "rule": rule,
+        })
+        self.assertEqual(200, status, saved_response)
+        saved = saved_response["entry"]
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            self.assertEqual(before_rows, case_conn.execute(
+                "SELECT count(*) FROM findings").fetchone()[0],
+                "saving a rule wrote a finding")
+        finally:
+            case_conn.close()
         apply_body = {
             "cluster_keys": [cluster["cluster_key"], second_cluster["cluster_key"]],
-            "pattern": {"name": "HTTP workbench synthetic rule",
-                        "technology": "wordpress", "rule": rule},
+            "pattern_id": saved["id"],
+            "expected_version": saved["version"],
             "idempotency_key": f"synthetic-{slug}-{test_id}",
         }
         status, applied = post_json(
@@ -516,6 +529,8 @@ class EndpointSurfaceTests(unittest.TestCase):
         expected_clients = len({cluster["client"], second_cluster["client"]})
         self.assertEqual(expected_clients, applied["findings"])
         self.assertFalse(applied["already_applied"])
+        self.assertEqual(saved["version"], applied["pattern"]["version"],
+                         "applying a saved rule created another version")
         case_conn = db.connect(WORKSPACE / slug)
         try:
             self.assertEqual(before_rows + expected_clients,
