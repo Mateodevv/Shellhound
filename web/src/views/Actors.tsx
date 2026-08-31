@@ -591,7 +591,7 @@ function Pagination({ page, total, tr, onPage }: {
 }
 
 export function ActorInspector({
-  detail, loading, threshold, tr, initialTab, embedded = false,
+  detail, loading, threshold, tr, initialTab, embedded = false, showClose = true,
   onClose, onTrace, onCollect, onArtifact,
 }: {
   detail?: ActorDetail
@@ -600,6 +600,7 @@ export function ActorInspector({
   tr: Translate
   initialTab: ActorInspectorTab
   embedded?: boolean
+  showClose?: boolean
   onClose: () => void
   onTrace: (exact?: string[], ips?: string[]) => void
   onCollect: () => void
@@ -635,8 +636,9 @@ export function ActorInspector({
           {detail.triage && (
             <TriageBadge state={detail.triage} label={tr(`triage.${detail.triage}`)} />
           )}
-          <Button className={clsx('absolute right-4 top-4', !embedded && 'lg:hidden')} variant="ghost"
+          {showClose && <Button className={clsx('absolute right-4 top-4', !embedded && 'lg:hidden')} variant="ghost"
             title={tr('common.close')} onClick={onClose}><X size={17} /></Button>
+          }
         </div>
         <div className={clsx('mt-3 text-[14px] font-semibold',
           primary?.tone === 'danger' && 'text-[var(--danger-text)]',
