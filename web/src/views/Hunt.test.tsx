@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import {
-  api, del, post, type HuntPattern, type HuntRuleV2, type HuntTest,
+  api, del, post, type ActorDetail, type HuntPattern, type HuntRuleV2, type HuntTest,
 } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Hunt } from './Hunt'
@@ -56,6 +56,25 @@ const CLUSTER = {
   example_uri: '/wp-content/uploads/drop.php',
 }
 
+const ACTOR_DETAIL = {
+  actor: {
+    ip_id: 1, ip: CLUSTER.client, requests: 8,
+    first_epoch: CLUSTER.first_epoch, last_epoch: CLUSTER.last_epoch, tz: 0,
+    err4: 0, err5: 0, bytes: 1000, bytes_unknown: 0, posts: 0,
+    login_posts: 0, login_redirects: 0, admin_ok: 0, login_statuses: '[]',
+    scanner_uas: '[]', sqli_attempts: 1, sqli_ok: 1,
+    traversal_attempts: 0, traversal_ok: 0, upload_php_attempts: 6,
+    upload_php_ok: 6, cms_dir_php_attempts: 0, cms_dir_php_ok: 0,
+    login_first: null, login_last: null, login_burst: 0, agents: 1,
+    alerts: [], sparkline: [1, 3, 4], in_box: false, triage: null,
+  },
+  alerts: [],
+  top_paths: [{ uri: CLUSTER.example_uri, n: 6, ok: 6 }],
+  top_agents: [{ agent: 'Mozilla/5.0', n: 8 }],
+  triage: null, triage_note: '', triaged_at: '', worst: null,
+  findings: [], in_box: false, relations: [],
+} as ActorDetail
+
 const OWN: HuntPattern = {
   ...PATTERN, id: 'own-variant', source: 'own', name: 'Edited sample',
   version: 1, derived_from: { id: PATTERN.id, version: 1, source: 'bundled' },
@@ -74,9 +93,7 @@ function mocks() {
       raw_truncated: false,
     }
     if (path.includes('/actor?ip=')) return {
-      actor: {}, alerts: [], top_paths: [], top_agents: [], triage: null,
-      triage_note: '', triaged_at: '', worst: null, findings: [], in_box: false,
-      relations: [],
+      ...ACTOR_DETAIL,
     }
     throw new Error(`unexpected API call: ${path}`)
   })
@@ -115,9 +132,10 @@ describe('Pattern Hunt forensic workbench', () => {
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
       path.endsWith('/hunt/tests'))).toBe(true))
     fireEvent.click(await screen.findByRole('button', { name: '203.0.113.42' }))
-    expect(gotoView).toHaveBeenCalledWith('actors', {
-      search: '203.0.113.42', actor: '203.0.113.42', section: 'activity',
-    })
+    expect(await screen.findByRole('button', { name: 'Activity' })).toHaveAttribute(
+      'aria-pressed', 'true')
+    expect((await screen.findAllByText('/wp-content/uploads/drop.php')).length).toBeGreaterThan(1)
+    expect(gotoView).not.toHaveBeenCalled()
     const checkbox = await screen.findByLabelText('Select request cluster')
     fireEvent.click(checkbox)
     fireEvent.click(screen.getByRole('button', { name: /Save and apply/ }))
