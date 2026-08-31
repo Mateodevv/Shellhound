@@ -13,7 +13,7 @@ import {
 import type { Navigate } from '../../App'
 import { formatCount, formatLogTime, formatSpan } from '../../format'
 import { useT } from '../../i18n'
-import { Button, Tag } from '../../components/ui'
+import { Button, Modal, Tag } from '../../components/ui'
 import { IpFlag } from '../../components/IpFlag'
 import { TraceWindow, type TraceMarks } from '../../components/TraceWindow'
 import { ActorInspector } from '../Actors'
@@ -130,30 +130,16 @@ export function HuntResults({
         <p className="mt-1 max-w-sm text-[11px] text-[var(--muted)]">{tr('hunt.workbench.testFirstSub')}</p>
       </div>
     </div> : <>
-      <div className={clsx('min-h-0 flex-1', actorIp
-        ? 'grid grid-cols-[minmax(390px,0.72fr)_minmax(500px,1.28fr)] gap-3 overflow-hidden p-3'
-        : 'flex flex-col')}>
-        <div className={clsx('flex min-h-0 min-w-0 flex-col overflow-hidden', actorIp
-          && 'rounded-xl border border-[var(--line)]')}>
-          <div className={clsx(
-            'grid shrink-0 items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]',
-            actorIp
-              ? 'grid-cols-[28px_minmax(125px,0.7fr)_minmax(180px,1.3fr)_58px]'
-              : 'grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px]',
-          )}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <div className="grid shrink-0 grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px] items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-2 py-1.5 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
             <span />
             <span>{tr('hunt.workbench.client')}</span>
-            {actorIp ? <>
-              <span>{tr('hunt.workbench.inspector')}</span>
-              <span className="text-right">{tr('hunt.requests')}</span>
-            </> : <>
-              <span>{tr('hunt.field.method')}</span><span>{tr('hunt.field.uri')}</span>
-              <span>{tr('hunt.field.status')}</span>
-              <span className="text-right">{tr('hunt.requests')}</span><span>{tr('hunt.firstHit')}</span>
-            </>}
+            <span>{tr('hunt.field.method')}</span><span>{tr('hunt.field.uri')}</span>
+            <span>{tr('hunt.field.status')}</span>
+            <span className="text-right">{tr('hunt.requests')}</span><span>{tr('hunt.firstHit')}</span>
           </div>
-          <div ref={scrollRef} className={clsx('min-h-[150px] overflow-y-auto', actorIp
-            ? 'flex-1' : 'flex-[1.15] border-b border-[var(--line)]')}>
+          <div ref={scrollRef} className="min-h-[150px] flex-[1.15] overflow-y-auto border-b border-[var(--line)]">
         {pages.isLoading ? <Loading /> : clusters.length ? <div className="relative w-full"
           style={{ height: `${virtualizer.getTotalSize()}px` }}>
           {virtualizer.getVirtualItems().map((item) => {
@@ -162,10 +148,7 @@ export function HuntResults({
             return <div key={cluster.cluster_key} data-index={item.index}
               ref={virtualizer.measureElement}
               className={clsx(
-                'absolute left-0 top-0 grid w-full items-center gap-2 border-b border-[var(--line-soft)] px-2 py-1.5 text-[10.5px] hover:bg-[var(--panel-2)]',
-                actorIp
-                  ? 'grid-cols-[28px_minmax(125px,0.7fr)_minmax(180px,1.3fr)_58px]'
-                  : 'grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px]',
+                'absolute left-0 top-0 grid w-full grid-cols-[28px_minmax(130px,0.7fr)_54px_minmax(180px,1.5fr)_45px_58px_100px] items-center gap-2 border-b border-[var(--line-soft)] px-2 py-1.5 text-[10.5px] hover:bg-[var(--panel-2)]',
                 inspected?.cluster_key === cluster.cluster_key && 'bg-[var(--accent-soft)]')}
               style={{ transform: `translateY(${item.start}px)` }}>
               <input type="checkbox" checked={checked} aria-label={tr('hunt.workbench.selectCluster')}
@@ -181,24 +164,12 @@ export function HuntResults({
                 className="mono inline-flex min-w-0 cursor-pointer items-center gap-1.5 truncate text-left font-semibold">
                 <IpFlag ip={cluster.client} />{cluster.client}
               </button>
-              {actorIp ? <>
-                <button type="button" onClick={() => setInspectedKey(cluster.cluster_key)}
-                  title={cluster.example_uri} className="mono min-w-0 cursor-pointer truncate text-left">
-                  <span className="mr-1.5 text-[var(--muted)]">{cluster.method}</span>
-                  {cluster.uri_pattern}
-                  <span className={clsx('ml-1.5 font-semibold', cluster.ok_hits && 'text-[var(--sev-high)]')}>
-                    {cluster.status_class}
-                  </span>
-                </button>
-                <span className="text-right tabular">{formatCount(cluster.requests)}</span>
-              </> : <>
-                <span className="mono">{cluster.method}</span>
-                <button type="button" onClick={() => setInspectedKey(cluster.cluster_key)}
-                  title={cluster.example_uri} className="mono cursor-pointer truncate text-left">{cluster.uri_pattern}</button>
-                <span className={clsx('tabular font-semibold', cluster.ok_hits && 'text-[var(--sev-high)]')}>{cluster.status_class}</span>
-                <span className="text-right tabular">{formatCount(cluster.requests)}</span>
-                <span className="truncate text-[9.5px] text-[var(--muted)]">{formatLogTime(cluster.first_epoch, cluster.tz)}</span>
-              </>}
+              <span className="mono">{cluster.method}</span>
+              <button type="button" onClick={() => setInspectedKey(cluster.cluster_key)}
+                title={cluster.example_uri} className="mono cursor-pointer truncate text-left">{cluster.uri_pattern}</button>
+              <span className={clsx('tabular font-semibold', cluster.ok_hits && 'text-[var(--sev-high)]')}>{cluster.status_class}</span>
+              <span className="text-right tabular">{formatCount(cluster.requests)}</span>
+              <span className="truncate text-[9.5px] text-[var(--muted)]">{formatLogTime(cluster.first_epoch, cluster.tz)}</span>
             </div>
           })}
         </div> : <div className="flex h-full items-center justify-center p-6 text-[11px] text-[var(--muted)]">
@@ -209,25 +180,33 @@ export function HuntResults({
           {clusters.length} / {total}
         </div>}
           </div>
-          {!actorIp && <RequestInspector cluster={inspected} context={context.data}
-            loading={context.isFetching} gotoView={gotoView} />}
+          <RequestInspector cluster={inspected} context={context.data}
+            loading={context.isFetching} gotoView={gotoView} />
         </div>
-
-        {actorIp && <ActorInspector key={actorIp} embedded detail={actor.data}
-          loading={actor.isFetching} initialTab="activity" tr={tr}
-          onClose={() => setActorIp(null)}
-          onTrace={(exact = [], ips = [actorIp]) => {
-            setTraceMarks({ exact, reason: tr('marks.alertTrigger') })
-            setTraceIps(ips)
-          }}
-          onCollect={() => collect.mutate(actorIp)}
-          onArtifact={() => gotoView('actors', {
-            search: actorIp, actor: actorIp, section: 'evidence',
-          })} />}
       </div>
 
       <CoverageFooter test={test} />
-      <TraceWindow slug={slug} ips={traceIps} marks={traceMarks}
+      <Modal open={Boolean(actorIp)} onClose={() => setActorIp(null)}
+        title={<span className="flex items-center gap-2">
+          {actorIp && <IpFlag ip={actorIp} />}
+          <span>{tr('actors.inspector.title')}</span>
+          {actorIp && <span className="mono text-[13px] text-[var(--muted)]">{actorIp}</span>}
+        </span>}>
+        <div className="h-[min(720px,calc(92vh-7rem))]">
+          {actorIp && <ActorInspector key={actorIp} embedded showClose={false}
+            detail={actor.data} loading={actor.isFetching} initialTab="activity" tr={tr}
+            onClose={() => setActorIp(null)}
+            onTrace={(exact = [], ips = [actorIp]) => {
+              setTraceMarks({ exact, reason: tr('marks.alertTrigger') })
+              setTraceIps(ips)
+            }}
+            onCollect={() => collect.mutate(actorIp)}
+            onArtifact={() => gotoView('actors', {
+              search: actorIp, actor: actorIp, section: 'evidence',
+            })} />}
+        </div>
+      </Modal>
+      <TraceWindow slug={slug} ips={traceIps} marks={traceMarks} layer={1}
         onClose={() => setTraceIps(null)} />
     </>}
   </section>

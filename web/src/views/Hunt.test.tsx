@@ -134,8 +134,11 @@ describe('Pattern Hunt forensic workbench', () => {
     fireEvent.click(await screen.findByRole('button', { name: '203.0.113.42' }))
     expect(await screen.findByRole('button', { name: 'Activity' })).toHaveAttribute(
       'aria-pressed', 'true')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect((await screen.findAllByText('/wp-content/uploads/drop.php')).length).toBeGreaterThan(1)
     expect(gotoView).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     const checkbox = await screen.findByLabelText('Select request cluster')
     fireEvent.click(checkbox)
     fireEvent.click(screen.getByRole('button', { name: /Save and apply/ }))
