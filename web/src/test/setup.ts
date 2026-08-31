@@ -2,7 +2,7 @@
 //
 // The interface reaches for browser facilities that jsdom does not implement,
 // and a component that throws on mount fails a test for a reason that has
-// nothing to do with what the test is about. The three stands-in below are
+// nothing to do with what the test is about. The stands-in below are
 // each guarded, so a jsdom version that grows the real thing keeps it: a
 // stub that shadows a working implementation is a second way to be wrong.
 import '@testing-library/jest-dom/vitest'
@@ -51,6 +51,13 @@ if (!window.matchMedia) {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia
+}
+
+// Cross-links can move the matching forensic entry into view after opening
+// its section. jsdom has no layout and therefore omits this harmless browser
+// method, but the delayed call still needs a callable stand-in.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
 }
 
 beforeEach(() => {

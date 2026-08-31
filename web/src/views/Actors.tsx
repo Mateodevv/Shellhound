@@ -41,7 +41,7 @@ type ActorView = 'relevant' | 'confirmed' | 'all'
 type FocusFilter = 'any' | 'notable' | 'scanner' | 'bruteforce' | 'probes'
 type DecisionFilter = 'any' | 'new' | 'review' | 'dismissed'
 type Density = 'comfortable' | 'compact'
-type ActorInspectorTab = 'overview' | 'evidence' | 'activity' | 'relations'
+export type ActorInspectorTab = 'overview' | 'evidence' | 'activity' | 'relations'
 
 function actorDeepLink() {
   const params = new URLSearchParams(location.search)
@@ -590,12 +590,16 @@ function Pagination({ page, total, tr, onPage }: {
   )
 }
 
-function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, onTrace, onCollect, onArtifact }: {
+export function ActorInspector({
+  detail, loading, threshold, tr, initialTab, embedded = false,
+  onClose, onTrace, onCollect, onArtifact,
+}: {
   detail?: ActorDetail
   loading: boolean
   threshold?: number
   tr: Translate
   initialTab: ActorInspectorTab
+  embedded?: boolean
   onClose: () => void
   onTrace: (exact?: string[], ips?: string[]) => void
   onCollect: () => void
@@ -604,7 +608,10 @@ function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, o
   const [tab, setTab] = useState<ActorInspectorTab>(initialTab)
   if (!detail) {
     return (
-      <aside className="hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[13px] text-[var(--muted)] lg:block">
+      <aside className={clsx(
+        'rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[13px] text-[var(--muted)]',
+        !embedded && 'hidden lg:block',
+      )}>
         {loading ? tr('common.loading') : tr('actors.inspector.empty')}
       </aside>
     )
@@ -614,7 +621,11 @@ function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, o
   const primary = signals[0]
   const analystOnly = detail.triage === 'confirmed' && !primary
   return (
-    <aside className="fixed inset-0 z-40 min-w-0 overflow-y-auto bg-[var(--bg)] p-3 lg:sticky lg:inset-auto lg:top-3 lg:max-h-[calc(100vh-1.5rem)] lg:overflow-hidden lg:rounded-xl lg:border lg:border-[var(--line)] lg:bg-[var(--panel)] lg:p-0"
+    <aside className={clsx(
+      embedded
+        ? 'relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]'
+        : 'fixed inset-0 z-40 min-w-0 overflow-y-auto bg-[var(--bg)] p-3 lg:sticky lg:inset-auto lg:top-3 lg:max-h-[calc(100vh-1.5rem)] lg:overflow-hidden lg:rounded-xl lg:border lg:border-[var(--line)] lg:bg-[var(--panel)] lg:p-0',
+    )}
       aria-label={tr('actors.inspector.title')}>
       <div className="border-b border-[var(--line)] p-4">
         <div className="flex flex-wrap items-center gap-2 pr-9 lg:pr-0">
@@ -624,7 +635,7 @@ function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, o
           {detail.triage && (
             <TriageBadge state={detail.triage} label={tr(`triage.${detail.triage}`)} />
           )}
-          <Button className="absolute right-4 top-4 lg:hidden" variant="ghost"
+          <Button className={clsx('absolute right-4 top-4', !embedded && 'lg:hidden')} variant="ghost"
             title={tr('common.close')} onClick={onClose}><X size={17} /></Button>
         </div>
         <div className={clsx('mt-3 text-[14px] font-semibold',
@@ -674,7 +685,9 @@ function ActorInspector({ detail, loading, threshold, tr, initialTab, onClose, o
         ))}
       </nav>
 
-      <div className="min-h-[220px] p-4 lg:max-h-[calc(100vh-27rem)] lg:overflow-y-auto">
+      <div className={clsx('min-h-[220px] p-4', embedded
+        ? 'min-h-0 flex-1 overflow-y-auto'
+        : 'lg:max-h-[calc(100vh-27rem)] lg:overflow-y-auto')}>
         {tab === 'overview' && <>
           <InspectorSection title={tr('actors.inspector.why')}>
             <div className="rounded-lg border border-[var(--accent)]/35 bg-[var(--accent-soft)] p-3">
