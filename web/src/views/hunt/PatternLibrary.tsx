@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import {
-  Archive, ChevronLeft, Copy, Download, MoreHorizontal, Play, Plus,
+  Archive, ChevronLeft, Copy, Download, MoreHorizontal, PencilLine, Play, Plus,
   Search, ScrollText, ToggleLeft, ToggleRight, Upload, X,
 } from 'lucide-react'
 import type { HuntPattern, HuntTechnology, HuntTest, Job } from '../../api'
@@ -13,7 +13,7 @@ const TECHNOLOGIES: HuntTechnology[] = ['wordpress', 'joomla', 'generic', 'other
 
 export function PatternLibrary({
   patterns, tests, selectedId, search, filter, collapsed, busy,
-  onSearch, onFilter, onSelect, onNew, onDuplicate, onToggle, onArchive,
+  onSearch, onFilter, onSelect, onEdit, onNew, onDuplicate, onToggle, onArchive,
   onBatch, onFromLogs, onCollapse, importText, onImportText, onImport,
   batchJob, onCancelBatch,
 }: {
@@ -27,6 +27,7 @@ export function PatternLibrary({
   onSearch: (value: string) => void
   onFilter: (value: 'active' | 'all' | 'own' | 'bundled' | 'archived' | 'hit') => void
   onSelect: (pattern: HuntPattern) => void
+  onEdit: (pattern: HuntPattern) => void
   onNew: () => void
   onDuplicate: (pattern: HuntPattern) => void
   onToggle: (pattern: HuntPattern) => void
@@ -171,6 +172,8 @@ export function PatternLibrary({
                 </span>
               </button>
               <div className="flex items-center justify-end gap-0.5 px-2 pb-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                <button type="button" onClick={() => onEdit(pattern)} title={tr('hunt.workbench.editRule')}
+                  className="cursor-pointer rounded p-1 text-[var(--accent-text)] hover:bg-[var(--accent-soft)]"><PencilLine size={12} /></button>
                 <button type="button" onClick={() => onDuplicate(pattern)} title={tr('hunt.workbench.duplicate')}
                   className="cursor-pointer rounded p-1 text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--fg)]"><Copy size={12} /></button>
                 <button type="button" onClick={() => onToggle(pattern)} title={pattern.enabled ? tr('hunt.disable.hint') : tr('hunt.enable.hint')}

@@ -1602,6 +1602,9 @@ export const en: Record<string, string> = {
   // Pattern Hunt workbench
   'hunt.workbench.library': 'Library',
   'hunt.workbench.editor': 'Rule draft',
+  'hunt.workbench.editRule': 'Edit rule',
+  'hunt.workbench.resumeDraft': 'Continue draft',
+  'hunt.workbench.closeEditor': 'Close rule editor',
   'hunt.workbench.results': 'Hits and evidence',
   'hunt.workbench.rules': 'rules',
   'hunt.workbench.new': 'New',

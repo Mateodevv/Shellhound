@@ -24,6 +24,7 @@ export interface HuntSessionState {
   selectedClusters: string[]
   libraryWidth: number
   editorWidth: number
+  editorOpen: boolean
   libraryCollapsed: boolean
   resultCollapsed: boolean
   search: string
@@ -39,7 +40,7 @@ const DEFAULT_RULE: HuntRuleV2 = {
 
 export const DEFAULT_SESSION: HuntSessionState = {
   selectedId: '', draft: null, testedHash: '', testId: null,
-  selectedClusters: [], libraryWidth: 340, editorWidth: 560,
+  selectedClusters: [], libraryWidth: 340, editorWidth: 560, editorOpen: false,
   libraryCollapsed: false, resultCollapsed: false,
   search: '', filter: 'active',
 }

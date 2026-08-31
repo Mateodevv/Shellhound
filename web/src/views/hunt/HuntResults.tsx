@@ -4,7 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import clsx from 'clsx'
 import {
   AlertTriangle, ChevronRight, ExternalLink,
-  FileSearch, LoaderCircle, Network, Search,
+  FileSearch, LoaderCircle, Network, PencilLine, Search,
 } from 'lucide-react'
 import {
   api, post, type AccessRequestContext, type ActorDetail, type HuntCluster,
@@ -19,14 +19,17 @@ import { IpFlag } from '../../components/IpFlag'
 const PAGE_SIZE = 200
 
 export function HuntResults({
-  slug, test, selected, collapsed, onSelected, onCollapse, gotoView,
+  slug, test, selected, collapsed, ruleName, onSelected, onCollapse, onEdit, editLabel, gotoView,
 }: {
   slug: string
   test: HuntTest | null
   selected: Set<string>
   collapsed: boolean
+  ruleName?: string
   onSelected: (value: Set<string>) => void
   onCollapse: () => void
+  onEdit?: () => void
+  editLabel?: string
   gotoView: Navigate
 }) {
   const tr = useT()
@@ -89,15 +92,20 @@ export function HuntResults({
       <div className="min-w-0 flex-1">
         <div className="text-[12px] font-semibold">{tr('hunt.workbench.results')}</div>
         {test ? <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-[var(--muted)]">
+          {ruleName && <span className="font-semibold text-[var(--fg)]">{ruleName}</span>}
           <span><b className="text-[var(--fg)]">{formatCount(test.hits ?? 0)}</b> {tr('hunt.requests')}</span>
           <span><b className="text-[var(--fg)]">{formatCount(test.clients ?? 0)}</b> {tr('hunt.clients')}</span>
           <span><b className="text-[var(--sev-high)]">{formatCount(test.ok_hits ?? 0)}</b> 2xx</span>
           <span>{test.first_epoch && test.last_epoch
             ? formatSpan(test.first_epoch, test.last_epoch) : '—'}</span>
           <span>{formatLogTime(Date.parse(test.tested_at) / 1000, 0, { withZone: true })}</span>
-        </div> : <div className="text-[10px] text-[var(--muted)]">{tr('hunt.workbench.noTest')}</div>}
+        </div> : <div className="text-[10px] text-[var(--muted)]">
+          {ruleName && <span className="font-semibold text-[var(--fg)]">{ruleName} · </span>}
+          {tr('hunt.workbench.noTest')}
+        </div>}
       </div>
       {selected.size > 0 && <Tag tone="accent">{selected.size} {tr('hunt.workbench.selected')}</Tag>}
+      {onEdit && <Button onClick={onEdit}><PencilLine size={12} /> {editLabel || tr('hunt.workbench.editRule')}</Button>}
       <button type="button" onClick={onCollapse} title={tr('common.close')}
         className="cursor-pointer rounded p-1.5 text-[var(--muted)] hover:bg-[var(--panel-2)]">
         <ChevronRight size={15} />
