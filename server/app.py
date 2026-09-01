@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 
 from server import case_report, correlation, coverage, db, enrich, geoip, huntrules
 from server import iocs as ioclib
+from server import opencti as openctilib
+from server import opencti_case
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
@@ -490,6 +492,52 @@ def create_app(config: Config) -> FastAPI:
         `enrich` refuses -- the same gate as the GeoIP confirmation."""
         return settingslib.set_ack(config.workspace, body.accepted)
 
+    def _opencti_http_error(exc):
+        if isinstance(exc, openctilib.OpenCtiError):
+            raise HTTPException(exc.status, {"code": exc.code, "message": str(exc)}) from exc
+        if isinstance(exc, opencti_case.CaseOpenCtiError):
+            raise HTTPException(400, {"code": exc.code, "message": str(exc)}) from exc
+        raise exc
+
+    class OpenCtiSettingsBody(BaseModel):
+        url: str | None = None
+        token: str | None = None
+        taxii_collection_url: str | None = None
+        author_id: str | None = None
+        author_name: str | None = None
+        default_marking_id: str | None = None
+        default_marking_name: str | None = None
+
+    @app.get("/api/settings/opencti", dependencies=[auth])
+    def opencti_settings_get():
+        return settingslib.public(config.workspace)["opencti"]
+
+    @app.put("/api/settings/opencti", dependencies=[auth])
+    def opencti_settings_put(body: OpenCtiSettingsBody):
+        values = body.model_dump(exclude_unset=True)
+        # Reject malformed external URLs before persisting them. Empty values
+        # intentionally clear the integration and therefore need no parsing.
+        try:
+            if values.get("url"):
+                openctilib.validate_https_url(values["url"])
+            if values.get("taxii_collection_url"):
+                openctilib.validate_https_url(
+                    values["taxii_collection_url"], "TAXII collection URL")
+        except openctilib.OpenCtiError as exc:
+            _opencti_http_error(exc)
+        return settingslib.set_opencti(config.workspace, values)
+
+    @app.post("/api/settings/opencti/test", dependencies=[auth])
+    def opencti_settings_test():
+        private = settingslib.opencti(config.workspace)
+        try:
+            with openctilib.OpenCtiClient(private) as client:
+                result = client.test_connection()
+        except openctilib.OpenCtiError as exc:
+            _opencti_http_error(exc)
+        public = settingslib.verify_opencti(config.workspace, result)
+        return {"ok": True, "user": result.get("user", {}), "opencti": public}
+
     class EnrichBody(BaseModel):
         service: str           # virustotal | abuseipdb
         value: str             # THE one indicator; nothing else is sent
@@ -523,6 +571,475 @@ def create_app(config: Config) -> FastAPI:
             except ValueError:
                 r["result"] = {}
         return {"entries": rows}
+
+    # --- OpenCTI -----------------------------------------------------------
+    # Every operation is an analyst click. Reads become timestamped foreign
+    # context; writes become immutable publication receipts. Neither path
+    # calls a finding/triage function.
+
+    def _opencti_config():
+        try:
+            return openctilib.validate_config(
+                settingslib.opencti(config.workspace), require_verified=True)
+        except openctilib.OpenCtiError as exc:
+            _opencti_http_error(exc)
+
+    class OpenCtiLookupTarget(BaseModel):
+        kind: str
+        value: str
+
+    class OpenCtiLookupBody(BaseModel):
+        targets: list[OpenCtiLookupTarget] = Field(default_factory=list)
+
+    def _case_lookup_targets(case_dir, supplied):
+        if supplied:
+            raw = [(row.kind, row.value) for row in supplied]
+        else:
+            conn = db.connect(case_dir)
+            try:
+                raw = [(row["type"], row["value"]) for row in db.rows(
+                    conn, "SELECT type,value FROM iocs ORDER BY id")]
+                confirmed_files = [row["artifact"] for row in db.rows(
+                    conn, "SELECT DISTINCT artifact FROM findings "
+                          "WHERE artifact_kind='file' AND triage='confirmed' "
+                          "ORDER BY artifact LIMIT 100")]
+                for index, path in enumerate(confirmed_files):
+                    try:
+                        snap = opencti_case.file_snapshot(
+                            conn, path, f"lookup-file:{index}")
+                        raw.append(("hash", snap["hashes"]["SHA-256"]))
+                    except opencti_case.CaseOpenCtiError:
+                        continue
+            finally:
+                conn.close()
+            actor_result = logindex.actors_list(
+                case_dir, sort="evidence", limit=500, offset=0)
+            raw.extend(("ip", row["ip"]) for row in actor_result["actors"])
+        allowed = {"ip", "hash", "url", "domain", "email", "user", "path"}
+        result, seen = [], set()
+        for kind, value in raw:
+            kind = str(kind).lower()
+            if kind not in allowed:
+                continue
+            try:
+                normalized = openctilib.normalize_value(kind, value)
+            except ValueError:
+                continue
+            key = (kind, normalized)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(key)
+        # The bound is stated in the response, never a silent partial sweep.
+        return result[:1000], max(0, len(result) - 1000)
+
+    @app.post("/api/cases/{slug}/opencti/lookups", dependencies=[auth])
+    def opencti_lookups(slug: str, body: OpenCtiLookupBody):
+        case_dir = case_dir_or_404(slug)
+        private = _opencti_config()
+        targets, omitted = _case_lookup_targets(case_dir, body.targets)
+        fetched = openctilib.utc_now()
+        entries = []
+        try:
+            with openctilib.OpenCtiClient(private) as client:
+                for kind, value in targets:
+                    result = client.lookup(kind, value)
+                    entries.append({"target_kind": kind, "target_key": value,
+                                    "fetched_at": fetched, "result": result})
+        except openctilib.OpenCtiError as exc:
+            _opencti_http_error(exc)
+        conn = db.connect(case_dir)
+        try:
+            for entry in entries:
+                conn.execute(
+                    "INSERT INTO opencti_lookup_snapshots"
+                    "(target_kind,target_key,fetched_at,payload) VALUES(?,?,?,?) "
+                    "ON CONFLICT(target_kind,target_key) DO UPDATE SET "
+                    "fetched_at=excluded.fetched_at,payload=excluded.payload",
+                    (entry["target_kind"], entry["target_key"], fetched,
+                     json.dumps(entry["result"], ensure_ascii=False)))
+            conn.commit()
+        finally:
+            conn.close()
+        return {"entries": entries, "checked": len(entries), "omitted": omitted,
+                "fetched_at": fetched}
+
+    @app.get("/api/cases/{slug}/opencti/context", dependencies=[auth])
+    def opencti_context(slug: str, kind: str = "", key: str = ""):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            return {"entries": opencti_case.context_rows(conn, kind, key)}
+        finally:
+            conn.close()
+
+    class OpenCtiPromoteBody(BaseModel):
+        snapshot_id: int
+        external_id: str
+        value: str
+        type: str
+        note: str = ""
+
+    @app.post("/api/cases/{slug}/opencti/context/promote", dependencies=[auth])
+    def opencti_promote(slug: str, body: OpenCtiPromoteBody):
+        case_dir = case_dir_or_404(slug)
+        if body.type not in ioclib.IOC_TYPES or body.type == "other":
+            raise HTTPException(400, "unsupported IOC type")
+        try:
+            normalized = openctilib.normalize_value(body.type, body.value)
+        except ValueError as exc:
+            raise HTTPException(400, "invalid IOC value") from exc
+        conn = db.connect(case_dir)
+        try:
+            row = conn.execute(
+                "SELECT payload FROM opencti_lookup_snapshots WHERE id=?",
+                (body.snapshot_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "OpenCTI snapshot not found")
+            payload = opencti_case.json_load(row[0], {})
+            candidates = []
+            candidates.extend(payload.get("matches") or [])
+            candidates.extend(payload.get("related") or [])
+            candidate = next((item for item in candidates
+                              if str(item.get("id")) == body.external_id), None)
+            if (not candidate or str(candidate.get("value") or "") != body.value
+                    or candidate.get("ioc_type") != body.type
+                    or not candidate.get("promotable")):
+                raise HTTPException(409, "IOC is not a promotable value in this snapshot")
+            ioc_id = db.add_ioc(
+                conn, normalized, body.type, ["opencti", ioclib.TAG_ANALYST],
+                note=body.note[:4000], origin="selected from OpenCTI context")
+            conn.execute(
+                "INSERT OR IGNORE INTO ioc_external_sources"
+                "(ioc_id,provider,external_id,source_url,snapshot_id,added) "
+                "VALUES(?,?,?,?,?,?)",
+                (ioc_id, "opencti", body.external_id,
+                 settingslib.opencti(config.workspace).get("url", ""),
+                 body.snapshot_id, db.now()))
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"ok": True, "ioc_id": ioc_id}
+
+    class OpenCtiDraftItem(BaseModel):
+        kind: str
+        id: int | None = None
+        value: str | None = None
+        path: str | None = None
+        indicator: bool = False
+
+    class OpenCtiDraftBody(BaseModel):
+        items: list[OpenCtiDraftItem] = Field(default_factory=list)
+        summary: str = Field(default="", max_length=20000)
+        marking_id: str = ""
+
+    @app.get("/api/cases/{slug}/opencti/draft", dependencies=[auth])
+    def opencti_draft_get(slug: str):
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            return opencti_case.get_draft(conn)
+        finally:
+            conn.close()
+
+    @app.put("/api/cases/{slug}/opencti/draft", dependencies=[auth])
+    def opencti_draft_put(slug: str, body: OpenCtiDraftBody):
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            return opencti_case.save_draft(conn, body.model_dump())
+        finally:
+            conn.close()
+
+    @app.delete("/api/cases/{slug}/opencti/draft", dependencies=[auth])
+    def opencti_draft_delete(slug: str):
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            opencti_case.delete_draft(conn)
+            return {"ok": True}
+        finally:
+            conn.close()
+
+    class OpenCtiPreviewBody(BaseModel):
+        publication_id: str | None = None
+
+    def _uuid_or_new(value):
+        try:
+            return str(uuid.UUID(str(value))) if value else str(uuid.uuid4())
+        except ValueError as exc:
+            raise HTTPException(400, "invalid publication id") from exc
+
+    def _preview_response(built, publication_id):
+        files = [{key: row.get(key) for key in
+                  ("relative_path", "name", "size", "hashes", "mime_type",
+                   "artifact_stix_id")}
+                 for row in built["uploads"]]
+        return {"publication_id": publication_id,
+                "fingerprint": built["fingerprint"],
+                "report_id": built["report_id"], "case": built["case"],
+                "summary": built["summary"], "marking": built["marking"],
+                "author": built["author"], "files": files,
+                "objects": built["bundle"]["objects"],
+                "object_count": len(built["bundle"]["objects"])}
+
+    @app.post("/api/cases/{slug}/opencti/preview", dependencies=[auth])
+    def opencti_preview(slug: str, body: OpenCtiPreviewBody):
+        case_dir = case_dir_or_404(slug)
+        private = _opencti_config()
+        publication_id = _uuid_or_new(body.publication_id)
+        conn = db.connect(case_dir)
+        try:
+            draft = opencti_case.get_draft(conn)
+        finally:
+            conn.close()
+        try:
+            built = opencti_case.materialize(
+                case_dir, private, draft, publication_id)
+        except (opencti_case.CaseOpenCtiError, openctilib.OpenCtiError) as exc:
+            _opencti_http_error(exc)
+        conn = db.connect(case_dir)
+        try:
+            existing = conn.execute(
+                "SELECT status FROM opencti_publications WHERE id=?",
+                (publication_id,)).fetchone()
+            if existing and existing["status"] != "previewed":
+                raise HTTPException(409, {"code": "publication_exists",
+                                          "message": "Publication id is no longer a preview"})
+            _record_publication(conn, publication_id, built, "previewed")
+        finally:
+            conn.close()
+        return _preview_response(built, publication_id)
+
+    class OpenCtiPublishBody(BaseModel):
+        publication_id: str
+        expected_fingerprint: str
+        confirm_duplicate: bool = False
+
+    def _safe_snapshot(built):
+        uploads = []
+        for row in built["uploads"]:
+            uploads.append({key: row.get(key) for key in
+                            ("local_ref", "relative_path", "name", "size", "hashes",
+                             "artifact_stix_id", "mime_type")})
+        return {"bundle": built["bundle"], "uploads": uploads,
+                "case": built["case"], "summary": built["summary"],
+                "marking": built["marking"], "author": built["author"]}
+
+    def _record_publication(conn, publication_id, built, status="publishing"):
+        snapshot = _safe_snapshot(built)
+        conn.execute("DELETE FROM opencti_publication_files WHERE publication_id=?",
+                     (publication_id,))
+        conn.execute(
+            "INSERT INTO opencti_publications"
+            "(id,report_stix_id,fingerprint,status,created_at,marking_id,"
+            "marking_name,author_id,author_name,snapshot) VALUES(?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET report_stix_id=excluded.report_stix_id,"
+            "fingerprint=excluded.fingerprint,status=excluded.status,"
+            "marking_id=excluded.marking_id,marking_name=excluded.marking_name,"
+            "author_id=excluded.author_id,author_name=excluded.author_name,"
+            "snapshot=excluded.snapshot,error_code='',error_message='',taxii_result='{}'",
+            (publication_id, built["report_id"], built["fingerprint"], status,
+             db.now(), built["marking"].get("id", ""),
+             built["marking"].get("name", ""), built["author"].get("id", ""),
+             built["author"].get("name", ""), json.dumps(snapshot, ensure_ascii=False)))
+        for upload in built["uploads"]:
+            conn.execute(
+                "INSERT INTO opencti_publication_files"
+                "(publication_id,relative_path,sha256,size,device,inode,mtime_ns,"
+                "artifact_stix_id,status) VALUES(?,?,?,?,?,?,?,?,'pending')",
+                (publication_id, upload["relative_path"],
+                 (upload.get("hashes") or {}).get("SHA-256", ""), upload["size"],
+                 upload.get("device", ""), upload.get("inode", ""),
+                 upload.get("mtime_ns", ""),
+                 upload["artifact_stix_id"]))
+        conn.commit()
+
+    def _update_publication(conn, publication_id, status, error=None,
+                            taxii_result=None):
+        code = error.code if isinstance(error, openctilib.OpenCtiError) else ""
+        message = str(error) if error else ""
+        conn.execute(
+            "UPDATE opencti_publications SET status=?,completed_at=?,error_code=?,"
+            "error_message=?,taxii_result=COALESCE(?,taxii_result) WHERE id=?",
+            (status, db.now() if status in ("published", "partial", "failed") else "",
+             code, message, json.dumps(taxii_result, ensure_ascii=False)
+             if taxii_result is not None else None, publication_id))
+        conn.commit()
+
+    def _upload_publication_files(case_dir, private, publication_id, client):
+        conn = db.connect(case_dir)
+        failures = 0
+        try:
+            publication = conn.execute(
+                "SELECT marking_id FROM opencti_publications WHERE id=?",
+                (publication_id,)).fetchone()
+            pending = db.rows(
+                conn, "SELECT * FROM opencti_publication_files "
+                      "WHERE publication_id=? AND status!='uploaded' ORDER BY id",
+                (publication_id,))
+            for row in pending:
+                try:
+                    target = opencti_case.safe_file(conn, row["relative_path"])
+                    before = target.stat()
+                    expected_identity = (row.get("device") or "",
+                                         row.get("inode") or "",
+                                         row.get("mtime_ns") or "")
+                    actual_identity = (str(before.st_dev), str(before.st_ino),
+                                       str(before.st_mtime_ns))
+                    if any(expected_identity) and expected_identity != actual_identity:
+                        raise openctilib.OpenCtiError(
+                            "file_changed", "Evidence file identity changed after preview", 409)
+                    hashes = opencti_case.file_hashes(target)
+                    if hashes.get("SHA-256") != row["sha256"] or before.st_size != row["size"]:
+                        raise openctilib.OpenCtiError(
+                            "file_changed", "Evidence file changed after preview", 409)
+                    remote_id = client.find_observable_id(row["artifact_stix_id"])
+                    client.upload_file(remote_id, str(target), publication["marking_id"])
+                    after = target.stat()
+                    after_hash = opencti_case.file_hashes(target).get("SHA-256")
+                    if ((before.st_dev, before.st_ino, before.st_size,
+                         before.st_mtime_ns) !=
+                            (after.st_dev, after.st_ino, after.st_size,
+                             after.st_mtime_ns) or after_hash != row["sha256"]):
+                        raise openctilib.OpenCtiError(
+                            "file_changed", "Evidence file changed during upload", 409)
+                    conn.execute(
+                        "UPDATE opencti_publication_files SET status='uploaded',"
+                        "remote_id=?,error_code='',error_message='' WHERE id=?",
+                        (remote_id, row["id"]))
+                except (openctilib.OpenCtiError, opencti_case.CaseOpenCtiError,
+                        OSError) as exc:
+                    failures += 1
+                    code = getattr(exc, "code", "file_error")
+                    message = str(exc) if not isinstance(exc, OSError) else "Evidence file is not readable"
+                    conn.execute(
+                        "UPDATE opencti_publication_files SET status='failed',"
+                        "error_code=?,error_message=? WHERE id=?",
+                        (code, message, row["id"]))
+                conn.commit()
+            return failures
+        finally:
+            conn.close()
+
+    @app.post("/api/cases/{slug}/opencti/publish", dependencies=[auth])
+    def opencti_publish(slug: str, body: OpenCtiPublishBody):
+        case_dir = case_dir_or_404(slug)
+        private = _opencti_config()
+        publication_id = _uuid_or_new(body.publication_id)
+        conn = db.connect(case_dir)
+        try:
+            draft = opencti_case.get_draft(conn)
+        finally:
+            conn.close()
+        try:
+            built = opencti_case.materialize(case_dir, private, draft, publication_id)
+        except (opencti_case.CaseOpenCtiError, openctilib.OpenCtiError) as exc:
+            _opencti_http_error(exc)
+        if built["fingerprint"] != body.expected_fingerprint:
+            raise HTTPException(409, {"code": "preview_stale",
+                                      "message": "Package changed; review the preview again"})
+        conn = db.connect(case_dir)
+        try:
+            existing = conn.execute(
+                "SELECT status,fingerprint FROM opencti_publications WHERE id=?",
+                (publication_id,)).fetchone()
+            if (not existing or existing["status"] != "previewed"
+                    or existing["fingerprint"] != built["fingerprint"]):
+                raise HTTPException(409, {"code": "preview_missing",
+                    "message": "Preview is missing or no longer current"})
+            duplicate = conn.execute(
+                "SELECT id,report_stix_id,created_at FROM opencti_publications "
+                "WHERE fingerprint=? AND id<>? AND status IN ('published','partial') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (built["fingerprint"], publication_id)).fetchone()
+            if duplicate and not body.confirm_duplicate:
+                raise HTTPException(409, {"code": "duplicate",
+                    "message": "An identical package was already published",
+                    "publication": dict(duplicate)})
+            _update_publication(conn, publication_id, "publishing")
+        finally:
+            conn.close()
+        taxii_result = None
+        try:
+            with openctilib.OpenCtiClient(private) as client:
+                taxii_result = client.taxii_push(built["bundle"])
+                conn = db.connect(case_dir)
+                try:
+                    conn.execute(
+                        "UPDATE opencti_publications SET taxii_result=? WHERE id=?",
+                        (json.dumps(taxii_result, ensure_ascii=False), publication_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                failures = _upload_publication_files(
+                    case_dir, private, publication_id, client)
+        except openctilib.OpenCtiError as exc:
+            conn = db.connect(case_dir)
+            try:
+                _update_publication(conn, publication_id, "failed", exc, taxii_result)
+            finally:
+                conn.close()
+            _opencti_http_error(exc)
+        conn = db.connect(case_dir)
+        try:
+            status = "partial" if failures else "published"
+            _update_publication(conn, publication_id, status)
+            if status == "published":
+                opencti_case.delete_draft(conn)
+            result = next(row for row in opencti_case.publication_rows(conn)
+                          if row["id"] == publication_id)
+        finally:
+            conn.close()
+        return result
+
+    @app.get("/api/cases/{slug}/opencti/publications", dependencies=[auth])
+    def opencti_publications(slug: str):
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            return {"entries": opencti_case.publication_rows(conn)}
+        finally:
+            conn.close()
+
+    @app.post("/api/cases/{slug}/opencti/publications/{publication_id}/retry",
+              dependencies=[auth])
+    def opencti_retry(slug: str, publication_id: str):
+        case_dir = case_dir_or_404(slug)
+        private = _opencti_config()
+        publication_id = _uuid_or_new(publication_id)
+        conn = db.connect(case_dir)
+        try:
+            row = conn.execute("SELECT * FROM opencti_publications WHERE id=?",
+                               (publication_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "publication not found")
+            snapshot = opencti_case.json_load(row["snapshot"], {})
+            _update_publication(conn, publication_id, "publishing")
+        finally:
+            conn.close()
+        taxii_result = None
+        try:
+            with openctilib.OpenCtiClient(private) as client:
+                if row["status"] == "failed" or not opencti_case.json_load(
+                        row["taxii_result"], {}):
+                    taxii_result = client.taxii_push(snapshot.get("bundle") or {})
+                failures = _upload_publication_files(
+                    case_dir, private, publication_id, client)
+        except openctilib.OpenCtiError as exc:
+            conn = db.connect(case_dir)
+            try:
+                _update_publication(conn, publication_id, "failed", exc, taxii_result)
+            finally:
+                conn.close()
+            _opencti_http_error(exc)
+        conn = db.connect(case_dir)
+        try:
+            _update_publication(conn, publication_id,
+                                "partial" if failures else "published",
+                                taxii_result=taxii_result)
+            result = next(row for row in opencti_case.publication_rows(conn)
+                          if row["id"] == publication_id)
+        finally:
+            conn.close()
+        return result
 
     @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
     def log_coverage(slug: str, lang: str = lang_dep, tz: str = tz_dep):
@@ -1435,6 +1952,8 @@ def create_app(config: Config) -> FastAPI:
                 conn.execute("DELETE FROM ioc_links WHERE src = ? OR dst = ?",
                              (ioc["id"], ioc["id"]))
                 conn.execute("DELETE FROM ioc_sources WHERE ioc_id = ?",
+                             (ioc["id"],))
+                conn.execute("DELETE FROM ioc_external_sources WHERE ioc_id = ?",
                              (ioc["id"],))
                 conn.execute("DELETE FROM iocs WHERE id = ?", (ioc["id"],))
                 removed.append(ioc["id"])
@@ -3570,6 +4089,14 @@ def create_app(config: Config) -> FastAPI:
             # the two indicators the relationship is "stored" -- a question
             # that is none of their business.
             by_id = {r["id"]: r for r in rows}
+            for row in rows:
+                row["external_sources"] = []
+            for source in db.rows(
+                    conn, "SELECT ioc_id,provider,external_id,source_url,snapshot_id,added "
+                          "FROM ioc_external_sources ORDER BY added"):
+                target = by_id.get(source["ioc_id"])
+                if target is not None:
+                    target["external_sources"].append(source)
             for link in db.ioc_links(conn):
                 out, back = ioclib.LINK_LABELS.get(
                     link["kind"], (link["kind"], link["kind"]))
@@ -3656,6 +4183,8 @@ def create_app(config: Config) -> FastAPI:
             # enough here.
             conn.execute("DELETE FROM ioc_links WHERE src = ? OR dst = ?",
                          (ioc_id, ioc_id))
+            conn.execute("DELETE FROM ioc_external_sources WHERE ioc_id = ?",
+                         (ioc_id,))
             conn.execute("DELETE FROM iocs WHERE id = ?", (ioc_id,))
             conn.commit()
             return {"ok": True}

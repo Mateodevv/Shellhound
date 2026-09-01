@@ -305,6 +305,17 @@ Nothing else is sent: not the case, not the path, not the other indicators.
 The result is a foreign opinion, not a measurement. It is kept apart from the
 findings and never moves a severity or a triage decision.
 
+### OpenCTI
+
+OpenCTI 7.x can be connected as an optional, manually operated context and
+publication target. Exact IOC, actor-IP and file-hash lookups are stored as
+dated foreign snapshots. Selected case objects are reviewed in an explicit
+package preview and published as a new STIX Report through TAXII 2.1; selected
+file content is then uploaded through GraphQL. There is no background sync.
+
+Service-user permissions, TAXII Push setup, markings, data boundaries and the
+failure/retry workflow are documented in [docs/OPENCTI.md](docs/OPENCTI.md).
+
 ## Configuration
 
 | Option | Meaning |
@@ -321,8 +332,8 @@ findings and never moves a severity or a triage decision.
 | `SHELLHOUND_GEOIP` | Path to a GeoIP `.mmdb` file |
 
 A case is a directory. `logindex.db` is derived from the logs and is not
-archived. API keys live in `<workspace>/settings.json`, in the workspace and
-never in a case archive.
+archived. API keys and the optional OpenCTI token live in
+`<workspace>/settings.json`, in the workspace and never in a case archive.
 
 ## Security
 
@@ -333,16 +344,20 @@ for the evidence directory.
 Single-seat tool, no user accounts, no TLS. For access from another machine an
 SSH tunnel is the intended route, not a bind to `0.0.0.0`.
 
-Outbound network access happens in exactly three places, all optional and all
-opt-in:
+Outbound network access happens only in the places below. All are optional
+and initiated by an explicit analyst or operator action:
 
 | Request | Transmitted value |
 |---|---|
 | GeoIP database download | — |
 | VirusTotal lookup | one SHA-256 |
 | AbuseIPDB lookup | one IP address |
+| OpenCTI lookup | one normalized observable per request |
+| OpenCTI publication | the complete visible STIX preview and every selected file |
 
-None of them transmits case data beyond the single value of the lookup.
+The first three rows transmit no case data beyond the stated lookup value.
+OpenCTI is the deliberate exception: its package builder shows the exact
+objects, markings, paths, hashes, sizes and files before publication.
 
 Full threat model and how to report vulnerabilities:
 [SECURITY.md](SECURITY.md).

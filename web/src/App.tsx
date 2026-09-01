@@ -19,6 +19,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { ArtifactWindow, type ArtifactStub } from './components/ArtifactWindow'
 import { TraceWindow, type TraceMarks } from './components/TraceWindow'
 import { FileViewer } from './components/FileViewer'
+import { OpenCtiPackageButton } from './components/OpenCti'
 import { TriageFollowUp } from './components/triage'
 import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
@@ -317,6 +318,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
                 {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
               </div>
             </div>
+            <OpenCtiPackageButton slug={slug} />
             {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
             {openArtifacts > 0 && view !== 'findings' && view !== 'dashboard' && (
               <button onClick={() => gotoView('findings', { triage: 'new,reviewed' })}

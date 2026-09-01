@@ -335,6 +335,72 @@ CREATE TABLE IF NOT EXISTS enrichment (
     payload TEXT NOT NULL DEFAULT '{}',
     UNIQUE(service, value)
 );
+-- Explicit OpenCTI exchanges.  The foreign context remains a timestamped
+-- snapshot, never a finding.  Draft/publication rows make every byte sent by
+-- an analyst action reconstructable without retaining the binary itself.
+CREATE TABLE IF NOT EXISTS opencti_lookup_snapshots (
+    id INTEGER PRIMARY KEY,
+    target_kind TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(target_kind, target_key)
+);
+CREATE INDEX IF NOT EXISTS idx_opencti_lookup_target
+    ON opencti_lookup_snapshots(target_kind, target_key);
+CREATE TABLE IF NOT EXISTS opencti_draft (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    updated_at TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS opencti_publications (
+    id TEXT PRIMARY KEY,
+    report_stix_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT '',
+    marking_id TEXT NOT NULL DEFAULT '',
+    marking_name TEXT NOT NULL DEFAULT '',
+    author_id TEXT NOT NULL DEFAULT '',
+    author_name TEXT NOT NULL DEFAULT '',
+    snapshot TEXT NOT NULL DEFAULT '{}',
+    taxii_result TEXT NOT NULL DEFAULT '{}',
+    error_code TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_opencti_publication_fingerprint
+    ON opencti_publications(fingerprint, created_at);
+CREATE TABLE IF NOT EXISTS opencti_publication_files (
+    id INTEGER PRIMARY KEY,
+    publication_id TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL DEFAULT '',
+    size INTEGER NOT NULL DEFAULT 0,
+    device TEXT NOT NULL DEFAULT '',
+    inode TEXT NOT NULL DEFAULT '',
+    mtime_ns TEXT NOT NULL DEFAULT '',
+    artifact_stix_id TEXT NOT NULL,
+    remote_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    error_code TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    UNIQUE(publication_id, artifact_stix_id)
+);
+CREATE INDEX IF NOT EXISTS idx_opencti_file_publication
+    ON opencti_publication_files(publication_id, status);
+CREATE TABLE IF NOT EXISTS ioc_external_sources (
+    id INTEGER PRIMARY KEY,
+    ioc_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    source_url TEXT NOT NULL DEFAULT '',
+    snapshot_id INTEGER,
+    added TEXT NOT NULL,
+    UNIQUE(ioc_id, provider, external_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ioc_external_source_ioc
+    ON ioc_external_sources(ioc_id);
 -- The result of the last webroot comparison (engines/webrootdiff.py).
 -- A derivation from two trees, not a history: every run replaces the
 -- previous one. Paths relative to the respective root, with /.
@@ -433,6 +499,11 @@ _ADDED_COLUMNS = {
         ("last_epoch", "INTEGER"),
         ("tz", "INTEGER NOT NULL DEFAULT 0"),
     ],
+    "opencti_publication_files": [
+        ("device", "TEXT NOT NULL DEFAULT ''"),
+        ("inode", "TEXT NOT NULL DEFAULT ''"),
+        ("mtime_ns", "TEXT NOT NULL DEFAULT ''"),
+    ],
 }
 
 
@@ -457,7 +528,10 @@ _ADDED_COLUMNS = {
 #     Joomla.  Sensitive raw credentials and full content stay in evidence.
 # 10: Pattern Hunt keeps immutable draft-test audits and the analyst's
 #     selected cluster applications separately from generated findings.
-CASE_SCHEMA_VERSION = 10
+# 11: explicit OpenCTI lookup snapshots, drafts, publications, file upload
+#     receipts and promoted-IOC provenance.
+# 12: OpenCTI file receipts retain filesystem identity across preview/upload.
+CASE_SCHEMA_VERSION = 12
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -467,6 +541,8 @@ CASE_SCHEMA_VERSION = 10
 _CURRENT_SCHEMA_TABLES = {
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters",
+    "opencti_lookup_snapshots", "opencti_draft", "opencti_publications",
+    "opencti_publication_files", "ioc_external_sources",
 }
 
 

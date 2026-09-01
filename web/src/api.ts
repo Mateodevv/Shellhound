@@ -41,7 +41,10 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     let detail = res.statusText
     try {
       const body = await res.json()
-      detail = body.detail ?? detail
+      const supplied = body.detail ?? detail
+      detail = typeof supplied === 'object' && supplied
+        ? (supplied.message ?? JSON.stringify(supplied))
+        : supplied
     } catch { /* not JSON */ }
     throw new ApiError(res.status, String(detail))
   }
@@ -396,7 +399,96 @@ export interface SettingsInfo {
     url: string
   }>
   enrichment_ack: boolean
+  opencti?: OpenCtiSettings
   path: string
+}
+
+export interface OpenCtiCatalogEntry {
+  id: string
+  standard_id: string
+  name: string
+  type?: string
+}
+
+export interface OpenCtiSettings {
+  configured: boolean
+  verified: boolean
+  url: string
+  taxii_collection_url: string
+  token_hint: string
+  author_id: string
+  author_name: string
+  default_marking_id: string
+  default_marking_name: string
+  verified_at: string
+  version: string
+  capabilities: string[]
+  markings: OpenCtiCatalogEntry[]
+  authors: OpenCtiCatalogEntry[]
+}
+
+export interface OpenCtiDraftItem {
+  kind: 'ioc' | 'actor' | 'file' | 'finding'
+  id?: number
+  value?: string
+  path?: string
+  indicator: boolean
+}
+
+export interface OpenCtiDraft {
+  items: OpenCtiDraftItem[]
+  summary: string
+  marking_id: string
+  updated_at?: string
+}
+
+export interface OpenCtiContextEntry {
+  id: number
+  target_kind: string
+  target_key: string
+  fetched_at: string
+  result: {
+    matched: boolean
+    matches: Array<Record<string, unknown> & {
+      id: string; value: string; score?: number
+      labels?: string[]
+      markings?: Array<{ id?: string; standard_id?: string; name?: string }>
+      indicators?: Array<{ id?: string; name?: string; x_opencti_score?: number }>
+    }>
+    related: Array<Record<string, unknown> & {
+      id: string; type: string; relationship: string
+      name?: string; value?: string; ioc_type?: string; promotable?: boolean
+    }>
+  }
+}
+
+export interface OpenCtiPreview {
+  publication_id: string
+  fingerprint: string
+  report_id: string
+  object_count: number
+  objects: Array<Record<string, unknown> & { type: string; id: string }>
+  files: Array<{
+    relative_path: string; name: string; size: number
+    hashes: Record<string, string>; mime_type: string; artifact_stix_id: string
+  }>
+  marking: OpenCtiCatalogEntry
+  author: OpenCtiCatalogEntry
+  summary: string
+}
+
+export interface OpenCtiPublication {
+  id: string
+  report_stix_id: string
+  fingerprint: string
+  status: 'previewed' | 'publishing' | 'published' | 'partial' | 'failed'
+  created_at: string
+  completed_at: string
+  marking_name: string
+  author_name: string
+  error_code: string
+  error_message: string
+  files: Array<{ relative_path: string; size: number; status: string; error_message: string }>
 }
 
 /** What a third party said about one indicator. An OPINION, not a
@@ -629,6 +721,13 @@ export interface Ioc {
    *  what the other side can look for. */
   resolved?: string | null
   links: IocLink[]
+  external_sources?: Array<{
+    provider: string
+    external_id: string
+    source_url: string
+    snapshot_id: number | null
+    added: string
+  }>
 }
 
 export interface CrossCaseIocMatch {

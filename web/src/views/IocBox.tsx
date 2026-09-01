@@ -19,6 +19,7 @@ import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
 import { EnrichPanel } from '../components/Enrich'
 import { FileViewer } from '../components/FileViewer'
+import { OpenCtiContextPanel } from '../components/OpenCti'
 import { TraceWindow } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 import { defang } from '../defang'
@@ -320,7 +321,19 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
             </button>
           </Tooltip>
         )}
+        {ioc.type !== 'other' && <OpenCtiContextPanel slug={slug}
+          kind={ioc.type} value={ioc.value}
+          item={{ kind: 'ioc', id: ioc.id, indicator: false }} compact />}
         <div className="flex max-w-[280px] flex-wrap items-center justify-end gap-1">
+          {(ioc.external_sources ?? []).map((source) => (
+            <a key={`${source.provider}-${source.external_id}`}
+              href={source.source_url || undefined} target="_blank"
+              rel="noreferrer noopener"
+              title={`${source.external_id} · ${source.added}`}
+              className="rounded px-1 py-0.5 text-[10px] text-[var(--accent-text)] hover:underline">
+              {source.provider}
+            </a>
+          ))}
           {ioc.tags.filter((t) => !PROVENANCE_TAGS.has(t)).map((t) => (
             <IocTag key={t} tag={t} tone={TAG_TONE[t]} />
           ))}

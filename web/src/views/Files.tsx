@@ -19,6 +19,7 @@ import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
+import { OpenCtiContextPanel } from '../components/OpenCti'
 import type { ViewId } from '../App'
 
 export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -295,6 +296,10 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
         </div>
         <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.metadata.caution')}</p>
       </section>
+
+      <OpenCtiContextPanel slug={slug} kind="hash"
+        value={preview.data?.hashes.sha256 ?? ''}
+        item={{ kind: 'file', path: file.path, indicator: false }} />
 
       <section>
         <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">

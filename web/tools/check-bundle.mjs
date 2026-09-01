@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url'
 
 const DIST = new URL('../dist/', import.meta.url)
 const ENTRY_LIMIT = 700 * 1024
-// Actor comparison and the access-log explorer are deliberately lazy route
-// content, but this total counts every route chunk. Keep the entry ceiling
-// unchanged and allow each investigation workspace a measured 50 KiB.
-const JS_LIMIT = 1_450 * 1024
+// Actor comparison, the access-log explorer and the OpenCTI package builder
+// are deliberately lazy content, but this total counts every route chunk.
+// Keep the entry ceiling unchanged; the explicit 50 KiB increase below is
+// the budget for the complete OpenCTI UI, not a relaxation of entry cost.
+const JS_LIMIT = 1_500 * 1024
 const DIST_LIMIT = 3_500 * 1024
 
 function filesBelow(path) {

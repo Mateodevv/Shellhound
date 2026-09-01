@@ -10,7 +10,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  CheckCircle2, ChevronDown, Code2, Download, ExternalLink, FileCode2,
+  CheckCircle2, ChevronDown, CloudCog, Code2, Download, ExternalLink, FileCode2,
   Globe, KeyRound, PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight,
   Trash2,
 } from 'lucide-react'
@@ -138,6 +138,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
           )}
         </Section>
       </div>
+      <OpenCtiSection settings={data} />
       </>}
 
       {tab === 'detection' && <>
@@ -146,6 +147,132 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
       </>}
     </div>
   )
+}
+
+export function OpenCtiSection({ settings }: { settings: SettingsInfo }) {
+  const tr = useT()
+  const qc = useQueryClient()
+  const current = settings.opencti
+  const [url, setUrl] = useState(current?.url ?? '')
+  const [taxii, setTaxii] = useState(current?.taxii_collection_url ?? '')
+  const [token, setToken] = useState('')
+  const save = useMutation({
+    mutationFn: (body: Record<string, string | null>) =>
+      put('/api/settings/opencti', body),
+    onSuccess: () => {
+      setToken('')
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+  })
+  const test = useMutation({
+    mutationFn: () => post('/api/settings/opencti/test'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+  const connectionDirty = url !== (current?.url ?? '')
+    || taxii !== (current?.taxii_collection_url ?? '') || Boolean(token)
+  const storeConnection = () => save.mutate({
+    url, taxii_collection_url: taxii, token: token || null,
+  })
+  const choose = (field: 'author' | 'marking', id: string) => {
+    const rows = field === 'author' ? current?.authors : current?.markings
+    const selected = rows?.find((row) => row.id === id)
+    save.mutate(field === 'author'
+      ? { author_id: id, author_name: selected?.name ?? '' }
+      : { default_marking_id: id, default_marking_name: selected?.name ?? '' })
+  }
+
+  return <Section title={tr('settings.opencti')} sub={tr('settings.opencti.sub')}>
+    <Card className="overflow-hidden">
+      <div className="flex items-start gap-3 border-b border-[var(--line)] px-4 py-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)] text-[var(--accent-text)]">
+          <CloudCog size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] font-semibold">OpenCTI 7.x</span>
+            {current?.verified
+              ? <Tag tone="accent">{tr('settings.opencti.verified')} · {current.version}</Tag>
+              : <Tag>{tr('settings.opencti.closed')}</Tag>}
+            {current?.token_hint && <Tag>{current.token_hint}</Tag>}
+          </div>
+          <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
+            {tr('settings.opencti.body')}
+          </p>
+          {current?.verified && current.capabilities.length > 0 &&
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              <span className="mr-1 text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                {tr('settings.opencti.permissions')}
+              </span>
+              {current.capabilities.map((capability) =>
+                <Tag key={capability} tone="accent">{capability}</Tag>)}
+            </div>}
+        </div>
+      </div>
+      <div className="grid gap-3 p-4 lg:grid-cols-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {tr('settings.opencti.url')}
+          </span>
+          <input value={url} onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://opencti.example"
+            className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {tr('settings.opencti.token')}
+          </span>
+          <input type="password" value={token} onChange={(event) => setToken(event.target.value)}
+            placeholder={current?.token_hint || tr('settings.opencti.token.placeholder')}
+            className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        <label className="flex flex-col gap-1 lg:col-span-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            {tr('settings.opencti.taxii')}
+          </span>
+          <input value={taxii} onChange={(event) => setTaxii(event.target.value)}
+            placeholder="https://opencti.example/taxii2/root/collections/id/objects"
+            className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]/70" />
+        </label>
+        {current?.verified && <>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              {tr('settings.opencti.author')}
+            </span>
+            <select value={current.author_id} onChange={(event) => choose('author', event.target.value)}
+              className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px]">
+              <option value="">{tr('settings.opencti.select')}</option>
+              {current.authors.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              {tr('settings.opencti.marking')}
+            </span>
+            <select value={current.default_marking_id}
+              onChange={(event) => choose('marking', event.target.value)}
+              className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[12px]">
+              <option value="">{tr('settings.opencti.select')}</option>
+              {current.markings.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+            </select>
+          </label>
+        </>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-[var(--line)] px-4 py-3">
+        <Button variant="primary" disabled={!url || !taxii || save.isPending || !connectionDirty}
+          onClick={storeConnection}>{tr('settings.opencti.save')}</Button>
+        <Button variant="ghost" disabled={connectionDirty || test.isPending || !url || !taxii}
+          onClick={() => test.mutate()}>
+          {test.isPending ? tr('common.loading') : tr('settings.opencti.test')}
+        </Button>
+        {(save.isError || test.isError) && <span className="text-[11px] text-[var(--danger-text)]">
+          {String(save.error ?? test.error)}
+        </span>}
+        {current?.verified_at && <span className="ml-auto text-[10px] text-[var(--muted)]">
+          {tr('settings.opencti.tested')} {current.verified_at}
+        </span>}
+      </div>
+    </Card>
+  </Section>
 }
 
 /** The built-in rules, with a switch each.

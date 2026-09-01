@@ -31,6 +31,7 @@ import { IpFlag } from './IpFlag'
 import type { TraceMarks } from './TraceWindow'
 import { explainRule } from '../explain'
 import { EnrichPanel } from './Enrich'
+import { AddToOpenCtiButton, OpenCtiContextPanel } from './OpenCti'
 
 // With article, for the question in the detail window: "Is this file part of
 // the incident?" is the most important line in there, so each kind gets its
@@ -178,6 +179,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           </div>
         )}
 
+        {kind === 'client' && <OpenCtiContextPanel slug={slug} kind="ip"
+          value={artifact.artifact}
+          item={{ kind: 'actor', value: artifact.artifact, indicator: false }} />}
+        {kind === 'file' && <OpenCtiContextPanel slug={slug} kind="hash"
+          value={fileHashes.sha256 ?? ''}
+          item={{ kind: 'file', path: artifact.artifact, indicator: false }} />}
+
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start">
           {/* ============== left: what to decide, and why ================== */}
           <div className="flex flex-col gap-4">
@@ -317,6 +325,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                       <div className="flex flex-wrap items-center gap-2">
                         <SeverityBadge severity={f.severity} />
                         <span className="text-[12.5px] font-semibold">{f.rule}</span>
+                        {f.triage === 'confirmed' && <AddToOpenCtiButton slug={slug}
+                          item={{ kind: 'finding', id: f.id, indicator: false }} compact />}
                         {/* A retired row's line number points at text that
                             is no longer there -- a jump to it would land the
                             preview on a comment. The row says when it was

@@ -44,6 +44,10 @@ dependencies = [
   # uvicorn[standard]; a format the log side parses should not depend on
   # that.
   "PyYAML>=6.0",
+  # OpenCTI needs bounded HTTPS requests and streaming multipart uploads.
+  # Keeping this small adapter local avoids coupling Shellhound to pycti's
+  # release cadence while httpx supplies the transport and test doubles.
+  "httpx>=0.27,<1",
 ]
 
 [project.urls]

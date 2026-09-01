@@ -39,8 +39,8 @@ A few consequences follow that you need to know:
 
 ## Network contact
 
-SHELLHOUND speaks outward at **two places**, both shut by default and both
-opened by an explicit click.
+SHELLHOUND speaks outward only through the integrations listed here. All are
+shut by default and opened by an explicit analyst or operator action.
 
 **The GeoIP country database** from `download.db-ip.com`. A confirmation
 window says so beforehand; if it is declined, nothing is fetched. **No case
@@ -64,8 +64,23 @@ IP address to AbuseIPDB. These are off until you enable them under
 What comes back is stored as a **third-party opinion**: apart from the
 findings, never a severity, never a triage decision.
 
-Everything else — analysis, traces, country attribution, exports — runs
-entirely offline.
+**OpenCTI 7.x** is a separate, deliberately broader exchange. A manual lookup
+sends one normalized observable. A manual publication sends the complete
+STIX preview and the content of every selected evidence file. The package
+builder names the marking, relative path, hashes and size before the analyst
+confirms. It never sends absolute paths. There is no sync, refresh job,
+automatic retry or remote rollback.
+
+OpenCTI URLs must use HTTPS with ordinary certificate verification. Redirects
+are not followed, GraphQL documents are fixed, remote text is rendered as
+data, and the dedicated service user is required to have knowledge-write and
+knowledge-file-upload rights rather than administrator bypass. Its token uses
+the same cleartext owner-only `settings.json` model as the other keys and is
+not included in case archives. Detailed setup and failure semantics are in
+[docs/OPENCTI.md](docs/OPENCTI.md).
+
+Everything else — analysis, traces, country attribution and ordinary exports
+— runs entirely offline.
 
 ## Handling live web shells
 
