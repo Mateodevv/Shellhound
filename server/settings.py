@@ -222,6 +222,7 @@ def set_opencti(workspace, values) -> dict:
     data = load(workspace)
     current = dict(data.get("opencti") or _DEFAULTS["opencti"])
     connection_changed = False
+    instance_changed = False
     for key in allowed:
         if key not in values or values[key] is None:
             continue
@@ -230,9 +231,17 @@ def set_opencti(workspace, values) -> dict:
             current[key] = value
             if key in {"url", "token", "taxii_collection_url"}:
                 connection_changed = True
+            if key in {"url", "taxii_collection_url"}:
+                instance_changed = True
     if connection_changed:
         current.update(verified_at="", version="", capabilities=[],
                        markings=[], authors=[])
+    if instance_changed:
+        # Internal IDs are scoped to one OpenCTI instance. Reusing them after
+        # changing the platform or push collection could apply an unintended
+        # author or marking on the new destination.
+        current.update(author_id="", author_name="",
+                       default_marking_id="", default_marking_name="")
     data["opencti"] = current
     save(workspace, data)
     return public(workspace)["opencti"]

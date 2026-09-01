@@ -26,6 +26,11 @@ class SettingsTests(unittest.TestCase):
 
     def test_token_is_masked_and_connection_change_requires_retest(self):
         settings.set_opencti(self.workspace, configuration())
+        settings.set_opencti(self.workspace, {
+            "author_id": "author-old", "author_name": "Old author",
+            "default_marking_id": "marking-old",
+            "default_marking_name": "TLP:OLD",
+        })
         settings.verify_opencti(self.workspace, {
             "verified_at": "2026-09-01T10:00:00Z", "version": "7.260817.0",
             "capabilities": ["KNOWLEDGE_KNUPDATE", "KNOWLEDGE_KNUPLOAD"],
@@ -36,13 +41,26 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual("…abcd", public["token_hint"])
         self.assertTrue(public["verified"])
         settings.set_opencti(self.workspace, {"url": "https://new.example.test"})
-        self.assertFalse(settings.public(self.workspace)["opencti"]["verified"])
+        changed = settings.public(self.workspace)["opencti"]
+        self.assertFalse(changed["verified"])
+        self.assertEqual("", changed["author_id"])
+        self.assertEqual("", changed["default_marking_id"])
         self.assertEqual(configuration()["token"], settings.opencti(self.workspace)["token"])
 
     def test_only_https_without_embedded_credentials_is_accepted(self):
         for value in ("http://opencti.test", "https://u:p@opencti.test", "file:///tmp/x"):
             with self.subTest(value=value), self.assertRaises(opencti.OpenCtiError):
                 opencti.validate_https_url(value)
+
+    def test_taxii_objects_url_maps_to_collection_metadata(self):
+        url = "https://opencti.test/taxii2/root/collections/one/objects/"
+        self.assertEqual(
+            "https://opencti.test/taxii2/root/collections/one/",
+            opencti.taxii_collection_metadata_url(url),
+        )
+        with self.assertRaises(opencti.OpenCtiError):
+            opencti.taxii_collection_metadata_url(
+                "https://opencti.test/taxii2/root/collections/one/")
 
 
 class StixTests(unittest.TestCase):
@@ -97,6 +115,28 @@ class StixTests(unittest.TestCase):
         self.assertEqual(1, len(files))
         self.assertEqual("x.txt", files[0]["name"])
         self.assertEqual(99, files[0]["size"])
+
+    def test_access_time_and_local_identity_do_not_change_release_fingerprint(self):
+        base = {"kind": "file", "path": "C:/one/harmless.txt",
+                "relative_path": "harmless.txt", "name": "harmless.txt",
+                "size": 12, "hashes": {"SHA-256": "c" * 64},
+                "modified_at": "2026-09-01T10:00:00Z",
+                "accessed_at": "2026-09-01T10:00:00Z",
+                "device": "1", "inode": "2", "mtime_ns": "3"}
+        first = opencti.build_bundle(
+            {"slug": "c"}, str(uuid.uuid4()), "summary", "m", "a", [base])
+        changed_access = {**base, "path": "D:/moved/harmless.txt",
+                          "accessed_at": "2026-09-01T11:00:00Z",
+                          "device": "9", "inode": "8"}
+        second = opencti.build_bundle(
+            {"slug": "c"}, str(uuid.uuid4()), "summary", "m", "a",
+            [changed_access])
+        changed_content = {**base, "hashes": {"SHA-256": "d" * 64}}
+        third = opencti.build_bundle(
+            {"slug": "c"}, str(uuid.uuid4()), "summary", "m", "a",
+            [changed_content])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertNotEqual(first["fingerprint"], third["fingerprint"])
 
 
 class CaseStateTests(unittest.TestCase):
@@ -184,7 +224,11 @@ class CaseStateTests(unittest.TestCase):
 class ClientTests(unittest.TestCase):
     def _handler(self, request):
         if request.method == "GET":
-            return httpx.Response(200, json={"objects": []})
+            return httpx.Response(200, json={
+                "id": "one", "title": "Shellhound push",
+                "can_read": False, "can_write": True,
+                "media_types": ["application/stix+json;version=2.1"],
+            })
         if request.url.path.endswith("/graphql"):
             body = json.loads(request.content)
             if "ShellhoundConnection" in body["query"]:
@@ -208,10 +252,27 @@ class ClientTests(unittest.TestCase):
                     "stixCyberObservables": {"edges": [{"node": {
                         "id": "remote-1", "standard_id": "ipv4-addr--1",
                         "entity_type": "IPv4-Addr", "observable_value": value,
-                        "x_opencti_score": 80, "objectLabel": {"edges": []},
-                        "objectMarking": {"edges": []}, "indicators": {"edges": []},
-                        "stixCoreRelationships": {"edges": []},
+                        "x_opencti_score": 80,
+                        "objectLabel": [{"value": "synthetic"}],
+                        "objectMarking": [{"id": "m1", "definition": "TLP:AMBER"}],
+                        "indicators": {"edges": []},
+                        "stixCoreRelationships": {"edges": [{"node": {
+                            "id": "relationship-1", "relationship_type": "related-to",
+                            "from": {"id": "remote-1", "entity_type": "IPv4-Addr",
+                                     "representative": {"main": value}},
+                            "to": {"id": "campaign-1", "entity_type": "Campaign",
+                                   "representative": {"main": "Synthetic campaign"}},
+                        }}]},
                     }}]}}})
+            if "ShellhoundResolve" in body["query"]:
+                return httpx.Response(200, json={"data": {
+                    "stixCyberObservable": {
+                        "id": "remote-artifact",
+                        # OpenCTI may replace the submitted Artifact STIX id
+                        # with its own hash-derived canonical standard id.
+                        "standard_id": "artifact--canonicalized",
+                    }
+                }})
         if request.method == "POST" and "/taxii/" in request.url.path:
             return httpx.Response(202, json={"status": "pending", "id": "status-1"})
         return httpx.Response(500)
@@ -224,8 +285,41 @@ class ClientTests(unittest.TestCase):
             self.assertEqual("TLP:AMBER", result["markings"][0]["name"])
             lookup = client.lookup("ip", "192.0.2.8")
             self.assertTrue(lookup["matched"])
+            self.assertEqual(["synthetic"], lookup["matches"][0]["labels"])
+            self.assertEqual("TLP:AMBER", lookup["matches"][0]["markings"][0]["name"])
+            self.assertEqual("Synthetic campaign", lookup["related"][0]["name"])
             pushed = client.taxii_push({"objects": [{"type": "ipv4-addr"}]})
             self.assertEqual("pending", pushed["status"])
+            self.assertEqual(
+                "remote-artifact",
+                client.find_observable_id("artifact--submitted"))
+
+    def test_connection_rejects_a_non_writable_collection(self):
+        def handler(request):
+            if request.method == "GET":
+                return httpx.Response(200, json={
+                    "id": "one", "title": "Read only", "can_read": True,
+                    "can_write": False, "media_types": [],
+                })
+            return self._handler(request)
+        with opencti.OpenCtiClient(
+                configuration(), httpx.MockTransport(handler)) as client:
+            with self.assertRaises(opencti.OpenCtiError) as caught:
+                client.test_connection()
+        self.assertEqual("taxii_not_writable", caught.exception.code)
+
+    def test_graphql_auth_error_is_classified_without_remote_text(self):
+        def handler(_request):
+            return httpx.Response(200, json={"errors": [{
+                "message": "secret authentication detail",
+                "extensions": {"code": "AUTH_REQUIRED"},
+            }]})
+        with opencti.OpenCtiClient(
+                configuration(), httpx.MockTransport(handler)) as client:
+            with self.assertRaises(opencti.OpenCtiError) as caught:
+                client.graphql("query { me { id } }")
+        self.assertEqual("unauthorized", caught.exception.code)
+        self.assertNotIn("secret authentication detail", str(caught.exception))
 
     def test_redirect_and_remote_body_are_not_exposed(self):
         def handler(_request):
@@ -240,7 +334,8 @@ class ClientTests(unittest.TestCase):
     def test_missing_upload_permission_blocks_verification(self):
         def handler(request):
             if request.method == "GET":
-                return httpx.Response(200, json={"objects": []})
+                return httpx.Response(200, json={"can_read": False,
+                                                 "can_write": True})
             return httpx.Response(200, json={"data": {
                 "about": {"version": "7.260817.0"},
                 "me": {"id": "u1", "name": "limited", "capabilities": [

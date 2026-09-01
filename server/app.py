@@ -940,7 +940,7 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             existing = conn.execute(
-                "SELECT status,fingerprint FROM opencti_publications WHERE id=?",
+                "SELECT status,fingerprint,snapshot FROM opencti_publications WHERE id=?",
                 (publication_id,)).fetchone()
             if (not existing or existing["status"] != "previewed"
                     or existing["fingerprint"] != built["fingerprint"]):
@@ -955,13 +955,20 @@ def create_app(config: Config) -> FastAPI:
                 raise HTTPException(409, {"code": "duplicate",
                     "message": "An identical package was already published",
                     "publication": dict(duplicate)})
+            preview_snapshot = opencti_case.json_load(existing["snapshot"], {})
+            preview_bundle = preview_snapshot.get("bundle")
+            if not isinstance(preview_bundle, dict):
+                raise HTTPException(409, {"code": "preview_invalid",
+                    "message": "Stored preview is invalid; review it again"})
             _update_publication(conn, publication_id, "publishing")
         finally:
             conn.close()
         taxii_result = None
         try:
             with openctilib.OpenCtiClient(private) as client:
-                taxii_result = client.taxii_push(built["bundle"])
+                # Publish the immutable bundle the analyst actually reviewed,
+                # not a freshly rebuilt variant with new timestamps.
+                taxii_result = client.taxii_push(preview_bundle)
                 conn = db.connect(case_dir)
                 try:
                     conn.execute(

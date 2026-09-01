@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from server import db, opencti, workspace
+from server import db, opencti, opencti_case, workspace
 import server.app as app_module
 from server.config import Config
 
@@ -23,6 +23,7 @@ class FakeOpenCtiClient:
     """The endpoint contract, never an OpenCTI installation."""
 
     taxii_calls = 0
+    last_taxii_bundle = None
     upload_calls = 0
     upload_failures_remaining = 0
 
@@ -59,8 +60,9 @@ class FakeOpenCtiClient:
                          "relationship": "resolves-to", "promotable": True}],
         }
 
-    def taxii_push(self, _bundle):
+    def taxii_push(self, bundle):
         type(self).taxii_calls += 1
+        type(self).last_taxii_bundle = bundle
         return {"status": "complete", "id": "taxii-status"}
 
     def find_observable_id(self, standard_id):
@@ -106,6 +108,7 @@ class OpenCtiHttpTests(unittest.TestCase):
             Config(workspace=self.root, token=TOKEN)))
         self.headers = {"X-Token": TOKEN}
         FakeOpenCtiClient.taxii_calls = 0
+        FakeOpenCtiClient.last_taxii_bundle = None
         FakeOpenCtiClient.upload_calls = 0
         FakeOpenCtiClient.upload_failures_remaining = 0
 
@@ -175,6 +178,14 @@ class OpenCtiHttpTests(unittest.TestCase):
         preview = self.request("POST", base + "/preview", {})
         self.assertEqual(200, preview.status_code, preview.text)
         previewed = preview.json()
+        conn = db.connect(self.case_dir)
+        try:
+            snapshot = conn.execute(
+                "SELECT snapshot FROM opencti_publications WHERE id=?",
+                (previewed["publication_id"],)).fetchone()["snapshot"]
+            expected_bundle = opencti_case.json_load(snapshot, {})["bundle"]
+        finally:
+            conn.close()
         rows = self.request("GET", base + "/publications").json()["entries"]
         self.assertEqual("previewed", rows[0]["status"])
         published = self.request("POST", base + "/publish", {
@@ -184,6 +195,7 @@ class OpenCtiHttpTests(unittest.TestCase):
         })
         self.assertEqual(200, published.status_code, published.text)
         self.assertEqual("published", published.json()["status"])
+        self.assertEqual(expected_bundle, FakeOpenCtiClient.last_taxii_bundle)
         self.assertEqual([], self.request("GET", base + "/draft").json()["items"])
 
         self.request("PUT", base + "/draft", draft)

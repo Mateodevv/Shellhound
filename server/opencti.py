@@ -16,7 +16,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -77,6 +77,25 @@ def validate_config(config: dict, require_verified: bool = True) -> dict:
         raise OpenCtiError(
             "not_verified", "Test the OpenCTI connection before using it", 409)
     return out
+
+
+def taxii_collection_metadata_url(objects_url: str) -> str:
+    """Return the TAXII collection resource for an objects push endpoint.
+
+    A push collection can deliberately advertise ``can_read: false`` while
+    still accepting bundles.  Testing the objects endpoint with GET would
+    therefore reject the exact least-privilege setup Shellhound recommends.
+    """
+    parsed = urlsplit(validate_https_url(objects_url, "TAXII collection URL"))
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/objects"):
+        raise OpenCtiError(
+            "invalid_taxii_url",
+            "TAXII collection URL must end with /objects/",
+            400,
+        )
+    collection_path = path[:-len("objects")]
+    return urlunsplit((parsed.scheme, parsed.netloc, collection_path, "", ""))
 
 
 def _canonical(value) -> str:
@@ -212,6 +231,23 @@ def _indicator_pattern(observable: dict) -> str | None:
     return f"[{kind}:{key} = '{escaped}']"
 
 
+def _fingerprint_items(items: list[dict]) -> list[dict]:
+    """Keep release semantics while excluding local/volatile file state.
+
+    The exact bundle created during preview is persisted and published.  The
+    fingerprint only decides whether the analyst's selection or evidence
+    content changed afterwards. Reading a file may update atime and must not
+    invalidate that otherwise exact preview.
+    """
+    result = []
+    for item in items:
+        clean = dict(item)
+        for key in ("path", "device", "inode", "mtime_ns", "accessed_at"):
+            clean.pop(key, None)
+        result.append(clean)
+    return result
+
+
 def build_bundle(case: dict, publication_id: str, summary: str, marking_ref: str,
                  author_ref: str, items: list[dict], at: str | None = None) -> dict:
     """Build one immutable OpenCTI report snapshot and its upload manifest."""
@@ -334,7 +370,8 @@ def build_bundle(case: dict, publication_id: str, summary: str, marking_ref: str
     return {"bundle": bundle, "report_id": report_id, "uploads": uploads,
             "fingerprint": fingerprint({"case": case.get("slug"),
                                         "summary": summary, "marking": marking_ref,
-                                        "author": author_ref, "items": items})}
+                                        "author": author_ref,
+                                        "items": _fingerprint_items(items)})}
 
 
 CONNECTION_QUERY = """
@@ -344,7 +381,7 @@ query ShellhoundConnection {
   markingDefinitions(first: 200) {
     edges { node { id standard_id definition_type definition } }
   }
-  identities(first: 200, types: ["Organization"]) {
+  identities(first: 500, types: ["Organization"]) {
     edges { node { id standard_id name entity_type } }
   }
 }
@@ -355,13 +392,17 @@ query ShellhoundObservableLookup($search: String!, $first: Int!) {
   stixCyberObservables(search: $search, first: $first) {
     edges { node {
       id standard_id entity_type observable_value x_opencti_score
-      objectLabel { edges { node { value } } }
-      objectMarking { edges { node { id standard_id definition } } }
+      objectLabel { value }
+      objectMarking { id standard_id definition }
       indicators { edges { node { id standard_id name pattern pattern_type x_opencti_score } } }
       stixCoreRelationships(first: 50) { edges { node {
         id relationship_type
-        from { ... on BasicObject { id entity_type representative } }
-        to { ... on BasicObject { id entity_type representative } }
+        from { ... on StixObject {
+          id entity_type representative { main secondary }
+        } }
+        to { ... on StixObject {
+          id entity_type representative { main secondary }
+        } }
       } } }
     } }
   }
@@ -384,6 +425,13 @@ def _edges(value) -> list[dict]:
         return []
     return [edge.get("node") for edge in value.get("edges", [])
             if isinstance(edge, dict) and isinstance(edge.get("node"), dict)]
+
+
+def _nodes(value) -> list[dict]:
+    """Accept both OpenCTI list fields and Relay-style connections."""
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    return _edges(value)
 
 
 class OpenCtiClient:
@@ -454,6 +502,16 @@ class OpenCtiClient:
         if payload.get("errors"):
             # GraphQL error text can echo variables or internal paths.  The
             # category is actionable; the untrusted body stays out of logs/UI.
+            codes = {
+                str(((row.get("extensions") or {}).get("code") or "")).upper()
+                for row in payload["errors"] if isinstance(row, dict)
+            }
+            if "AUTH_REQUIRED" in codes:
+                raise OpenCtiError(
+                    "unauthorized", "OpenCTI rejected the API token", 401)
+            if codes.intersection({"FORBIDDEN", "AUTH_FORBIDDEN"}):
+                raise OpenCtiError(
+                    "forbidden", "OpenCTI user lacks the required permission", 403)
             raise OpenCtiError("graphql_error", "OpenCTI rejected the GraphQL operation")
         if not isinstance(payload.get("data"), dict):
             raise OpenCtiError("invalid_response", "OpenCTI response has no data")
@@ -484,19 +542,25 @@ class OpenCtiClient:
             "id": row.get("id", ""), "standard_id": row.get("standard_id", ""),
             "name": row.get("name", ""), "type": row.get("entity_type", ""),
         } for row in _edges(data.get("identities"))]
-        # GET is non-mutating and validates the generated collection URL. A
-        # standard TAXII deployment may answer 405 on the object endpoint;
-        # that still proves the endpoint exists and is authenticated.
+        # Validate the collection metadata, not GET /objects. A dedicated
+        # push collection is correctly write-only and rejects object reads.
         try:
-            response = self.client.get(
-                self.taxii_url, params={"limit": "1"},
+            response = self._request(
+                "GET", taxii_collection_metadata_url(self.taxii_url),
                 headers={"Accept": "application/taxii+json;version=2.1"})
-        except httpx.HTTPError as exc:
-            raise OpenCtiError("unreachable", "TAXII collection is not reachable") from exc
-        if response.status_code not in (200, 405):
-            if response.status_code in (401, 403):
-                raise OpenCtiError("taxii_forbidden", "OpenCTI rejected TAXII access", response.status_code)
-            raise OpenCtiError("taxii_invalid", f"TAXII endpoint returned HTTP {response.status_code}")
+        except OpenCtiError as exc:
+            if exc.code in {"unauthorized", "forbidden"}:
+                raise OpenCtiError(
+                    "taxii_forbidden", "OpenCTI rejected TAXII access", exc.status) from exc
+            raise
+        try:
+            collection = response.json()
+        except ValueError as exc:
+            raise OpenCtiError(
+                "taxii_invalid", "TAXII collection returned invalid JSON") from exc
+        if not isinstance(collection, dict) or collection.get("can_write") is not True:
+            raise OpenCtiError(
+                "taxii_not_writable", "TAXII collection is not writable", 403)
         return {"verified_at": utc_now(), "version": version,
                 "user": {"id": me.get("id", ""), "name": me.get("name", "")},
                 "capabilities": capabilities, "markings": markings, "authors": authors}
@@ -535,11 +599,11 @@ class OpenCtiClient:
                 exact = False
             if not exact:
                 continue
-            labels = [str(row.get("value")) for row in _edges(node.get("objectLabel"))
+            labels = [str(row.get("value")) for row in _nodes(node.get("objectLabel"))
                       if row.get("value")]
             markings = [{"id": row.get("id"), "standard_id": row.get("standard_id"),
                          "name": row.get("definition")}
-                        for row in _edges(node.get("objectMarking"))]
+                        for row in _nodes(node.get("objectMarking"))]
             indicators = [{key: row.get(key) for key in
                            ("id", "standard_id", "name", "pattern", "pattern_type",
                             "x_opencti_score")}
@@ -554,10 +618,14 @@ class OpenCtiClient:
                     if not isinstance(endpoint, dict) or endpoint.get("id") == node.get("id"):
                         continue
                     entity_type = endpoint.get("entity_type")
+                    representative = endpoint.get("representative")
+                    if isinstance(representative, dict):
+                        representative = (representative.get("main")
+                                          or representative.get("secondary") or "")
                     if entity_type in DIRECT_TYPES:
                         related[str(endpoint.get("id"))] = {
                             "id": endpoint.get("id"), "type": entity_type,
-                            "name": endpoint.get("representative") or "",
+                            "name": representative or "",
                             "relationship": rel.get("relationship_type") or "related-to",
                             "promotable": False,
                         }
@@ -588,18 +656,17 @@ class OpenCtiClient:
 
     def find_observable_id(self, standard_id: str) -> str:
         query = """
-        query ShellhoundResolve($filters: FilterGroup) {
-          stixCyberObservables(filters: $filters, first: 2) {
-            edges { node { id standard_id } }
-          }
+        query ShellhoundResolve($id: String!) {
+          stixCyberObservable(id: $id) { id standard_id }
         }
         """
-        filters = {"mode": "and", "filters": [{"key": "ids", "values": [standard_id],
-                    "operator": "eq", "mode": "or"}], "filterGroups": []}
-        data = self.graphql(query, {"filters": filters})
-        for node in _edges(data.get("stixCyberObservables")):
-            if node.get("standard_id") == standard_id:
-                return str(node.get("id"))
+        data = self.graphql(query, {"id": standard_id})
+        node = data.get("stixCyberObservable")
+        if isinstance(node, dict) and node.get("id"):
+            # OpenCTI can canonicalize an Artifact's standard_id from its
+            # payload hash. The direct resolver still accepts the submitted
+            # STIX id, so its internal id is authoritative for file upload.
+            return str(node["id"])
         raise OpenCtiError("not_indexed", "OpenCTI has not indexed the uploaded artifact yet", 409)
 
     def upload_file(self, remote_id: str, path: str, marking_id: str = "",
