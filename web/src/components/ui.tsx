@@ -372,12 +372,19 @@ const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), texta
  *  level. That is not decoration: one sees at the edge that something else
  *  lies below, something one comes back to -- otherwise a trace feels like a
  *  change of subject rather than a glance to the side. */
-export function Modal({ open, onClose, title, children, layer = 0 }: {
+export function Modal({ open, onClose, title, children, layer = 0,
+                        contained = false, bodyClassName }: {
   open: boolean
   onClose: () => void
   title: ReactNode
   children: ReactNode
   layer?: number
+  /** Give the body a real available height. Workspaces with their own
+   *  scroll panes (artifact/file review) use this so late content cannot
+   *  resize the complete dialog. */
+  contained?: boolean
+  /** Replaces the ordinary scrolling/padding body classes. */
+  bodyClassName?: string
 }) {
   const tr = useT()
   const titleId = useId()
@@ -431,6 +438,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
         aria-labelledby={titleId}
         style={{
           width: `min(${1280 - inset * 70}px, ${96 - inset * 3}vw)`,
+          height: contained ? `${92 - inset * 3}vh` : undefined,
           maxHeight: `${92 - inset * 3}vh`,
         }}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-3">
@@ -444,7 +452,8 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
             <X size={16} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className={clsx('min-h-0 flex-1', bodyClassName
+          ?? 'overflow-y-auto px-5 py-4')}>{children}</div>
       </div>
     </div>
   )

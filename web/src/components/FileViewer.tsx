@@ -18,14 +18,12 @@ import { api, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, CopyButton, Modal, Tag } from './ui'
 
-export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
+export function FileContentPane({ slug, path, focusLine, showPath = true, className }: {
   slug: string
-  path: string | null
+  path: string
   focusLine?: number | null
-  onClose: () => void
-  /** In front by default: the viewer is almost always opened FROM an
-   *  artifact detail and has to lie above it. */
-  layer?: number
+  showPath?: boolean
+  className?: string
 }) {
   const tr = useT()
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
@@ -37,12 +35,9 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
     queryKey: ['file', slug, path, mode, offset],
     queryFn: () => api<FileContent>(
       `/api/cases/${slug}/file?path=${encodeURIComponent(path!)}&mode=${mode}&offset=${offset}`),
-    enabled: !!path,
+    enabled: Boolean(path),
   })
 
-  if (!path) return null
-
-  const name = path.replace(/\\/g, '/').split('/').pop()
   const pages = data ? Math.max(1, Math.ceil(data.size / data.window)) : 1
   const page = data ? Math.floor(data.offset / data.window) + 1 : 1
   const copyableContent = data?.mode === 'raw'
@@ -52,19 +47,10 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
       .join('\n')
 
   return (
-    <Modal open onClose={onClose} layer={layer}
-      title={
-        <span className="flex min-w-0 items-center gap-2">
-          <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
-          <span className="mono truncate">{name}</span>
-          {data && <Tag>{formatBytes(data.size)}</Tag>}
-          {data?.binary && <Tag tone="warn" explain={tr('viewer.binary.hint')}>{tr('viewer.binary')}</Tag>}
-        </span>
-      }>
-      <div className="flex flex-col gap-3">
-        <div className="mono break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[11.5px] text-[var(--muted)]">
+      <div className={clsx('flex h-full min-h-0 flex-col gap-3', className)}>
+        {showPath && <div className="mono break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[11.5px] text-[var(--muted)]">
           {path}
-        </div>
+        </div>}
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
@@ -116,6 +102,13 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           </span>
         </div>
 
+        {data && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Tag>{formatBytes(data.size)}</Tag>
+            {data.binary && <Tag tone="warn" explain={tr('viewer.binary.hint')}>{tr('viewer.binary')}</Tag>}
+          </div>
+        )}
+
         {isError && (
           <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)]">
             {String((error as Error)?.message ?? error)}
@@ -123,7 +116,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
         )}
 
         {data?.mode === 'raw' && data.lines && (
-          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.lines.map((line, i) => {
               const n = data.from_line != null ? data.from_line + i : null
               const hit = n != null && n === focusLine
@@ -141,7 +134,7 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
         )}
 
         {data?.mode === 'hex' && data.rows && (
-          <pre className="mono max-h-[65vh] overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.rows.map((r) => (
               <div key={r.offset} className="flex gap-4 px-3">
                 <span className="w-20 shrink-0 select-none text-right text-[#4b5566]">
@@ -162,6 +155,27 @@ export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
           </p>
         )}
       </div>
+  )
+}
+
+export function FileViewer({ slug, path, focusLine, onClose, layer = 2 }: {
+  slug: string
+  path: string | null
+  focusLine?: number | null
+  onClose: () => void
+  /** In front by default: the viewer is almost always opened FROM an
+   *  artifact detail and has to lie above it. */
+  layer?: number
+}) {
+  if (!path) return null
+  const name = path.replace(/\\/g, '/').split('/').pop()
+  return (
+    <Modal open onClose={onClose} layer={layer} contained
+      title={<span className="flex min-w-0 items-center gap-2">
+        <FileCode2 size={16} className="shrink-0 text-[var(--accent)]" />
+        <span className="mono truncate">{name}</span>
+      </span>}>
+      <FileContentPane slug={slug} path={path} focusLine={focusLine} />
     </Modal>
   )
 }

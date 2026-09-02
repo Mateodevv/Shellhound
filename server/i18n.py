@@ -336,6 +336,10 @@ CATALOGUE: dict[str, dict[str, str]] = {
     "err.notRegularFile": {
         "en": "not a regular file", "de": "kein reguläres File",
     },
+    "err.revealUnavailable": {
+        "en": "the local file manager is unavailable",
+        "de": "der lokale Dateimanager ist nicht verfügbar",
+    },
     "err.noFolder": {"en": "no folder given", "de": "kein Ordner angegeben"},
     "err.sameTree": {
         "en": "a tree compared with itself says nothing",

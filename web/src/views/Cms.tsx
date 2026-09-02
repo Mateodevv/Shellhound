@@ -25,7 +25,7 @@ import {
   type VersionFacts,
 } from '../api'
 import {
-  SEVERITY_VAR, absoluteTime, formatCount, shortPath, type EvidenceRoot,
+  SEVERITY_VAR, absoluteTime, baseName, formatCount, shortPath, type EvidenceRoot,
 } from '../format'
 import {
   Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag,
@@ -219,8 +219,9 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={() => { setSelected(null); t.clearCollected() }}
-        onTriage={(state, note) => {
-          if (selected) t.decide([selected.artifact], state, note)
+        onSave={(state, note) => {
+          if (!selected) return Promise.reject(new Error('No artifact selected'))
+          return t.decideAsync([selected.artifact], state, note)
         }}
       />
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
@@ -289,7 +290,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
             )}
           </div>
           <div className="mono truncate text-[11.5px] text-[var(--muted)]" title={install.root}>
-            {install.root}
+            {baseName(install.root)}
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 text-[12px] text-[var(--muted)]">

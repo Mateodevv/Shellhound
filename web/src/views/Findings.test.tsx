@@ -1,7 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, type FindingsResponse } from '../api'
+import { api, post, type ArtifactContext, type FindingsResponse, type TriageResult } from '../api'
 import { renderWithProviders } from '../test/setup'
+import { nextReviewArtifact } from '../reviewQueue'
 import { Findings } from './Findings'
 
 vi.mock('../api', async (original) => ({
@@ -29,6 +31,7 @@ const RESPONSE: FindingsResponse = {
 
 describe('findings filter workbench', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     localStorage.clear()
     history.replaceState(null, '', '/?case=case-1&view=findings')
     vi.mocked(api).mockResolvedValue(RESPONSE)
@@ -61,5 +64,90 @@ describe('findings filter workbench', () => {
       name: 'Open review', hiddenSeverity: ['3'], hiddenTriage: ['dismissed'],
       hiddenSource: [], search: '', showRetired: false,
     }])
+  })
+})
+
+describe('save-and-next queue ordering', () => {
+  const queue = [
+    { artifact: 'first', triage: 'new' as const },
+    { artifact: 'propagated', triage: 'reviewed' as const },
+    { artifact: 'already-done', triage: 'confirmed' as const },
+    { artifact: 'next', triage: 'new' as const },
+  ]
+
+  it('moves only forward and skips artifacts decided through propagation', () => {
+    expect(nextReviewArtifact(queue, 'first', ['propagated'])?.artifact).toBe('next')
+  })
+
+  it('does not wrap when the filtered queue is complete', () => {
+    expect(nextReviewArtifact(queue, 'next', [])).toBeNull()
+  })
+})
+
+describe('save-and-next Findings integration', () => {
+  const artifacts: FindingsResponse['artifacts'] = ['client-one', 'client-two'].map(
+    (artifact) => ({
+      artifact, artifact_kind: 'client', worst: 1, source: 'logs', findings: 1,
+      retired: 0, triage: 'new', triage_note: '', triaged_at: null, last_seen: '',
+    }))
+  const response: FindingsResponse = {
+    ...RESPONSE,
+    total: 2,
+    artifacts,
+    findings: artifacts.map((artifact, index) => ({
+      id: index + 1, fingerprint: `finding-${index}`, artifact: artifact.artifact,
+      artifact_kind: 'client', source: 'logs', rule: 'Suspicious request', severity: 1,
+      evidence: 'synthetic request', line: null, created: '', last_seen: '', retired: 0,
+      triage: 'new', triage_note: '',
+    })),
+  }
+  const saved: TriageResult = {
+    updated: 1, artifacts: 1, collected: [], linked: [], suggested: [], retained_iocs: [],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    history.replaceState(null, '',
+      '/?case=case-1&view=findings&search=client&artifact=client-one')
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/findings?')) return response as never
+      const requested = decodeURIComponent(path.split('artifact=')[1] ?? 'client-one')
+      const context: ArtifactContext = {
+        artifact: requested, kind: 'client', findings: response.findings.filter(
+          (finding) => finding.artifact === requested),
+        triage: 'new', triage_note: '', triaged_at: '', worst: 1, sources: ['logs'],
+        related_ips: [], actor: null,
+      }
+      return context as never
+    })
+    vi.mocked(post).mockResolvedValue(saved)
+  })
+
+  it('updates the artifact URL only after a successful save', async () => {
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('radio', { name: 'Reviewed' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save & next' }))
+
+    await waitFor(() => expect(new URL(location.href).searchParams.get('artifact'))
+      .toBe('client-two'))
+    expect(post).toHaveBeenCalledWith('/api/cases/case-1/triage', {
+      artifacts: ['client-one'], state: 'reviewed', note: '', propagate: undefined,
+    })
+  })
+
+  it('closes at the end without wrapping and reports the filtered queue complete', async () => {
+    history.replaceState(null, '',
+      '/?case=case-1&view=findings&search=client&artifact=client-two')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('radio', { name: 'Reviewed' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save & next' }))
+
+    await waitFor(() => expect(new URL(location.href).searchParams.get('artifact')).toBeNull())
+    expect(screen.getByText('Filtered queue complete')).toBeVisible()
+    expect(post).toHaveBeenCalledWith('/api/cases/case-1/triage', {
+      artifacts: ['client-two'], state: 'reviewed', note: '', propagate: undefined,
+    })
   })
 })

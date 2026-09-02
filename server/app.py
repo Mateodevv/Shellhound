@@ -18,6 +18,8 @@ import hashlib
 import io
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -2108,6 +2110,33 @@ def create_app(config: Config) -> FastAPI:
         out["from_line"] = 1 if offset == 0 else None
         out["lines"] = text.split("\n")
         return out
+
+    class RevealFileBody(BaseModel):
+        path: str
+
+    @app.post("/api/cases/{slug}/reveal-file", dependencies=[auth])
+    def reveal_file(slug: str, body: RevealFileBody, lang: str = lang_dep):
+        """Select a registered evidence file in the local file manager.
+
+        This never opens the hostile file itself. The same resolved-root
+        fence as the inert viewer rejects traversal and escaping symlinks;
+        the launcher receives an argument array with shell execution off.
+        """
+        case_dir = case_dir_or_404(slug)
+        target = _within_evidence(case_dir, body.path, lang)
+        if not target.is_file():
+            raise HTTPException(400, _t(lang, "err.notRegularFile"))
+        if os.name == "nt":
+            command = ["explorer.exe", f"/select,{target}"]
+        elif sys.platform == "darwin":
+            command = ["open", "-R", str(target)]
+        else:
+            command = ["xdg-open", str(target.parent)]
+        try:
+            subprocess.Popen(command, shell=False)
+        except OSError:
+            raise HTTPException(503, _t(lang, "err.revealUnavailable"))
+        return {"ok": True}
 
     # --- pattern hunt -------------------------------------------------------
     # The library belongs to the WORKSPACE: created once, a pattern is ready
