@@ -97,8 +97,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
 }) {
   const tr = useT()
   const [note, setNote] = useState('')
+  const [noteLoadedFor, setNoteLoadedFor] = useState<string | null>(null)
 
-  const { data: ctx } = useQuery({
+  const { data: ctx, isError: contextError } = useQuery({
     queryKey: ['artifact', slug, artifact?.artifact],
     queryFn: () => api<ArtifactContext>(
       `/api/cases/${slug}/artifact?artifact=${encodeURIComponent(artifact!.artifact)}`),
@@ -116,6 +117,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   useEffect(() => {
     if (!artifact) {
       noteFor.current = null
+      setNoteLoadedFor(null)
       return
     }
     if (noteFor.current === artifact.artifact) return
@@ -124,8 +126,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     if (ctx?.artifact === artifact.artifact) {
       noteFor.current = artifact.artifact
       setNote(ctx.triage_note ?? '')
+      setNoteLoadedFor(artifact.artifact)
     } else {
       setNote(artifact.triage_note ?? '')
+      setNoteLoadedFor(null)
     }
   }, [artifact, ctx])
 
@@ -140,6 +144,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const worst = ctx?.worst ?? artifact.worst
   const ips = ctx?.related_ips ?? []
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
+  const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifact.artifact
   const Icon = KIND_ICON[kind] ?? Bug
 
   // WHAT turns red in the trace depends on the kind of artifact:
@@ -179,49 +184,52 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         )}
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:items-start">
-          {/* ============== left: what to decide, and why ================== */}
+          {/* ============== left: evidence first, then supporting context === */}
           <div className="flex flex-col gap-4">
-            {/* ---- the decision ---- */}
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-3">
-              <div className="mb-2 text-[12.5px]">
-                {tr('artifact.question', {
-                  what: tr(KIND_THIS[kind] ?? 'artifact.this.generic'),
-                })}{' '}
-                <span className="font-semibold">{tr('artifact.question.tail')}</span>{' '}
-                <span className="text-[var(--muted)]">
-                  {tr('artifact.question.scope', {
-                    n: formatCount(findings.length),
-                    findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
-                  })}
-                </span>
+            {/* ---- WHY it is here: every finding on this artifact ---- */}
+            <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
+              <div className="flex flex-col gap-1.5">
+                {findings.map((f) => {
+                  const e = explainRule(tr, f.rule)
+                  return (
+                    <div key={f.fingerprint}
+                      className={clsx(
+                        'rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2',
+                        f.retired === 1 && 'opacity-60',
+                      )}
+                      style={{ borderLeftColor: SEVERITY_VAR[f.severity] }}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SeverityBadge severity={f.severity} />
+                        <span className="text-[12.5px] font-semibold">{f.rule}</span>
+                        {f.retired !== 1 && f.line != null && f.line !== 0 && (
+                          <button
+                            className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
+                            onClick={() => onView(artifact.artifact, f.line)}>
+                            {tr('artifact.line')} {f.line}
+                          </button>
+                        )}
+                        {f.retired === 1 && (
+                          <span className="text-[11px] text-[var(--muted)]">
+                            {tr('artifact.retired', { date: f.last_seen })}
+                          </span>
+                        )}
+                      </div>
+                      {e && (
+                        <div className="mt-1 text-[12px] leading-snug">
+                          {e.what}
+                          {e.why && <span className="text-[var(--muted)]"> {e.why}</span>}
+                        </div>
+                      )}
+                      {f.evidence && (
+                        <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--code-bg)] px-2 py-1 text-[11px] leading-relaxed text-[#e6edf3]">
+                          {f.evidence}
+                        </pre>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={2}
-                placeholder={tr('artifact.note.placeholder')}
-                className="mb-2 w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button variant="primary" onClick={() => onTriage('confirmed', note)}>
-                  <Check size={14} /> {tr('artifact.truePositiveCollect')}
-                </Button>
-                <Button onClick={() => onTriage('reviewed', note)}>
-                  <Eye size={14} /> {tr('triage.reviewed')}
-                </Button>
-                <Button variant="danger" onClick={() => onTriage('dismissed', note)}>
-                  <X size={14} /> False Positive
-                </Button>
-                {ctx?.triaged_at && (
-                  <span className="self-center text-[11px] text-[var(--muted)]">
-                    {tr('artifact.lastDecided')}: {absoluteTime(ctx.triaged_at)}
-                  </span>
-                )}
-              </div>
-              <p className="mt-2 text-[11px] text-[var(--muted)]">
-                {tr('artifact.triage.explain')}
-              </p>
-            </div>
+            </Block>
 
             {/* ---- what the artifact IS ---- */}
             <Block title={tr(`kind.${kind}`)}>
@@ -301,55 +309,6 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 )}
               </div>
             )}
-
-            {/* ---- WHY it is here: every finding on this artifact ---- */}
-            <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
-              <div className="flex flex-col gap-1.5">
-                {findings.map((f) => {
-                  const e = explainRule(tr, f.rule)
-                  return (
-                    <div key={f.fingerprint}
-                      className={clsx(
-                        'rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2',
-                        f.retired === 1 && 'opacity-60',
-                      )}
-                      style={{ borderLeftColor: SEVERITY_VAR[f.severity] }}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <SeverityBadge severity={f.severity} />
-                        <span className="text-[12.5px] font-semibold">{f.rule}</span>
-                        {/* A retired row's line number points at text that
-                            is no longer there -- a jump to it would land the
-                            preview on a comment. The row says when it was
-                            last real instead. */}
-                        {f.retired !== 1 && f.line != null && f.line !== 0 && (
-                          <button
-                            className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                            onClick={() => onView(artifact.artifact, f.line)}>
-                            {tr('artifact.line')} {f.line}
-                          </button>
-                        )}
-                        {f.retired === 1 && (
-                          <span className="text-[11px] text-[var(--muted)]">
-                            {tr('artifact.retired', { date: f.last_seen })}
-                          </span>
-                        )}
-                      </div>
-                      {e && (
-                        <div className="mt-1 text-[12px] leading-snug">
-                          {e.what}
-                          {e.why && <span className="text-[var(--muted)]"> {e.why}</span>}
-                        </div>
-                      )}
-                      {f.evidence && (
-                        <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--code-bg)] px-2 py-1 text-[11px] leading-relaxed text-[#e6edf3]">
-                          {f.evidence}
-                        </pre>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            </Block>
           </div>
 
           {/* ============== right: what one looks at for it ================ */}
@@ -495,6 +454,67 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 <MetaCell label={tr('database.fact.created')}>{ctx.dump.meta?.created || '—'}</MetaCell>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Analyst reasoning and the decision are deliberately last: first
+            read the evidence, then record the conclusion. The bar stays in
+            reach while longer context scrolls. */}
+        <div className="sticky -bottom-4 z-10 -mx-5 border-t border-[var(--line-strong)] bg-[color-mix(in_srgb,var(--panel)_94%,transparent)] px-5 py-4 shadow-[0_-12px_30px_rgba(0,0,0,0.24)] backdrop-blur">
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                {tr('artifact.reasoning.title')}
+              </div>
+              <div className="mt-0.5 text-[12.5px]">
+                {tr('artifact.question', {
+                  what: tr(KIND_THIS[kind] ?? 'artifact.this.generic'),
+                })}{' '}
+                <span className="font-semibold">{tr('artifact.question.tail')}</span>{' '}
+                <span className="text-[var(--muted)]">
+                  {tr('artifact.question.scope', {
+                    n: formatCount(findings.length),
+                    findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
+                  })}
+                </span>
+              </div>
+            </div>
+            {ctx?.triaged_at && (
+              <span className="text-[11px] text-[var(--muted)]">
+                {tr('artifact.lastDecided')}: {absoluteTime(ctx.triaged_at)}
+              </span>
+            )}
+          </div>
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            rows={2}
+            disabled={!contextReady}
+            aria-busy={!contextReady}
+            placeholder={tr('artifact.note.placeholder')}
+            className="mb-2 w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70 disabled:cursor-wait disabled:opacity-60"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="incident" disabled={!contextReady}
+              onClick={() => onTriage('confirmed', note)}>
+              <Check size={14} /> {tr('artifact.truePositiveCollect')}
+            </Button>
+            <Button variant="review" disabled={!contextReady}
+              onClick={() => onTriage('reviewed', note)}>
+              <Eye size={14} /> {tr('triage.reviewed')}
+            </Button>
+            <Button variant="outline" disabled={!contextReady}
+              onClick={() => onTriage('dismissed', note)}>
+              <X size={14} /> {tr('triage.dismissed')}
+            </Button>
+            <span className={clsx(
+              'self-center text-[11px]',
+              contextError ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]',
+            )}>
+              {contextError
+                ? tr('artifact.contextError')
+                : contextReady ? tr('artifact.triage.explain') : tr('artifact.contextLoading')}
+            </span>
           </div>
         </div>
       </div>

@@ -76,4 +76,27 @@ describe('evidence registration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove registration' }))
     await waitFor(() => expect(del).toHaveBeenCalledWith('/api/cases/case-1/evidence/7'))
   })
+
+  it('collapses completed evidence into a ready summary and labels repeat runs', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/api/cases/case-1') return {
+        ...CASE,
+        evidence_items: ['webroot', 'access_logs', 'sql_dump'].map((kind, index) => ({
+          id: index + 1, kind, path: `C:\\Synthetic\\${kind}`, added: '', scanned_at: '',
+          stats: {}, exists: true,
+        })),
+      }
+      if (path === '/api/cases/case-1/jobs') return [{
+        id: 1, run_id: 'run-1', kind: 'analysis', state: 'done', progress: 1,
+        message: '', error: '', created: '2026-09-02T10:00:00Z', stats: {},
+      }]
+      throw new Error(`unexpected API call: ${path}`)
+    })
+
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+
+    expect(await screen.findByText('Evidence ready')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analyse again' })).toBeInTheDocument()
+    expect(screen.getByText('Manage evidence').closest('details')).not.toHaveAttribute('open')
+  })
 })

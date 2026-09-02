@@ -120,7 +120,7 @@ export function TriageBadge({ state, label }: { state: string; label: string }) 
 
 export function Tag({ children, tone, explain, hint }: {
   children: ReactNode
-  tone?: 'accent' | 'danger' | 'warn'
+  tone?: 'accent' | 'danger' | 'warn' | 'ok'
   explain?: string
   hint?: string
 }) {
@@ -129,6 +129,7 @@ export function Tag({ children, tone, explain, hint }: {
       'inline-flex items-center gap-1 rounded-md px-1.5 py-px text-[11px] font-medium',
       tone === 'danger' && 'bg-[var(--danger-soft)] text-[var(--danger-text)]',
       tone === 'warn' && 'bg-[rgba(250,178,25,0.12)] text-[var(--sev-low)]',
+      tone === 'ok' && 'bg-[rgba(38,166,91,0.12)] text-[var(--ok)]',
       tone === 'accent' && 'bg-[var(--accent-soft)] text-[var(--accent-text)]',
       !tone && 'bg-[var(--panel-2)] text-[var(--muted)]',
     )}>
@@ -182,10 +183,11 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   )
 }
 
-export function Button({ children, onClick, variant = 'default', disabled, className, title, style, onMouseLeave }: {
+export function Button({ children, onClick, variant = 'default', disabled, className, title, style,
+                         onMouseLeave, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls }: {
   children: ReactNode
   onClick?: () => void
-  variant?: 'default' | 'primary' | 'danger' | 'ghost'
+  variant?: 'default' | 'primary' | 'danger' | 'ghost' | 'incident' | 'review' | 'outline'
   disabled?: boolean
   className?: string
   title?: string
@@ -195,6 +197,8 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   /** For a button that ARMS on first click (delete, and nothing else so
    *  far): leaving it must disarm, or the armed state lies in wait. */
   onMouseLeave?: () => void
+  'aria-expanded'?: boolean
+  'aria-controls'?: string
 }) {
   return (
     <button
@@ -203,6 +207,8 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       disabled={disabled}
       title={title}
       aria-label={title}
+      aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
       style={style}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',
@@ -211,6 +217,12 @@ export function Button({ children, onClick, variant = 'default', disabled, class
           'bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)] active:scale-[0.98]',
         variant === 'danger' &&
           'border border-[var(--sev-high)]/55 bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
+        variant === 'incident' &&
+          'border border-[var(--incident)] bg-[var(--incident)] text-white hover:border-[var(--incident-hover)] hover:bg-[var(--incident-hover)] active:scale-[0.98]',
+        variant === 'review' &&
+          'border border-[var(--sev-low)]/55 bg-[var(--review-soft)] text-[var(--review-text)] hover:border-[var(--sev-low)] hover:bg-[var(--review-soft)]',
+        variant === 'outline' &&
+          'border border-[var(--line-strong)] bg-transparent text-[var(--fg)] hover:border-[var(--accent)] hover:bg-[var(--panel-2)]',
         variant === 'default' &&
           'border border-[var(--line-strong)] bg-[var(--panel-2)] text-[var(--fg)] hover:border-[var(--accent)] hover:bg-[var(--panel-raised)]',
         variant === 'ghost' && 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]',
@@ -351,6 +363,8 @@ function useOverlayEscape(open: boolean, onClose: () => void) {
   }, [open, onClose])
 }
 
+const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /** A centred window -- the standard view for everything that needs AREA:
  *  artifact detail, file viewer, trace.
  *
@@ -374,7 +388,11 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const bodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus())
+    const frame = window.requestAnimationFrame(() => {
+      const first = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE)
+      if (first) first.focus()
+      else dialogRef.current?.focus()
+    })
     return () => {
       window.cancelAnimationFrame(frame)
       document.body.style.overflow = bodyOverflow
@@ -385,8 +403,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   const inset = Math.min(layer, 3)
   const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab') return
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
     if (!focusable.length) {
       event.preventDefault()
       dialogRef.current?.focus()
@@ -406,7 +423,7 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
       <div className={clsx('absolute inset-0 animate-fade-in',
         layer > 0 ? 'bg-black/35' : 'bg-black/60')} onClick={onClose} />
       <div ref={dialogRef} tabIndex={-1} onKeyDown={trapFocus} className={clsx(
-        'relative flex flex-col overflow-hidden',
+        'relative flex flex-col overflow-hidden outline-none',
         'rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-2xl',
         'animate-fade-up')}
         role="dialog"

@@ -81,6 +81,14 @@ const noteBox = () =>
   screen.getByPlaceholderText(/Reasoning/i) as HTMLTextAreaElement
 
 describe('the note box', () => {
+  it('enables decisions after an intentionally empty server note has loaded', async () => {
+    vi.mocked(api).mockResolvedValue(context({ triage_note: '' }))
+    mount()
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /True positive/i })).toBeEnabled())
+  })
+
   it('shows the note the server has, not the empty one the caller passed', async () => {
     // The bug in one assertion: opened from a view that knows no note, the
     // box must still end up carrying the reasoning already on record.
@@ -157,11 +165,15 @@ describe('the note box', () => {
 
     rerender(window_(stub({ artifact: other })))
     expect(noteBox().value).toBe('')
+    expect(noteBox()).toBeDisabled()
+    expect(screen.getByRole('button', { name: /True positive/i })).toBeDisabled()
 
     await act(async () => {
       release?.(context({ artifact: other, triage_note: 'its own note' }))
     })
     await waitFor(() => expect(noteBox().value).toBe('its own note'))
+    expect(noteBox()).toBeEnabled()
+    expect(screen.getByRole('button', { name: /True positive/i })).toBeEnabled()
   })
 })
 
@@ -195,6 +207,24 @@ describe('what the window states about the artifact', () => {
     mount(stub({ triage: 'new' }))
 
     await waitFor(() => expect(screen.getByText('false positive')).toBeInTheDocument())
+  })
+
+  it('places evidence before analyst reasoning and decisions', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      findings: [{
+        id: 1, fingerprint: 'synthetic-finding', artifact: SHELL, artifact_kind: 'file',
+        source: 'webshell', rule: 'Suspicious PHP execution', severity: 0,
+        evidence: 'eval($_POST["x"]);', line: 12, retired: 0, last_seen: '', created: '',
+        triage: 'new', triage_note: '',
+      }],
+    }))
+
+    mount()
+    const evidenceHeading = await screen.findByText(/Why this artifact was flagged/)
+    const reasoningHeading = screen.getByText('Analyst reasoning')
+
+    expect(evidenceHeading.compareDocumentPosition(reasoningHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
   })
 
   it('renders nothing at all when no artifact is open', () => {
