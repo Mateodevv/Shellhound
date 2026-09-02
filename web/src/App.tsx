@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
+  Activity, ArrowLeft, ArrowRight, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
   SlidersHorizontal, Users,
 } from 'lucide-react'
@@ -46,7 +46,7 @@ export type ViewId =
 
 export type ViewParams = Partial<Record<
   | 'severity' | 'triage' | 'source' | 'search' | 'artifact' | 'retired' | 'request'
-  | 'actor' | 'section', string
+  | 'actor' | 'section' | 'next', string
 >>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
@@ -219,7 +219,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     url.searchParams.set('view', next)
     for (const key of [
       'severity', 'triage', 'source', 'search', 'artifact', 'retired', 'request',
-      'actor', 'section',
+      'actor', 'section', 'next',
     ] as const) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)
@@ -249,6 +249,17 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const decisionTotal = openArtifacts + decidedArtifacts
   const completion = decisionTotal ? decidedArtifacts / decisionTotal : 0
   const workflowAction = deriveWorkflowAction(caseInfo, jobs, dashboard)
+
+  const followWorkflowAction = () => {
+    if (!workflowAction) return
+    if (workflowAction.id === 'triage') {
+      // Findings resolves this marker against its real displayed queue. That
+      // keeps this shortcut identical to the button inside the workbench.
+      gotoView('findings', { triage: 'new,reviewed', next: '1' })
+      return
+    }
+    gotoView(workflowAction.view)
+  }
 
   return (
     <div className="h-full">
@@ -284,10 +295,18 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             </div>
             {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
             {workflowAction && view !== workflowAction.view && (
-              <button onClick={() => gotoView(workflowAction.view,
-                workflowAction.id === 'triage' ? { triage: 'new,reviewed' } : {})}
-                className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-text)] transition-colors hover:bg-[var(--primary-hover)] cursor-pointer">
+              <button type="button" onClick={followWorkflowAction}
+                className={clsx(
+                  'group inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--primary)] font-semibold text-[var(--primary-text)] transition-all hover:bg-[var(--primary-hover)] disabled:cursor-wait disabled:opacity-60',
+                  view === 'dashboard'
+                    ? 'px-4 py-2.5 text-[13px] shadow-[0_8px_24px_color-mix(in_srgb,var(--primary)_20%,transparent)]'
+                    : 'px-3 py-1.5 text-[12px]')}
+              >
                 {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
+                {workflowAction.id === 'triage' && (
+                  <ArrowRight size={15}
+                    className="transition-transform group-hover:translate-x-0.5" />
+                )}
               </button>
             )}
           </div>
@@ -448,7 +467,7 @@ function Root() {
     const url = new URL(location.href)
     url.searchParams.delete('case')
     url.searchParams.delete('view')
-    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired']) {
+    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired', 'next']) {
       url.searchParams.delete(key)
     }
     history.pushState(null, '', url)
