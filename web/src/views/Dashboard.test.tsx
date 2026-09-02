@@ -97,4 +97,30 @@ describe('forensic dashboard briefing', () => {
     fireEvent.click(screen.getByRole('button', { name: /Notable clients/ }))
     expect(gotoView).toHaveBeenCalledWith('actors')
   })
+
+  it.each([
+    [{ new: 3, reviewed: 1, confirmed: 0, dismissed: 0 }, 'Assessment in progress', /4 artifacts still need/],
+    [{ new: 0, reviewed: 0, confirmed: 0, dismissed: 4 }, 'No compromise confirmed in reviewed evidence', /Every queued artifact/],
+  ])('states incomplete and completed-clean triage honestly', async (triage, title, detail) => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/dashboard')) return { ...DASHBOARD, triage, confirmed_artifacts: [],
+        confirmed_kinds: {}, confirmed_severity: {} }
+      if (path.endsWith('/coverage')) return {
+        quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0,
+      }
+      throw new Error(`unexpected API call: ${path}`)
+    })
+
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+
+    expect(await screen.findByText(title)).toBeInTheDocument()
+    expect(screen.getByText(detail)).toBeInTheDocument()
+  })
+
+  it('keeps the unstarted case state separate from an assessed-clean case', async () => {
+    vi.mocked(api).mockResolvedValue({ ...DASHBOARD, evidence: [] })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('This case is empty.')).toBeInTheDocument()
+    expect(screen.queryByText('No compromise confirmed in reviewed evidence')).not.toBeInTheDocument()
+  })
 })

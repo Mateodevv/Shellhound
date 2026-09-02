@@ -97,6 +97,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   if (!data) return <div className="py-16 text-center text-[var(--muted)] animate-pulse-soft">{tr('dashboard.loading')}</div>
 
   const confirmed = data.triage.confirmed ?? 0
+  const outstanding = (data.triage.new ?? 0) + (data.triage.reviewed ?? 0)
   const high = data.confirmed_severity['0'] ?? 0
   const medium = data.confirmed_severity['1'] ?? 0
   const low = data.confirmed_severity['2'] ?? 0
@@ -136,7 +137,11 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
                 </span>
                 <h3 className="mt-1 text-lg font-semibold"
                   style={confirmed > 0 ? { color: 'var(--sev-high)' } : undefined}>
-                  {confirmed > 0 ? tr('dashboard.brief.confirmed') : tr('dashboard.brief.unconfirmed')}
+                  {confirmed > 0
+                    ? tr('dashboard.brief.confirmed')
+                    : outstanding > 0
+                      ? tr('dashboard.brief.inProgress')
+                      : tr('dashboard.brief.reviewedClear')}
                 </h3>
                 <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--muted)]">
                   {confirmed > 0
@@ -144,7 +149,9 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
                         n: formatCount(confirmed),
                         span: formatSpan(chronology.event_span.first, chronology.event_span.last),
                       })
-                    : tr('dashboard.brief.unconfirmed.sub')}
+                    : outstanding > 0
+                      ? tr('dashboard.brief.inProgress.sub', { n: formatCount(outstanding) })
+                      : tr('dashboard.brief.reviewedClear.sub')}
                 </p>
               </div>
             </div>
