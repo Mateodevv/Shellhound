@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, post, type CaseDetail, type PickPath } from '../api'
+import { api, del, post, type CaseDetail, type PickPath } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Evidence } from './Evidence'
 
@@ -51,5 +51,29 @@ describe('evidence registration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add Access logs' }))
     expect(screen.getByPlaceholderText('or type a path directly')).toHaveValue(
       'C:\\Synthetic\\Evidence')
+  })
+
+  it('confirms removal and states that disk evidence remains', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/api/cases/case-1') return {
+        ...CASE,
+        evidence_items: [{ id: 7, kind: 'webroot', path: 'C:\\Evidence\\Site', added: '',
+          scanned_at: '', stats: {}, label: 'Site copy', exists: true }],
+      }
+      if (path === '/api/cases/case-1/jobs') return []
+      throw new Error(`unexpected API call: ${path}`)
+    })
+    vi.mocked(del).mockResolvedValue({})
+
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Remove from the case (the evidence stays on disk)',
+    }))
+
+    expect(await screen.findByRole('dialog', { name: 'Remove this evidence registration?' }))
+      .toHaveTextContent('original evidence on disk is not changed')
+    expect(del).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove registration' }))
+    await waitFor(() => expect(del).toHaveBeenCalledWith('/api/cases/case-1/evidence/7'))
   })
 })

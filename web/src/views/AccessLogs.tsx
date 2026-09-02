@@ -453,7 +453,14 @@ function AccessHistogram({ overview, loading, onRange }: {
           {point.signals > 0 && <span className="absolute -top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[var(--sev-high)]" />}
         </button>
       })}
-    </div> : <div className="flex h-24 items-center justify-center text-[12px] text-[var(--muted)]">
+    </div> : loading ? (
+      <div className="flex h-24 items-end gap-1" role="status" aria-label={tr('common.loading')}>
+        {[42, 68, 36, 82, 54, 73, 48, 64, 31, 58, 76, 45].map((height, index) => (
+          <span key={index} className="flex-1 rounded-t-sm bg-[var(--panel-raised)] animate-pulse-soft"
+            style={{ height: `${height}%` }} />
+        ))}
+      </div>
+    ) : <div className="flex h-24 items-center justify-center text-[12px] text-[var(--muted)]">
       {tr('logs.noTimeline')}
     </div>}
   </Card>
