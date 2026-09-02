@@ -6,6 +6,16 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — guided frontend workflow
+
+- Reworked the existing interface into a four-stage case workflow with clearer
+  semantic surfaces, accessible focus and filter states, persistent case
+  navigation, contextual next-step links, safer confirmations and loading
+  skeletons. Evidence, findings review, IOC preparation, reporting and the
+  supporting investigation screens keep their existing routes, API payloads,
+  stored conclusions, exports and keyboard commands; this is a frontend-only
+  usability change with no new dependency.
+
 ### Added — investigation workbench workflow
 
 - **IIS W3C Extended access logs** are parsed from their per-file `#Fields`

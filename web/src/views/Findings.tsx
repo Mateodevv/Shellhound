@@ -747,7 +747,7 @@ export function Findings({ slug, gotoView }: {
               return (
                 <div key={'c' + c.cat.id}
                   className={clsx(
-                    'absolute left-0 top-0 flex w-full items-center gap-3 pr-4',
+                    'absolute left-0 top-0 flex w-full items-center gap-2 pr-2 sm:gap-3 sm:pr-4',
                     'border-y border-[var(--line)]',
                     // The rule above only when a category is currently
                     // CLOSED -- when open it flows into its artifacts.
@@ -769,11 +769,11 @@ export function Findings({ slug, gotoView }: {
                     title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
                     aria-label={open ? tr('findings.collapse') : tr('findings.expand')}
-                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left sm:gap-3">
                     {open
                       ? <ChevronDown size={16} className="shrink-0 text-[var(--muted)]" />
                       : <ChevronRight size={16} className="shrink-0 text-[var(--muted)]" />}
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                    <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:flex"
                       style={{ background: `color-mix(in srgb, ${tint} 20%, transparent)`,
                                color: tint }}>
                       <CatIcon size={17} />
@@ -800,8 +800,8 @@ export function Findings({ slug, gotoView }: {
                   <Tooltip
                     title={tr('findings.progress', { decided, total: c.artifacts.length })}
                     hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${tr('findings.open', { n: c.artifacts.length - decided })}`}>
-                    <div className="flex w-24 shrink-0 items-center gap-2">
-                      <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)]">
+                    <div className="flex w-auto shrink-0 items-center gap-2 sm:w-24">
+                      <span className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)] sm:flex">
                         {c.confirmed > 0 && (
                           <span style={{ width: `${(c.confirmed / c.artifacts.length) * 100}%`,
                                          background: 'var(--sev-high)' }} />
@@ -826,10 +826,12 @@ export function Findings({ slug, gotoView }: {
               const tint = SEVERITY_VAR[item.d.worst]
               return (
                 <div key={'d' + item.d.key}
-                  className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-4 text-[12px] hover:bg-[var(--panel-2)]"
+                  className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-2 text-[12px] hover:bg-[var(--panel-2)] sm:pr-4"
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-25" style={{ background: tint }} />
-                  <span className="shrink-0" style={{ width: `${item.depth * 18 + 32}px` }} />
+                  <span className="hidden shrink-0 sm:block"
+                    style={{ width: `${item.depth * 18 + 32}px` }} />
+                  <span className="w-1 shrink-0 sm:hidden" />
                   <button
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded py-1 text-left"
                     aria-label={open
@@ -847,7 +849,9 @@ export function Findings({ slug, gotoView }: {
                       : <Folder size={15} className="shrink-0 text-[var(--muted)]" />}
                     <span className="mono truncate font-medium">{item.d.name}</span>
                     {item.d.path !== item.d.name && (
-                      <span className="truncate text-[10.5px] text-[var(--muted)]">{item.d.path}</span>
+                      <span className="hidden truncate text-[10.5px] text-[var(--muted)] sm:inline">
+                        {item.d.path}
+                      </span>
                     )}
                     <span className="ml-auto shrink-0 text-[10.5px] text-[var(--muted)] tabular">
                       {tr('findings.folder.files', { n: formatCount(item.d.count) })}
@@ -878,8 +882,8 @@ export function Findings({ slug, gotoView }: {
                     a.findings === 0 && a.retired > 0 && 'opacity-35')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
-                  <span className="shrink-0" style={{ width: `${item.depth * 18}px` }} />
-                  <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
+                  <span className="hidden shrink-0 sm:block" style={{ width: `${item.depth * 18}px` }} />
+                  <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={checked.has(a.artifact)}
                     onChange={(e) => {
                       const next = new Set(checked)
@@ -906,7 +910,7 @@ export function Findings({ slug, gotoView }: {
                     {/* The artifact kind as an icon, tinted by severity: a file
                         looks different from a client, and red stands out of a
                         list. */}
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                    <span className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg sm:flex"
                       style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`,
                                color: tint }}>
                       <Icon size={15} />
@@ -929,14 +933,14 @@ export function Findings({ slug, gotoView }: {
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <SeverityBadge severity={a.worst} />
-                      <span className="text-[10.5px] text-[var(--muted)] tabular">
+                      <span className="hidden text-[10.5px] text-[var(--muted)] tabular sm:inline">
                         {tr(a.findings === 1 ? 'findings.observation.one' : 'findings.observation.many', {
                           n: formatCount(a.findings),
                         })}
                       </span>
                     </div>
                   </button>
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 sm:flex">
                     {a.artifact_kind === 'file' && (
                       <Tooltip hint={tr('findings.viewFile.hint')}>
                         <button
@@ -1147,12 +1151,15 @@ function ArtifactName({ artifact, kind, roots }: {
     ? (root.label?.trim() ||
        root.path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop())
     : null
+  const displayName = root ? rel : shortPath(artifact, 80)
+  const leafName = displayName.replace(/\\/g, '/').split('/').pop() || displayName
   return (
     <Tooltip wide className="min-w-0"
       title={rootName ? tr('findings.under', { root: rootName }) : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
-        {root ? rel : shortPath(artifact, 80)}
+        <span className="sm:hidden">{leafName}</span>
+        <span className="hidden sm:inline">{displayName}</span>
       </span>
     </Tooltip>
   )

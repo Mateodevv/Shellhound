@@ -151,12 +151,18 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <header>
         <Tooltip title={tr('nav.cms')}
           body={tr('cms.title.body')}
           hint={tr('cms.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">{tr('nav.cms')}</h1>
+          <h1 className="text-lg font-bold">{tr('nav.cms')}</h1>
         </Tooltip>
+        <p className="mt-1 text-[12.5px] text-[var(--muted)]">{tr('cms.title.body')}</p>
+      </header>
+      <Card surface="raised" className="flex flex-wrap items-center gap-2 p-2.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+          {tr('cms.filters.included')}
+        </span>
         {typeCounts.map(([base, n]) => (
           <Tooltip key={base}
             hint={hiddenTypes.has(base)
@@ -184,7 +190,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         <div className="ml-auto">
           <SearchInput value={search} onChange={setSearch} placeholder={tr('cms.search')} />
         </div>
-      </div>
+      </Card>
 
       {installs.map((inst) => (
         <InstallCard key={inst.id} install={inst} visible={visible}
@@ -396,8 +402,9 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                     </button>
                   </Tooltip>
                 )}
-                {/* The version cell is a BUTTON: checking means opening the
-                    file the number came from. */}
+                {/* Keep the measured value visible, but name the action too:
+                    an unlabeled pencil/version field is easy to mistake for
+                    static metadata. */}
                 <Tooltip
                   title={item.version_set ? tr('cms.setByHand') : tr('cms.checkVersion')}
                   body={item.version_source
@@ -407,10 +414,6 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                     ? tr('cms.measuredWas', { v: item.version_parsed })
                     : tr('cms.versionSource.hint')}
                   wide>
-                  {/* The cell looks like an input field, not like text: border
-                      and pencil are ALWAYS there. A surface that only reveals
-                      itself on hover is found only by those who already know
-                      it exists. */}
                   <button
                     onClick={() => onEditVersion({
                       kind: 'item', id: item.id, label: item.name,
@@ -421,16 +424,19 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                       version_set_at: item.version_set_at,
                     })}
                     className={clsx(
-                      'flex w-36 shrink-0 cursor-pointer items-center justify-between gap-1.5',
+                      'flex w-44 shrink-0 cursor-pointer items-center justify-between gap-2',
                       'rounded-lg border px-2 py-1 transition-colors',
                       'border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60',
                       item.version_set && 'border-[var(--accent)]/50')}>
-                    <PencilLine size={11}
-                      className={clsx('shrink-0',
-                        item.version_set ? 'text-[var(--accent)]' : 'text-[var(--muted)]')} />
+                    <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-medium">
+                      <PencilLine size={11}
+                        className={clsx('shrink-0',
+                          item.version_set ? 'text-[var(--accent)]' : 'text-[var(--muted)]')} />
+                      {tr('cms.set')}
+                    </span>
                     {item.version === '(unknown)'
-                      ? <span className="text-[11px] text-[var(--sev-low)]">{tr('cms.unknown')}</span>
-                      : <span className="mono truncate text-[12px]">{item.version}</span>}
+                      ? <span className="truncate text-[11px] text-[var(--sev-low)]">{tr('cms.unknown')}</span>
+                      : <span className="mono max-w-16 truncate text-[11px] text-[var(--muted)]">{item.version}</span>}
                   </button>
                 </Tooltip>
                 {worstHit && <SeverityBadge severity={worstHit.worst} plain />}

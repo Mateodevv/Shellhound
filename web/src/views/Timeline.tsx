@@ -36,6 +36,7 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
   }))
 
   if (!data) return <div className="py-16 text-center text-[var(--muted)]">{tr('common.loading')}</div>
+  const sparseTimeline = data.timeline.length < 4
 
   return (
     <div className="flex flex-col gap-6">
@@ -46,7 +47,9 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
             from: formatDay(data.logs.first_epoch),
             to: formatDay(data.logs.last_epoch),
           })}>
-          <Card className="p-4"><TimelineChart data={data.timeline} /></Card>
+          <Card className={sparseTimeline ? 'max-w-4xl p-3' : 'p-4'}>
+            <TimelineChart data={data.timeline} height={sparseTimeline ? 140 : 220} />
+          </Card>
         </Section>
       </> : (
         <EmptyState icon={<CalendarClock size={36} />} title={tr('timeline.empty.title')}

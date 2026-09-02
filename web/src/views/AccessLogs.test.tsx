@@ -128,6 +128,9 @@ describe('access-log investigation workspace', () => {
     await screen.findByText('Access Log Explorer')
     expect(await screen.findByText(ROW.uri, { selector: 'span' })).toBeInTheDocument()
     expect(screen.getByText('access.log:42')).toBeInTheDocument()
+    expect(screen.getByText('Traffic overview and distributions').closest('details'))
+      .not.toHaveAttribute('open')
+    expect(screen.getByText('Field distributions').closest('details')).not.toHaveAttribute('open')
 
     fireEvent.click(screen.getByText(ROW.uri, { selector: 'span' }))
     expect(await screen.findByText(CONTEXT.raw_line)).toBeInTheDocument()
@@ -140,6 +143,7 @@ describe('access-log investigation workspace', () => {
     renderWithProviders(<AccessLogs slug="case-1" gotoView={vi.fn()} />)
     await screen.findByText('Access Log Explorer')
 
+    fireEvent.click(screen.getByText('Field distributions'))
     const clientFacet = await screen.findByTitle(ROW.client)
     fireEvent.click(clientFacet)
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>

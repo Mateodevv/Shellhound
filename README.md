@@ -107,7 +107,13 @@ Inside the repository the server continues to find `web/dist` directly.
 
 ## Workflow
 
-### 1 · Evidence
+The case sidebar keeps **Dashboard** in Overview, the four numbered case stages
+in Workflow, and the less frequent investigation screens in a collapsed
+**Investigation tools** group. The current case and the next useful action stay
+visible while views load; the action only navigates and never starts analysis
+or changes a decision by itself.
+
+### 1 · Evidence & analysis
 
 Work on copies. Four kinds of evidence go in, three of them are needed to
 start.
@@ -119,9 +125,9 @@ start.
 | SQL dump | Database export of the CMS | yes |
 | Reference copy | Clean CMS release of the same version | no, enables the webroot diff |
 
-### 2 · Registration
+#### Evidence registration
 
-New case → *Evidence & jobs* → enter the paths.
+New case → **1 Evidence & analysis** → enter the paths.
 
 Alternative: enter the folder the evidence sits in and use **Detect evidence
 automatically**. It recognises webroot, logs and database export by their
@@ -129,19 +135,30 @@ content (CMS markers, parsable log lines, dump headers), states the reason for
 each proposal and can apply the complete detected set. Applied proposals leave
 the checklist instead of remaining actionable.
 
-![Evidence and jobs](assets/docs/evidence.png)
+![Evidence and analysis](assets/docs/evidence.png)
 
-### 3 · Analysis
+#### Analysis
 
-*Analyse* runs the engines once, at roughly 55,000 log lines per second. On a
+**Run analysis** runs the engines once, at roughly 55,000 log lines per second. On a
 million log lines this is the only slow step of a case; everything after it is
 a query. The jobs run in the background, each reports its own progress and can
 be cancelled. All engines started by one click belong to one expandable
 **analysis run**, with their shared status and durable run id.
 
-### 4 · Triage
+### 2 · Findings
 
-*Findings*.
+Review the artifact queue. Filters and saved views stay behind their named
+controls so the queue itself remains the starting point.
+
+### 3 · IOC box
+
+Review the indicators collected from confirmed artifacts or added manually,
+then export the required scope.
+
+### 4 · Report & close
+
+Check readiness, preview the selected report sections, and close only when the
+case is ready. Closing retains its existing typed confirmation.
 
 ## Views
 
@@ -159,16 +176,16 @@ dropped shell are five observations about one thing, not five decisions.
 |---|---|
 | <kbd>j</kbd> / <kbd>k</kbd> | Next / previous artifact |
 | <kbd>Enter</kbd> | Detail window |
-| <kbd>c</kbd> | True positive |
+| <kbd>c</kbd> | Confirm & collect |
 | <kbd>d</kbd> | False positive |
 | <kbd>r</kbd> | Reviewed |
 | <kbd>x</kbd> | Check |
 
-The detail window holds what the decision is made on:
+The detail window presents what the decision is made on in reading order:
 
-- the file content around the offending line,
-- every rule that fired, with its reasoning,
-- the clients that loaded this file according to the log.
+- why the artifact was flagged and the matching evidence excerpt,
+- supporting file facts, hashes, clients and trace context,
+- the analyst's reasoning and decision controls.
 
 ![Artifact detail](assets/docs/artifact-detail.png)
 
@@ -218,9 +235,12 @@ or filtering, otherwise it would answer a different question on each look.
 
 ### Pattern hunt
 
-Runs a URL pattern, for example the path from a CVE, against the log index and
-reports who requested it, how often, how much of it worked, and over what
-stretch of time. Runs without a hit are recorded as well.
+The workbench keeps the rule library, selected-rule meaning, editable draft,
+audited test results and application step visibly separate. Testing a URL rule,
+for example a path from a CVE, queries the log index and reports who requested
+it, how often, the HTTP responses, and the time span. A test does not create
+findings; only explicitly selected request clusters are applied. Runs without a
+hit are recorded as well.
 
 ![Pattern hunt](assets/docs/pattern-hunt.png)
 
@@ -276,10 +296,13 @@ are recognised, and their accounts read generically.
 
 | View | Contents |
 |---|---|
-| **Actors** | Every client from the logs with its behaviour, country and duration of activity. Several can be selected for one combined trace |
+| **Clients & actors** | Every client from the logs with its behaviour, country and duration of activity. Several can be selected for one combined trace |
 | **Database** | Accounts with named observations (created on the day of the export, never signed in, blocked), code injected into data fields, table inventory |
-| **Files** | Browse the evidence, take files into the IOC box by hand, compare against the reference copy |
+| **Files** | Browse from evidence-root breadcrumbs, retain copyable absolute paths, take files into the IOC box by hand, compare against the reference copy |
+| **Access logs** | Search the original request stream first; field distributions and the traffic overview expand only when needed |
 | **IOC box** | The collected indicators with their relationships and exact matches from other open cases, exportable as CSV, JSON or STIX 2.1 |
+
+![Access Log Explorer](assets/docs/access-logs.png)
 
 **Report & close** edits the case summary, checks evidence, running/failed
 analyses and open triage, and previews a selectable-section report before the
@@ -372,6 +395,11 @@ python -m unittest discover -s tests -t .
 They build their own evidence: tiny, invented files, each triggering exactly
 one rule. A failure names the broken rule instead of pointing at a large lump
 of data.
+
+On Windows, Defender may quarantine those intentionally suspicious test probes
+when Python writes them below `%TEMP%`. Do not exclude the whole AppData temp
+folder. Instead, create an ignored folder below `workspace/` and point `TEMP`
+and `TMP` there for that test process.
 
 ### Layout
 
