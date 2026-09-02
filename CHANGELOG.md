@@ -6,15 +6,21 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
-### Changed — guided frontend workflow
+### Changed — guided workflow and incremental review
 
 - Reworked the existing interface into a four-stage case workflow with clearer
   semantic surfaces, accessible focus and filter states, persistent case
   navigation, contextual next-step links, safer confirmations and loading
   skeletons. Evidence, findings review, IOC preparation, reporting and the
-  supporting investigation screens keep their existing routes, API payloads,
-  stored conclusions, exports and keyboard commands; this is a frontend-only
-  usability change with no new dependency.
+  supporting investigation screens keep their existing routes, stored
+  conclusions, exports and keyboard commands; the layout work adds no new
+  dependency.
+- Newly registered evidence now stays visibly pending and uses a safe
+  incremental analysis mode: file and SQL roots merge into prior results,
+  while new logs rebuild the complete case-wide log index. The bounded artifact
+  workspace adds inert expandable previews, guarded file-manager reveal and
+  explicit **Save & next** / **Save & close** decisions without changing triage
+  meanings, payloads, exports or enrichment safeguards.
 
 ### Added — investigation workbench workflow
 

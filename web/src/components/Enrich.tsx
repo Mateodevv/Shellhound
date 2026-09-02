@@ -23,11 +23,13 @@ import { Tooltip } from './Tooltip'
  *  this too -- here it only decides which button to offer. */
 const SERVICE_FOR: Record<string, string> = { hash: 'virustotal', ip: 'abuseipdb' }
 
-export function EnrichPanel({ slug, kind, value }: {
+export function EnrichPanel({ slug, kind, value, prominent = false }: {
   slug: string
   /** 'hash' or 'ip' -- anything else offers no lookup. */
   kind: string
   value: string
+  /** Used for the deliberate file-hash lookup in the review workspace. */
+  prominent?: boolean
 }) {
   const tr = useT()
   const service = SERVICE_FOR[kind]
@@ -85,7 +87,8 @@ export function EnrichPanel({ slug, kind, value }: {
           title={tr(`enrich.${service}`)}
           body={tr('enrich.sends', { what: tr(`settings.kind.${kind}`) })}
           hint={tr('enrich.opinion')}>
-          <Button variant="ghost" disabled={lookup.isPending}
+          <Button variant={prominent ? 'default' : 'ghost'} disabled={lookup.isPending}
+            className={prominent ? 'bg-[var(--panel-raised)] shadow-sm' : undefined}
             onClick={() => lookup.mutate(false)}>
             <Search size={13} />
             {lookup.isPending ? tr('common.loading')

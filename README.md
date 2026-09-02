@@ -186,11 +186,22 @@ dropped shell are five observations about one thing, not five decisions.
 | <kbd>r</kbd> | Reviewed |
 | <kbd>x</kbd> | Check |
 
-The detail window presents what the decision is made on in reading order:
+The bounded detail workspace keeps the decision footer still while evidence
+scrolls. For files, identity, hashes, the manual VirusTotal action and related
+clients stay on the left; flagging reasons and a scrollable inert preview use
+the right. **Expand file** turns that preview into the existing paged raw/hex
+viewer without leaving the review, and **Show in file manager** selects the
+registered copy without executing it.
 
-- why the artifact was flagged and the matching evidence excerpt,
-- supporting file facts, hashes, clients and trace context,
-- the analyst's reasoning and decision controls.
+Choose exactly one decision, then use **Save & next** to continue forward
+through the current filtered queue or **Save & close** to return to the list.
+Selecting a decision alone stores nothing; a failed save leaves the selection
+and optional reasoning in place. The workspace presents what the decision is
+made on in reading order:
+
+- file identity, supporting facts, hashes, clients and trace context,
+- why the artifact was flagged and the matching evidence excerpt or preview,
+- explicit decision controls, followed by optional analyst reasoning.
 
 ![Artifact detail](assets/docs/artifact-detail.png)
 

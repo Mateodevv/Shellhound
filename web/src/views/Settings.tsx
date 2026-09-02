@@ -20,6 +20,7 @@ import {
   type YaraRuleFile,
 } from '../api'
 import { useT } from '../i18n'
+import { shortPath } from '../format'
 import {
   Button, Card, Section, SeverityBadge, Tabs, Tag,
 } from '../components/ui'
@@ -64,7 +65,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
         <h1 className="text-lg font-bold">{tr('settings.title')}</h1>
         <p className="mt-1 text-[12.5px] text-[var(--muted)]">
           {tr('settings.sub')}{' '}
-          <span className="mono break-all">{data.path}</span>
+          <span className="mono break-all" title={data.path}>{shortPath(data.path)}</span>
         </p>
       </Card>
 

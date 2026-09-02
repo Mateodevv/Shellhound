@@ -29,16 +29,14 @@ import {
   Folder, FolderOpen, Keyboard, KeyRound, ListFilter, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
-import {
-  api, type ArtifactRow, type Finding, type FindingsResponse,
-} from '../api'
+import { api, type ArtifactRow, type Finding, type FindingsResponse } from '../api'
 import {
   SEVERITY_VAR, formatCount,
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
   Button, Card, EmptyState, Modal, SearchInput, SeverityBadge,
-  TriageBadge,
+  Toast, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
@@ -48,6 +46,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
+import { nextReviewArtifact } from '../reviewQueue'
 import type { Navigate } from '../App'
 
 // One icon per category. The category is the structure one starts from --
@@ -189,6 +188,28 @@ function directoryForest(artifacts: Artifact[], roots: EvidenceRoot[], category:
   return { direct, directories: top }
 }
 
+/** Follow the exact category/directory order used by the queue, including
+ * artifacts hidden behind a collapsed presentation group. Collapsing is a
+ * reading preference, not another filter. */
+function orderedQueue(categories: CatGroup[], roots: EvidenceRoot[]): Artifact[] {
+  const ordered: Artifact[] = []
+  const addDirectory = (directory: DirectoryNode) => {
+    ordered.push(...directory.artifacts)
+    for (const child of directory.children) addDirectory(child)
+  }
+  for (const category of categories) {
+    const tree = directoryForest(category.artifacts, roots, category.cat.id)
+    if (tree.directories.length) {
+      ordered.push(...tree.direct.filter((artifact) => artifact.artifact_kind !== 'file'))
+      for (const directory of tree.directories) addDirectory(directory)
+      ordered.push(...tree.direct.filter((artifact) => artifact.artifact_kind === 'file'))
+    } else {
+      ordered.push(...tree.direct)
+    }
+  }
+  return ordered
+}
+
 export function Findings({ slug, gotoView }: {
   slug: string
   gotoView: Navigate
@@ -230,6 +251,7 @@ export function Findings({ slug, gotoView }: {
   // What the trace should mark red -- comes from the artifact window, which
   // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
+  const [queueComplete, setQueueComplete] = useState(false)
   const savedKey = `shellhound.saved-findings.${slug}`
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
     try { return JSON.parse(localStorage.getItem(savedKey) || '[]') }
@@ -318,6 +340,7 @@ export function Findings({ slug, gotoView }: {
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
   }, [data, tr])
+  const reviewQueue = useMemo(() => orderedQueue(categories, roots), [categories, roots])
 
   useEffect(() => {
     const requested = new URLSearchParams(location.search).get('artifact')
@@ -329,6 +352,7 @@ export function Findings({ slug, gotoView }: {
 
   const openArtifact = (artifact: Artifact) => {
     t.clearCollected()
+    setQueueComplete(false)
     setSelected(artifact)
     const url = new URL(location.href)
     url.searchParams.set('artifact', artifact.artifact)
@@ -1006,10 +1030,26 @@ export function Findings({ slug, gotoView }: {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={closeArtifact}
-        onTriage={(state, note) => {
-          if (selected) t.decide([selected.artifact], state, note)
+        onSave={(state, note) => {
+          if (!selected) return Promise.reject(new Error('No artifact selected'))
+          return t.decideAsync([selected.artifact], state, note)
+        }}
+        onSavedNext={(result) => {
+          if (!selected || result.updated === 0) return
+          const next = nextReviewArtifact(
+            reviewQueue, selected.artifact, result.linked.map((link) => link.artifact))
+          if (next) openArtifact(next)
+          else {
+            closeArtifact()
+            setQueueComplete(true)
+          }
         }}
       />
+
+      <Toast open={queueComplete} onClose={() => setQueueComplete(false)} tone="ok"
+        title={tr('findings.queueComplete.title')}>
+        {tr('findings.queueComplete.body')}
+      </Toast>
 
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
         onClose={() => setTraceIps(null)} />

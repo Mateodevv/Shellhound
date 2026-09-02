@@ -413,8 +413,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         onView={(path, line) => setPaletteViewing({ path, line })}
         onTrace={(ips, m) => { setPaletteMarks(m); setPaletteTrace(ips) }}
         onClose={() => { setPaletteArtifact(null); t.clearCollected() }}
-        onTriage={(state, note) => {
-          if (paletteArtifact) t.decide([paletteArtifact.artifact], state, note)
+        onSave={(state, note) => {
+          if (!paletteArtifact) return Promise.reject(new Error('No artifact selected'))
+          return t.decideAsync([paletteArtifact.artifact], state, note)
         }}
       />
       <TraceWindow slug={slug} ips={paletteTrace} layer={1} marks={paletteMarks}
