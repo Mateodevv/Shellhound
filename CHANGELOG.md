@@ -25,6 +25,9 @@ All notable changes to SHELLHOUND. Format after
   **Skip for now**, and **False positive: Discard**, with persistent incident,
   caution, and safe color cues. The middle choice retains the existing
   `reviewed` state and deliberately leaves the artifact open for later review.
+- Made **Review next finding** open the next untouched artifact directly from
+  both the case header and Findings workbench, falling back to deliberately
+  skipped items only after the new queue is exhausted.
 
 ### Added — investigation workbench workflow
 

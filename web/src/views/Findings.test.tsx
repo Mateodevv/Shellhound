@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, post, type ArtifactContext, type FindingsResponse, type TriageResult } from '../api'
 import { renderWithProviders } from '../test/setup'
-import { nextReviewArtifact } from '../reviewQueue'
+import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import { Findings } from './Findings'
 
 vi.mock('../api', async (original) => ({
@@ -82,6 +82,13 @@ describe('save-and-next queue ordering', () => {
   it('does not wrap when the filtered queue is complete', () => {
     expect(nextReviewArtifact(queue, 'next', [])).toBeNull()
   })
+
+  it('opens untouched artifacts before returning to skipped ones', () => {
+    expect(firstReviewArtifact(queue)?.artifact).toBe('first')
+    expect(firstReviewArtifact(queue.slice(1))?.artifact).toBe('next')
+    expect(firstReviewArtifact(queue.slice(1, 3))?.artifact).toBe('propagated')
+    expect(firstReviewArtifact(queue.slice(2, 3))).toBeNull()
+  })
 })
 
 describe('save-and-next Findings integration', () => {
@@ -134,6 +141,28 @@ describe('save-and-next Findings integration', () => {
     expect(post).toHaveBeenCalledWith('/api/cases/case-1/triage', {
       artifacts: ['client-one'], state: 'reviewed', note: '', propagate: undefined,
     })
+  })
+
+  it('opens the next finding directly from the workbench action', async () => {
+    history.replaceState(null, '', '/?case=case-1&view=findings&search=client')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', {
+      name: 'Review next finding (2)',
+    }))
+
+    await waitFor(() => expect(new URL(location.href).searchParams.get('artifact'))
+      .toBe('client-one'))
+  })
+
+  it('resolves the Dashboard handoff against the same displayed queue', async () => {
+    history.replaceState(null, '',
+      '/?case=case-1&view=findings&search=client&next=1')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+
+    await waitFor(() => expect(new URL(location.href).searchParams.get('artifact'))
+      .toBe('client-one'))
+    expect(new URL(location.href).searchParams.get('next')).toBeNull()
   })
 
   it('closes at the end without wrapping and reports the filtered queue complete', async () => {

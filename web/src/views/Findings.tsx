@@ -24,7 +24,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
+  ArrowRight, BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
   Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
   Folder, FolderOpen, Keyboard, KeyRound, ListFilter, Radar, X,
 } from 'lucide-react'
@@ -46,7 +46,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
-import { nextReviewArtifact } from '../reviewQueue'
+import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import type { Navigate } from '../App'
 
 // One icon per category. The category is the structure one starts from --
@@ -341,14 +341,33 @@ export function Findings({ slug, gotoView }: {
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
   }, [data, tr])
   const reviewQueue = useMemo(() => orderedQueue(categories, roots), [categories, roots])
+  const firstReview = useMemo(() => firstReviewArtifact(reviewQueue), [reviewQueue])
+  const reviewableCount = useMemo(() => reviewQueue.filter((artifact) =>
+    artifact.triage === 'new' || artifact.triage === 'reviewed').length, [reviewQueue])
 
   useEffect(() => {
-    const requested = new URLSearchParams(location.search).get('artifact')
+    const params = new URLSearchParams(location.search)
+    if (params.get('next') === '1') {
+      if (firstReview) {
+        setQueueComplete(false)
+        setSelected(firstReview)
+        const url = new URL(location.href)
+        url.searchParams.set('artifact', firstReview.artifact)
+        url.searchParams.delete('next')
+        history.replaceState(null, '', url)
+      } else if (data) {
+        const url = new URL(location.href)
+        url.searchParams.delete('next')
+        history.replaceState(null, '', url)
+      }
+      return
+    }
+    const requested = params.get('artifact')
     if (!requested || selected?.artifact === requested) return
     const found = categories.flatMap((category) => category.artifacts)
       .find((artifact) => artifact.artifact === requested)
     if (found) setSelected(found)
-  }, [categories, selected?.artifact])
+  }, [categories, data, firstReview, selected?.artifact])
 
   const openArtifact = (artifact: Artifact) => {
     t.clearCollected()
@@ -356,6 +375,7 @@ export function Findings({ slug, gotoView }: {
     setSelected(artifact)
     const url = new URL(location.href)
     url.searchParams.set('artifact', artifact.artifact)
+    url.searchParams.delete('next')
     history.replaceState(null, '', url)
   }
 
@@ -551,7 +571,7 @@ export function Findings({ slug, gotoView }: {
   return (
     <div className="flex h-[calc(100vh-150px)] flex-col gap-3 md:h-[calc(100vh-110px)]">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="mr-auto min-w-48">
+        <div className={clsx('min-w-48', !firstReview && 'mr-auto')}>
           <Tooltip title={tr('dashboard.artifacts')}
             body={tr('findings.title.body')}
             hint={tr('findings.title.hint')}>
@@ -565,6 +585,13 @@ export function Findings({ slug, gotoView }: {
             })}
           </div>
         </div>
+        {firstReview && (
+          <Button variant="primary" onClick={() => openArtifact(firstReview)}
+            className="mr-auto shrink-0 px-4 py-2 text-[13px] font-semibold">
+            {tr('case.action.reviewNext', { n: reviewableCount })}
+            <ArrowRight size={15} />
+          </Button>
+        )}
         <div className="min-w-[16rem] flex-1 sm:max-w-md">
           <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
