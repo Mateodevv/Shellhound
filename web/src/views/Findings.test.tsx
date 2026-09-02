@@ -126,7 +126,7 @@ describe('save-and-next Findings integration', () => {
   it('updates the artifact URL only after a successful save', async () => {
     renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
 
-    await userEvent.click(await screen.findByRole('radio', { name: 'Reviewed' }))
+    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
     await userEvent.click(screen.getByRole('button', { name: 'Save & next' }))
 
     await waitFor(() => expect(new URL(location.href).searchParams.get('artifact'))
@@ -141,7 +141,7 @@ describe('save-and-next Findings integration', () => {
       '/?case=case-1&view=findings&search=client&artifact=client-two')
     renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
 
-    await userEvent.click(await screen.findByRole('radio', { name: 'Reviewed' }))
+    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
     await userEvent.click(screen.getByRole('button', { name: 'Save & next' }))
 
     await waitFor(() => expect(new URL(location.href).searchParams.get('artifact')).toBeNull())

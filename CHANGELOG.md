@@ -21,6 +21,10 @@ All notable changes to SHELLHOUND. Format after
   workspace adds inert expandable previews, guarded file-manager reveal and
   explicit **Save & next** / **Save & close** decisions without changing triage
   meanings, payloads, exports or enrichment safeguards.
+- Clarified the artifact verdict choices as **True positive: Collect**,
+  **Skip for now**, and **False positive: Discard**, with persistent incident,
+  caution, and safe color cues. The middle choice retains the existing
+  `reviewed` state and deliberately leaves the artifact open for later review.
 
 ### Added — investigation workbench workflow
 

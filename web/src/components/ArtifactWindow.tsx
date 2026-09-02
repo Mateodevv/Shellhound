@@ -8,8 +8,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  ArrowLeft, Bug, Check, Crosshair, Eye, Expand, FileSearch, FolderOpen,
-  LoaderCircle, ShieldCheck, ShieldOff, X,
+  ArrowLeft, Bug, Check, Clock3, Crosshair, Expand, FileSearch, FolderOpen,
+  LoaderCircle, ShieldCheck, ShieldOff,
 } from 'lucide-react'
 import { KIND_ICON } from '../artifactKinds'
 import {
@@ -451,13 +451,26 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     )}
   </>
 
-  const decisions: Array<{ state: Decision; label: string; icon: typeof Check; selected: string }> = [
+  const decisions: Array<{
+    state: Decision
+    label: string
+    icon: typeof Check
+    tone: string
+    text: string
+    background: string
+    selectedBackground: string
+  }> = [
     { state: 'confirmed', label: tr('artifact.truePositiveCollect'), icon: Check,
-      selected: 'border-[var(--incident)] bg-[var(--danger-soft)] text-[var(--danger-text)]' },
-    { state: 'reviewed', label: tr('artifact.reviewedAction'), icon: Eye,
-      selected: 'border-[var(--sev-low)] bg-[var(--review-soft)] text-[var(--review-text)]' },
-    { state: 'dismissed', label: tr('artifact.falsePositiveAction'), icon: X,
-      selected: 'border-[var(--accent)] bg-[var(--panel-raised)] text-[var(--fg)]' },
+      tone: 'var(--incident)', text: 'var(--danger-text)',
+      background: 'var(--danger-soft)', selectedBackground: 'var(--danger-soft-hover)' },
+    { state: 'reviewed', label: tr('artifact.reviewedAction'), icon: Clock3,
+      tone: 'var(--sev-low)', text: 'var(--review-text)',
+      background: 'var(--review-soft)',
+      selectedBackground: 'color-mix(in srgb, var(--sev-low) 20%, var(--panel-2))' },
+    { state: 'dismissed', label: tr('artifact.falsePositiveAction'), icon: ShieldCheck,
+      tone: 'var(--ok)', text: 'color-mix(in srgb, var(--ok) 76%, var(--fg))',
+      background: 'color-mix(in srgb, var(--ok) 9%, var(--panel-2))',
+      selectedBackground: 'color-mix(in srgb, var(--ok) 18%, var(--panel-2))' },
   ]
 
   return (
@@ -543,18 +556,28 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           <div className="flex flex-wrap items-center gap-2">
             <div role="radiogroup" aria-label={tr('artifact.decision.title')}
               className="flex flex-1 flex-wrap gap-2">
-              {decisions.map(({ state: option, label, icon: DecisionIcon, selected }) => (
+              {decisions.map(({ state: option, label, icon: DecisionIcon, tone, text,
+                                background, selectedBackground }) => (
                 <label key={option} className={clsx(
-                  'flex min-w-[9rem] flex-1 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[12.5px] font-semibold transition-colors',
-                  draftDecision === option
-                    ? selected
-                    : 'border-[var(--line-strong)] bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]',
-                  controlsDisabled && 'cursor-not-allowed opacity-50')}>
+                  'flex min-w-[9rem] flex-1 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[12.5px] font-semibold transition-[border-color,background-color,color,box-shadow,filter]',
+                  !controlsDisabled && 'hover:brightness-110',
+                  controlsDisabled && 'cursor-not-allowed opacity-50')}
+                  style={{
+                    borderColor: draftDecision === option
+                      ? tone
+                      : `color-mix(in srgb, ${tone} 58%, var(--line-strong))`,
+                    background: draftDecision === option ? selectedBackground : background,
+                    color: text,
+                    boxShadow: draftDecision === option
+                      ? `inset 0 0 0 1px ${tone}, 0 0 0 2px color-mix(in srgb, ${tone} 22%, transparent)`
+                      : undefined,
+                  }}>
                   <input type="radio" name={`artifact-decision-${artifact.artifact}`}
                     value={option} checked={draftDecision === option}
                     disabled={controlsDisabled}
                     onChange={() => setDraftDecision(option)}
-                    className="h-4 w-4 shrink-0 accent-[var(--accent)]" />
+                    style={{ accentColor: tone }}
+                    className="h-4 w-4 shrink-0" />
                   <DecisionIcon size={14} /> {label}
                 </label>
               ))}

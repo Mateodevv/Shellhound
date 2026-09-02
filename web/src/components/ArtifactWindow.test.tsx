@@ -110,9 +110,9 @@ describe('the note box', () => {
     mount()
 
     await waitFor(() =>
-      expect(screen.getByRole('radio', { name: /Confirm & collect/i })).toBeEnabled())
-    expect(screen.getByRole('radio', { name: 'Reviewed' })).toBeEnabled()
-    expect(screen.getByRole('radio', { name: 'False positive' })).toBeEnabled()
+      expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeEnabled())
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeEnabled()
+    expect(screen.getByRole('radio', { name: 'False positive: Discard' })).toBeEnabled()
   })
 
   it('shows the note the server has, not the empty one the caller passed', async () => {
@@ -136,7 +136,7 @@ describe('the note box', () => {
     const { onSave } = mount(stub({ triage_note: '' }))
     await waitFor(() => expect(noteBox().value).toBe('confirmed by hash'))
 
-    await userEvent.click(screen.getByRole('radio', { name: /Confirm & collect/i }))
+    await userEvent.click(screen.getByRole('radio', { name: /True positive: Collect/i }))
     expect(onSave).not.toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
     expect(onSave).toHaveBeenCalledWith('confirmed', 'confirmed by hash')
@@ -194,14 +194,14 @@ describe('the note box', () => {
     rerender(window_(stub({ artifact: other })))
     expect(noteBox().value).toBe('')
     expect(noteBox()).toBeDisabled()
-    expect(screen.getByRole('radio', { name: /Confirm & collect/i })).toBeDisabled()
+    expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeDisabled()
 
     await act(async () => {
       release?.(context({ artifact: other, triage_note: 'its own note' }))
     })
     await waitFor(() => expect(noteBox().value).toBe('its own note'))
     expect(noteBox()).toBeEnabled()
-    expect(screen.getByRole('radio', { name: /Confirm & collect/i })).toBeEnabled()
+    expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeEnabled()
   })
 })
 
@@ -210,8 +210,8 @@ describe('deliberate decision submission', () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'initial note' }))
     const { onSave, onSavedNext } = mount(stub(), true)
 
-    const confirmed = await screen.findByRole('radio', { name: /Confirm & collect/i })
-    const reviewed = screen.getByRole('radio', { name: 'Reviewed' })
+    const confirmed = await screen.findByRole('radio', { name: /True positive: Collect/i })
+    const reviewed = screen.getByRole('radio', { name: 'Skip for now' })
     await userEvent.click(confirmed)
     await userEvent.click(reviewed)
 
@@ -236,7 +236,7 @@ describe('deliberate decision submission', () => {
     const onClose = vi.fn()
     renderWithProviders(window_(stub(), onSave, undefined, onClose), testQueryClient())
 
-    await userEvent.click(await screen.findByRole('radio', { name: 'Reviewed' }))
+    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
     await userEvent.click(screen.getByRole('button', { name: 'Save & close' }))
     expect(onClose).not.toHaveBeenCalled()
 
@@ -249,7 +249,7 @@ describe('deliberate decision submission', () => {
     const { onSave } = mount()
     onSave.mockRejectedValueOnce(new Error('local request failed'))
 
-    const dismissed = await screen.findByRole('radio', { name: 'False positive' })
+    const dismissed = await screen.findByRole('radio', { name: 'False positive: Discard' })
     await userEvent.click(dismissed)
     await userEvent.type(noteBox(), 'known maintenance helper')
     await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
@@ -313,7 +313,7 @@ describe('what the window states about the artifact', () => {
 
     expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
     expect(await screen.findByText('safe text')).toBeVisible()
-    expect(screen.getByRole('radio', { name: 'Reviewed' })).toBeVisible()
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeVisible()
   })
 
   it('reveals explicitly and never starts enrichment on mount', async () => {
