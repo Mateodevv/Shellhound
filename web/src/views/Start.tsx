@@ -11,7 +11,7 @@ import {
   api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
 } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Card, EmptyState, Tag } from '../components/ui'
+import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { ThemeSwitcher } from '../components/ThemeSwitcher'
 
@@ -52,24 +52,25 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
     },
   })
 
-  // Both ways out of a case, from the same screen the case is entered
-  // from. Archiving is the default exit (everything into a zip below,
-  // restorable); deleting exists for the test case, the duplicate, the
-  // wrong start -- and is armed on the first click like every other
-  // destructive button here.
-  const [armed, setArmed] = useState<string | null>(null)
+  const [confirmation, setConfirmation] = useState<{
+    kind: 'archive' | 'delete'; item: CaseInfo
+  } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const archiveCase = useMutation({
     mutationFn: (slug: string) => post(`/api/cases/${slug}/archive`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['state'] })
       qc.invalidateQueries({ queryKey: ['archives'] })
+      setConfirmation(null)
     },
     onSettled: () => setBusy(null),
   })
   const deleteCase = useMutation({
     mutationFn: (slug: string) => del(`/api/cases/${slug}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['state'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['state'] })
+      setConfirmation(null)
+    },
     onSettled: () => setBusy(null),
   })
   const exitError = archiveCase.error ?? deleteCase.error
@@ -130,37 +131,19 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                   <Button variant="ghost" title={tr('start.archive')}
                     className="opacity-0 transition-opacity group-hover:opacity-100"
                     disabled={busy === c.slug}
-                    onClick={() => {
-                      setArmed(null)
-                      setBusy(c.slug)
-                      archiveCase.mutate(c.slug)
-                    }}>
+                    onClick={() => setConfirmation({ kind: 'archive', item: c })}>
                     {busy === c.slug && archiveCase.isPending
                       ? <span className="text-[11px]">{tr('start.archiving')}</span>
                       : <Archive size={14} />}
                   </Button>
                 </Tooltip>
-                {/* Armed on the first click, gone on the second -- and it
-                    says so in red before anything happens. Only the working
-                    copy: evidence on disk is never touched. */}
                 <Tooltip hint={tr('start.delete.hint')}>
-                  <Button variant={armed === c.slug ? 'danger' : 'ghost'}
+                  <Button variant="ghost"
                     title={tr('common.remove')}
-                    className={armed === c.slug
-                      ? undefined
-                      : 'opacity-0 transition-opacity group-hover:opacity-100'}
+                    className="opacity-0 transition-opacity group-hover:opacity-100"
                     disabled={busy === c.slug}
-                    onClick={() => {
-                      if (armed === c.slug) {
-                        setArmed(null)
-                        setBusy(c.slug)
-                        deleteCase.mutate(c.slug)
-                      } else setArmed(c.slug)
-                    }}
-                    onMouseLeave={() => { if (armed === c.slug) setArmed(null) }}>
-                    {armed === c.slug
-                      ? <span className="text-[11px] font-semibold">{tr('start.delete.sure')}</span>
-                      : <Trash2 size={14} />}
+                    onClick={() => setConfirmation({ kind: 'delete', item: c })}>
+                    <Trash2 size={14} />
                   </Button>
                 </Tooltip>
               </div>
@@ -307,6 +290,35 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           </p>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmation?.kind === 'archive'}
+        onClose={() => { if (!archiveCase.isPending) setConfirmation(null) }}
+        title={tr('start.archive.confirm.title')}
+        body={tr('start.archive.confirm.body')}
+        confirmLabel={tr('start.archive.confirm.action')}
+        pending={archiveCase.isPending}
+        onConfirm={() => {
+          if (!confirmation) return
+          setBusy(confirmation.item.slug)
+          archiveCase.mutate(confirmation.item.slug)
+        }}
+      />
+      <ConfirmDialog
+        open={confirmation?.kind === 'delete'}
+        onClose={() => { if (!deleteCase.isPending) setConfirmation(null) }}
+        title={tr('start.delete.confirm.title')}
+        body={tr('start.delete.confirm.body')}
+        confirmLabel={tr('start.delete.confirm.action')}
+        pending={deleteCase.isPending}
+        danger
+        confirmText={confirmation?.kind === 'delete' ? confirmation.item.name : undefined}
+        typeLabel={tr('start.delete.confirm.type')}
+        onConfirm={() => {
+          if (!confirmation) return
+          setBusy(confirmation.item.slug)
+          deleteCase.mutate(confirmation.item.slug)
+        }}
+      />
     </div>
   )
 }

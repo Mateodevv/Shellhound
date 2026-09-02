@@ -12,7 +12,7 @@ import {
   type EvidenceItem, type Job, type PickPath,
 } from '../api'
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
-import { Button, Card, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
+import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
@@ -273,11 +273,12 @@ function EvidenceCard({ item, onRename, onRemove }: {
 }) {
   const tr = useT()
   const [editing, setEditing] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [name, setName] = useState('')
   const Icon = KIND_ICON[item.kind] ?? HardDrive
   const displayName = evidenceName(item)
 
-  return (
+  return (<>
     <Card className="flex items-center gap-3 px-4 py-3">
       <Tooltip title={explain(tr, `evidence.${item.kind}`)?.what} hint={explain(tr, `evidence.${item.kind}`)?.why} wide>
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
@@ -343,11 +344,16 @@ function EvidenceCard({ item, onRename, onRemove }: {
       </div>
 
       <Button variant="ghost" title={tr('evidence.remove')}
-        onClick={onRemove}>
+        onClick={() => setConfirmRemove(true)}>
         <Trash2 size={14} />
       </Button>
     </Card>
-  )
+    <ConfirmDialog open={confirmRemove} onClose={() => setConfirmRemove(false)}
+      title={tr('evidence.remove.confirm.title')}
+      body={tr('evidence.remove.confirm.body', { name: displayName })}
+      confirmLabel={tr('evidence.remove.confirm.action')}
+      onConfirm={() => { setConfirmRemove(false); onRemove() }} />
+  </>)
 }
 
 export function CloseCase({ slug, caseName, onClosed }: {

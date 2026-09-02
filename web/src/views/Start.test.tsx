@@ -31,27 +31,31 @@ beforeEach(() => {
 })
 
 describe('leaving a case from the start page', () => {
-  it('deletes only on the second click -- the first one arms', async () => {
+  it('requires the case name before permanent deletion', async () => {
     renderWithProviders(<Start onOpen={() => {}} />)
     await screen.findByText('The case')
 
     const remove = screen.getByRole('button', { name: 'Remove' })
     fireEvent.click(remove)
-    // Armed, said out loud, nothing sent yet: a case takes its findings
-    // and its triage with it, and there is no way back.
-    expect(await screen.findByText('Sure?')).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'Permanently delete this case?' })).toBeInTheDocument()
     expect(del).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByText('Sure?'))
+    const confirm = screen.getByRole('button', { name: 'Delete permanently' })
+    expect(confirm).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'The case' } })
+    fireEvent.click(confirm)
     await waitFor(() =>
       expect(del).toHaveBeenCalledWith('/api/cases/the-case'))
   })
 
-  it('archives on a single click -- the zip below is the way back', async () => {
+  it('explains the recoverable archive before creating it', async () => {
     renderWithProviders(<Start onOpen={() => {}} />)
     await screen.findByText('The case')
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    expect(await screen.findByRole('dialog', { name: 'Archive this case?' })).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Archive case' }))
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith('/api/cases/the-case/archive', {}))
     expect(del).not.toHaveBeenCalled()

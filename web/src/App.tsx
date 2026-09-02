@@ -4,13 +4,13 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
+  Activity, ArrowLeft, Box, Bug, ChevronDown, ChevronRight, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
-  SlidersHorizontal, Users,
+  SlidersHorizontal, Users, Wrench,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
 import { useLiveEvents } from './ws'
-import { ProgressBar } from './components/ui'
+import { PageSkeleton, ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { TimeSwitcher } from './components/TimeSwitcher'
@@ -23,6 +23,7 @@ import { TriageFollowUp } from './components/triage'
 import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
 import { queryClient } from './queryClient'
+import { deriveWorkflowAction } from './workflow'
 
 const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
 const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
@@ -54,27 +55,22 @@ const VIEW_IDS = new Set<ViewId>([
   'database', 'evidence', 'timeline', 'report', 'settings',
 ])
 
-const NAV: { label: string; items: { id: ViewId; icon: typeof Bug; experimental?: boolean }[] }[] = [
-  { label: 'nav.phase.overview', items: [
-    { id: 'dashboard', icon: LayoutDashboard },
-  ] },
-  { label: 'nav.phase.prepare', items: [
-    { id: 'evidence', icon: FolderCog },
-    { id: 'files', icon: FolderTree },
-  ] },
-  { label: 'nav.phase.investigate', items: [
-    { id: 'findings', icon: Bug },
-    { id: 'actors', icon: Users },
-    { id: 'hunt', icon: Radar },
-    { id: 'timeline', icon: ListChecks },
-    { id: 'database', icon: Database },
-    { id: 'cms', icon: Puzzle },
-    { id: 'logs', icon: ScrollText, experimental: true },
-  ] },
-  { label: 'nav.phase.finish', items: [
-    { id: 'iocbox', icon: Box },
-    { id: 'report', icon: FileCheck2 },
-  ] },
+interface NavItem { id: ViewId; icon: typeof Bug; experimental?: boolean; step?: number }
+const OVERVIEW_NAV: NavItem[] = [{ id: 'dashboard', icon: LayoutDashboard }]
+const WORKFLOW_NAV: NavItem[] = [
+  { id: 'evidence', icon: FolderCog, step: 1 },
+  { id: 'findings', icon: Bug, step: 2 },
+  { id: 'iocbox', icon: Box, step: 3 },
+  { id: 'report', icon: FileCheck2, step: 4 },
+]
+const INVESTIGATION_NAV: NavItem[] = [
+  { id: 'actors', icon: Users },
+  { id: 'files', icon: FolderTree },
+  { id: 'timeline', icon: ListChecks },
+  { id: 'database', icon: Database },
+  { id: 'cms', icon: Puzzle },
+  { id: 'hunt', icon: Radar },
+  { id: 'logs', icon: ScrollText, experimental: true },
 ]
 
 function viewFromUrl(): ViewId {
@@ -85,6 +81,7 @@ function viewFromUrl(): ViewId {
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const tr = useT()
   const [view, setView] = useState<ViewId>(viewFromUrl)
+  const [toolsOpen, setToolsOpen] = useState(() => INVESTIGATION_NAV.some((item) => item.id === viewFromUrl()))
   const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
   // The global search belongs to the shell: it has to be reachable from
@@ -133,6 +130,11 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     queryFn: () => api<DashboardData>(`/api/cases/${slug}/dashboard`),
     refetchInterval: 10000,
   })
+  const { data: jobs } = useQuery({
+    queryKey: ['jobs', slug],
+    queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`),
+    refetchInterval: 4000,
+  })
 
   const gotoView = useCallback<Navigate>((next, params = {}) => {
     const url = new URL(location.href)
@@ -156,6 +158,10 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
+  useEffect(() => {
+    if (INVESTIGATION_NAV.some((item) => item.id === view)) setToolsOpen(true)
+  }, [view])
+
   const running = useMemo(
     () => Object.values(liveJobs).filter((j) => j.state === 'running' || j.state === 'queued'),
     [liveJobs])
@@ -169,6 +175,39 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const decidedArtifacts = (triage.confirmed ?? 0) + (triage.dismissed ?? 0)
   const decisionTotal = openArtifacts + decidedArtifacts
   const completion = decisionTotal ? decidedArtifacts / decisionTotal : 0
+  const workflowAction = deriveWorkflowAction(caseInfo, jobs, dashboard)
+
+  const navItem = ({ id, icon: Icon, experimental, step }: NavItem) => (
+    <button
+      key={id}
+      onClick={() => gotoView(id)}
+      aria-current={view === id ? 'page' : undefined}
+      className={clsx(
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
+        'transition-colors duration-150 cursor-pointer',
+        view === id
+          ? 'border border-[var(--accent)]/45 bg-[var(--accent-soft)] text-[var(--fg)]'
+          : 'border border-transparent text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
+    >
+      {step ? (
+        <span className={clsx('flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+          view === id ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-[var(--line-strong)]')}>
+          {step}
+        </span>
+      ) : <Icon size={15} />}
+      <span className="min-w-0 truncate">{tr(`nav.${id}`)}</span>
+      {experimental && (
+        <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
+          {tr('common.experimental')}
+        </span>
+      )}
+      {id === 'findings' && openArtifacts > 0 && (
+        <span className="ml-auto rounded-full bg-[var(--panel-raised)] px-1.5 text-[10px] tabular">
+          {openArtifacts}
+        </span>
+      )}
+    </button>
+  )
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -197,39 +236,27 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
               {tr('nav.shortcut')}
             </span>
           </button>
-          {NAV.map((section) => (
-            <div key={section.label} className="mb-2">
-              <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)] opacity-70">
-                {tr(section.label)}
-              </div>
-              {section.items.map(({ id, icon: Icon, experimental }) => (
-                <button
-                  key={id}
-                  onClick={() => gotoView(id)}
-                  aria-current={view === id ? 'page' : undefined}
-                  className={clsx(
-                    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
-                    'transition-colors duration-150 cursor-pointer',
-                    view === id
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
-                      : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
-                >
-                  <Icon size={15} />
-                  {tr(`nav.${id}`)}
-                  {experimental && (
-                    <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
-                      {tr('common.experimental')}
-                    </span>
-                  )}
-                  {id === 'findings' && openArtifacts > 0 && (
-                    <span className="ml-auto rounded-full bg-[var(--panel-2)] px-1.5 text-[10px] tabular">
-                      {openArtifacts}
-                    </span>
-                  )}
-                </button>
-              ))}
+          <div className="mb-2">
+            <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+              {tr('nav.phase.overview')}
             </div>
-          ))}
+            {OVERVIEW_NAV.map(navItem)}
+          </div>
+          <div className="mb-2">
+            <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+              {tr('nav.phase.workflow')}
+            </div>
+            {WORKFLOW_NAV.map(navItem)}
+          </div>
+          <div className="mb-2">
+            <button type="button" onClick={() => setToolsOpen((value) => !value)}
+              aria-expanded={toolsOpen}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 pb-1 pt-2 text-left text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
+              <Wrench size={12} /> {tr('nav.phase.tools')}
+              {toolsOpen ? <ChevronDown className="ml-auto" size={12} /> : <ChevronRight className="ml-auto" size={12} />}
+            </button>
+            {toolsOpen && <div className="mt-1">{INVESTIGATION_NAV.map(navItem)}</div>}
+          </div>
         </div>
 
         {/* Quiet, at the foot. The sidebar HEADER belongs to the case --
@@ -286,11 +313,19 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           <select value={view} onChange={(event) => gotoView(event.target.value as ViewId)}
             aria-label={tr('nav.currentView')}
             className="w-full bg-transparent text-[11px] text-[var(--muted)] outline-none">
-            {NAV.flatMap((section) => section.items).map((item) => (
-              <option key={item.id} value={item.id}>
-                {tr(`nav.${item.id}`)}{item.experimental ? ` · ${tr('common.experimental')}` : ''}
-              </option>
-            ))}
+            <optgroup label={tr('nav.phase.overview')}>
+              {OVERVIEW_NAV.map((item) => <option key={item.id} value={item.id}>{tr(`nav.${item.id}`)}</option>)}
+            </optgroup>
+            <optgroup label={tr('nav.phase.workflow')}>
+              {WORKFLOW_NAV.map((item) => <option key={item.id} value={item.id}>{item.step}. {tr(`nav.${item.id}`)}</option>)}
+            </optgroup>
+            <optgroup label={tr('nav.phase.tools')}>
+              {INVESTIGATION_NAV.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {tr(`nav.${item.id}`)}{item.experimental ? ` · ${tr('common.experimental')}` : ''}
+                </option>
+              ))}
+            </optgroup>
             <option value="settings">{tr('nav.settings')}</option>
           </select>
         </div>
@@ -318,10 +353,11 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
               </div>
             </div>
             {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
-            {openArtifacts > 0 && view !== 'findings' && view !== 'dashboard' && (
-              <button onClick={() => gotoView('findings', { triage: 'new,reviewed' })}
-                className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-110 cursor-pointer">
-                {tr('case.continueTriage', { n: openArtifacts })}
+            {workflowAction && view !== workflowAction.view && (
+              <button onClick={() => gotoView(workflowAction.view,
+                workflowAction.id === 'triage' ? { triage: 'new,reviewed' } : {})}
+                className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-text)] transition-colors hover:bg-[var(--primary-hover)] cursor-pointer">
+                {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
               </button>
             )}
           </div>
@@ -329,19 +365,21 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         <div key={view} className={clsx('mx-auto', view === 'hunt'
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
-          {view === 'dashboard' && <Dashboard {...props} />}
-          {view === 'findings' && <Findings {...props} />}
-          {view === 'actors' && <Actors {...props} />}
-          {view === 'logs' && <AccessLogs {...props} />}
-          {view === 'hunt' && <Hunt {...props} />}
-          {view === 'iocbox' && <IocBox {...props} />}
-          {view === 'files' && <Files {...props} />}
-          {view === 'cms' && <Cms {...props} />}
-          {view === 'database' && <DatabaseView {...props} />}
-          {view === 'evidence' && <Evidence {...props} />}
-          {view === 'timeline' && <Timeline {...props} />}
-          {view === 'report' && <Report {...props} onClosed={onBack} />}
-          {view === 'settings' && <Settings />}
+          <Suspense fallback={<PageSkeleton />}>
+            {view === 'dashboard' && <Dashboard {...props} />}
+            {view === 'findings' && <Findings {...props} />}
+            {view === 'actors' && <Actors {...props} />}
+            {view === 'logs' && <AccessLogs {...props} />}
+            {view === 'hunt' && <Hunt {...props} />}
+            {view === 'iocbox' && <IocBox {...props} />}
+            {view === 'files' && <Files {...props} />}
+            {view === 'cms' && <Cms {...props} />}
+            {view === 'database' && <DatabaseView {...props} />}
+            {view === 'evidence' && <Evidence {...props} />}
+            {view === 'timeline' && <Timeline {...props} />}
+            {view === 'report' && <Report {...props} onClosed={onBack} />}
+            {view === 'settings' && <Settings />}
+          </Suspense>
         </div>
       </main>
 
@@ -408,19 +446,17 @@ function Root() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  return slug ? <CaseShell slug={slug} onBack={back} /> : <Start onOpen={open} />
+  return slug
+    ? <CaseShell slug={slug} onBack={back} />
+    : <Suspense fallback={<div className="mx-auto max-w-3xl px-6 py-12"><PageSkeleton /></div>}>
+        <Start onOpen={open} />
+      </Suspense>
 }
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Suspense fallback={(
-        <div className="flex min-h-screen items-center justify-center text-[var(--muted)] animate-pulse-soft">
-          ShellHound…
-        </div>
-      )}>
-        <Root />
-      </Suspense>
+      <Root />
     </QueryClientProvider>
   )
 }

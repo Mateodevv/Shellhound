@@ -1,6 +1,6 @@
 // ui.tsx — the small building blocks: cards, badges, chips, drawer, progress.
 import { useT } from '../i18n'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
@@ -8,19 +8,44 @@ import { copyText } from '../copy'
 import { explain } from '../explain'
 import { InfoDot, Tooltip } from './Tooltip'
 
-export function Card({ children, className, style, id }: {
+export function Card({ children, className, style, id, surface = 'base' }: {
   // `id` only so that a card can be a jump target (IOC box: from one
   // indicator to its linked neighbour).
   children: ReactNode; className?: string; style?: React.CSSProperties; id?: string
+  surface?: 'base' | 'raised' | 'interactive'
 }) {
   return (
     <div
       id={id}
       className={clsx(
-        'rounded-xl border border-[var(--line)] bg-[var(--panel)]', className)}
+        'rounded-xl border',
+        surface === 'base' && 'border-[var(--line)] bg-[var(--panel)]',
+        surface === 'raised' && 'border-[var(--line)] bg-[var(--panel-2)]',
+        surface === 'interactive' &&
+          'border-[var(--line)] bg-[var(--panel)] transition-colors hover:border-[var(--line-strong)] hover:bg-[var(--panel-2)]',
+        className)}
       style={style}
     >
       {children}
+    </div>
+  )
+}
+
+/** A page-shaped loading state keeps the shell stable and does not pretend
+ * that an unfinished request is an empty result. */
+export function PageSkeleton({ label }: { label?: string }) {
+  const tr = useT()
+  return (
+    <div className="space-y-4 py-1" role="status" aria-live="polite">
+      <span className="sr-only">{label ?? tr('common.loading')}</span>
+      <div className="h-5 w-48 rounded bg-[var(--panel-raised)] animate-pulse-soft" />
+      <div className="h-3 w-80 max-w-full rounded bg-[var(--panel-2)] animate-pulse-soft" />
+      <div className="grid gap-3 pt-2 md:grid-cols-3">
+        {[0, 1, 2].map((item) => (
+          <div key={item} className="h-24 rounded-xl border border-[var(--line)] bg-[var(--panel)] animate-pulse-soft" />
+        ))}
+      </div>
+      <div className="h-52 rounded-xl border border-[var(--line)] bg-[var(--panel)] animate-pulse-soft" />
     </div>
   )
 }
@@ -136,16 +161,17 @@ export function Chip({ active, onClick, children, count, dimmed }: {
   return (
     <button
       onClick={onClick}
-      aria-pressed={!dimmed}
+      aria-pressed={active && !dimmed}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
         'transition-colors duration-150 cursor-pointer',
         dimmed
           ? 'border-[var(--line)] bg-transparent text-[var(--muted)] opacity-50 line-through hover:opacity-80'
           : active
-            ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-text)]'
+            ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--fg)]'
             : 'border-[var(--line)] bg-transparent text-[var(--muted)] hover:border-[var(--accent)]/50 hover:text-[var(--fg)]')}
     >
+      {active && !dimmed && <Check size={12} aria-hidden="true" />}
       {children}
       {count != null && (
         <span className="tabular rounded-full bg-[var(--panel-2)] px-1.5 text-[10px]">
@@ -182,11 +208,11 @@ export function Button({ children, onClick, variant = 'default', disabled, class
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',
         'transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40',
         variant === 'primary' &&
-          'bg-[var(--accent)] text-white hover:brightness-110 active:scale-[0.98]',
+          'bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)] active:scale-[0.98]',
         variant === 'danger' &&
-          'bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
+          'border border-[var(--sev-high)]/55 bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
         variant === 'default' &&
-          'border border-[var(--line)] bg-[var(--panel-2)] hover:border-[var(--accent)]/60',
+          'border border-[var(--line-strong)] bg-[var(--panel-2)] text-[var(--fg)] hover:border-[var(--accent)] hover:bg-[var(--panel-raised)]',
         variant === 'ghost' && 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]',
         className)}
     >
@@ -340,26 +366,58 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
   layer?: number
 }) {
   const tr = useT()
+  const titleId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
   useOverlayEscape(open, onClose)
+  useEffect(() => {
+    if (!open) return
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const bodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus())
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.body.style.overflow = bodyOverflow
+      previous?.focus()
+    }
+  }, [open])
   if (!open) return null
   const inset = Math.min(layer, 3)
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
+    if (!focusable.length) {
+      event.preventDefault()
+      dialogRef.current?.focus()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault(); last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault(); first.focus()
+    }
+  }
   return (
     <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6"
       style={{ zIndex: 40 + layer * 10 }}>
       <div className={clsx('absolute inset-0 animate-fade-in',
         layer > 0 ? 'bg-black/35' : 'bg-black/60')} onClick={onClose} />
-      <div className={clsx(
+      <div ref={dialogRef} tabIndex={-1} onKeyDown={trapFocus} className={clsx(
         'relative flex flex-col overflow-hidden',
         'rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-2xl',
         'animate-fade-up')}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         style={{
           width: `min(${1280 - inset * 70}px, ${96 - inset * 3}vw)`,
           maxHeight: `${92 - inset * 3}vh`,
         }}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-3">
-          <div className="min-w-0 text-[15px] font-semibold">{title}</div>
+          <div id={titleId} className="min-w-0 text-[15px] font-semibold">{title}</div>
           <button
             onClick={onClose}
             title={tr('common.closeEsc')}
@@ -372,6 +430,44 @@ export function Modal({ open, onClose, title, children, layer = 0 }: {
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
+  )
+}
+
+export function ConfirmDialog({ open, onClose, title, body, confirmLabel, onConfirm,
+                                pending = false, danger = false, confirmText, typeLabel }: {
+  open: boolean
+  onClose: () => void
+  title: string
+  body: ReactNode
+  confirmLabel: string
+  onConfirm: () => void
+  pending?: boolean
+  danger?: boolean
+  confirmText?: string
+  typeLabel?: string
+}) {
+  const tr = useT()
+  const [typed, setTyped] = useState('')
+  useEffect(() => { if (!open) setTyped('') }, [open])
+  const allowed = !confirmText || typed.trim() === confirmText.trim()
+  return (
+    <Modal open={open} onClose={onClose} title={title} layer={1}>
+      <div className="space-y-4">
+        <div className="text-[13px] leading-relaxed text-[var(--muted)]">{body}</div>
+        {confirmText && (
+          <label className="block text-[12px] text-[var(--muted)]">
+            {typeLabel ?? tr('common.confirm')}: <span className="mono text-[var(--fg)]">{confirmText}</span>
+            <input autoFocus value={typed} onChange={(event) => setTyped(event.target.value)}
+              className="mt-1.5 w-full rounded-lg border border-[var(--line-strong)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none" />
+          </label>
+        )}
+        <div className="flex justify-end gap-2 border-t border-[var(--line-soft)] pt-3">
+          <Button variant="ghost" onClick={onClose}>{tr('common.cancel')}</Button>
+          <Button variant={danger ? 'danger' : 'primary'} disabled={!allowed || pending}
+            onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
