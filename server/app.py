@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import threading
 import time
 import uuid
 import zipfile
@@ -717,33 +718,98 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
+    def _paths_overlap(left, right):
+        """Whether two registered roots cover any of the same filesystem.
+
+        Incremental work must never guess which registration owns a shared
+        subtree.  Resolve links and compare path components so ``site`` does
+        not accidentally match ``site-old`` and different drives stay safe.
+        """
+        a = os.path.normcase(os.path.realpath(os.path.abspath(str(left))))
+        b = os.path.normcase(os.path.realpath(os.path.abspath(str(right))))
+        try:
+            common = os.path.commonpath((a, b))
+        except ValueError:
+            return False
+        return common == a or common == b
+
+    class AnalyzeBody(BaseModel):
+        mode: str = "all"
+
     @app.post("/api/cases/{slug}/analyze", dependencies=[auth])
-    def analyze(slug: str):
-        """One button: index the logs, scan the webroot, inventory the CMS,
-        analyze the dumps -- whatever evidence is registered."""
+    def analyze(slug: str, body: AnalyzeBody | None = None):
+        """Run every registered source, or only newly registered evidence.
+
+        An omitted body intentionally retains the original full-run API.
+        Incremental file/SQL engines merge their output without advancing the
+        engine-wide retirement marker.  Logs remain a case-wide index, so a
+        newly registered log source rebuilds that index from every log root.
+        """
         case_dir = case_dir_or_404(slug)
         by_kind = _evidence_by_kind(case_dir)
+        mode = body.mode if body is not None else "all"
+        if mode not in ("new", "all"):
+            raise HTTPException(400, "analysis mode must be 'new' or 'all'")
+
+        supported = ("webroot", "access_logs", "sql_dump")
+        pending_by_kind = {
+            kind: [row for row in by_kind.get(kind, [])
+                   if not str(row.get("scanned_at") or "").strip()]
+            for kind in supported
+        }
+        if mode == "new" and not any(pending_by_kind.values()):
+            raise HTTPException(
+                400,
+                "no new evidence to analyze; use full reanalysis for files "
+                "added inside an already registered path")
+
+        if mode == "new":
+            # Overlap only matters inside one evidence kind: a SQL dump may
+            # legitimately sit below a webroot, but two webroot registrations
+            # covering the same file make a partial engine run ambiguous.
+            for kind in supported:
+                scanned = [row for row in by_kind.get(kind, [])
+                           if str(row.get("scanned_at") or "").strip()]
+                for new_row in pending_by_kind[kind]:
+                    for old_row in scanned:
+                        if _paths_overlap(new_row["path"], old_row["path"]):
+                            raise HTTPException(
+                                409,
+                                f"new {kind} path overlaps previously analyzed "
+                                "evidence; use full reanalysis")
+
+        chosen = by_kind if mode == "all" else pending_by_kind
+        authoritative = mode == "all"
         started = []
         run_id = uuid.uuid4().hex[:12]
 
-        logs = by_kind.get("access_logs", [])
+        # The index is one case-wide derived dataset. A new log source means
+        # rebuilding it from ALL registered logs; only the pending rows get a
+        # new scanned_at receipt.
+        selected_logs = chosen.get("access_logs", [])
+        logs = by_kind.get("access_logs", []) if selected_logs else []
         if logs:
             paths = [e["path"] for e in logs]
-            ids = [e["id"] for e in logs]
+            ids = [e["id"] for e in selected_logs]
+            log_ready = threading.Event()
+            log_result = {"complete": False}
 
             def run_logs(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = logindex.build(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
-                return stats
+                try:
+                    stats = logindex.build(case_dir, paths, ctx, config.workspace)
+                    if not ctx.cancelled() and not stats.get("partial"):
+                        _mark_scanned(case_dir, ids, stats)
+                        log_result["complete"] = True
+                    return stats
+                finally:
+                    log_ready.set()
 
             started.append({"kind": "index_logs",
                             "job": manager.submit(case_dir, "index_logs", run_logs,
                                                   run_id=run_id)})
 
-            # The error logs sit in the same directory and were skipped by
-            # the index -- they name files the access log structurally
-            # cannot see. Own job: it reads the same directory but answers a
-            # different question.
+            # Error logs live beside the access logs but answer a different
+            # question, so they keep their own visible job.
             def run_errors(ctx, paths=paths, case_dir=case_dir):
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
@@ -756,24 +822,32 @@ def create_app(config: Config) -> FastAPI:
             # somebody else's rules, running after the thing they read has
             # been built. Nothing here if the sigma/ folder is empty.
             def run_sigma(ctx, case_dir=case_dir):
+                log_ready.wait()
+                if not log_result["complete"]:
+                    return {"rules": 0, "findings": 0, "clients": 0,
+                            "broken_rules": 0, "skipped": 1,
+                            "reason": "log index build did not complete"}
                 return sigmascan.scan(case_dir, config.workspace, ctx)
 
             started.append({"kind": "sigma",
                             "job": manager.submit(case_dir, "sigma", run_sigma,
                                                   run_id=run_id)})
 
-        webroots = by_kind.get("webroot", [])
+        webroots = chosen.get("webroot", [])
         if webroots:
             paths = [e["path"] for e in webroots]
             ids = [e["id"] for e in webroots]
 
             def run_shell(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = webshell.scan(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
+                stats = webshell.scan(case_dir, paths, ctx, config.workspace,
+                                      authoritative=authoritative)
+                if not ctx.cancelled():
+                    _mark_scanned(case_dir, ids, stats)
                 return stats
 
             def run_cms(ctx, paths=paths, case_dir=case_dir):
-                return cmsinventory.scan(case_dir, paths, ctx)
+                return cmsinventory.scan(case_dir, paths, ctx,
+                                         authoritative=authoritative)
 
             started.append({"kind": "webshell",
                             "job": manager.submit(case_dir, "webshell", run_shell,
@@ -787,24 +861,43 @@ def create_app(config: Config) -> FastAPI:
             if yarascan.status(config.workspace).get("rules"):
                 def run_yara(ctx, paths=paths, case_dir=case_dir):
                     return yarascan.scan(case_dir, paths,
-                                         workspace=config.workspace, ctx=ctx)
+                                         workspace=config.workspace, ctx=ctx,
+                                         authoritative=authoritative)
 
                 started.append({"kind": "yara",
                                 "job": manager.submit(case_dir, "yara", run_yara,
                                                       run_id=run_id)})
 
-        dumps = by_kind.get("sql_dump", [])
+        dumps = chosen.get("sql_dump", [])
         if dumps:
             paths = [e["path"] for e in dumps]
             ids = [e["id"] for e in dumps]
 
             def run_sql(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = sqldump.scan(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
+                stats = sqldump.scan(case_dir, paths, ctx, config.workspace,
+                                     authoritative=authoritative)
+                if not ctx.cancelled():
+                    _mark_scanned(case_dir, ids, stats)
                 return stats
 
             started.append({"kind": "sqldb",
                             "job": manager.submit(case_dir, "sqldb", run_sql,
+                                                  run_id=run_id)})
+
+        # Error-log paths can resolve differently when a webroot is added,
+        # even when the logs themselves did not change. Refresh that one
+        # cross-source engine, but never rebuild the access index for a new
+        # webroot alone.
+        all_logs = by_kind.get("access_logs", [])
+        refresh_errors = mode == "new" and not logs and bool(webroots) and bool(all_logs)
+        if refresh_errors:
+            error_paths = [e["path"] for e in all_logs]
+
+            def run_errors(ctx, paths=error_paths, case_dir=case_dir):
+                return errorlog.scan(case_dir, paths, ctx, config.workspace)
+
+            started.append({"kind": "errorlog",
+                            "job": manager.submit(case_dir, "errorlog", run_errors,
                                                   run_id=run_id)})
 
         if not started:

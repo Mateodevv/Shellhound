@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from server import db
+from server.engines.fsutil import path_within_any
 
 WORDPRESS = "WordPress"
 JOOMLA = "Joomla"
@@ -280,13 +281,22 @@ def inventory_joomla(root):
 
 # --- the engine -------------------------------------------------------------
 
-def scan(case_dir, targets, ctx=None):
+def scan(case_dir, targets, ctx=None, authoritative=True):
     """Inventory every install under `targets` into case.db."""
     stats = {"installs": 0, "items": 0, "unknown_versions": 0}
     conn = db.connect(case_dir)
     try:
-        conn.execute("DELETE FROM cms_items")
-        conn.execute("DELETE FROM cms_installs")
+        if authoritative:
+            conn.execute("DELETE FROM cms_items")
+            conn.execute("DELETE FROM cms_installs")
+        else:
+            install_ids = [row["id"] for row in conn.execute(
+                "SELECT id, root FROM cms_installs").fetchall()
+                if path_within_any(row["root"], targets)]
+            conn.executemany("DELETE FROM cms_items WHERE install_id = ?",
+                             ((row_id,) for row_id in install_ids))
+            conn.executemany("DELETE FROM cms_installs WHERE id = ?",
+                             ((row_id,) for row_id in install_ids))
         for target in targets:
             if ctx is not None and ctx.cancelled():
                 break

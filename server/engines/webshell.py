@@ -27,7 +27,7 @@ import os
 import re
 
 from server import bundled_rules, db, ruleswitch
-from server.engines.fsutil import get_files_recursive, sha256_of
+from server.engines.fsutil import get_files_recursive, path_within_any, sha256_of
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".svg", ".webp"}
@@ -294,7 +294,7 @@ def scan_file(file_path, root=None):
     return findings, None, None
 
 
-def scan(case_dir, targets, ctx=None, workspace=None):
+def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
     """Scan every file under `targets`; write findings straight into case.db.
     Flagged files are hashed (SHA-256) so the IOC box can carry both path and
     hash without a second pass."""
@@ -317,8 +317,22 @@ def scan(case_dir, targets, ctx=None, workspace=None):
     try:
         run = db.begin_run(conn, "webshell")
         cancelled = False
-        conn.execute("DELETE FROM inert_php")
-        conn.execute("DELETE FROM skipped WHERE source = 'webshell'")
+        if authoritative:
+            conn.execute("DELETE FROM inert_php")
+            conn.execute("DELETE FROM skipped WHERE source = 'webshell'")
+        else:
+            # A retry after a failed/cancelled incremental scan must replace
+            # its own derived records without touching older evidence roots.
+            inert_ids = [row["id"] for row in conn.execute(
+                "SELECT id, path FROM inert_php").fetchall()
+                if path_within_any(row["path"], targets)]
+            skipped_ids = [row["id"] for row in conn.execute(
+                "SELECT id, path FROM skipped WHERE source = 'webshell'").fetchall()
+                if path_within_any(row["path"], targets)]
+            conn.executemany("DELETE FROM inert_php WHERE id = ?",
+                             ((row_id,) for row_id in inert_ids))
+            conn.executemany("DELETE FROM skipped WHERE id = ?",
+                             ((row_id,) for row_id in skipped_ids))
         flagged = set()
         for i, (file_path, root) in enumerate(files):
             if ctx is not None and i % 200 == 0:
@@ -365,12 +379,21 @@ def scan(case_dir, targets, ctx=None, workspace=None):
         # measurement of THIS run. Keeping the previous map when a re-scan
         # flags nothing would hand a confirmation the digest of a file that is
         # no longer there -- a hash in the IOC box that nothing measured.
+        if not authoritative:
+            row = db.one(conn, "SELECT value FROM meta WHERE key = 'webshell_hashes'")
+            try:
+                previous = json.loads(row["value"] if row else "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                previous = {}
+            previous = {path: digest for path, digest in previous.items()
+                        if not path_within_any(path, targets)}
+            hashes = {**previous, **hashes}
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('webshell_hashes', ?)",
                      (json.dumps(hashes),))
         conn.commit()
         # Only a run that saw every file may retire what it did not
         # reproduce; a cancelled one has no opinion about the rest.
-        if not cancelled:
+        if authoritative and not cancelled:
             db.complete_run(conn, "webshell", run)
     finally:
         conn.close()

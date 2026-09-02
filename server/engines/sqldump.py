@@ -11,7 +11,7 @@ import re
 from collections import namedtuple
 
 from server import cmsintelligence, db, ruleswitch
-from server.engines.fsutil import iter_target_files, open_text_auto
+from server.engines.fsutil import iter_target_files, open_text_auto, path_within_any
 
 _STREAM_CHUNK = 1 << 20
 
@@ -708,7 +708,7 @@ def _with_source(conn, rule, table, row_no, evidence, dump_name):
     return (evidence + " · " + ", ".join(seen))[:400]
 
 
-def scan(case_dir, targets, ctx=None, workspace=None):
+def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
     """Analyze every dump under `targets`; write findings, accounts, table
     inventory and dump metadata into case.db. Returns a stats dict."""
     files = []
@@ -726,6 +726,12 @@ def scan(case_dir, targets, ctx=None, workspace=None):
     try:
         run = db.begin_run(conn, "sqldump")
         cancelled = False
+        if not authoritative:
+            skipped_ids = [row["id"] for row in conn.execute(
+                "SELECT id, path FROM skipped WHERE source = 'sqldb'").fetchall()
+                if path_within_any(row["path"], targets)]
+            conn.executemany("DELETE FROM skipped WHERE id = ?",
+                             ((row_id,) for row_id in skipped_ids))
         done = 0
         for path in files:
             if ctx is not None and ctx.cancelled():
@@ -817,7 +823,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
         conn.commit()
         # Only a run that read every dump may retire what it did not
         # reproduce; a cancelled one has no opinion about the rest.
-        if not cancelled:
+        if authoritative and not cancelled:
             db.complete_run(conn, "sqldump", run)
     finally:
         conn.close()

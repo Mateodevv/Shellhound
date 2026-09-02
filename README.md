@@ -141,9 +141,14 @@ the checklist instead of remaining actionable.
 
 **Run analysis** runs the engines once, at roughly 55,000 log lines per second. On a
 million log lines this is the only slow step of a case; everything after it is
-a query. The jobs run in the background, each reports its own progress and can
-be cancelled. All engines started by one click belong to one expandable
-**analysis run**, with their shared status and durable run id.
+a query. Later registrations appear separately as **New evidence** and
+**Analyze new evidence** scans only the affected file or SQL roots. A new log
+source rebuilds the complete case-wide log index, because partial log indexes
+can give stale answers. Use **Reanalyze all evidence** when files changed inside
+an already registered directory. Existing analyst decisions and notes survive
+either mode. Jobs run in the background, report progress and can be cancelled;
+all engines started by one click share one expandable analysis run and durable
+run id.
 
 ### 2 · Findings
 
