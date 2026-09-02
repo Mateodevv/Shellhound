@@ -108,8 +108,8 @@ Inside the repository the server continues to find `web/dist` directly.
 ## Workflow
 
 The case sidebar keeps **Dashboard** in Overview, the four numbered case stages
-in Workflow, and the less frequent investigation screens in a collapsed
-**Investigation tools** group. The current case and the next useful action stay
+in Workflow, and the less frequent screens under the always-visible
+**Investigation tools** heading. The current case and the next useful action stay
 visible while views load; the action only navigates and never starts analysis
 or changes a decision by itself.
 

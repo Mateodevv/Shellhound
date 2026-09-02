@@ -4,9 +4,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, Box, Bug, ChevronDown, ChevronRight, Database, FileCheck2, FolderCog, FolderTree,
+  Activity, ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
-  SlidersHorizontal, Users, Wrench,
+  SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
 import { useLiveEvents } from './ws'
@@ -73,6 +73,84 @@ const INVESTIGATION_NAV: NavItem[] = [
   { id: 'logs', icon: ScrollText, experimental: true },
 ]
 
+export function CaseNavigation({
+  view,
+  openArtifacts,
+  onNavigate,
+  onSearch,
+}: {
+  view: ViewId
+  openArtifacts: number
+  onNavigate: (view: ViewId) => void
+  onSearch: () => void
+}) {
+  const tr = useT()
+  const navItem = ({ id, icon: Icon, experimental, step }: NavItem) => (
+    <button
+      key={id}
+      onClick={() => onNavigate(id)}
+      aria-current={view === id ? 'page' : undefined}
+      className={clsx(
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
+        'transition-colors duration-150 cursor-pointer',
+        view === id
+          ? 'border border-[var(--accent)]/45 bg-[var(--accent-soft)] text-[var(--fg)]'
+          : 'border border-transparent text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
+    >
+      {step ? (
+        <span className={clsx('flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+          view === id ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-[var(--line-strong)]')}>
+          {step}
+        </span>
+      ) : <Icon size={15} />}
+      <span className="min-w-0 truncate">{tr(`nav.${id}`)}</span>
+      {experimental && (
+        <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
+          {tr('common.experimental')}
+        </span>
+      )}
+      {id === 'findings' && openArtifacts > 0 && (
+        <span className="ml-auto rounded-full bg-[var(--panel-raised)] px-1.5 text-[10px] tabular">
+          {openArtifacts}
+        </span>
+      )}
+    </button>
+  )
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+      <button
+        onClick={onSearch}
+        className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+      >
+        <Search size={14} />
+        {tr('nav.search')}
+        <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
+          {tr('nav.shortcut')}
+        </span>
+      </button>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.overview')}
+        </div>
+        {OVERVIEW_NAV.map(navItem)}
+      </div>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.workflow')}
+        </div>
+        {WORKFLOW_NAV.map(navItem)}
+      </div>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.tools')}
+        </div>
+        {INVESTIGATION_NAV.map(navItem)}
+      </div>
+    </div>
+  )
+}
+
 function viewFromUrl(): ViewId {
   const value = new URLSearchParams(location.search).get('view') as ViewId | null
   return value && VIEW_IDS.has(value) ? value : 'dashboard'
@@ -81,7 +159,6 @@ function viewFromUrl(): ViewId {
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const tr = useT()
   const [view, setView] = useState<ViewId>(viewFromUrl)
-  const [toolsOpen, setToolsOpen] = useState(() => INVESTIGATION_NAV.some((item) => item.id === viewFromUrl()))
   const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
   // The global search belongs to the shell: it has to be reachable from
@@ -158,10 +235,6 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  useEffect(() => {
-    if (INVESTIGATION_NAV.some((item) => item.id === view)) setToolsOpen(true)
-  }, [view])
-
   const running = useMemo(
     () => Object.values(liveJobs).filter((j) => j.state === 'running' || j.state === 'queued'),
     [liveJobs])
@@ -177,44 +250,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const completion = decisionTotal ? decidedArtifacts / decisionTotal : 0
   const workflowAction = deriveWorkflowAction(caseInfo, jobs, dashboard)
 
-  const navItem = ({ id, icon: Icon, experimental, step }: NavItem) => (
-    <button
-      key={id}
-      onClick={() => gotoView(id)}
-      aria-current={view === id ? 'page' : undefined}
-      className={clsx(
-        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
-        'transition-colors duration-150 cursor-pointer',
-        view === id
-          ? 'border border-[var(--accent)]/45 bg-[var(--accent-soft)] text-[var(--fg)]'
-          : 'border border-transparent text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
-    >
-      {step ? (
-        <span className={clsx('flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
-          view === id ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-[var(--line-strong)]')}>
-          {step}
-        </span>
-      ) : <Icon size={15} />}
-      <span className="min-w-0 truncate">{tr(`nav.${id}`)}</span>
-      {experimental && (
-        <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
-          {tr('common.experimental')}
-        </span>
-      )}
-      {id === 'findings' && openArtifacts > 0 && (
-        <span className="ml-auto rounded-full bg-[var(--panel-raised)] px-1.5 text-[10px] tabular">
-          {openArtifacts}
-        </span>
-      )}
-    </button>
-  )
-
   return (
-    <div className="flex h-full flex-col md:flex-row">
-      <nav className="hidden w-56 shrink-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
+    <div className="h-full">
+      <div className="flex h-full flex-col md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]">
         <button
           onClick={onBack}
-          className="group flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-left cursor-pointer"
+          className="group hidden h-full items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
         >
           <ArrowLeft size={14} className="text-[var(--muted)] transition-transform group-hover:-translate-x-0.5" />
           <div className="min-w-0">
@@ -225,39 +266,36 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           </div>
         </button>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
-          >
-            <Search size={14} />
-            {tr('nav.search')}
-            <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
-              {tr('nav.shortcut')}
-            </span>
-          </button>
-          <div className="mb-2">
-            <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-              {tr('nav.phase.overview')}
+        <header className="z-20 hidden border-b border-[var(--line)] bg-[var(--bg)]/95 px-6 py-3 backdrop-blur md:block">
+          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[15px] font-semibold">{caseInfo?.name ?? slug}</span>
+                {caseInfo?.reference && (
+                  <span className="truncate rounded-md bg-[var(--panel-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
+                    {caseInfo.reference}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 text-[11px] text-[var(--muted)]">
+                {tr(`nav.${view}`)}
+                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
+              </div>
             </div>
-            {OVERVIEW_NAV.map(navItem)}
+            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
+            {workflowAction && view !== workflowAction.view && (
+              <button onClick={() => gotoView(workflowAction.view,
+                workflowAction.id === 'triage' ? { triage: 'new,reviewed' } : {})}
+                className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-text)] transition-colors hover:bg-[var(--primary-hover)] cursor-pointer">
+                {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
+              </button>
+            )}
           </div>
-          <div className="mb-2">
-            <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
-              {tr('nav.phase.workflow')}
-            </div>
-            {WORKFLOW_NAV.map(navItem)}
-          </div>
-          <div className="mb-2">
-            <button type="button" onClick={() => setToolsOpen((value) => !value)}
-              aria-expanded={toolsOpen}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 pb-1 pt-2 text-left text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
-              <Wrench size={12} /> {tr('nav.phase.tools')}
-              {toolsOpen ? <ChevronDown className="ml-auto" size={12} /> : <ChevronRight className="ml-auto" size={12} />}
-            </button>
-            {toolsOpen && <div className="mt-1">{INVESTIGATION_NAV.map(navItem)}</div>}
-          </div>
-        </div>
+        </header>
+
+        <nav className="hidden min-h-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
+          <CaseNavigation view={view} openArtifacts={openArtifacts}
+            onNavigate={gotoView} onSearch={() => setPaletteOpen(true)} />
 
         {/* Quiet, at the foot. The sidebar HEADER belongs to the case --
             a mark up there would compete with the case name, which is the
@@ -301,9 +339,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             </div>
           )}
         </div>
-      </nav>
+        </nav>
 
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
         <button onClick={onBack} aria-label={tr('nav.switchCase')}
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <ArrowLeft size={16} />
@@ -333,35 +371,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <Search size={16} />
         </button>
-      </div>
+        </div>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--bg)]/95 px-6 py-3 backdrop-blur">
-          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[15px] font-semibold">{caseInfo?.name ?? slug}</span>
-                {caseInfo?.reference && (
-                  <span className="truncate rounded-md bg-[var(--panel-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
-                    {caseInfo.reference}
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-                {tr(`nav.${view}`)}
-                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
-              </div>
-            </div>
-            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
-            {workflowAction && view !== workflowAction.view && (
-              <button onClick={() => gotoView(workflowAction.view,
-                workflowAction.id === 'triage' ? { triage: 'new,reviewed' } : {})}
-                className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-text)] transition-colors hover:bg-[var(--primary-hover)] cursor-pointer">
-                {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
-              </button>
-            )}
-          </div>
-        </header>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-2">
         <div key={view} className={clsx('mx-auto', view === 'hunt'
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
@@ -381,7 +393,8 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'settings' && <Settings />}
           </Suspense>
         </div>
-      </main>
+        </main>
+      </div>
 
       <CommandPalette
         slug={slug}
