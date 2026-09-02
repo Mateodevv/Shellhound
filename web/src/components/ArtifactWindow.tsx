@@ -501,11 +501,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </Button>
             <Button variant="review" disabled={!contextReady}
               onClick={() => onTriage('reviewed', note)}>
-              <Eye size={14} /> {tr('triage.reviewed')}
+              <Eye size={14} /> {tr('artifact.reviewedAction')}
             </Button>
             <Button variant="outline" disabled={!contextReady}
               onClick={() => onTriage('dismissed', note)}>
-              <X size={14} /> {tr('triage.dismissed')}
+              <X size={14} /> {tr('artifact.falsePositiveAction')}
             </Button>
             <span className={clsx(
               'self-center text-[11px]',

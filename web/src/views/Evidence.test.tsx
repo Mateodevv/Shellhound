@@ -96,7 +96,7 @@ describe('evidence registration', () => {
     renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
 
     expect(await screen.findByText('Evidence ready')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Analyse again' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run again' })).toBeInTheDocument()
     expect(screen.getByText('Manage evidence').closest('details')).not.toHaveAttribute('open')
   })
 })

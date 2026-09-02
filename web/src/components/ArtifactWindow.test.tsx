@@ -86,7 +86,9 @@ describe('the note box', () => {
     mount()
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /True positive/i })).toBeEnabled())
+      expect(screen.getByRole('button', { name: /Confirm & collect/i })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Reviewed' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'False positive' })).toBeEnabled()
   })
 
   it('shows the note the server has, not the empty one the caller passed', async () => {
@@ -110,7 +112,7 @@ describe('the note box', () => {
     const { onTriage } = mount(stub({ triage_note: '' }))
     await waitFor(() => expect(noteBox().value).toBe('confirmed by hash'))
 
-    await userEvent.click(screen.getByRole('button', { name: /True positive/i }))
+    await userEvent.click(screen.getByRole('button', { name: /Confirm & collect/i }))
     expect(onTriage).toHaveBeenCalledWith('confirmed', 'confirmed by hash')
   })
 
@@ -166,14 +168,14 @@ describe('the note box', () => {
     rerender(window_(stub({ artifact: other })))
     expect(noteBox().value).toBe('')
     expect(noteBox()).toBeDisabled()
-    expect(screen.getByRole('button', { name: /True positive/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Confirm & collect/i })).toBeDisabled()
 
     await act(async () => {
       release?.(context({ artifact: other, triage_note: 'its own note' }))
     })
     await waitFor(() => expect(noteBox().value).toBe('its own note'))
     expect(noteBox()).toBeEnabled()
-    expect(screen.getByRole('button', { name: /True positive/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Confirm & collect/i })).toBeEnabled()
   })
 })
 

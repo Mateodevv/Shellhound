@@ -156,6 +156,21 @@ describe('actors investigation workspace', () => {
       path.includes('/actors?') && path.includes('flag=alerted'))).toBe(true))
   })
 
+  it('labels row spacing and keeps the selected client visually distinct', async () => {
+    mockApi()
+    renderWithProviders(<Actors slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByText('Clients & actors')
+
+    const spacing = screen.getByRole('button', { name: 'Row spacing: Comfortable' })
+    fireEvent.click(spacing)
+    expect(screen.getByRole('button', { name: 'Row spacing: Compact' })).toBeInTheDocument()
+
+    const active = screen.getByRole('button', { name: new RegExp(ACTOR.ip.replaceAll('.', '\\.')) })
+      .closest('article')
+    expect(active).toHaveAttribute('aria-current', 'true')
+    expect(active?.className).toContain('shadow-[inset_3px_0_0_var(--accent)]')
+  })
+
   it('compares a small selected scope and labels overlap as evidence, not attribution', async () => {
     mockApi()
     vi.mocked(api).mockImplementation(async (path) => {

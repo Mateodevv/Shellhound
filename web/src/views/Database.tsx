@@ -196,7 +196,11 @@ function AccessLens({ slug, accounts, access, flagAccount, flagging }: {
         href={downloadUrl(`/api/cases/${slug}/database/accounts.csv`)}><Download size={13} /> CSV</a>
       <SearchInput value={search} onChange={setSearch} placeholder={tr('database.search')} />
     </div>}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">{signalCounts.map(([id, signal]) => <Tooltip key={id} title={signal.label} body={signal.why}>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel-2)] p-2.5">
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+          {tr('database.filters.included')}
+        </span>
+        {signalCounts.map(([id, signal]) => <Tooltip key={id} title={signal.label} body={signal.why}>
         <Chip active={!hiddenSignals.has(id)} dimmed={hiddenSignals.has(id)} count={signal.n}
           onClick={() => setHiddenSignals((previous) => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })}>
           {signal.label}</Chip></Tooltip>)}
@@ -227,7 +231,10 @@ function AccessLens({ slug, accounts, access, flagAccount, flagging }: {
           <td className="px-2 py-2 text-[12px] text-[var(--muted)]">{account.last_login || '—'}</td>
           <td className="mono px-2 py-2 text-[11px] text-[var(--muted)]">{account.cms} · {account.tbl}</td>
           <td className="px-3 py-2 text-right">{account.in_box ? <Tag tone="accent">IOC</Tag>
-            : <Button variant="ghost" disabled={flagging} className="opacity-0 group-hover:opacity-100" onClick={() => flagAccount(account.id)}><Box size={13} /> IOC</Button>}</td>
+            : <Button variant="ghost" disabled={flagging} className="whitespace-nowrap"
+              onClick={() => flagAccount(account.id)}>
+              <Box size={13} /> {tr('database.flagAccount')}
+            </Button>}</td>
         </tr>
         })}</tbody>
       </table>{!visible.length && <EmptyRow text={accounts.length ? tr('database.allHidden') : tr('database.noAccounts')} />}</Card>
@@ -245,6 +252,10 @@ function ExtensionLens({ rows, onOpenArtifact, onOpenInventory }: {
     && (!search || itemTitle(row).toLowerCase().includes(search.toLowerCase())))
   const cmsNames = [...new Set(rows.map((row) => row.cms))]
   return <Section title={tr('database.extensions')} sub={tr('database.extensions.sub')} right={<div className="flex flex-wrap items-center gap-2">
+    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+      {tr('database.filters.included')}
+    </span>
+    <Chip active={cms === 'all'} onClick={() => setCms('all')}>{tr('database.allCms')}</Chip>
     {cmsNames.map((name) => <Chip key={name} active={cms === name} onClick={() => setCms(cms === name ? 'all' : name)}>{name}</Chip>)}
     <Chip active={reviewOnly} count={rows.filter((row) => row.review).length} onClick={() => setReviewOnly(!reviewOnly)}>{tr('database.needsReview')}</Chip>
     <SearchInput value={search} onChange={setSearch} placeholder={tr('database.extensionSearch')} />
@@ -290,6 +301,9 @@ function ContentLens({ rows }: { rows: DbIntelligenceItem[] }) {
   const visible = rows.filter((row) => (!signalsOnly || row.signals.length)
     && (!search || itemTitle(row).toLowerCase().includes(search.toLowerCase())))
   return <Section title={tr('database.content')} sub={tr('database.content.sub')} right={<div className="flex items-center gap-2">
+    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+      {tr('database.filters.included')}
+    </span>
     <Chip active={signalsOnly} count={rows.filter((row) => row.signals.length).length} onClick={() => setSignalsOnly(!signalsOnly)}>{tr('database.withSignals')}</Chip>
     <SearchInput value={search} onChange={setSearch} placeholder={tr('database.contentSearch')} /></div>}>
     <Card className="overflow-hidden">{visible.map((row, index) => {

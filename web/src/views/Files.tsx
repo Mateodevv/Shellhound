@@ -72,6 +72,9 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
   const selected = browse.data?.files.find((file) => file.path === selectedPath) ?? null
   const selectedIndex = files.findIndex((file) => file.path === selectedPath)
   const atRoot = !path
+  const currentPath = browse.data?.path ?? path
+  const breadcrumbs = useMemo(() => evidenceBreadcrumbs(currentPath, fileRoots),
+    [currentPath, fileRoots])
 
   const chooseFile = (file: BrowseFile) => {
     setSelectedPath(file.path)
@@ -114,8 +117,21 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       {browse.data?.parent != null && <Button variant="ghost" onClick={() => setPath(browse.data!.parent!)}>
         <ArrowLeft size={14} /> {tr('evidence.parentDir')}
       </Button>}
-      {!atRoot && <span className="mono min-w-0 flex-1 truncate text-[11px] text-[var(--muted)]"
-        title={browse.data?.path}>{browse.data?.path}</span>}
+      {!atRoot && <nav aria-label={tr('files.breadcrumbs')}
+        className="flex min-w-0 flex-1 items-center overflow-hidden text-[11.5px]">
+        {breadcrumbs.map((crumb, index) => <span key={crumb.path}
+          className="flex min-w-0 items-center">
+          {index > 0 && <ChevronRight size={12} aria-hidden="true"
+            className="mx-0.5 shrink-0 text-[var(--muted)]" />}
+          {crumb.current ? <span aria-current="page" title={currentPath}
+            className="mono truncate font-semibold text-[var(--fg)]">{crumb.label}</span>
+            : <button type="button" onClick={() => setPath(crumb.path)} title={crumb.path}
+              className="mono cursor-pointer truncate rounded px-1 py-0.5 text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]">
+              {crumb.label}
+            </button>}
+        </span>)}
+      </nav>}
+      {!atRoot && <CopyButton value={currentPath} label={tr('files.copyCurrentPath')} />}
       {!atRoot && <div className="ml-auto min-w-64">
         <SearchInput value={filter} onChange={setFilter} placeholder={tr('files.filter')} />
       </div>}
@@ -196,6 +212,30 @@ function pathWithinRoot(path: string, root: string) {
   const normalizedPath = path.replace(/\\/g, '/').toLowerCase()
   const normalizedRoot = root.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`)
+}
+
+type EvidenceBreadcrumb = { label: string; path: string; current: boolean }
+
+/** Keep long forensic paths available without making them the page heading.
+ * The breadcrumb begins at the registered evidence root, never at the drive. */
+function evidenceBreadcrumbs(path: string, roots: EvidenceRoot[]): EvidenceBreadcrumb[] {
+  const root = roots.find((item) => pathWithinRoot(path, item.path))
+  if (!path) return []
+  if (!root) return [{ label: path, path, current: true }]
+  const rootPath = root.path.replace(/[\\/]+$/, '')
+  const separator = rootPath.includes('\\') ? '\\' : '/'
+  const relative = path.slice(rootPath.length).split(/[\\/]+/).filter(Boolean)
+  const crumbs: EvidenceBreadcrumb[] = [{
+    label: root.label?.trim() || rootPath.split(/[\\/]/).filter(Boolean).at(-1) || rootPath,
+    path: rootPath,
+    current: relative.length === 0,
+  }]
+  let built = rootPath
+  relative.forEach((label, index) => {
+    built = `${built}${separator}${label}`
+    crumbs.push({ label, path: built, current: index === relative.length - 1 })
+  })
+  return crumbs
 }
 
 function forensicTime(value: string | null) {
