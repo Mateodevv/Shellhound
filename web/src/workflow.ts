@@ -3,7 +3,7 @@ import type { CaseDetail, Dashboard, Job } from './api'
 export const REQUIRED_EVIDENCE = ['webroot', 'access_logs', 'sql_dump'] as const
 
 export interface WorkflowAction {
-  id: 'evidence' | 'analysis' | 'running' | 'issue' | 'triage' | 'report'
+  id: 'evidence' | 'analysis' | 'running' | 'issue' | 'pending' | 'triage' | 'report'
   view: 'evidence' | 'findings' | 'report'
   label: string
   count?: number
@@ -34,6 +34,12 @@ export function deriveWorkflowAction(
   }
   if (run.some((job) => job.state === 'failed' || job.state === 'cancelled')) {
     return { id: 'issue', view: 'evidence', label: 'case.action.reviewAnalysis' }
+  }
+
+  const pending = caseInfo.evidence_items.filter((item) =>
+    item.kind !== 'reference' && !item.scanned_at).length
+  if (pending > 0) {
+    return { id: 'pending', view: 'evidence', label: 'case.action.analyzeNew', count: pending }
   }
 
   const triage = dashboard?.triage ?? {}

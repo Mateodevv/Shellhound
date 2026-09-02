@@ -45,6 +45,8 @@ export function Evidence({ slug }: {
   const [pathSeededFor, setPathSeededFor] = useState('')
   const [detectFolder, setDetectFolder] = useState('')
   const [detected, setDetected] = useState<DetectResult | null>(null)
+  const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false)
+  const [confirmReanalyze, setConfirmReanalyze] = useState(false)
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['case', slug] })
@@ -82,8 +84,12 @@ export function Evidence({ slug }: {
     onSuccess: invalidate,
   })
   const analyze = useMutation({
-    mutationFn: () => post(`/api/cases/${slug}/analyze`),
-    onSuccess: invalidate,
+    mutationFn: (mode: 'new' | 'all') => post(`/api/cases/${slug}/analyze`, { mode }),
+    onSuccess: () => {
+      setAnalysisMenuOpen(false)
+      setConfirmReanalyze(false)
+      invalidate()
+    },
   })
   const detect = useMutation({
     mutationFn: () => post<DetectResult>('/api/detect', { folder: detectFolder }),
@@ -109,6 +115,17 @@ export function Evidence({ slug }: {
     item: evidence.find((item) => item.kind === kind),
   }))
   const evidenceReady = requiredEvidence.every(({ item }) => Boolean(item))
+  const pendingEvidence = useMemo(() => evidence
+    .filter((item) => !item.scanned_at)
+    .sort((a, b) => (b.added || '').localeCompare(a.added || '') || b.id - a.id), [evidence])
+  const analyzedEvidence = useMemo(() => evidence
+    .filter((item) => Boolean(item.scanned_at)), [evidence])
+  const hasAnalysisHistory = Boolean(jobs?.length)
+  const analysisActive = Boolean(jobs?.some((job) =>
+    job.state === 'queued' || job.state === 'running'))
+  const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
+  const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
+    || (hasAnalysisHistory && pendingEvidence.length === 0)
   const registered = new Set(evidence.map((item) =>
     `${item.kind}\u0000${item.path.replace(/\\/g, '/').toLowerCase()}`))
   const availableCandidates = detected ? (['webroot', 'access_logs', 'sql_dump'] as const)
@@ -123,10 +140,38 @@ export function Evidence({ slug }: {
         title={tr('evidence.title')}
         sub={tr('evidence.sub')}
         right={
-          <Button variant="primary" disabled={!evidence.length || analyze.isPending}
-            onClick={() => analyze.mutate()}>
-            <Play size={14} /> {tr(jobs?.length ? 'evidence.analyzeAgain' : 'evidence.analyze')}
-          </Button>
+          <div className="relative flex">
+            <Button variant="primary" disabled={primaryDisabled}
+              className={hasAnalysisHistory ? 'rounded-r-none' : undefined}
+              onClick={() => analyze.mutate(primaryMode)}>
+              <Play size={14} /> {tr(!hasAnalysisHistory
+                ? 'evidence.analyze'
+                : pendingEvidence.length
+                  ? 'evidence.analyzeNew'
+                  : 'evidence.noNew', { n: pendingEvidence.length })}
+            </Button>
+            {hasAnalysisHistory && (
+              <Button variant="primary" disabled={!evidence.length || analyze.isPending || analysisActive}
+                className="-ml-px rounded-l-none border-l border-white/25 px-2"
+                title={tr('evidence.analysisMenu')}
+                aria-expanded={analysisMenuOpen}
+                aria-controls="analysis-actions"
+                onClick={() => setAnalysisMenuOpen((open) => !open)}>
+                <ChevronDown size={14} />
+              </Button>
+            )}
+            {analysisMenuOpen && !analysisActive && (
+              <div id="analysis-actions"
+                className="absolute right-0 top-[calc(100%+0.35rem)] z-30 w-64 rounded-xl border border-[var(--line-strong)] bg-[var(--panel-raised)] p-1.5 shadow-xl">
+                <button type="button" onClick={() => {
+                  setAnalysisMenuOpen(false)
+                  setConfirmReanalyze(true)
+                }} className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[12.5px] font-medium hover:bg-[var(--panel-2)]">
+                  {tr('evidence.reanalyzeAll')}
+                </button>
+              </div>
+            )}
+          </div>
         }
       >
         <Card surface="raised" className="overflow-hidden">
@@ -178,28 +223,60 @@ export function Evidence({ slug }: {
         </Card>
       </Section>
 
-      <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]" open={!evidenceReady || undefined}>
+      <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]"
+        open={!evidenceReady || pendingEvidence.length > 0 || undefined}>
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold marker:content-none">
           <ChevronRight size={15} className="transition-transform group-open:rotate-90" />
           {tr('evidence.manage')}
           <span className="font-normal text-[var(--muted)]">{tr('evidence.manage.sub')}</span>
         </summary>
-        <div className="flex flex-col gap-5 border-t border-[var(--line-soft)] p-4">
-          <div className="flex flex-col gap-2">
-            {evidence.map((e) => (
-              <EvidenceCard
-                key={e.id}
-                item={e}
-                onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
-                onRemove={() => removeEvidence.mutate(e.id)}
-              />
-            ))}
+          <div className="flex flex-col gap-5 border-t border-[var(--line-soft)] p-4">
+            <div className="flex flex-col gap-2">
+            {pendingEvidence.length > 0 && (<>
+              <div className="flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--sev-low)]">
+                {tr('evidence.new.title')}
+                <span className="rounded-full bg-[var(--review-soft)] px-2 py-0.5 text-[10px] tabular">
+                  {pendingEvidence.length}
+                </span>
+              </div>
+              {pendingEvidence.map((e) => (
+                <EvidenceCard
+                  key={e.id}
+                  item={e}
+                  onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
+                  onRemove={() => removeEvidence.mutate(e.id)}
+                />
+              ))}
+            </>)}
+            {analyzedEvidence.length > 0 && (<>
+              <div className={clsx(
+                'flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--muted)]',
+                pendingEvidence.length > 0 && 'mt-3')}>
+                {tr('evidence.analyzed.title')}
+                <span className="rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[10px] tabular">
+                  {analyzedEvidence.length}
+                </span>
+              </div>
+              {analyzedEvidence.map((e) => (
+                <EvidenceCard
+                  key={e.id}
+                  item={e}
+                  onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
+                  onRemove={() => removeEvidence.mutate(e.id)}
+                />
+              ))}
+            </>)}
             {!evidence.length && (
               <EmptyState
                 icon={<FolderOpen size={36} />}
                 title={tr('evidence.empty.title')}
                 sub={tr('evidence.empty.sub')}
               />
+            )}
+            {evidence.length > 0 && (
+              <p className="pt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+                {tr('evidence.incrementalHint')}
+              </p>
             )}
           </div>
 
@@ -324,6 +401,15 @@ export function Evidence({ slug }: {
       {addEvidence.isError && (
         <div className="text-[13px] text-[var(--danger-text)]">{String(addEvidence.error)}</div>
       )}
+      {analyze.isError && (
+        <div className="text-[13px] text-[var(--danger-text)]">{String(analyze.error)}</div>
+      )}
+      <ConfirmDialog open={confirmReanalyze} onClose={() => setConfirmReanalyze(false)}
+        title={tr('evidence.reanalyze.confirm.title')}
+        body={tr('evidence.reanalyze.confirm.body')}
+        confirmLabel={tr('evidence.reanalyze.confirm.action')}
+        pending={analyze.isPending}
+        onConfirm={() => analyze.mutate('all')} />
     </div>
   )
 }

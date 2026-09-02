@@ -28,7 +28,7 @@ import os
 import re
 
 from server import db, settings as settingslib
-from server.engines.fsutil import get_files_recursive
+from server.engines.fsutil import get_files_recursive, path_within_any
 
 import yara
 
@@ -279,7 +279,7 @@ def _evidence(match):
     return out[:400]
 
 
-def scan(case_dir, targets, workspace=None, ctx=None):
+def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
     """Run every rule in the workspace over every file under `targets`.
 
     Findings land on the FILE artifact, like the webshell scan -- so triage,
@@ -303,6 +303,15 @@ def scan(case_dir, targets, workspace=None, ctx=None):
         # workspace where YARA found nothing.
         conn = db.connect(case_dir)
         try:
+            if authoritative:
+                conn.execute("DELETE FROM skipped WHERE source = 'yara'")
+            else:
+                names = {entry["file"] for entry in broken}
+                ids = [row["id"] for row in conn.execute(
+                    "SELECT id, path FROM skipped WHERE source = 'yara'").fetchall()
+                    if row["path"] in names or path_within_any(row["path"], targets)]
+                conn.executemany("DELETE FROM skipped WHERE id = ?",
+                                 ((row_id,) for row_id in ids))
             for entry in broken:
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
@@ -325,7 +334,15 @@ def scan(case_dir, targets, workspace=None, ctx=None):
     try:
         run = db.begin_run(conn, "yarascan")
         cancelled = False
-        conn.execute("DELETE FROM skipped WHERE source = 'yara'")
+        if authoritative:
+            conn.execute("DELETE FROM skipped WHERE source = 'yara'")
+        else:
+            names = {entry["file"] for entry in broken}
+            ids = [row["id"] for row in conn.execute(
+                "SELECT id, path FROM skipped WHERE source = 'yara'").fetchall()
+                if row["path"] in names or path_within_any(row["path"], targets)]
+            conn.executemany("DELETE FROM skipped WHERE id = ?",
+                             ((row_id,) for row_id in ids))
         # One line per broken rule file, in the same place every other
         # unchecked thing goes: a rule that did not run is not a rule that
         # found nothing.
@@ -376,7 +393,7 @@ def scan(case_dir, targets, workspace=None, ctx=None):
         # so only a completed one may retire the rows it did not reproduce.
         # The compile-failure path above never gets here -- a scan that
         # could not run is not a scan that found nothing.
-        if not cancelled:
+        if authoritative and not cancelled:
             db.complete_run(conn, "yarascan", run)
     finally:
         conn.close()

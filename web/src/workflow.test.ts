@@ -8,7 +8,7 @@ const evidence = (kinds: string[]): CaseDetail => ({
   evidence_items: kinds.map((kind, id) => ({
     id, kind: kind as CaseDetail['evidence_items'][number]['kind'], path: `C:/${kind}`,
     added: '', stats: {}, label: kind, exists: true, files: 1, bytes: 1,
-    scanned_at: '', meta_partial: 0,
+    scanned_at: '2026-01-01T00:00:00Z', meta_partial: 0,
   })),
   log_index: { exists: false, fresh: false, reason: '', lines: 0, clients: 0, unparsed: 0, size: 0 },
 })
@@ -42,5 +42,16 @@ describe('deriveWorkflowAction', () => {
       .toMatchObject({ id: 'triage', count: 5 })
     expect(deriveWorkflowAction(complete, [job('done')], dashboard({ confirmed: 3, dismissed: 2 })))
       .toMatchObject({ id: 'report' })
+  })
+
+  it('prioritises newly registered evidence after run status and before triage', () => {
+    const withPending = evidence(['webroot', 'access_logs', 'sql_dump'])
+    withPending.evidence_items.push({
+      ...withPending.evidence_items[0], id: 9, path: 'C:/webroot-2', scanned_at: '',
+    })
+    expect(deriveWorkflowAction(withPending, [job('done')], dashboard({ new: 3 })))
+      .toMatchObject({ id: 'pending', count: 1, view: 'evidence' })
+    expect(deriveWorkflowAction(withPending, [job('failed')], dashboard({ new: 3 })))
+      .toMatchObject({ id: 'issue' })
   })
 })
