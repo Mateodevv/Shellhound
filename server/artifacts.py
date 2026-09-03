@@ -171,12 +171,10 @@ def web_path(conn, artifact):
     `uri_path()` -- and a URL is not the file system: the same file arrives as
     /Images/Shell.php and /images/shell.php.
     """
-    target = str(artifact).replace("\\", "/")
-    best = ""
-    for row in db.rows(conn, "SELECT path FROM evidence"):
-        root = str(row["path"]).replace("\\", "/").rstrip("/")
-        if root and target.lower().startswith(root.lower() + "/") \
-                and len(root) > len(best):
-            best = root
-    rel = target[len(best) + 1:] if best else os.path.basename(target)
+    # Use the same root/alias handling as collected path IOCs. Otherwise a
+    # Windows 8.3 alias can turn a full request path into just its basename.
+    rel = db.case_relative_path(conn, artifact)
+    rel = str(rel).replace("\\", "/")
+    if rel == str(artifact).replace("\\", "/"):
+        rel = os.path.basename(rel)
     return rel.strip("/").lower()
