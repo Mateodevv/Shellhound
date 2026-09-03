@@ -307,9 +307,13 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
         </select>
         <Tooltip hint={density === 'comfortable'
           ? tr('actors.density.compact.help') : tr('actors.density.comfortable.help')}>
-          <Button variant="ghost" aria-label={tr('actors.density.toggle')}
+          <Button variant="ghost" title={tr('actors.density.label', {
+            value: tr(`actors.density.${density}`),
+          })}
             onClick={() => setDensity((current) => current === 'comfortable' ? 'compact' : 'comfortable')}>
-            <Rows3 size={14} /> {tr(`actors.density.${density}`)}
+            <Rows3 size={14} /> {tr('actors.density.label', {
+              value: tr(`actors.density.${density}`),
+            })}
           </Button>
         </Tooltip>
         <div className="ml-auto flex items-center gap-2 text-[12px] text-[var(--muted)]">
@@ -434,7 +438,9 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
                   className={clsx(
                     'group cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]',
                     density === 'comfortable' ? 'p-3' : 'px-3 py-2',
-                    active ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--panel-2)]',
+                    active
+                      ? 'bg-[var(--accent-soft)] shadow-[inset_3px_0_0_var(--accent)]'
+                      : 'hover:bg-[var(--panel-2)]',
                   )}>
                   <div className="flex min-w-0 items-start gap-3">
                     <input type="checkbox" className="mt-1 shrink-0 cursor-pointer accent-[var(--accent)]"
@@ -554,8 +560,9 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
         onClose={() => { setArtifact(null); triage.clearCollected() }}
-        onTriage={(state, note) => {
-          if (artifact) triage.decide([artifact.artifact], state, note)
+        onSave={(state, note) => {
+          if (!artifact) return Promise.reject(new Error('No artifact selected'))
+          return triage.decideAsync([artifact.artifact], state, note)
         }} />
 
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}

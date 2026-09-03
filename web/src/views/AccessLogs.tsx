@@ -315,13 +315,6 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
         onTime={() => setQuery((current) => ({ ...current, from_epoch: null, to_epoch: null }))} />
     </Card>
 
-    <AccessHistogram overview={overview} loading={overviewQuery.isFetching}
-      onRange={(from, to) => setQuery((current) => ({
-        ...current, from_epoch: from, to_epoch: to,
-      }))} />
-
-    <SummaryStrip data={data} />
-
     <div className="grid min-w-0 gap-3 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_360px]">
       <aside className="min-w-0 space-y-3">
         <SavedSearches rows={savedQuery.data ?? []} onLoad={loadSaved}
@@ -386,6 +379,19 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
         clipNote={clipNote} setClipNote={setClipNote}
         onClip={(id) => clipMutation.mutate(id)} clipping={clipMutation.isPending} />
     </div>
+
+    <details className="rounded-xl border border-[var(--line)] bg-[var(--panel)]">
+      <summary className="cursor-pointer px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] hover:text-[var(--fg)]">
+        {tr('logs.overview.toggle')}
+      </summary>
+      <div className="space-y-3 border-t border-[var(--line)] p-3">
+        <SummaryStrip data={data} />
+        <AccessHistogram overview={overview} loading={overviewQuery.isFetching}
+          onRange={(from, to) => setQuery((current) => ({
+            ...current, from_epoch: from, to_epoch: to,
+          }))} />
+      </div>
+    </details>
 
     <BasketModal slug={slug} open={basketOpen} onClose={() => setBasketOpen(false)}
       clips={clipsQuery.data ?? []} onDelete={(id) => deleteClip.mutate(id)} />
@@ -453,7 +459,14 @@ function AccessHistogram({ overview, loading, onRange }: {
           {point.signals > 0 && <span className="absolute -top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-[var(--sev-high)]" />}
         </button>
       })}
-    </div> : <div className="flex h-24 items-center justify-center text-[12px] text-[var(--muted)]">
+    </div> : loading ? (
+      <div className="flex h-24 items-end gap-1" role="status" aria-label={tr('common.loading')}>
+        {[42, 68, 36, 82, 54, 73, 48, 64, 31, 58, 76, 45].map((height, index) => (
+          <span key={index} className="flex-1 rounded-t-sm bg-[var(--panel-raised)] animate-pulse-soft"
+            style={{ height: `${height}%` }} />
+        ))}
+      </div>
+    ) : <div className="flex h-24 items-center justify-center text-[12px] text-[var(--muted)]">
       {tr('logs.noTimeline')}
     </div>}
   </Card>
@@ -536,31 +549,35 @@ function FacetPanel({ overview, query, onInclude, onExclude, onStatus, onMethod 
 }) {
   const tr = useT()
   return <Card className="p-2.5">
-    <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-      <Filter size={12} /> {tr('logs.facets')}
-    </div>
-    <FacetGroup title={tr('logs.facets.status')} rows={overview?.facets.status ?? []}
-      active={(value) => query.status === String(value)}
-      onInclude={(value) => onStatus(String(value))} />
-    <FacetGroup title={tr('logs.facets.method')} rows={overview?.facets.methods ?? []}
-      active={(value) => query.method === String(value)}
-      onInclude={(value) => onMethod(String(value))} />
-    <FacetGroup title={tr('logs.facets.clients')} rows={overview?.facets.clients ?? []}
-      active={(value) => query.clients.includes(String(value))}
-      onInclude={(value) => onInclude('clients', String(value))}
-      onExclude={(value) => onExclude('clients', String(value))} />
-    <FacetGroup title={tr('logs.facets.paths')} rows={overview?.facets.paths ?? []}
-      active={(value) => query.paths.includes(String(value))}
-      onInclude={(value) => onInclude('paths', String(value))}
-      onExclude={(value) => onExclude('paths', String(value))} />
-    <FacetGroup title={tr('logs.facets.sources')} rows={overview?.facets.sources ?? []}
-      active={(value) => query.source_ids.includes(Number(value))}
-      onInclude={(value) => onInclude('source_ids', Number(value))}
-      onExclude={(value) => onExclude('source_ids', Number(value))} />
-    <FacetGroup title={tr('logs.facets.agents')} rows={overview?.facets.agents ?? []}
-      active={(value) => query.agents.includes(String(value))}
-      onInclude={(value) => onInclude('agents', String(value))}
-      onExclude={(value) => onExclude('agents', String(value))} />
+    <details>
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)] hover:text-[var(--fg)]">
+        <Filter size={12} /> {tr('logs.facets')}
+      </summary>
+      <div className="mt-3 border-t border-[var(--line-soft)] pt-3">
+        <FacetGroup title={tr('logs.facets.status')} rows={overview?.facets.status ?? []}
+          active={(value) => query.status === String(value)}
+          onInclude={(value) => onStatus(String(value))} />
+        <FacetGroup title={tr('logs.facets.method')} rows={overview?.facets.methods ?? []}
+          active={(value) => query.method === String(value)}
+          onInclude={(value) => onMethod(String(value))} />
+        <FacetGroup title={tr('logs.facets.clients')} rows={overview?.facets.clients ?? []}
+          active={(value) => query.clients.includes(String(value))}
+          onInclude={(value) => onInclude('clients', String(value))}
+          onExclude={(value) => onExclude('clients', String(value))} />
+        <FacetGroup title={tr('logs.facets.paths')} rows={overview?.facets.paths ?? []}
+          active={(value) => query.paths.includes(String(value))}
+          onInclude={(value) => onInclude('paths', String(value))}
+          onExclude={(value) => onExclude('paths', String(value))} />
+        <FacetGroup title={tr('logs.facets.sources')} rows={overview?.facets.sources ?? []}
+          active={(value) => query.source_ids.includes(Number(value))}
+          onInclude={(value) => onInclude('source_ids', Number(value))}
+          onExclude={(value) => onExclude('source_ids', Number(value))} />
+        <FacetGroup title={tr('logs.facets.agents')} rows={overview?.facets.agents ?? []}
+          active={(value) => query.agents.includes(String(value))}
+          onInclude={(value) => onInclude('agents', String(value))}
+          onExclude={(value) => onExclude('agents', String(value))} />
+      </div>
+    </details>
   </Card>
 }
 

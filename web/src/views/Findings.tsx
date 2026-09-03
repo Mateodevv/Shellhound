@@ -24,21 +24,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
+  ArrowRight, BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
   Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
-  Folder, FolderOpen, KeyRound, Radar, X,
+  Folder, FolderOpen, Keyboard, KeyRound, ListFilter, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { api, type ArtifactRow, type Finding, type FindingsResponse } from '../api'
 import {
-  api, type ArtifactRow, type Finding, type FindingsResponse,
-} from '../api'
-import {
-  SEVERITY_LABEL, SEVERITY_VAR, formatCount,
+  SEVERITY_VAR, formatCount,
   relativeToRoot, shortPath, type EvidenceRoot,
 } from '../format'
 import {
-  Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge,
-  TriageBadge,
+  Button, Card, EmptyState, Modal, SearchInput, SeverityBadge,
+  Toast, TriageBadge,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { FileViewer } from '../components/FileViewer'
@@ -48,6 +46,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
 import { artifactNoun, categorize, explainRule, type Category } from '../explain'
+import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import type { Navigate } from '../App'
 
 // One icon per category. The category is the structure one starts from --
@@ -189,6 +188,28 @@ function directoryForest(artifacts: Artifact[], roots: EvidenceRoot[], category:
   return { direct, directories: top }
 }
 
+/** Follow the exact category/directory order used by the queue, including
+ * artifacts hidden behind a collapsed presentation group. Collapsing is a
+ * reading preference, not another filter. */
+function orderedQueue(categories: CatGroup[], roots: EvidenceRoot[]): Artifact[] {
+  const ordered: Artifact[] = []
+  const addDirectory = (directory: DirectoryNode) => {
+    ordered.push(...directory.artifacts)
+    for (const child of directory.children) addDirectory(child)
+  }
+  for (const category of categories) {
+    const tree = directoryForest(category.artifacts, roots, category.cat.id)
+    if (tree.directories.length) {
+      ordered.push(...tree.direct.filter((artifact) => artifact.artifact_kind !== 'file'))
+      for (const directory of tree.directories) addDirectory(directory)
+      ordered.push(...tree.direct.filter((artifact) => artifact.artifact_kind === 'file'))
+    } else {
+      ordered.push(...tree.direct)
+    }
+  }
+  return ordered
+}
+
 export function Findings({ slug, gotoView }: {
   slug: string
   gotoView: Navigate
@@ -225,10 +246,12 @@ export function Findings({ slug, gotoView }: {
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   // What the trace should mark red -- comes from the artifact window, which
   // knows what this is about (the file, or the client's alert).
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
+  const [queueComplete, setQueueComplete] = useState(false)
   const savedKey = `shellhound.saved-findings.${slug}`
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
     try { return JSON.parse(localStorage.getItem(savedKey) || '[]') }
@@ -317,20 +340,42 @@ export function Findings({ slug, gotoView }: {
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
   }, [data, tr])
+  const reviewQueue = useMemo(() => orderedQueue(categories, roots), [categories, roots])
+  const firstReview = useMemo(() => firstReviewArtifact(reviewQueue), [reviewQueue])
+  const reviewableCount = useMemo(() => reviewQueue.filter((artifact) =>
+    artifact.triage === 'new' || artifact.triage === 'reviewed').length, [reviewQueue])
 
   useEffect(() => {
-    const requested = new URLSearchParams(location.search).get('artifact')
+    const params = new URLSearchParams(location.search)
+    if (params.get('next') === '1') {
+      if (firstReview) {
+        setQueueComplete(false)
+        setSelected(firstReview)
+        const url = new URL(location.href)
+        url.searchParams.set('artifact', firstReview.artifact)
+        url.searchParams.delete('next')
+        history.replaceState(null, '', url)
+      } else if (data) {
+        const url = new URL(location.href)
+        url.searchParams.delete('next')
+        history.replaceState(null, '', url)
+      }
+      return
+    }
+    const requested = params.get('artifact')
     if (!requested || selected?.artifact === requested) return
     const found = categories.flatMap((category) => category.artifacts)
       .find((artifact) => artifact.artifact === requested)
     if (found) setSelected(found)
-  }, [categories, selected?.artifact])
+  }, [categories, data, firstReview, selected?.artifact])
 
   const openArtifact = (artifact: Artifact) => {
     t.clearCollected()
+    setQueueComplete(false)
     setSelected(artifact)
     const url = new URL(location.href)
     url.searchParams.set('artifact', artifact.artifact)
+    url.searchParams.delete('next')
     history.replaceState(null, '', url)
   }
 
@@ -521,63 +566,41 @@ export function Findings({ slug, gotoView }: {
   }
 
   const counts = data?.counts
+  const filterCount = hiddenSeverity.size + hiddenTriage.size + hiddenSource.size + (showRetired ? 1 : 0)
 
   return (
     <div className="flex h-[calc(100vh-150px)] flex-col gap-3 md:h-[calc(100vh-110px)]">
-      <div className="flex flex-wrap items-center gap-2">
-        <Tooltip title={tr('dashboard.artifacts')}
-          body={tr('findings.title.body')}
-          hint={tr('findings.title.hint')}>
-          <h1 className="mr-2 text-lg font-bold">{tr('nav.findings')}</h1>
-        </Tooltip>
-        {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
-           ['2', 'Low', 'var(--sev-low)'], ['3', 'Info', 'var(--muted)']] as const
-        ).map(([s, label, color]) => (
-          <Tooltip key={s}
-            hint={hiddenSeverity.has(s)
-              ? tr('findings.hidden.back', { what: label })
-              : tr('filter.hide', { what: label })}>
-            <Chip active={!hiddenSeverity.has(s)} dimmed={hiddenSeverity.has(s)}
-              onClick={() => setHiddenSeverity((prev) => toggleHidden(prev, s))}
-              count={counts?.severity[s] ?? 0}>
-              <span className="h-2 w-2 rounded-full" style={{ background: color }} /> {label}
-            </Chip>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className={clsx('min-w-48', !firstReview && 'mr-auto')}>
+          <Tooltip title={tr('dashboard.artifacts')}
+            body={tr('findings.title.body')}
+            hint={tr('findings.title.hint')}>
+            <h1 className="text-lg font-bold">{tr('nav.findings')}</h1>
           </Tooltip>
-        ))}
-        <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {(['new', 'reviewed', 'confirmed', 'dismissed'] as const).map((state) => (
-          <Tooltip key={state}
-            hint={hiddenTriage.has(state)
-              ? tr('findings.hidden.back', { what: tr(`triage.${state}`) })
-              : tr('filter.hide', { what: tr(`triage.${state}`) })}>
-            <Chip active={!hiddenTriage.has(state)} dimmed={hiddenTriage.has(state)}
-              onClick={() => setHiddenTriage((prev) => toggleHidden(prev, state))}
-              count={counts?.triage[state] ?? 0}>
-              {tr(`triage.${state}`)}
-            </Chip>
-          </Tooltip>
-        ))}
-        <span className="mx-1 h-4 w-px bg-[var(--line)]" />
-        {/* THE SOURCES THAT EXIST. `errorlog` is not one -- those findings
-            are written as `logs` -- and `yara` is, but the server's whitelist
-            never included it, so both chips looked active and filtered
-            nothing. A dead switch in a filter is worse than a missing one:
-            it reads as "I have excluded these". */}
-        {ALL_SOURCES.map((key) => {
-          const label = tr(`source.${key}`)
-          return (
-          <Tooltip key={key}
-            hint={hiddenSource.has(key)
-              ? tr('findings.hidden.back', { what: label })
-              : tr('filter.hide', { what: label })}>
-            <Chip active={!hiddenSource.has(key)} dimmed={hiddenSource.has(key)}
-              onClick={() => setHiddenSource((prev) => toggleHidden(prev, key))}
-              count={counts?.source[key] ?? 0}>
-              {label}
-            </Chip>
-          </Tooltip>
-        )})}
-        <div className="ml-auto flex items-center gap-2">
+          <div className="mt-0.5 text-[11px] text-[var(--muted)]">
+            {tr('findings.count', {
+              artifacts: formatCount(data?.total ?? 0),
+              findings: formatCount(data?.findings_total ?? 0),
+              categories: formatCount(categories.length),
+            })}
+          </div>
+        </div>
+        {firstReview && (
+          <Button variant="primary" onClick={() => openArtifact(firstReview)}
+            className="mr-auto shrink-0 px-4 py-2 text-[13px] font-semibold">
+            {tr('case.action.reviewNext', { n: reviewableCount })}
+            <ArrowRight size={15} />
+          </Button>
+        )}
+        <div className="min-w-[16rem] flex-1 sm:max-w-md">
+          <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
+        </div>
+        <Button onClick={() => setFiltersOpen((open) => !open)}
+          aria-expanded={filtersOpen} aria-controls="findings-filter-panel">
+          <ListFilter size={14} /> {tr('findings.filters', { n: filterCount })}
+        </Button>
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-1">
+          <span className="pl-2 text-[11px] font-semibold text-[var(--muted)]">{tr('findings.views')}</span>
           {savedViews.length > 0 && (
             <select defaultValue="" aria-label={tr('findings.saved.views')}
               onChange={(event) => { applyView(event.target.value); event.target.value = '' }}
@@ -589,9 +612,62 @@ export function Findings({ slug, gotoView }: {
           <Button variant="ghost" onClick={saveView} title={tr('findings.saved.save')}>
             <BookmarkPlus size={14} /> {tr('findings.saved.save')}
           </Button>
-          <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
         </div>
+        <Button variant="ghost" onClick={() => setHelpOpen(true)}>
+          <Keyboard size={14} /> {tr('findings.shortcuts')}
+        </Button>
       </div>
+
+      {filtersOpen && (
+        <Card id="findings-filter-panel" surface="raised" className="grid gap-4 p-4 sm:grid-cols-3 animate-fade-up">
+          <FilterGroup title={tr('findings.filter.severity')}>
+            {([['0', 'High', 'var(--sev-high)'], ['1', 'Medium', 'var(--sev-medium)'],
+               ['2', 'Low', 'var(--sev-low)'], ['3', 'Info', 'var(--muted)']] as const
+            ).map(([value, label, color]) => (
+              <FilterCheck key={value} checked={!hiddenSeverity.has(value)} label={label}
+                count={counts?.severity[value] ?? 0} color={color}
+                onChange={() => setHiddenSeverity((previous) => toggleHidden(previous, value))} />
+            ))}
+          </FilterGroup>
+          <FilterGroup title={tr('findings.filter.decision')}>
+            {ALL_TRIAGE.map((state) => (
+              <FilterCheck key={state} checked={!hiddenTriage.has(state)}
+                label={tr(`triage.${state}`)} count={counts?.triage[state] ?? 0}
+                onChange={() => setHiddenTriage((previous) => toggleHidden(previous, state))} />
+            ))}
+          </FilterGroup>
+          <FilterGroup title={tr('findings.filter.source')}>
+            {ALL_SOURCES.map((source) => (
+              <FilterCheck key={source} checked={!hiddenSource.has(source)}
+                label={tr(`source.${source}`)} count={counts?.source[source] ?? 0}
+                onChange={() => setHiddenSource((previous) => toggleHidden(previous, source))} />
+            ))}
+            <FilterCheck checked={showRetired} label={tr('findings.filter.retired')}
+              onChange={() => setShowRetired((shown) => !shown)} />
+          </FilterGroup>
+          <div className="flex flex-wrap items-center gap-3 border-t border-[var(--line-soft)] pt-3 sm:col-span-3">
+            <span className="text-[11px] text-[var(--muted)]">{tr('findings.filterMeaning')}</span>
+            <button className="cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
+              onClick={() => {
+                setHiddenSeverity(new Set())
+                setHiddenTriage(new Set())
+                setHiddenSource(new Set())
+              }}>
+              {tr('findings.showAll')}
+            </button>
+            <button className="cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
+              onClick={() => {
+                setHiddenSeverity(new Set(['3']))
+                setHiddenTriage(new Set(['dismissed']))
+                setHiddenSource(new Set())
+                setSearch('')
+                setShowRetired(false)
+              }}>
+              {tr('findings.resetFilters')}
+            </button>
+          </div>
+        </Card>
+      )}
 
       {/* A rule that was switched off takes artifacts with it. That has to
           be said: the analyst who muted a rule three cases ago will not
@@ -640,47 +716,22 @@ export function Findings({ slug, gotoView }: {
           <span className="opacity-70">
             {tr('findings.hidden', { n: formatCount(counts.total - data.total) })}
           </span>
-          <button
-            className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
-            onClick={() => {
-              setHiddenSeverity(new Set())
-              setHiddenTriage(new Set())
-              setHiddenSource(new Set())
-            }}>
-            {tr('findings.showAll')}
-          </button>
         </div>
       )}
-
-      <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--muted)]">
-        <span>{tr('findings.filterMeaning')}</span>
-        {(hiddenSeverity.size > 0 || hiddenTriage.size > 0 || hiddenSource.size > 0 || search || showRetired) && (
-          <button className="cursor-pointer font-semibold text-[var(--accent-text)] hover:underline"
-            onClick={() => {
-              setHiddenSeverity(new Set(['3']))
-              setHiddenTriage(new Set(['dismissed']))
-              setHiddenSource(new Set())
-              setSearch('')
-              setShowRetired(false)
-            }}>
-            {tr('findings.resetFilters')}
-          </button>
-        )}
-      </div>
 
       {checked.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">
             {tr('findings.selected', { n: formatCount(checked.size) })}
           </span>
-          <Button variant="primary" onClick={() => bulkTriage('confirmed')}>
+          <Button variant="incident" onClick={() => bulkTriage('confirmed')}>
             <Check size={14} /> {tr('artifact.truePositiveCollect')}
           </Button>
-          <Button onClick={() => bulkTriage('reviewed')}>
+          <Button variant="review" onClick={() => bulkTriage('reviewed')}>
             <Eye size={14} /> {tr('triage.reviewed')}
           </Button>
-          <Button variant="danger" onClick={() => bulkTriage('dismissed')}>
-            <X size={14} /> False Positive
+          <Button variant="outline" onClick={() => bulkTriage('dismissed')}>
+            <X size={14} /> {tr('triage.dismissed')}
           </Button>
           <input
             value={bulkNote}
@@ -692,13 +743,6 @@ export function Findings({ slug, gotoView }: {
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
-          <span>
-            {tr('findings.count', {
-              artifacts: formatCount(data?.total ?? 0),
-              findings: formatCount(data?.findings_total ?? 0),
-              categories: formatCount(categories.length),
-            })}
-          </span>
           {/* A LIST THAT QUIETLY SHRINKS IS A LIST NOBODY CAN TRUST. The
               request is capped at 2000 while the count beside it describes
               the whole set, so above that the header stated a number the
@@ -721,16 +765,6 @@ export function Findings({ slug, gotoView }: {
             }}>
             {tr('findings.toggleAll')}
           </button>
-          <span className="opacity-60">·</span>
-          <span>
-            {tr('findings.keys')}: <kbd className="rounded bg-[var(--panel-2)] px-1">j</kbd>/<kbd className="rounded bg-[var(--panel-2)] px-1">k</kbd> {tr('findings.keys.navigate')},{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">x</kbd> {tr('findings.keys.check')},{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">c</kbd> True Positive,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">d</kbd> False Positive,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">r</kbd> {tr('triage.reviewed')},{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">Enter</kbd> Details,{' '}
-            <kbd className="rounded bg-[var(--panel-2)] px-1">?</kbd> {tr('findings.keys.help')}
-          </span>
         </div>
       )}
 
@@ -764,7 +798,7 @@ export function Findings({ slug, gotoView }: {
               return (
                 <div key={'c' + c.cat.id}
                   className={clsx(
-                    'absolute left-0 top-0 flex w-full items-center gap-3 pr-4',
+                    'absolute left-0 top-0 flex w-full items-center gap-2 pr-2 sm:gap-3 sm:pr-4',
                     'border-y border-[var(--line)]',
                     // The rule above only when a category is currently
                     // CLOSED -- when open it flows into its artifacts.
@@ -786,11 +820,11 @@ export function Findings({ slug, gotoView }: {
                     title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
                     aria-label={open ? tr('findings.collapse') : tr('findings.expand')}
-                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left sm:gap-3">
                     {open
                       ? <ChevronDown size={16} className="shrink-0 text-[var(--muted)]" />
                       : <ChevronRight size={16} className="shrink-0 text-[var(--muted)]" />}
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                    <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:flex"
                       style={{ background: `color-mix(in srgb, ${tint} 20%, transparent)`,
                                color: tint }}>
                       <CatIcon size={17} />
@@ -817,8 +851,8 @@ export function Findings({ slug, gotoView }: {
                   <Tooltip
                     title={tr('findings.progress', { decided, total: c.artifacts.length })}
                     hint={`${c.confirmed} True Positive · ${c.dismissed} False Positive · ${tr('findings.open', { n: c.artifacts.length - decided })}`}>
-                    <div className="flex w-24 shrink-0 items-center gap-2">
-                      <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)]">
+                    <div className="flex w-auto shrink-0 items-center gap-2 sm:w-24">
+                      <span className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--panel)] sm:flex">
                         {c.confirmed > 0 && (
                           <span style={{ width: `${(c.confirmed / c.artifacts.length) * 100}%`,
                                          background: 'var(--sev-high)' }} />
@@ -843,10 +877,12 @@ export function Findings({ slug, gotoView }: {
               const tint = SEVERITY_VAR[item.d.worst]
               return (
                 <div key={'d' + item.d.key}
-                  className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-4 text-[12px] hover:bg-[var(--panel-2)]"
+                  className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-2 text-[12px] hover:bg-[var(--panel-2)] sm:pr-4"
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-25" style={{ background: tint }} />
-                  <span className="shrink-0" style={{ width: `${item.depth * 18 + 32}px` }} />
+                  <span className="hidden shrink-0 sm:block"
+                    style={{ width: `${item.depth * 18 + 32}px` }} />
+                  <span className="w-1 shrink-0 sm:hidden" />
                   <button
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded py-1 text-left"
                     aria-label={open
@@ -864,7 +900,9 @@ export function Findings({ slug, gotoView }: {
                       : <Folder size={15} className="shrink-0 text-[var(--muted)]" />}
                     <span className="mono truncate font-medium">{item.d.name}</span>
                     {item.d.path !== item.d.name && (
-                      <span className="truncate text-[10.5px] text-[var(--muted)]">{item.d.path}</span>
+                      <span className="hidden truncate text-[10.5px] text-[var(--muted)] sm:inline">
+                        {item.d.path}
+                      </span>
                     )}
                     <span className="ml-auto shrink-0 text-[10.5px] text-[var(--muted)] tabular">
                       {tr('findings.folder.files', { n: formatCount(item.d.count) })}
@@ -895,8 +933,8 @@ export function Findings({ slug, gotoView }: {
                     a.findings === 0 && a.retired > 0 && 'opacity-35')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
-                  <span className="shrink-0" style={{ width: `${item.depth * 18}px` }} />
-                  <input type="checkbox" className="ml-4 cursor-pointer accent-[var(--accent)]"
+                  <span className="hidden shrink-0 sm:block" style={{ width: `${item.depth * 18}px` }} />
+                  <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={checked.has(a.artifact)}
                     onChange={(e) => {
                       const next = new Set(checked)
@@ -923,7 +961,7 @@ export function Findings({ slug, gotoView }: {
                     {/* The artifact kind as an icon, tinted by severity: a file
                         looks different from a client, and red stands out of a
                         list. */}
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                    <span className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg sm:flex"
                       style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`,
                                color: tint }}>
                       <Icon size={15} />
@@ -944,9 +982,16 @@ export function Findings({ slug, gotoView }: {
                       </div>
                       <RuleChips items={a.items} />
                     </div>
-                    <SeverityMeter items={a.items} total={a.findings} />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <SeverityBadge severity={a.worst} />
+                      <span className="hidden text-[10.5px] text-[var(--muted)] tabular sm:inline">
+                        {tr(a.findings === 1 ? 'findings.observation.one' : 'findings.observation.many', {
+                          n: formatCount(a.findings),
+                        })}
+                      </span>
+                    </div>
                   </button>
-                  <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <div className="hidden shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 sm:flex">
                     {a.artifact_kind === 'file' && (
                       <Tooltip hint={tr('findings.viewFile.hint')}>
                         <button
@@ -1012,10 +1057,26 @@ export function Findings({ slug, gotoView }: {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={closeArtifact}
-        onTriage={(state, note) => {
-          if (selected) t.decide([selected.artifact], state, note)
+        onSave={(state, note) => {
+          if (!selected) return Promise.reject(new Error('No artifact selected'))
+          return t.decideAsync([selected.artifact], state, note)
+        }}
+        onSavedNext={(result) => {
+          if (!selected || result.updated === 0) return
+          const next = nextReviewArtifact(
+            reviewQueue, selected.artifact, result.linked.map((link) => link.artifact))
+          if (next) openArtifact(next)
+          else {
+            closeArtifact()
+            setQueueComplete(true)
+          }
         }}
       />
+
+      <Toast open={queueComplete} onClose={() => setQueueComplete(false)} tone="ok"
+        title={tr('findings.queueComplete.title')}>
+        {tr('findings.queueComplete.body')}
+      </Toast>
 
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
         onClose={() => setTraceIps(null)} />
@@ -1062,13 +1123,46 @@ export function Findings({ slug, gotoView }: {
   )
 }
 
-/** The rules of an artifact as chips under its name -- one sees in the list
- *  WHAT it is about without expanding or opening. More than three would be a
- *  second list inside the list; the rest stands next to it as a number. */
+function FilterGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset className="min-w-0">
+      <legend className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+        {title}
+      </legend>
+      <div className="flex flex-col gap-1">{children}</div>
+    </fieldset>
+  )
+}
+
+function FilterCheck({ checked, label, count, color, onChange }: {
+  checked: boolean
+  label: string
+  count?: number
+  color?: string
+  onChange: () => void
+}) {
+  return (
+    <label className={clsx(
+      'flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12px] transition-colors',
+      checked
+        ? 'border-[var(--line-strong)] bg-[var(--panel)] text-[var(--fg)]'
+        : 'border-transparent text-[var(--muted)] hover:bg-[var(--panel)]',
+    )}>
+      <input type="checkbox" checked={checked} onChange={onChange}
+        className="h-3.5 w-3.5 cursor-pointer accent-[var(--accent)]" />
+      {color && <span className="h-2 w-2 rounded-full" style={{ background: color }} />}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count != null && <span className="tabular text-[10.5px] text-[var(--muted)]">{formatCount(count)}</span>}
+    </label>
+  )
+}
+
+/** The leading reason explains why the artifact is here. Supporting reasons
+ *  remain available in the expanded row and detail window. */
 function RuleChips({ items }: { items: Finding[] }) {
   const tr = useT()
   if (!items.length) return null
-  const shown = items.slice(0, 3)
+  const shown = items.slice(0, 1)
   const rest = items.length - shown.length
   return (
     <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
@@ -1084,41 +1178,13 @@ function RuleChips({ items }: { items: Finding[] }) {
         )
       })}
       {rest > 0 && (
-        <span className="shrink-0 text-[10.5px] text-[var(--muted)]">+{rest}</span>
+        <span className="shrink-0 text-[10.5px] text-[var(--muted)]">
+          {tr(rest === 1 ? 'findings.moreObservation.one' : 'findings.moreObservation.many', {
+            n: formatCount(rest),
+          })}
+        </span>
       )}
     </div>
-  )
-}
-
-/** How the findings of an artifact distribute across the severities. Two
- *  artifacts with "4 findings" are not the same thing: four times LOW is a
- *  different picture from twice HIGH -- and that is exactly what one should
- *  see without expanding the row. */
-function SeverityMeter({ items, total }: { items: Finding[]; total: number }) {
-  const counts = [0, 1, 2, 3].map((s) => items.filter((f) => f.severity === s).length)
-  const sum = counts.reduce((a, b) => a + b, 0)
-  if (!sum) {
-    return (
-      <span className="shrink-0 text-[11px] text-[var(--muted)] tabular">
-        {formatCount(total)}
-      </span>
-    )
-  }
-  return (
-    <Tooltip
-      title={`${formatCount(sum)} Finding${sum === 1 ? '' : 's'} auf diesem Artefakt`}
-      hint={counts
-        .map((n, s) => (n ? `${n}× ${SEVERITY_LABEL[s]}` : null))
-        .filter(Boolean).join(' · ')}>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="flex h-1.5 w-16 overflow-hidden rounded-full bg-[var(--panel-2)]">
-          {counts.map((n, s) => n > 0 && (
-            <span key={s} style={{ width: `${(n / sum) * 100}%`, background: SEVERITY_VAR[s] }} />
-          ))}
-        </span>
-        <span className="w-4 text-right text-[11px] text-[var(--muted)] tabular">{sum}</span>
-      </div>
-    </Tooltip>
   )
 }
 
@@ -1152,12 +1218,15 @@ function ArtifactName({ artifact, kind, roots }: {
     ? (root.label?.trim() ||
        root.path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop())
     : null
+  const displayName = root ? rel : shortPath(artifact, 80)
+  const leafName = displayName.replace(/\\/g, '/').split('/').pop() || displayName
   return (
     <Tooltip wide className="min-w-0"
       title={rootName ? tr('findings.under', { root: rootName }) : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
-        {root ? rel : shortPath(artifact, 80)}
+        <span className="sm:hidden">{leafName}</span>
+        <span className="hidden sm:inline">{displayName}</span>
       </span>
     </Tooltip>
   )

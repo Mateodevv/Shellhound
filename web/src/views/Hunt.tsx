@@ -397,6 +397,8 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         <HuntResults slug={slug} test={activeTest} selected={selected}
           collapsed={resultsCollapsed}
           ruleName={draft?.name}
+          ruleMeaning={draft?.means}
+          ruleNotMeaning={draft?.notMeans}
           sort={session.resultSort} direction={session.resultDirection}
           onSort={(resultSort) => mutateSession({
             resultSort,

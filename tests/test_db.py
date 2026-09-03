@@ -6,13 +6,15 @@ connection used to write unconditionally, so a read-only request that
 arrived while an engine held the write lock died with "database is locked".
 It reproduced every time; it must never come back silently.
 """
+import os
 import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from server import db
+from server import artifacts, db
 
 
 class ConnectTests(unittest.TestCase):
@@ -238,6 +240,39 @@ class RelativePathTests(unittest.TestCase):
         self.assertEqual(
             "images/x.phtml",
             self._relative(r"d:/work/CASE-42/Webroot-Copy/images/x.phtml"))
+
+    def test_local_aliases_keep_the_relative_ioc_and_request_path(self):
+        root = r"D:\Work\case-42\webroot-copy"
+        target = "D:/Long Work/case-42/webroot-copy/Images/review.txt"
+        resolved = {root.replace("\\", "/"): "D:/Long Work/case-42/webroot-copy",
+                    target: target}
+        with patch.object(db, "_resolved_norm", side_effect=resolved.get):
+            self.assertEqual("Images/review.txt", self._relative(target))
+            conn = db.connect(self.case)
+            try:
+                self.assertEqual("images/review.txt", artifacts.web_path(conn, target))
+            finally:
+                conn.close()
+
+    def test_resolved_sibling_is_not_treated_as_a_child(self):
+        target = "D:/Long Work/case-42/webroot-copy-other/review.txt"
+        with patch.object(db, "_resolved_norm", side_effect=lambda path:
+                          target if path == target else "D:/Long Work/case-42/webroot-copy"):
+            self.assertEqual(target, self._relative(target))
+
+    @unittest.skipUnless(os.name == "nt", "NTFS path aliases")
+    def test_real_windows_short_path_registration(self):
+        import ctypes
+        root = self.case / "long-evidence-directory"
+        file = root / "Images" / "review.txt"
+        file.parent.mkdir(parents=True)
+        file.write_text("Harmless synthetic marker.", encoding="utf-8")
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(root), buffer, len(buffer))
+        if not length or buffer.value == str(root):
+            self.skipTest("8.3 aliases not available on this volume")
+        self.assertEqual("Images/review.txt", db.relative_to_evidence(
+            [buffer.value.replace("\\", "/")], str(file.resolve())))
 
     def test_a_path_below_no_root_is_handed_back_unchanged(self):
         """Better an absolute path than an invented relative one."""

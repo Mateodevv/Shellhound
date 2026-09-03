@@ -12,10 +12,11 @@ import {
   type EvidenceItem, type Job, type PickPath,
 } from '../api'
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
-import { Button, Card, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
+import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
+import { EVIDENCE_KINDS } from '../workflow'
 
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
@@ -44,6 +45,8 @@ export function Evidence({ slug }: {
   const [pathSeededFor, setPathSeededFor] = useState('')
   const [detectFolder, setDetectFolder] = useState('')
   const [detected, setDetected] = useState<DetectResult | null>(null)
+  const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false)
+  const [confirmReanalyze, setConfirmReanalyze] = useState(false)
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['case', slug] })
@@ -81,8 +84,12 @@ export function Evidence({ slug }: {
     onSuccess: invalidate,
   })
   const analyze = useMutation({
-    mutationFn: () => post(`/api/cases/${slug}/analyze`),
-    onSuccess: invalidate,
+    mutationFn: (mode: 'new' | 'all') => post(`/api/cases/${slug}/analyze`, { mode }),
+    onSuccess: () => {
+      setAnalysisMenuOpen(false)
+      setConfirmReanalyze(false)
+      invalidate()
+    },
   })
   const detect = useMutation({
     mutationFn: () => post<DetectResult>('/api/detect', { folder: detectFolder }),
@@ -103,6 +110,22 @@ export function Evidence({ slug }: {
   }, [caseInfo, evidence, pathSeededFor, slug])
   const index = caseInfo?.log_index
   const runs = useMemo(() => groupJobs(jobs ?? []), [jobs])
+  const evidenceSources = EVIDENCE_KINDS.map((kind) => ({
+    kind,
+    item: evidence.find((item) => item.kind === kind),
+  }))
+  const evidenceReady = evidenceSources.some(({ item }) => Boolean(item))
+  const pendingEvidence = useMemo(() => evidence
+    .filter((item) => !item.scanned_at)
+    .sort((a, b) => (b.added || '').localeCompare(a.added || '') || b.id - a.id), [evidence])
+  const analyzedEvidence = useMemo(() => evidence
+    .filter((item) => Boolean(item.scanned_at)), [evidence])
+  const hasAnalysisHistory = Boolean(jobs?.length)
+  const analysisActive = Boolean(jobs?.some((job) =>
+    job.state === 'queued' || job.state === 'running'))
+  const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
+  const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
+    || (hasAnalysisHistory && pendingEvidence.length === 0)
   const registered = new Set(evidence.map((item) =>
     `${item.kind}\u0000${item.path.replace(/\\/g, '/').toLowerCase()}`))
   const availableCandidates = detected ? (['webroot', 'access_logs', 'sql_dump'] as const)
@@ -117,69 +140,181 @@ export function Evidence({ slug }: {
         title={tr('evidence.title')}
         sub={tr('evidence.sub')}
         right={
-          <Button variant="primary" disabled={!evidence.length || analyze.isPending}
-            onClick={() => analyze.mutate()}>
-            <Play size={14} /> {tr('evidence.analyze')}
-          </Button>
+          <div className="relative flex">
+            <Button variant="primary" disabled={primaryDisabled}
+              className={hasAnalysisHistory ? 'rounded-r-none' : undefined}
+              onClick={() => analyze.mutate(primaryMode)}>
+              <Play size={14} /> {tr(!hasAnalysisHistory
+                ? 'evidence.analyze'
+                : pendingEvidence.length
+                  ? 'evidence.analyzeNew'
+                  : 'evidence.noNew', { n: pendingEvidence.length })}
+            </Button>
+            {hasAnalysisHistory && (
+              <Button variant="primary" disabled={!evidence.length || analyze.isPending || analysisActive}
+                className="-ml-px rounded-l-none border-l border-white/25 px-2"
+                title={tr('evidence.analysisMenu')}
+                aria-expanded={analysisMenuOpen}
+                aria-controls="analysis-actions"
+                onClick={() => setAnalysisMenuOpen((open) => !open)}>
+                <ChevronDown size={14} />
+              </Button>
+            )}
+            {analysisMenuOpen && !analysisActive && (
+              <div id="analysis-actions"
+                className="absolute right-0 top-[calc(100%+0.35rem)] z-30 w-64 rounded-xl border border-[var(--line-strong)] bg-[var(--panel-raised)] p-1.5 shadow-xl">
+                <button type="button" onClick={() => {
+                  setAnalysisMenuOpen(false)
+                  setConfirmReanalyze(true)
+                }} className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-[12.5px] font-medium hover:bg-[var(--panel-2)]">
+                  {tr('evidence.reanalyzeAll')}
+                </button>
+              </div>
+            )}
+          </div>
         }
       >
-        <div className="flex flex-col gap-2">
-          {evidence.map((e) => (
-            <EvidenceCard
-              key={e.id}
-              item={e}
-              onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
-              onRemove={() => removeEvidence.mutate(e.id)}
-            />
-          ))}
-          {!evidence.length && (
-            <EmptyState
-              icon={<FolderOpen size={36} />}
-              title={tr('evidence.empty.title')}
-              sub={tr('evidence.empty.sub')}
-            />
-          )}
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) => (
-            <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
-              hint={explain(tr, `evidence.${kind}`)?.why} wide>
-              <Button onClick={() => setBrowsing(kind)}>
-                <FolderOpen size={14} /> {tr('evidence.add', { what: tr(`evidence.${kind}`) })}
-              </Button>
-            </Tooltip>
-          ))}
-        </div>
-
-        {index && evidence.some((e) => e.kind === 'access_logs') && (
-          <Card className="mt-3 px-4 py-3">
-            <div className="flex items-center gap-2 text-[13px]">
-              {index.fresh
-                ? <CheckCircle2 size={15} className="text-[var(--ok)]" />
-                : <TriangleAlert size={15} className="text-[var(--sev-low)]" />}
-              <span className="font-medium">{tr('evidence.logIndex')}</span>
-              <InfoDot body={tr('field.log_index')} wide />
-              {index.fresh ? (
-                <span className="text-[var(--muted)]">
-                  {tr('evidence.logIndex.fresh', {
-                    lines: formatCount(index.lines),
-                    clients: formatCount(index.clients),
-                    size: formatBytes(index.size),
-                  })}
-                </span>
-              ) : (
-                <span className="text-[var(--muted)]">{index.reason}</span>
-              )}
+        <Card surface="raised" className="overflow-hidden">
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-4 py-3">
+            <div>
+              <div className="text-[13px] font-semibold">
+                {tr(evidenceReady ? 'evidence.ready.title' : 'evidence.checklist.title')}
+              </div>
+              <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
+                {tr(evidenceReady ? 'evidence.ready.sub' : 'evidence.checklist.sub')}
+              </div>
             </div>
-          </Card>
-        )}
+            <Tag tone={evidenceReady ? 'ok' : 'warn'}>
+              {tr(evidenceReady ? 'evidence.ready' : 'evidence.noneRegistered')}
+            </Tag>
+          </div>
+          <div className="grid md:grid-cols-3">
+            {evidenceSources.map(({ kind, item }) => {
+              const Icon = KIND_ICON[kind] ?? HardDrive
+              return (
+                <div key={kind}
+                  className="flex min-w-0 items-center gap-3 border-b border-[var(--line-soft)] px-4 py-3 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0">
+                  <span className={clsx(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+                    item
+                      ? 'border-[var(--ok)]/40 bg-[var(--ok)]/10 text-[var(--ok)]'
+                      : 'border-[var(--line-strong)] bg-[var(--panel-2)] text-[var(--muted)]',
+                  )}>
+                    {item ? <CheckCircle2 size={15} /> : <Icon size={15} />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12.5px] font-semibold">{tr(`evidence.${kind}`)}</div>
+                    <div className="truncate text-[10.5px] text-[var(--muted)]" title={item?.path}>
+                      {item ? tr('evidence.registered') : tr('evidence.missing')}
+                    </div>
+                  </div>
+                  {!item && (
+                    <Button variant="ghost" onClick={() => setBrowsing(kind)}
+                      title={tr('evidence.add', { what: tr(`evidence.${kind}`) })}>
+                      {tr('common.add')}
+                    </Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </Card>
       </Section>
 
-      <Section
-        title={tr('evidence.detect')}
-        sub={tr('evidence.detect.hint')}
-      >
+      <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]"
+        open={!evidenceReady || pendingEvidence.length > 0 || undefined}>
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold marker:content-none">
+          <ChevronRight size={15} className="transition-transform group-open:rotate-90" />
+          {tr('evidence.manage')}
+          <span className="font-normal text-[var(--muted)]">{tr('evidence.manage.sub')}</span>
+        </summary>
+          <div className="flex flex-col gap-5 border-t border-[var(--line-soft)] p-4">
+            <div className="flex flex-col gap-2">
+            {pendingEvidence.length > 0 && (<>
+              <div className="flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--sev-low)]">
+                {tr('evidence.new.title')}
+                <span className="rounded-full bg-[var(--review-soft)] px-2 py-0.5 text-[10px] tabular">
+                  {pendingEvidence.length}
+                </span>
+              </div>
+              {pendingEvidence.map((e) => (
+                <EvidenceCard
+                  key={e.id}
+                  item={e}
+                  onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
+                  onRemove={() => removeEvidence.mutate(e.id)}
+                />
+              ))}
+            </>)}
+            {analyzedEvidence.length > 0 && (<>
+              <div className={clsx(
+                'flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--muted)]',
+                pendingEvidence.length > 0 && 'mt-3')}>
+                {tr('evidence.analyzed.title')}
+                <span className="rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[10px] tabular">
+                  {analyzedEvidence.length}
+                </span>
+              </div>
+              {analyzedEvidence.map((e) => (
+                <EvidenceCard
+                  key={e.id}
+                  item={e}
+                  onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
+                  onRemove={() => removeEvidence.mutate(e.id)}
+                />
+              ))}
+            </>)}
+            {!evidence.length && (
+              <EmptyState
+                icon={<FolderOpen size={36} />}
+                title={tr('evidence.empty.title')}
+                sub={tr('evidence.empty.sub')}
+              />
+            )}
+            {evidence.length > 0 && (
+              <p className="pt-1 text-[11px] leading-relaxed text-[var(--muted)]">
+                {tr('evidence.incrementalHint')}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {EVIDENCE_KINDS.map((kind) => (
+              <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
+                hint={explain(tr, `evidence.${kind}`)?.why} wide>
+                <Button onClick={() => setBrowsing(kind)}>
+                  <FolderOpen size={14} /> {tr('evidence.addAnother', { what: tr(`evidence.${kind}`) })}
+                </Button>
+              </Tooltip>
+            ))}
+          </div>
+
+          {index && evidence.some((e) => e.kind === 'access_logs') && (
+            <Card className="px-4 py-3">
+              <div className="flex items-center gap-2 text-[13px]">
+                {index.fresh
+                  ? <CheckCircle2 size={15} className="text-[var(--ok)]" />
+                  : <TriangleAlert size={15} className="text-[var(--sev-low)]" />}
+                <span className="font-medium">{tr('evidence.logIndex')}</span>
+                <InfoDot body={tr('field.log_index')} wide />
+                {index.fresh ? (
+                  <span className="text-[var(--muted)]">
+                    {tr('evidence.logIndex.fresh', {
+                      lines: formatCount(index.lines),
+                      clients: formatCount(index.clients),
+                      size: formatBytes(index.size),
+                    })}
+                  </span>
+                ) : (
+                  <span className="text-[var(--muted)]">{index.reason}</span>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <div>
+            <h3 className="text-[13px] font-semibold">{tr('evidence.detect')}</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-[var(--muted)]">{tr('evidence.detect.hint')}</p>
         <div className="flex gap-2">
           <input
             value={detectFolder}
@@ -234,7 +369,9 @@ export function Evidence({ slug }: {
               )}
           </div>
         )}
-      </Section>
+          </div>
+        </div>
+      </details>
 
       <Section title={tr('evidence.runs')} sub={tr('evidence.jobs.sub')}>
         <div className="flex flex-col gap-2">
@@ -262,6 +399,15 @@ export function Evidence({ slug }: {
       {addEvidence.isError && (
         <div className="text-[13px] text-[var(--danger-text)]">{String(addEvidence.error)}</div>
       )}
+      {analyze.isError && (
+        <div className="text-[13px] text-[var(--danger-text)]">{String(analyze.error)}</div>
+      )}
+      <ConfirmDialog open={confirmReanalyze} onClose={() => setConfirmReanalyze(false)}
+        title={tr('evidence.reanalyze.confirm.title')}
+        body={tr('evidence.reanalyze.confirm.body')}
+        confirmLabel={tr('evidence.reanalyze.confirm.action')}
+        pending={analyze.isPending}
+        onConfirm={() => analyze.mutate('all')} />
     </div>
   )
 }
@@ -273,11 +419,12 @@ function EvidenceCard({ item, onRename, onRemove }: {
 }) {
   const tr = useT()
   const [editing, setEditing] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [name, setName] = useState('')
   const Icon = KIND_ICON[item.kind] ?? HardDrive
   const displayName = evidenceName(item)
 
-  return (
+  return (<>
     <Card className="flex items-center gap-3 px-4 py-3">
       <Tooltip title={explain(tr, `evidence.${item.kind}`)?.what} hint={explain(tr, `evidence.${item.kind}`)?.why} wide>
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
@@ -343,11 +490,16 @@ function EvidenceCard({ item, onRename, onRemove }: {
       </div>
 
       <Button variant="ghost" title={tr('evidence.remove')}
-        onClick={onRemove}>
+        onClick={() => setConfirmRemove(true)}>
         <Trash2 size={14} />
       </Button>
     </Card>
-  )
+    <ConfirmDialog open={confirmRemove} onClose={() => setConfirmRemove(false)}
+      title={tr('evidence.remove.confirm.title')}
+      body={tr('evidence.remove.confirm.body', { name: displayName })}
+      confirmLabel={tr('evidence.remove.confirm.action')}
+      onConfirm={() => { setConfirmRemove(false); onRemove() }} />
+  </>)
 }
 
 export function CloseCase({ slug, caseName, onClosed }: {

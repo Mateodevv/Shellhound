@@ -27,6 +27,25 @@ def iter_target_files(target):
         yield from get_files_recursive(target)
 
 
+def path_within_any(path, targets):
+    """True when ``path`` is one of ``targets`` or lives below one.
+
+    Both sides are resolved first so a symlink cannot make a partial cleanup
+    reach outside the evidence that job was actually given.  ``commonpath``
+    also handles path-component boundaries (``site`` never matches
+    ``site-old``) and different Windows drives without string-prefix tricks.
+    """
+    candidate = os.path.normcase(os.path.realpath(os.path.abspath(str(path))))
+    for target in targets:
+        root = os.path.normcase(os.path.realpath(os.path.abspath(str(target))))
+        try:
+            if os.path.commonpath((candidate, root)) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def is_compressed(file_path):
     return Path(file_path).suffix.lower() in COMPRESSED_OPENERS
 

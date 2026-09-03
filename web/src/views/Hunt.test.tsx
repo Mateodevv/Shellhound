@@ -200,6 +200,8 @@ describe('Pattern Hunt forensic workbench', () => {
     renderWithProviders(<Hunt slug="case-collapsed" gotoView={vi.fn()} />)
 
     expect(await screen.findByText('No audited test selected')).toBeInTheDocument()
+    expect(await screen.findByText('Selected rule')).toBeInTheDocument()
+    expect(screen.getByText('The request matches the selected path.')).toBeInTheDocument()
     expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
   })
 })

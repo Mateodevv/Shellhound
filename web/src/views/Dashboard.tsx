@@ -97,6 +97,14 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   if (!data) return <div className="py-16 text-center text-[var(--muted)] animate-pulse-soft">{tr('dashboard.loading')}</div>
 
   const confirmed = data.triage.confirmed ?? 0
+  const outstanding = (data.triage.new ?? 0) + (data.triage.reviewed ?? 0)
+  const evidence = data.evidence.filter((item) => item.kind !== 'reference')
+  const analysisComplete = evidence.length > 0 && evidence.every((item) => item.scanned_at)
+    && !data.jobs_running.length && data.analysis_complete !== false
+  const verdict = confirmed > 0 ? 'confirmed'
+    : outstanding > 0 ? 'inProgress'
+      : !analysisComplete ? 'pendingAnalysis'
+        : (data.triage.dismissed ?? 0) > 0 ? 'reviewedClear' : 'noFindings'
   const high = data.confirmed_severity['0'] ?? 0
   const medium = data.confirmed_severity['1'] ?? 0
   const low = data.confirmed_severity['2'] ?? 0
@@ -105,7 +113,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   const sources = [...new Set(data.evidence.map((item) => item.kind))]
   const zone = chronology.tz_mixed ? chronology.tz_offsets.join(', ') : chronology.zone
 
-  if (!data.evidence.length) {
+  if (!evidence.length) {
     return (
       <EmptyState
         icon={<HardDrive size={36} />}
@@ -136,16 +144,19 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
                 </span>
                 <h3 className="mt-1 text-lg font-semibold"
                   style={confirmed > 0 ? { color: 'var(--sev-high)' } : undefined}>
-                  {confirmed > 0 ? tr('dashboard.brief.confirmed') : tr('dashboard.brief.unconfirmed')}
+                  {tr(`dashboard.brief.${verdict}`)}
                 </h3>
                 <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--muted)]">
-                  {confirmed > 0
-                    ? tr('dashboard.brief.confirmed.sub', {
-                        n: formatCount(confirmed),
-                        span: formatSpan(chronology.event_span.first, chronology.event_span.last),
-                      })
-                    : tr('dashboard.brief.unconfirmed.sub')}
+                  {tr(`dashboard.brief.${verdict}.sub`, {
+                    n: formatCount(confirmed > 0 ? confirmed : outstanding),
+                    span: formatSpan(chronology.event_span.first, chronology.event_span.last),
+                  })}
                 </p>
+                {!analysisComplete && verdict !== 'pendingAnalysis' && (
+                  <p className="mt-1 text-[12px] text-[var(--muted)]">
+                    {tr('dashboard.brief.pendingAnalysis.sub')}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-1.5">

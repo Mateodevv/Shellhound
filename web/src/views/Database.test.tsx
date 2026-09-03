@@ -65,12 +65,15 @@ describe('Database CMS intelligence workspace', () => {
     expect(await screen.findByRole('heading', { name: 'Accounts and permissions' })).toBeInTheDocument()
     expect(screen.getByText('synthetic-admin')).toBeInTheDocument()
     expect(screen.getByText('administrator')).toBeInTheDocument()
+    expect(screen.getByText('Included filters')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add to IOC box' })).toBeInTheDocument()
   })
 
   it('keeps WordPress and Joomla in one extension lens', async () => {
     renderWithProviders(<DatabaseView slug="test" gotoView={() => {}} />)
     await screen.findByText('synthetic-admin')
     fireEvent.click(screen.getByRole('tab', { name: /Extensions/ }))
+    expect(screen.getByRole('button', { name: 'All CMS' })).toHaveAttribute('aria-pressed', 'true')
     expect(await screen.findByText('System - Example')).toBeInTheDocument()
     expect(screen.getAllByText('missing').length).toBeGreaterThan(0)
     expect(screen.getByText('present')).toBeInTheDocument()

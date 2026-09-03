@@ -69,6 +69,8 @@ describe('manual file review workspace', () => {
     await screen.findByText('Manual file review')
     expect(await screen.findByRole('button', { name: /Review index\.php/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Synthetic site/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Evidence path' })).toHaveTextContent('Synthetic site')
+    expect(screen.getByRole('button', { name: 'Copy current folder path' })).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: /Review index\.php/ }))
 
     expect(await screen.findByText('Filesystem metadata')).toBeInTheDocument()
