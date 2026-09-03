@@ -38,6 +38,7 @@ from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
+from server.analysis import AnalysisReceipts, stats_complete
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
                               uri_targets, web_path)
@@ -782,7 +783,7 @@ def create_app(config: Config) -> FastAPI:
 
         chosen = by_kind if mode == "all" else pending_by_kind
         authoritative = mode == "all"
-        started = []
+        tasks = []
         run_id = uuid.uuid4().hex[:12]
 
         # The index is one case-wide derived dataset. A new log source means
@@ -792,32 +793,31 @@ def create_app(config: Config) -> FastAPI:
         logs = by_kind.get("access_logs", []) if selected_logs else []
         if logs:
             paths = [e["path"] for e in logs]
-            ids = [e["id"] for e in selected_logs]
             log_ready = threading.Event()
             log_result = {"complete": False}
 
-            def run_logs(ctx, paths=paths, ids=ids, case_dir=case_dir):
+            def run_logs(ctx, paths=paths, case_dir=case_dir):
                 try:
                     stats = logindex.build(case_dir, paths, ctx, config.workspace)
                     if not ctx.cancelled() and not stats.get("partial"):
-                        _mark_scanned(case_dir, ids, stats)
                         log_result["complete"] = True
                     return stats
                 finally:
                     log_ready.set()
 
-            started.append({"kind": "index_logs",
-                            "job": manager.submit(case_dir, "index_logs", run_logs,
-                                                  run_id=run_id)})
+            tasks.append(("index_logs", run_logs, ("access_logs",)))
 
             # Error logs live beside the access logs but answer a different
             # question, so they keep their own visible job.
             def run_errors(ctx, paths=paths, case_dir=case_dir):
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
-            started.append({"kind": "errorlog",
-                            "job": manager.submit(case_dir, "errorlog", run_errors,
-                                                  run_id=run_id)})
+            # File correlations need a webroot. Their absence is a coverage
+            # limit, not a prerequisite for analyzing an access-log-only case.
+            error_kinds = ()
+            if by_kind.get("webroot"):
+                error_kinds = ("access_logs", "webroot") if chosen.get("webroot") else ("access_logs",)
+            tasks.append(("errorlog", run_errors, error_kinds))
 
             # The analyst's own SIGMA rules over the finished index. Its own
             # job because it is the log-side counterpart to the YARA one:
@@ -831,32 +831,22 @@ def create_app(config: Config) -> FastAPI:
                             "reason": "log index build did not complete"}
                 return sigmascan.scan(case_dir, config.workspace, ctx)
 
-            started.append({"kind": "sigma",
-                            "job": manager.submit(case_dir, "sigma", run_sigma,
-                                                  run_id=run_id)})
+            tasks.append(("sigma", run_sigma, ("access_logs",)))
 
         webroots = chosen.get("webroot", [])
         if webroots:
             paths = [e["path"] for e in webroots]
-            ids = [e["id"] for e in webroots]
 
-            def run_shell(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = webshell.scan(case_dir, paths, ctx, config.workspace,
-                                      authoritative=authoritative)
-                if not ctx.cancelled():
-                    _mark_scanned(case_dir, ids, stats)
-                return stats
+            def run_shell(ctx, paths=paths, case_dir=case_dir):
+                return webshell.scan(case_dir, paths, ctx, config.workspace,
+                                     authoritative=authoritative)
 
             def run_cms(ctx, paths=paths, case_dir=case_dir):
                 return cmsinventory.scan(case_dir, paths, ctx,
                                          authoritative=authoritative)
 
-            started.append({"kind": "webshell",
-                            "job": manager.submit(case_dir, "webshell", run_shell,
-                                                  run_id=run_id)})
-            started.append({"kind": "cms",
-                            "job": manager.submit(case_dir, "cms", run_cms,
-                                                  run_id=run_id)})
+            tasks.append(("webshell", run_shell, ("webroot",)))
+            tasks.append(("cms", run_cms, ("webroot",)))
 
             # The analyst's OWN rules, if there are any. Queued as its own
             # job so a slow rule set never holds up the shipped scan.
@@ -866,25 +856,17 @@ def create_app(config: Config) -> FastAPI:
                                          workspace=config.workspace, ctx=ctx,
                                          authoritative=authoritative)
 
-                started.append({"kind": "yara",
-                                "job": manager.submit(case_dir, "yara", run_yara,
-                                                      run_id=run_id)})
+                tasks.append(("yara", run_yara, ("webroot",)))
 
         dumps = chosen.get("sql_dump", [])
         if dumps:
             paths = [e["path"] for e in dumps]
-            ids = [e["id"] for e in dumps]
 
-            def run_sql(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = sqldump.scan(case_dir, paths, ctx, config.workspace,
-                                     authoritative=authoritative)
-                if not ctx.cancelled():
-                    _mark_scanned(case_dir, ids, stats)
-                return stats
+            def run_sql(ctx, paths=paths, case_dir=case_dir):
+                return sqldump.scan(case_dir, paths, ctx, config.workspace,
+                                    authoritative=authoritative)
 
-            started.append({"kind": "sqldb",
-                            "job": manager.submit(case_dir, "sqldb", run_sql,
-                                                  run_id=run_id)})
+            tasks.append(("sqldb", run_sql, ("sql_dump",)))
 
         # Error-log paths can resolve differently when a webroot is added,
         # even when the logs themselves did not change. Refresh that one
@@ -898,12 +880,15 @@ def create_app(config: Config) -> FastAPI:
             def run_errors(ctx, paths=error_paths, case_dir=case_dir):
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
-            started.append({"kind": "errorlog",
-                            "job": manager.submit(case_dir, "errorlog", run_errors,
-                                                  run_id=run_id)})
+            tasks.append(("errorlog", run_errors, ("webroot",)))
 
-        if not started:
+        if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
+        receipts = AnalysisReceipts(
+            tasks, chosen, lambda ids, stats: _mark_scanned(case_dir, ids, stats))
+        started = [{"kind": kind, "job": manager.submit(
+            case_dir, kind, receipts.wrap(kind, fn), run_id=run_id)}
+            for kind, fn, _kinds in tasks]
         return {"run_id": run_id, "started": started}
 
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])
@@ -987,6 +972,34 @@ def create_app(config: Config) -> FastAPI:
                               "ORDER BY id DESC")
             for r in running:
                 r["stats"] = json.loads(r.get("stats") or "{}")
+            # A receipt predating a failed full rescan must not make the
+            # briefing claim that analysis is complete. Keep the latest
+            # result per engine; a later unrelated job cannot hide a failure.
+            latest_engines = db.rows(conn, """
+                SELECT kind, state, stats FROM jobs WHERE id IN (
+                    SELECT max(id) FROM jobs
+                    WHERE kind IN ('webshell','cms','yara','index_logs','errorlog','sigma','sqldb')
+                    GROUP BY kind
+                )
+            """)
+            supported_evidence = [e for e in evidence
+                                  if e["kind"] in ("webroot", "access_logs", "sql_dump")]
+            present = {e["kind"] for e in supported_evidence}
+            required_engines = set()
+            if "webroot" in present:
+                required_engines.update(("webshell", "cms", "yara"))
+            if "access_logs" in present:
+                required_engines.update(("index_logs", "sigma"))
+                if "webroot" in present:
+                    required_engines.add("errorlog")
+            if "sql_dump" in present:
+                required_engines.add("sqldb")
+            analysis_complete = (
+                bool(supported_evidence)
+                and all(e.get("scanned_at") for e in supported_evidence)
+                and not running
+                and all(j["state"] == "done" and stats_complete(json.loads(j["stats"] or "{}"))
+                        for j in latest_engines if j["kind"] in required_engines))
         finally:
             conn.close()
 
@@ -1033,6 +1046,7 @@ def create_app(config: Config) -> FastAPI:
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
+            "analysis_complete": analysis_complete,
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
             "chronology": {
