@@ -22,8 +22,26 @@ const dashboard = (triage: Record<string, number>): Dashboard => ({ triage } as 
 describe('deriveWorkflowAction', () => {
   const complete = evidence(['webroot', 'access_logs', 'sql_dump'])
 
-  it('guides incomplete evidence before anything else', () => {
-    expect(deriveWorkflowAction(evidence(['webroot']), [], dashboard({}))).toMatchObject({ id: 'evidence' })
+  it('asks for evidence only when no supported source is registered', () => {
+    expect(deriveWorkflowAction(evidence([]), [], dashboard({}))).toMatchObject({ id: 'evidence' })
+    expect(deriveWorkflowAction(evidence(['reference']), [], dashboard({}))).toMatchObject({ id: 'evidence' })
+  })
+
+  it.each(['webroot', 'access_logs', 'sql_dump'])('supports a %s-only case end to end', (kind) => {
+    const single = evidence([kind])
+    expect(deriveWorkflowAction(single, [], dashboard({}))).toMatchObject({ id: 'analysis' })
+    expect(deriveWorkflowAction(single, [job('running')], dashboard({}))).toMatchObject({ id: 'running' })
+    expect(deriveWorkflowAction(single, [job('failed')], dashboard({}))).toMatchObject({ id: 'issue' })
+    expect(deriveWorkflowAction(single, [job('done')], dashboard({ new: 1 }))).toMatchObject({ id: 'triage' })
+    expect(deriveWorkflowAction(single, [job('done')], dashboard({ dismissed: 1 }))).toMatchObject({ id: 'report' })
+    single.evidence_items[0].scanned_at = ''
+    expect(deriveWorkflowAction(single, [job('done')], dashboard({}))).toMatchObject({ id: 'pending' })
+  })
+
+  it('does not hide an active older run behind a newer completed job', () => {
+    expect(deriveWorkflowAction(evidence(['webroot']), [
+      job('running', '2026-01-01', 'old'), job('done', '2026-01-02', 'new'),
+    ], dashboard({}))).toMatchObject({ id: 'running' })
   })
 
   it('guides a complete case to its first analysis', () => {

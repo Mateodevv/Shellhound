@@ -16,7 +16,7 @@ import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } fr
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
-import { REQUIRED_EVIDENCE } from '../workflow'
+import { EVIDENCE_KINDS } from '../workflow'
 
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
@@ -110,11 +110,11 @@ export function Evidence({ slug }: {
   }, [caseInfo, evidence, pathSeededFor, slug])
   const index = caseInfo?.log_index
   const runs = useMemo(() => groupJobs(jobs ?? []), [jobs])
-  const requiredEvidence = REQUIRED_EVIDENCE.map((kind) => ({
+  const evidenceSources = EVIDENCE_KINDS.map((kind) => ({
     kind,
     item: evidence.find((item) => item.kind === kind),
   }))
-  const evidenceReady = requiredEvidence.every(({ item }) => Boolean(item))
+  const evidenceReady = evidenceSources.some(({ item }) => Boolean(item))
   const pendingEvidence = useMemo(() => evidence
     .filter((item) => !item.scanned_at)
     .sort((a, b) => (b.added || '').localeCompare(a.added || '') || b.id - a.id), [evidence])
@@ -185,13 +185,11 @@ export function Evidence({ slug }: {
               </div>
             </div>
             <Tag tone={evidenceReady ? 'ok' : 'warn'}>
-              {tr(evidenceReady ? 'evidence.ready' : 'evidence.missingCount', {
-                n: requiredEvidence.filter(({ item }) => !item).length,
-              })}
+              {tr(evidenceReady ? 'evidence.ready' : 'evidence.noneRegistered')}
             </Tag>
           </div>
           <div className="grid md:grid-cols-3">
-            {requiredEvidence.map(({ kind, item }) => {
+            {evidenceSources.map(({ kind, item }) => {
               const Icon = KIND_ICON[kind] ?? HardDrive
               return (
                 <div key={kind}
@@ -281,7 +279,7 @@ export function Evidence({ slug }: {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {REQUIRED_EVIDENCE.map((kind) => (
+            {EVIDENCE_KINDS.map((kind) => (
               <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
                 hint={explain(tr, `evidence.${kind}`)?.why} wide>
                 <Button onClick={() => setBrowsing(kind)}>

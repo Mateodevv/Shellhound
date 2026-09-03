@@ -245,26 +245,27 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   // The server note is authoritative. It seeds once per matching artifact;
   // refetches never overwrite reasoning that is currently being typed.
   const noteFor = useRef<string | null>(null)
+  const artifactKey = artifact ? JSON.stringify([slug, artifact.artifact]) : null
+  const artifactPath = artifact?.artifact
+  // Reset only when the identity changes, not when the query or caller's
+  // stub refreshes. Those updates must preserve every unsaved control.
   useEffect(() => {
-    if (!artifact) {
-      noteFor.current = null
-      setNoteLoadedFor(null)
-      return
-    }
+    noteFor.current = null
+    setNoteLoadedFor(null)
+    setNote('')
     setDraftDecision(null)
     setSaveError('')
     setExpanded(false)
     setRevealError('')
-    if (noteFor.current === artifact.artifact) return
-    if (ctx?.artifact === artifact.artifact) {
-      noteFor.current = artifact.artifact
+  }, [artifactKey])
+  useEffect(() => {
+    if (!artifactKey || noteFor.current === artifactKey) return
+    if (ctx && ctx.artifact === artifactPath) {
+      noteFor.current = artifactKey
       setNote(ctx.triage_note ?? '')
-      setNoteLoadedFor(artifact.artifact)
-    } else {
-      setNote('')
-      setNoteLoadedFor(null)
+      setNoteLoadedFor(artifactKey)
     }
-  }, [artifact, ctx])
+  }, [artifactKey, artifactPath, ctx])
 
   if (!artifact) return null
   const kind = artifact.artifact_kind
@@ -281,7 +282,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const displayedIdentity = kind === 'file' && root
     ? `${rootName} · ${rel}`
     : artifact.artifact
-  const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifact.artifact
+  const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifactKey
   const controlsDisabled = !contextReady || saving
   const Icon = KIND_ICON[kind] ?? Bug
   const focusLine = findings.find((finding) => finding.line)?.line ?? null

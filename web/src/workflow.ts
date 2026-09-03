@@ -1,6 +1,6 @@
 import type { CaseDetail, Dashboard, Job } from './api'
 
-export const REQUIRED_EVIDENCE = ['webroot', 'access_logs', 'sql_dump'] as const
+export const EVIDENCE_KINDS = ['webroot', 'access_logs', 'sql_dump'] as const
 
 export interface WorkflowAction {
   id: 'evidence' | 'analysis' | 'running' | 'issue' | 'pending' | 'triage' | 'report'
@@ -17,10 +17,13 @@ export function deriveWorkflowAction(
 ): WorkflowAction | null {
   if (!caseInfo) return null
   const present = new Set(caseInfo.evidence_items.map((item) => item.kind))
-  if (REQUIRED_EVIDENCE.some((kind) => !present.has(kind))) {
+  if (!EVIDENCE_KINDS.some((kind) => present.has(kind))) {
     return { id: 'evidence', view: 'evidence', label: 'case.action.completeEvidence' }
   }
 
+  if (jobs?.some((job) => job.state === 'queued' || job.state === 'running')) {
+    return { id: 'running', view: 'evidence', label: 'case.action.viewAnalysis' }
+  }
   if (!jobs?.length) {
     return { id: 'analysis', view: 'evidence', label: 'case.action.runAnalysis' }
   }

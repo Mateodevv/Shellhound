@@ -32,6 +32,23 @@ beforeEach(() => {
 })
 
 describe('evidence registration', () => {
+  it('allows analysis of a single source without requiring the other types', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/jobs')) return []
+      return { ...CASE, evidence_items: [{
+        id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '', scanned_at: '',
+        stats: {}, label: '', exists: true,
+      }] }
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Evidence ready')).toBeInTheDocument()
+    expect(screen.getAllByText('Not provided (optional)')).toHaveLength(2)
+    expect(screen.queryByText('Required evidence')).not.toBeInTheDocument()
+    const analyze = screen.getByRole('button', { name: 'Run analysis' })
+    expect(analyze).toBeEnabled()
+    fireEvent.click(analyze)
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/analyze', { mode: 'all' }))
+  })
   it('reuses the last browsed path and no longer offers reference copies', async () => {
     renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
 

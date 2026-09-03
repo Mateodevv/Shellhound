@@ -158,6 +158,36 @@ describe('the note box', () => {
     expect(noteBox().value).toBe('second pass: same hash as the other host')
   })
 
+  it('keeps the decision and save action after a changed context and stub refresh', async () => {
+    vi.mocked(api).mockResolvedValue(context({ worst: 1 }))
+    const { qc, rerender } = mount()
+    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
+    await userEvent.type(noteBox(), 'unsaved reasoning')
+    await act(async () => {
+      qc.setQueryData(['artifact', 'case', SHELL], context({ worst: 0 }))
+    })
+    // Wait for the actual query rerender, not just the cache write.
+    expect(await screen.findByText('HIGH')).toBeVisible()
+    rerender(window_(stub({ worst: 0 })))
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled()
+    expect(noteBox()).toHaveValue('unsaved reasoning')
+  })
+
+  it('resets the draft when switching cases even if the artifact path is identical', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => context({
+      triage_note: path.includes('/other-case/') ? 'other case note' : 'first case note',
+    }))
+    const { rerender } = mount()
+    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
+    rerender(<ArtifactWindow slug="other-case" artifact={stub()} roots={[]}
+      collected={[]} onSave={async () => SAVED} onClose={() => {}}
+      onView={() => {}} onTrace={() => {}} />)
+    await waitFor(() => expect(noteBox()).toHaveValue('other case note'))
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled()
+  })
+
   it('replaces the note when a different artifact is opened', async () => {
     // The window stays mounted across artifacts. Carrying the previous
     // one's note over would attach somebody's reasoning to the wrong file --
@@ -308,12 +338,17 @@ describe('what the window states about the artifact', () => {
     vi.mocked(api).mockImplementation(async (path: string) =>
       (path.includes('/file?') ? fileContent : artifactContext) as never)
 
-    mount()
+    const { qc } = mount()
     await userEvent.click(await screen.findByRole('button', { name: 'Expand file' }))
 
     expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
     expect(await screen.findByText('safe text')).toBeVisible()
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeVisible()
+    await act(async () => {
+      qc.setQueryData(['artifact', 'case', SHELL], { ...artifactContext, worst: 1 })
+    })
+    expect(await screen.findByText('MEDIUM')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Back to evidence' })).toBeVisible()
   })
 
   it('reveals explicitly and never starts enrichment on mount', async () => {
@@ -353,8 +388,8 @@ describe('what the window states about the artifact', () => {
     vi.mocked(api).mockResolvedValue(context({
       findings: [{
         id: 1, fingerprint: 'synthetic-finding', artifact: SHELL, artifact_kind: 'file',
-        source: 'webshell', rule: 'Suspicious PHP execution', severity: 0,
-        evidence: 'eval($_POST["x"]);', line: 12, retired: 0, last_seen: '', created: '',
+        source: 'webshell', rule: 'Synthetic review rule', severity: 0,
+        evidence: 'Harmless synthetic evidence marker', line: 12, retired: 0, last_seen: '', created: '',
         triage: 'new', triage_note: '',
       }],
     }))
