@@ -42,6 +42,9 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
           if (event.job.state && event.job.state !== 'running') {
             qc.invalidateQueries({ queryKey: ['jobs'] })
             qc.invalidateQueries({ queryKey: ['dashboard'] })
+            // Any engine may be the last prerequisite for an evidence
+            // receipt, including YARA, SIGMA and error-log correlations.
+            qc.invalidateQueries({ queryKey: ['case'] })
           }
         } else if (event.type === 'invalidate') {
           for (const key of SCOPE_KEYS[event.scope] ?? ['dashboard']) {
