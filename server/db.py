@@ -747,6 +747,25 @@ def _norm(path):
     return str(path).replace("\\", "/").rstrip("/")
 
 
+def _resolved_norm(path):
+    """Canonical spelling of an existing local path, including NTFS aliases."""
+    try:
+        candidate = Path(path)
+        return _norm(candidate.resolve(strict=True)) if candidate.is_absolute() else None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _relative_spelling(roots, norm):
+    low = norm.lower()
+    for root in roots:
+        if low == root.lower():
+            return norm.rsplit("/", 1)[-1]
+        if low.startswith(root.lower() + "/"):
+            return norm[len(root) + 1:]
+    return None
+
+
 def evidence_roots(conn):
     """Every registered evidence root, longest first.
 
@@ -774,16 +793,22 @@ def relative_to_evidence(roots, path):
     distinction survives in the SHA-256 beside it and in the edge between
     them, which is where a difference between two files belongs.
 
-    Pure string work so the file browser can call it per entry without a
-    database. If no root matches, the value is handed back UNCHANGED -- an
-    absolute path is better than an invented relative one."""
+    The common case is pure string work. On a mismatch, resolve existing
+    local paths as well: Windows may register a short 8.3 root but return a
+    long path from the file browser. Offline/unavailable evidence keeps its
+    original spelling. If no root matches, the value is handed back UNCHANGED
+    -- an absolute path is better than an invented relative one."""
     norm = _norm(path)
-    low = norm.lower()
-    for root in roots:
-        if low == root.lower():
-            return norm.rsplit("/", 1)[-1]
-        if low.startswith(root.lower() + "/"):
-            return norm[len(root) + 1:]
+    relative = _relative_spelling(roots, norm)
+    if relative is not None:
+        return relative
+    resolved = _resolved_norm(path)
+    if resolved is not None:
+        canonical_roots = sorted(filter(None, (_resolved_norm(root) for root in roots)),
+                                 key=len, reverse=True)
+        relative = _relative_spelling(canonical_roots, resolved)
+        if relative is not None:
+            return relative
     return str(path)
 
 
