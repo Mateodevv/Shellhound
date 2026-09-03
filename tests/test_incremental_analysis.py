@@ -349,11 +349,12 @@ class PartialEngineMergeTests(unittest.TestCase):
         try:
             hashes = json.loads(db.one(
                 conn, "SELECT value FROM meta WHERE key = 'webshell_hashes'")["value"])
-            self.assertEqual({str(old_file.resolve()), str(new_file.resolve())}, set(hashes))
+            self.assertEqual({old_file.resolve(), new_file.resolve()},
+                             {Path(path).resolve() for path in hashes})
             self.assertEqual(marker, db.one(
                 conn, "SELECT value FROM meta WHERE key = 'engine_done:webshell'")["value"])
-            old_rows = db.rows(conn, "SELECT triage, triage_note FROM findings WHERE artifact = ?",
-                               (str(old_file.resolve()),))
+            old_rows = [row for row in db.rows(conn, "SELECT artifact, triage, triage_note FROM findings")
+                        if Path(row["artifact"]).resolve() == old_file.resolve()]
             self.assertTrue(old_rows)
             self.assertEqual({("confirmed", "synthetic review")},
                              {(row["triage"], row["triage_note"]) for row in old_rows})
@@ -383,10 +384,10 @@ class PartialEngineMergeTests(unittest.TestCase):
 
         conn = db.connect(self.case_dir)
         try:
-            self.assertEqual({str(old_site), str(new_site)}, {
-                row["root"] for row in db.rows(conn, "SELECT root FROM cms_installs")})
-            self.assertEqual({str(old_dump.resolve()), str(new_dump.resolve())}, {
-                row["path"] for row in db.rows(conn, "SELECT path FROM db_dumps")})
+            self.assertEqual({old_site.resolve(), new_site.resolve()}, {
+                Path(row["root"]).resolve() for row in db.rows(conn, "SELECT root FROM cms_installs")})
+            self.assertEqual({old_dump.resolve(), new_dump.resolve()}, {
+                Path(row["path"]).resolve() for row in db.rows(conn, "SELECT path FROM db_dumps")})
             self.assertEqual(marker, db.one(
                 conn, "SELECT value FROM meta WHERE key = 'engine_done:sqldump'")["value"])
         finally:

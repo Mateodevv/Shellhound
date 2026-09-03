@@ -1511,14 +1511,14 @@ class FileReviewEndpointTests(unittest.TestCase):
 
     def setUp(self):
         self.slug = case_copy(f"file-review-{self._testMethodName[:34]}")
-        self.file = EVIDENCE.webroot / "wp-includes" / "functions.php"
+        self.file = (EVIDENCE.webroot / "wp-includes" / "functions.php").resolve()
 
     def browse_file(self):
         status, body = get_json(
             f"/api/cases/{self.slug}/browse?path={q(str(self.file.parent))}")
         self.assertEqual(200, status, body)
         return next(row for row in body["files"]
-                    if row["path"] == str(self.file))
+                    if Path(row["path"]).samefile(self.file))
 
     def review(self, state, note=""):
         return post_json(f"/api/cases/{self.slug}/files/review", {

@@ -32,6 +32,7 @@ request never gets that far.
 import io
 import json
 import re
+import tempfile
 import unittest
 import zipfile
 from datetime import datetime, timezone
@@ -344,7 +345,11 @@ def stored_rows(case_dir):
         for table in sorted(names):
             columns = [d[0] for d in conn.execute(
                 f"SELECT * FROM {table} LIMIT 0").description]
-            keep = [c for c in columns if c not in _VOLATILE]
+            # Triage audit timestamps are wall-clock readings too. The two
+            # language runs can cross a second boundary; compare the actual
+            # decisions, not the time each test happened to record them.
+            volatile = _VOLATILE | ({"at"} if table == "triage_events" else set())
+            keep = [c for c in columns if c not in volatile]
             out[table] = sorted(
                 tuple((c, row[c]) for c in keep)
                 for row in conn.execute(f"SELECT * FROM {table}").fetchall())
@@ -373,6 +378,27 @@ def stored_strings(case_dir):
         return out
     finally:
         conn.close()
+
+
+class StoredRowsComparisonTests(unittest.TestCase):
+    def test_audit_time_is_ignored_but_decision_content_is_compared(self):
+        with tempfile.TemporaryDirectory() as root:
+            conn = db.connect(root)
+            try:
+                conn.execute("INSERT INTO triage_events "
+                             "(artifact, artifact_kind, from_state, to_state, note, at) "
+                             "VALUES (?,?,?,?,?,?)", ("192.0.2.16", "client", "new",
+                             "reviewed", "synthetic note", "2026-01-01T00:00:00"))
+                conn.commit()
+                first = stored_rows(root)
+                conn.execute("UPDATE triage_events SET at = '2026-01-01T00:00:01'")
+                conn.commit()
+                self.assertEqual(first, stored_rows(root))
+                conn.execute("UPDATE triage_events SET note = 'different reasoning'")
+                conn.commit()
+                self.assertNotEqual(first["triage_events"], stored_rows(root)["triage_events"])
+            finally:
+                conn.close()
 
 
 class StoredDataStaysEnglishTests(unittest.TestCase):
