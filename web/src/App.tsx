@@ -4,13 +4,13 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
+  Activity, ArrowLeft, ArrowRight, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
   SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
 import { useLiveEvents } from './ws'
-import { ProgressBar } from './components/ui'
+import { PageSkeleton, ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { TimeSwitcher } from './components/TimeSwitcher'
@@ -23,6 +23,7 @@ import { TriageFollowUp } from './components/triage'
 import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
 import { queryClient } from './queryClient'
+import { deriveWorkflowAction } from './workflow'
 
 const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
 const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
@@ -45,7 +46,7 @@ export type ViewId =
 
 export type ViewParams = Partial<Record<
   | 'severity' | 'triage' | 'source' | 'search' | 'artifact' | 'retired' | 'request'
-  | 'actor' | 'section', string
+  | 'actor' | 'section' | 'next', string
 >>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
@@ -54,28 +55,101 @@ const VIEW_IDS = new Set<ViewId>([
   'database', 'evidence', 'timeline', 'report', 'settings',
 ])
 
-const NAV: { label: string; items: { id: ViewId; icon: typeof Bug; experimental?: boolean }[] }[] = [
-  { label: 'nav.phase.overview', items: [
-    { id: 'dashboard', icon: LayoutDashboard },
-  ] },
-  { label: 'nav.phase.prepare', items: [
-    { id: 'evidence', icon: FolderCog },
-    { id: 'files', icon: FolderTree },
-  ] },
-  { label: 'nav.phase.investigate', items: [
-    { id: 'findings', icon: Bug },
-    { id: 'actors', icon: Users },
-    { id: 'hunt', icon: Radar },
-    { id: 'timeline', icon: ListChecks },
-    { id: 'database', icon: Database },
-    { id: 'cms', icon: Puzzle },
-    { id: 'logs', icon: ScrollText, experimental: true },
-  ] },
-  { label: 'nav.phase.finish', items: [
-    { id: 'iocbox', icon: Box },
-    { id: 'report', icon: FileCheck2 },
-  ] },
+interface NavItem { id: ViewId; icon: typeof Bug; experimental?: boolean; step?: number }
+const OVERVIEW_NAV: NavItem[] = [{ id: 'dashboard', icon: LayoutDashboard }]
+const WORKFLOW_NAV: NavItem[] = [
+  { id: 'evidence', icon: FolderCog, step: 1 },
+  { id: 'findings', icon: Bug, step: 2 },
+  { id: 'iocbox', icon: Box, step: 3 },
+  { id: 'report', icon: FileCheck2, step: 4 },
 ]
+const INVESTIGATION_NAV: NavItem[] = [
+  { id: 'actors', icon: Users },
+  { id: 'files', icon: FolderTree },
+  { id: 'timeline', icon: ListChecks },
+  { id: 'database', icon: Database },
+  { id: 'cms', icon: Puzzle },
+  { id: 'hunt', icon: Radar },
+  { id: 'logs', icon: ScrollText, experimental: true },
+]
+
+export function CaseNavigation({
+  view,
+  openArtifacts,
+  onNavigate,
+  onSearch,
+}: {
+  view: ViewId
+  openArtifacts: number
+  onNavigate: (view: ViewId) => void
+  onSearch: () => void
+}) {
+  const tr = useT()
+  const navItem = ({ id, icon: Icon, experimental, step }: NavItem) => (
+    <button
+      key={id}
+      onClick={() => onNavigate(id)}
+      aria-current={view === id ? 'page' : undefined}
+      className={clsx(
+        'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
+        'transition-colors duration-150 cursor-pointer',
+        view === id
+          ? 'border border-[var(--accent)]/45 bg-[var(--accent-soft)] text-[var(--fg)]'
+          : 'border border-transparent text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
+    >
+      {step ? (
+        <span className={clsx('flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
+          view === id ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-[var(--line-strong)]')}>
+          {step}
+        </span>
+      ) : <Icon size={15} />}
+      <span className="min-w-0 truncate">{tr(`nav.${id}`)}</span>
+      {experimental && (
+        <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
+          {tr('common.experimental')}
+        </span>
+      )}
+      {id === 'findings' && openArtifacts > 0 && (
+        <span className="ml-auto rounded-full bg-[var(--panel-raised)] px-1.5 text-[10px] tabular">
+          {openArtifacts}
+        </span>
+      )}
+    </button>
+  )
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+      <button
+        onClick={onSearch}
+        className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+      >
+        <Search size={14} />
+        {tr('nav.search')}
+        <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
+          {tr('nav.shortcut')}
+        </span>
+      </button>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.overview')}
+        </div>
+        {OVERVIEW_NAV.map(navItem)}
+      </div>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.workflow')}
+        </div>
+        {WORKFLOW_NAV.map(navItem)}
+      </div>
+      <div className="mb-2">
+        <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)]">
+          {tr('nav.phase.tools')}
+        </div>
+        {INVESTIGATION_NAV.map(navItem)}
+      </div>
+    </div>
+  )
+}
 
 function viewFromUrl(): ViewId {
   const value = new URLSearchParams(location.search).get('view') as ViewId | null
@@ -133,6 +207,11 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     queryFn: () => api<DashboardData>(`/api/cases/${slug}/dashboard`),
     refetchInterval: 10000,
   })
+  const { data: jobs } = useQuery({
+    queryKey: ['jobs', slug],
+    queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`),
+    refetchInterval: 4000,
+  })
 
   const gotoView = useCallback<Navigate>((next, params = {}) => {
     const url = new URL(location.href)
@@ -140,7 +219,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     url.searchParams.set('view', next)
     for (const key of [
       'severity', 'triage', 'source', 'search', 'artifact', 'retired', 'request',
-      'actor', 'section',
+      'actor', 'section', 'next',
     ] as const) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)
@@ -169,13 +248,25 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const decidedArtifacts = (triage.confirmed ?? 0) + (triage.dismissed ?? 0)
   const decisionTotal = openArtifacts + decidedArtifacts
   const completion = decisionTotal ? decidedArtifacts / decisionTotal : 0
+  const workflowAction = deriveWorkflowAction(caseInfo, jobs, dashboard)
+
+  const followWorkflowAction = () => {
+    if (!workflowAction) return
+    if (workflowAction.id === 'triage') {
+      // Findings resolves this marker against its real displayed queue. That
+      // keeps this shortcut identical to the button inside the workbench.
+      gotoView('findings', { triage: 'new,reviewed', next: '1' })
+      return
+    }
+    gotoView(workflowAction.view)
+  }
 
   return (
-    <div className="flex h-full flex-col md:flex-row">
-      <nav className="hidden w-56 shrink-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
+    <div className="h-full">
+      <div className="flex h-full flex-col md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]">
         <button
           onClick={onBack}
-          className="group flex items-center gap-2 border-b border-[var(--line)] px-4 py-3 text-left cursor-pointer"
+          className="group hidden h-full items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
         >
           <ArrowLeft size={14} className="text-[var(--muted)] transition-transform group-hover:-translate-x-0.5" />
           <div className="min-w-0">
@@ -186,51 +277,44 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           </div>
         </button>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
-          >
-            <Search size={14} />
-            {tr('nav.search')}
-            <span className="ml-auto rounded border border-[var(--line)] px-1 text-[10px]">
-              {tr('nav.shortcut')}
-            </span>
-          </button>
-          {NAV.map((section) => (
-            <div key={section.label} className="mb-2">
-              <div className="px-3 pb-1 pt-2 text-[9.5px] font-bold uppercase tracking-[0.14em] text-[var(--muted)] opacity-70">
-                {tr(section.label)}
+        <header className="z-20 hidden border-b border-[var(--line)] bg-[var(--bg)]/95 px-6 py-3 backdrop-blur md:block">
+          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[15px] font-semibold">{caseInfo?.name ?? slug}</span>
+                {caseInfo?.reference && (
+                  <span className="truncate rounded-md bg-[var(--panel-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
+                    {caseInfo.reference}
+                  </span>
+                )}
               </div>
-              {section.items.map(({ id, icon: Icon, experimental }) => (
-                <button
-                  key={id}
-                  onClick={() => gotoView(id)}
-                  aria-current={view === id ? 'page' : undefined}
-                  className={clsx(
-                    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
-                    'transition-colors duration-150 cursor-pointer',
-                    view === id
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
-                      : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
-                >
-                  <Icon size={15} />
-                  {tr(`nav.${id}`)}
-                  {experimental && (
-                    <span className="ml-auto rounded bg-[var(--sev-low)]/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--sev-low)]">
-                      {tr('common.experimental')}
-                    </span>
-                  )}
-                  {id === 'findings' && openArtifacts > 0 && (
-                    <span className="ml-auto rounded-full bg-[var(--panel-2)] px-1.5 text-[10px] tabular">
-                      {openArtifacts}
-                    </span>
-                  )}
-                </button>
-              ))}
+              <div className="mt-0.5 text-[11px] text-[var(--muted)]">
+                {tr(`nav.${view}`)}
+                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
+              </div>
             </div>
-          ))}
-        </div>
+            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
+            {workflowAction && view !== workflowAction.view && (
+              <button type="button" onClick={followWorkflowAction}
+                className={clsx(
+                  'group inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--primary)] font-semibold text-[var(--primary-text)] transition-all hover:bg-[var(--primary-hover)] disabled:cursor-wait disabled:opacity-60',
+                  view === 'dashboard'
+                    ? 'px-4 py-2.5 text-[13px] shadow-[0_8px_24px_color-mix(in_srgb,var(--primary)_20%,transparent)]'
+                    : 'px-3 py-1.5 text-[12px]')}
+              >
+                {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
+                {workflowAction.id === 'triage' && (
+                  <ArrowRight size={15}
+                    className="transition-transform group-hover:translate-x-0.5" />
+                )}
+              </button>
+            )}
+          </div>
+        </header>
+
+        <nav className="hidden min-h-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
+          <CaseNavigation view={view} openArtifacts={openArtifacts}
+            onNavigate={gotoView} onSearch={() => setPaletteOpen(true)} />
 
         {/* Quiet, at the foot. The sidebar HEADER belongs to the case --
             a mark up there would compete with the case name, which is the
@@ -274,9 +358,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             </div>
           )}
         </div>
-      </nav>
+        </nav>
 
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
         <button onClick={onBack} aria-label={tr('nav.switchCase')}
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <ArrowLeft size={16} />
@@ -286,11 +370,19 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           <select value={view} onChange={(event) => gotoView(event.target.value as ViewId)}
             aria-label={tr('nav.currentView')}
             className="w-full bg-transparent text-[11px] text-[var(--muted)] outline-none">
-            {NAV.flatMap((section) => section.items).map((item) => (
-              <option key={item.id} value={item.id}>
-                {tr(`nav.${item.id}`)}{item.experimental ? ` · ${tr('common.experimental')}` : ''}
-              </option>
-            ))}
+            <optgroup label={tr('nav.phase.overview')}>
+              {OVERVIEW_NAV.map((item) => <option key={item.id} value={item.id}>{tr(`nav.${item.id}`)}</option>)}
+            </optgroup>
+            <optgroup label={tr('nav.phase.workflow')}>
+              {WORKFLOW_NAV.map((item) => <option key={item.id} value={item.id}>{item.step}. {tr(`nav.${item.id}`)}</option>)}
+            </optgroup>
+            <optgroup label={tr('nav.phase.tools')}>
+              {INVESTIGATION_NAV.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {tr(`nav.${item.id}`)}{item.experimental ? ` · ${tr('common.experimental')}` : ''}
+                </option>
+              ))}
+            </optgroup>
             <option value="settings">{tr('nav.settings')}</option>
           </select>
         </div>
@@ -298,52 +390,30 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <Search size={16} />
         </button>
-      </div>
+        </div>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[var(--bg)]/95 px-6 py-3 backdrop-blur">
-          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[15px] font-semibold">{caseInfo?.name ?? slug}</span>
-                {caseInfo?.reference && (
-                  <span className="truncate rounded-md bg-[var(--panel-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
-                    {caseInfo.reference}
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-                {tr(`nav.${view}`)}
-                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
-              </div>
-            </div>
-            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
-            {openArtifacts > 0 && view !== 'findings' && view !== 'dashboard' && (
-              <button onClick={() => gotoView('findings', { triage: 'new,reviewed' })}
-                className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-110 cursor-pointer">
-                {tr('case.continueTriage', { n: openArtifacts })}
-              </button>
-            )}
-          </div>
-        </header>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-2">
         <div key={view} className={clsx('mx-auto', view === 'hunt'
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
-          {view === 'dashboard' && <Dashboard {...props} />}
-          {view === 'findings' && <Findings {...props} />}
-          {view === 'actors' && <Actors {...props} />}
-          {view === 'logs' && <AccessLogs {...props} />}
-          {view === 'hunt' && <Hunt {...props} />}
-          {view === 'iocbox' && <IocBox {...props} />}
-          {view === 'files' && <Files {...props} />}
-          {view === 'cms' && <Cms {...props} />}
-          {view === 'database' && <DatabaseView {...props} />}
-          {view === 'evidence' && <Evidence {...props} />}
-          {view === 'timeline' && <Timeline {...props} />}
-          {view === 'report' && <Report {...props} onClosed={onBack} />}
-          {view === 'settings' && <Settings />}
+          <Suspense fallback={<PageSkeleton />}>
+            {view === 'dashboard' && <Dashboard {...props} />}
+            {view === 'findings' && <Findings {...props} />}
+            {view === 'actors' && <Actors {...props} />}
+            {view === 'logs' && <AccessLogs {...props} />}
+            {view === 'hunt' && <Hunt {...props} />}
+            {view === 'iocbox' && <IocBox {...props} />}
+            {view === 'files' && <Files {...props} />}
+            {view === 'cms' && <Cms {...props} />}
+            {view === 'database' && <DatabaseView {...props} />}
+            {view === 'evidence' && <Evidence {...props} />}
+            {view === 'timeline' && <Timeline {...props} />}
+            {view === 'report' && <Report {...props} onClosed={onBack} />}
+            {view === 'settings' && <Settings />}
+          </Suspense>
         </div>
-      </main>
+        </main>
+      </div>
 
       <CommandPalette
         slug={slug}
@@ -362,8 +432,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         onView={(path, line) => setPaletteViewing({ path, line })}
         onTrace={(ips, m) => { setPaletteMarks(m); setPaletteTrace(ips) }}
         onClose={() => { setPaletteArtifact(null); t.clearCollected() }}
-        onTriage={(state, note) => {
-          if (paletteArtifact) t.decide([paletteArtifact.artifact], state, note)
+        onSave={(state, note) => {
+          if (!paletteArtifact) return Promise.reject(new Error('No artifact selected'))
+          return t.decideAsync([paletteArtifact.artifact], state, note)
         }}
       />
       <TraceWindow slug={slug} ips={paletteTrace} layer={1} marks={paletteMarks}
@@ -396,7 +467,7 @@ function Root() {
     const url = new URL(location.href)
     url.searchParams.delete('case')
     url.searchParams.delete('view')
-    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired']) {
+    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired', 'next']) {
       url.searchParams.delete(key)
     }
     history.pushState(null, '', url)
@@ -408,19 +479,17 @@ function Root() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  return slug ? <CaseShell slug={slug} onBack={back} /> : <Start onOpen={open} />
+  return slug
+    ? <CaseShell slug={slug} onBack={back} />
+    : <Suspense fallback={<div className="mx-auto max-w-3xl px-6 py-12"><PageSkeleton /></div>}>
+        <Start onOpen={open} />
+      </Suspense>
 }
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Suspense fallback={(
-        <div className="flex min-h-screen items-center justify-center text-[var(--muted)] animate-pulse-soft">
-          ShellHound…
-        </div>
-      )}>
-        <Root />
-      </Suspense>
+      <Root />
     </QueryClientProvider>
   )
 }

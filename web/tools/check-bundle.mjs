@@ -6,8 +6,9 @@ const DIST = new URL('../dist/', import.meta.url)
 const ENTRY_LIMIT = 700 * 1024
 // Actor comparison and the access-log explorer are deliberately lazy route
 // content, but this total counts every route chunk. Keep the entry ceiling
-// unchanged and allow each investigation workspace a measured 50 KiB.
-const JS_LIMIT = 1_450 * 1024
+// unchanged; the bounded review workspace and incremental-evidence controls
+// bring the measured complete JS set to about 1,460 KiB.
+const JS_LIMIT = 1_475 * 1024
 const DIST_LIMIT = 3_500 * 1024
 
 function filesBelow(path) {

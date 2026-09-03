@@ -57,6 +57,24 @@ export function Report({ slug, onClosed }: {
   return (
     <div className="flex flex-col gap-6">
       <Section title={tr('report.builder.title')} sub={tr('report.builder.sub')}>
+        <Card surface="raised" className="mb-4 flex flex-wrap items-center gap-3 px-4 py-3">
+          {ready
+            ? <CheckCircle2 size={18} className="shrink-0 text-[var(--ok)]" />
+            : <TriangleAlert size={18} className="shrink-0 text-[var(--sev-low)]" />}
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold">
+              {tr(ready ? 'report.ready.title' : 'report.needsReview.title')}
+            </div>
+            <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
+              {tr(ready ? 'report.ready.sub' : 'report.needsReview.sub', {
+                n: checks.filter((check) => !check.ok).length,
+              })}
+            </div>
+          </div>
+          <Tag tone={ready ? 'ok' : 'warn'}>
+            {ready ? tr('report.ready') : tr('report.needsReview')}
+          </Tag>
+        </Card>
         <Card className="mb-4 p-4">
           <label className="text-[13px] font-semibold" htmlFor="case-report-notes">
             {tr('report.caseNotes')}

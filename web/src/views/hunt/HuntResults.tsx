@@ -20,7 +20,7 @@ const PAGE_SIZE = 200
 export type HuntResultSort = 'client' | 'method' | 'uri' | 'status' | 'requests' | 'first_hit'
 
 export function HuntResults({
-  slug, test, selected, collapsed, ruleName, sort, direction, onSelected, onSort,
+  slug, test, selected, collapsed, ruleName, ruleMeaning, ruleNotMeaning, sort, direction, onSelected, onSort,
   onCollapse, onEdit, editLabel, gotoView,
 }: {
   slug: string
@@ -28,6 +28,8 @@ export function HuntResults({
   selected: Set<string>
   collapsed: boolean
   ruleName?: string
+  ruleMeaning?: string
+  ruleNotMeaning?: string
   sort: HuntResultSort
   direction: 'asc' | 'desc'
   onSelected: (value: Set<string>) => void
@@ -118,10 +120,28 @@ export function HuntResults({
       </button>}
     </header>
 
-    {!test ? <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center">
-      <div><Search size={28} className="mx-auto text-[var(--muted)]" />
-        <div className="mt-3 text-[13px] font-semibold">{tr('hunt.workbench.testFirst')}</div>
-        <p className="mt-1 max-w-sm text-[11px] text-[var(--muted)]">{tr('hunt.workbench.testFirstSub')}</p>
+    {!test ? <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+      <div className="w-full max-w-lg text-center"><Search size={28} className="mx-auto text-[var(--muted)]" />
+        {ruleName && <div className="mt-4 rounded-xl border border-[var(--line-strong)] bg-[var(--panel-2)] p-4 text-left">
+          <div className="text-[9.5px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.workbench.selectedRule')}
+          </div>
+          <div className="mt-1 text-[13px] font-semibold text-[var(--fg)]">{ruleName}</div>
+          <div className="mt-3 text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.means.title')}
+          </div>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--fg)]">
+            {ruleMeaning || tr('hunt.means.fallback')}
+          </p>
+          <div className="mt-3 text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.notMeans.title')}
+          </div>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--muted)]">
+            {ruleNotMeaning || tr('hunt.notMeans.fallback')}
+          </p>
+        </div>}
+        <div className="mt-4 text-[13px] font-semibold">{tr('hunt.workbench.testFirst')}</div>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{tr('hunt.workbench.testFirstSub')}</p>
       </div>
     </div> : <>
       <div className="flex min-h-0 flex-1 flex-col">

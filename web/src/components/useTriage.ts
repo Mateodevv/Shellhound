@@ -17,6 +17,11 @@ export interface TriageController {
    *  must not trigger a new wave of propagation. */
   decide: (artifacts: string[], state: string, note?: string,
            propagate?: boolean) => void
+  /** Awaitable form for review windows that must save successfully before
+   *  advancing or closing. Uses the exact same payload and receipts. */
+  decideAsync: (artifacts: string[], state: string, note?: string,
+                propagate?: boolean) => Promise<TriageResult>
+  saving: boolean
   /** Take a propagation back: every artifact returns to the state the
    *  server supplied. */
   undo: (links: TriageLink[]) => Promise<void>
@@ -99,6 +104,9 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     dismissNothingToDecide: () => setNothingToDecide(false),
     decide: (artifacts, state, note, propagate) =>
       mutation.mutate({ artifacts, state, note, propagate }),
+    decideAsync: (artifacts, state, note, propagate) =>
+      mutation.mutateAsync({ artifacts, state, note, propagate }),
+    saving: mutation.isPending,
     // Grouped by state so that it stays one call per group.
     // `propagate: false`, otherwise taking it back triggers a new wave.
     undo: async (links) => {

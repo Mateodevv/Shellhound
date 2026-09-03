@@ -18,6 +18,9 @@ import hashlib
 import io
 import json
 import os
+import subprocess
+import sys
+import threading
 import time
 import uuid
 import zipfile
@@ -35,6 +38,7 @@ from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
+from server.analysis import AnalysisReceipts, stats_complete
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
                               uri_targets, web_path)
@@ -717,98 +721,174 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
+    def _paths_overlap(left, right):
+        """Whether two registered roots cover any of the same filesystem.
+
+        Incremental work must never guess which registration owns a shared
+        subtree.  Resolve links and compare path components so ``site`` does
+        not accidentally match ``site-old`` and different drives stay safe.
+        """
+        a = os.path.normcase(os.path.realpath(os.path.abspath(str(left))))
+        b = os.path.normcase(os.path.realpath(os.path.abspath(str(right))))
+        try:
+            common = os.path.commonpath((a, b))
+        except ValueError:
+            return False
+        return common == a or common == b
+
+    class AnalyzeBody(BaseModel):
+        mode: str = "all"
+
     @app.post("/api/cases/{slug}/analyze", dependencies=[auth])
-    def analyze(slug: str):
-        """One button: index the logs, scan the webroot, inventory the CMS,
-        analyze the dumps -- whatever evidence is registered."""
+    def analyze(slug: str, body: AnalyzeBody | None = None):
+        """Run every registered source, or only newly registered evidence.
+
+        An omitted body intentionally retains the original full-run API.
+        Incremental file/SQL engines merge their output without advancing the
+        engine-wide retirement marker.  Logs remain a case-wide index, so a
+        newly registered log source rebuilds that index from every log root.
+        """
         case_dir = case_dir_or_404(slug)
         by_kind = _evidence_by_kind(case_dir)
-        started = []
+        mode = body.mode if body is not None else "all"
+        if mode not in ("new", "all"):
+            raise HTTPException(400, "analysis mode must be 'new' or 'all'")
+
+        supported = ("webroot", "access_logs", "sql_dump")
+        pending_by_kind = {
+            kind: [row for row in by_kind.get(kind, [])
+                   if not str(row.get("scanned_at") or "").strip()]
+            for kind in supported
+        }
+        if mode == "new" and not any(pending_by_kind.values()):
+            raise HTTPException(
+                400,
+                "no new evidence to analyze; use full reanalysis for files "
+                "added inside an already registered path")
+
+        if mode == "new":
+            # Overlap only matters inside one evidence kind: a SQL dump may
+            # legitimately sit below a webroot, but two webroot registrations
+            # covering the same file make a partial engine run ambiguous.
+            for kind in supported:
+                scanned = [row for row in by_kind.get(kind, [])
+                           if str(row.get("scanned_at") or "").strip()]
+                for new_row in pending_by_kind[kind]:
+                    for old_row in scanned:
+                        if _paths_overlap(new_row["path"], old_row["path"]):
+                            raise HTTPException(
+                                409,
+                                f"new {kind} path overlaps previously analyzed "
+                                "evidence; use full reanalysis")
+
+        chosen = by_kind if mode == "all" else pending_by_kind
+        authoritative = mode == "all"
+        tasks = []
         run_id = uuid.uuid4().hex[:12]
 
-        logs = by_kind.get("access_logs", [])
+        # The index is one case-wide derived dataset. A new log source means
+        # rebuilding it from ALL registered logs; only the pending rows get a
+        # new scanned_at receipt.
+        selected_logs = chosen.get("access_logs", [])
+        logs = by_kind.get("access_logs", []) if selected_logs else []
         if logs:
             paths = [e["path"] for e in logs]
-            ids = [e["id"] for e in logs]
+            log_ready = threading.Event()
+            log_result = {"complete": False}
 
-            def run_logs(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = logindex.build(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
-                return stats
+            def run_logs(ctx, paths=paths, case_dir=case_dir):
+                try:
+                    stats = logindex.build(case_dir, paths, ctx, config.workspace)
+                    if not ctx.cancelled() and not stats.get("partial"):
+                        log_result["complete"] = True
+                    return stats
+                finally:
+                    log_ready.set()
 
-            started.append({"kind": "index_logs",
-                            "job": manager.submit(case_dir, "index_logs", run_logs,
-                                                  run_id=run_id)})
+            tasks.append(("index_logs", run_logs, ("access_logs",)))
 
-            # The error logs sit in the same directory and were skipped by
-            # the index -- they name files the access log structurally
-            # cannot see. Own job: it reads the same directory but answers a
-            # different question.
+            # Error logs live beside the access logs but answer a different
+            # question, so they keep their own visible job.
             def run_errors(ctx, paths=paths, case_dir=case_dir):
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
-            started.append({"kind": "errorlog",
-                            "job": manager.submit(case_dir, "errorlog", run_errors,
-                                                  run_id=run_id)})
+            # File correlations need a webroot. Their absence is a coverage
+            # limit, not a prerequisite for analyzing an access-log-only case.
+            error_kinds = ()
+            if by_kind.get("webroot"):
+                error_kinds = ("access_logs", "webroot") if chosen.get("webroot") else ("access_logs",)
+            tasks.append(("errorlog", run_errors, error_kinds))
 
             # The analyst's own SIGMA rules over the finished index. Its own
             # job because it is the log-side counterpart to the YARA one:
             # somebody else's rules, running after the thing they read has
             # been built. Nothing here if the sigma/ folder is empty.
             def run_sigma(ctx, case_dir=case_dir):
+                log_ready.wait()
+                if not log_result["complete"]:
+                    return {"rules": 0, "findings": 0, "clients": 0,
+                            "broken_rules": 0, "skipped": 1,
+                            "reason": "log index build did not complete"}
                 return sigmascan.scan(case_dir, config.workspace, ctx)
 
-            started.append({"kind": "sigma",
-                            "job": manager.submit(case_dir, "sigma", run_sigma,
-                                                  run_id=run_id)})
+            tasks.append(("sigma", run_sigma, ("access_logs",)))
 
-        webroots = by_kind.get("webroot", [])
+        webroots = chosen.get("webroot", [])
         if webroots:
             paths = [e["path"] for e in webroots]
-            ids = [e["id"] for e in webroots]
 
-            def run_shell(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = webshell.scan(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
-                return stats
+            def run_shell(ctx, paths=paths, case_dir=case_dir):
+                return webshell.scan(case_dir, paths, ctx, config.workspace,
+                                     authoritative=authoritative)
 
             def run_cms(ctx, paths=paths, case_dir=case_dir):
-                return cmsinventory.scan(case_dir, paths, ctx)
+                return cmsinventory.scan(case_dir, paths, ctx,
+                                         authoritative=authoritative)
 
-            started.append({"kind": "webshell",
-                            "job": manager.submit(case_dir, "webshell", run_shell,
-                                                  run_id=run_id)})
-            started.append({"kind": "cms",
-                            "job": manager.submit(case_dir, "cms", run_cms,
-                                                  run_id=run_id)})
+            tasks.append(("webshell", run_shell, ("webroot",)))
+            tasks.append(("cms", run_cms, ("webroot",)))
 
             # The analyst's OWN rules, if there are any. Queued as its own
             # job so a slow rule set never holds up the shipped scan.
             if yarascan.status(config.workspace).get("rules"):
                 def run_yara(ctx, paths=paths, case_dir=case_dir):
                     return yarascan.scan(case_dir, paths,
-                                         workspace=config.workspace, ctx=ctx)
+                                         workspace=config.workspace, ctx=ctx,
+                                         authoritative=authoritative)
 
-                started.append({"kind": "yara",
-                                "job": manager.submit(case_dir, "yara", run_yara,
-                                                      run_id=run_id)})
+                tasks.append(("yara", run_yara, ("webroot",)))
 
-        dumps = by_kind.get("sql_dump", [])
+        dumps = chosen.get("sql_dump", [])
         if dumps:
             paths = [e["path"] for e in dumps]
-            ids = [e["id"] for e in dumps]
 
-            def run_sql(ctx, paths=paths, ids=ids, case_dir=case_dir):
-                stats = sqldump.scan(case_dir, paths, ctx, config.workspace)
-                _mark_scanned(case_dir, ids, stats)
-                return stats
+            def run_sql(ctx, paths=paths, case_dir=case_dir):
+                return sqldump.scan(case_dir, paths, ctx, config.workspace,
+                                    authoritative=authoritative)
 
-            started.append({"kind": "sqldb",
-                            "job": manager.submit(case_dir, "sqldb", run_sql,
-                                                  run_id=run_id)})
+            tasks.append(("sqldb", run_sql, ("sql_dump",)))
 
-        if not started:
+        # Error-log paths can resolve differently when a webroot is added,
+        # even when the logs themselves did not change. Refresh that one
+        # cross-source engine, but never rebuild the access index for a new
+        # webroot alone.
+        all_logs = by_kind.get("access_logs", [])
+        refresh_errors = mode == "new" and not logs and bool(webroots) and bool(all_logs)
+        if refresh_errors:
+            error_paths = [e["path"] for e in all_logs]
+
+            def run_errors(ctx, paths=error_paths, case_dir=case_dir):
+                return errorlog.scan(case_dir, paths, ctx, config.workspace)
+
+            tasks.append(("errorlog", run_errors, ("webroot",)))
+
+        if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
+        receipts = AnalysisReceipts(
+            tasks, chosen, lambda ids, stats: _mark_scanned(case_dir, ids, stats))
+        started = [{"kind": kind, "job": manager.submit(
+            case_dir, kind, receipts.wrap(kind, fn), run_id=run_id)}
+            for kind, fn, _kinds in tasks]
         return {"run_id": run_id, "started": started}
 
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])
@@ -892,6 +972,34 @@ def create_app(config: Config) -> FastAPI:
                               "ORDER BY id DESC")
             for r in running:
                 r["stats"] = json.loads(r.get("stats") or "{}")
+            # A receipt predating a failed full rescan must not make the
+            # briefing claim that analysis is complete. Keep the latest
+            # result per engine; a later unrelated job cannot hide a failure.
+            latest_engines = db.rows(conn, """
+                SELECT kind, state, stats FROM jobs WHERE id IN (
+                    SELECT max(id) FROM jobs
+                    WHERE kind IN ('webshell','cms','yara','index_logs','errorlog','sigma','sqldb')
+                    GROUP BY kind
+                )
+            """)
+            supported_evidence = [e for e in evidence
+                                  if e["kind"] in ("webroot", "access_logs", "sql_dump")]
+            present = {e["kind"] for e in supported_evidence}
+            required_engines = set()
+            if "webroot" in present:
+                required_engines.update(("webshell", "cms", "yara"))
+            if "access_logs" in present:
+                required_engines.update(("index_logs", "sigma"))
+                if "webroot" in present:
+                    required_engines.add("errorlog")
+            if "sql_dump" in present:
+                required_engines.add("sqldb")
+            analysis_complete = (
+                bool(supported_evidence)
+                and all(e.get("scanned_at") for e in supported_evidence)
+                and not running
+                and all(j["state"] == "done" and stats_complete(json.loads(j["stats"] or "{}"))
+                        for j in latest_engines if j["kind"] in required_engines))
         finally:
             conn.close()
 
@@ -938,6 +1046,7 @@ def create_app(config: Config) -> FastAPI:
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
+            "analysis_complete": analysis_complete,
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
             "chronology": {
@@ -2015,6 +2124,33 @@ def create_app(config: Config) -> FastAPI:
         out["from_line"] = 1 if offset == 0 else None
         out["lines"] = text.split("\n")
         return out
+
+    class RevealFileBody(BaseModel):
+        path: str
+
+    @app.post("/api/cases/{slug}/reveal-file", dependencies=[auth])
+    def reveal_file(slug: str, body: RevealFileBody, lang: str = lang_dep):
+        """Select a registered evidence file in the local file manager.
+
+        This never opens the hostile file itself. The same resolved-root
+        fence as the inert viewer rejects traversal and escaping symlinks;
+        the launcher receives an argument array with shell execution off.
+        """
+        case_dir = case_dir_or_404(slug)
+        target = _within_evidence(case_dir, body.path, lang)
+        if not target.is_file():
+            raise HTTPException(400, _t(lang, "err.notRegularFile"))
+        if os.name == "nt":
+            command = ["explorer.exe", f"/select,{target}"]
+        elif sys.platform == "darwin":
+            command = ["open", "-R", str(target)]
+        else:
+            command = ["xdg-open", str(target.parent)]
+        try:
+            subprocess.Popen(command, shell=False)
+        except OSError:
+            raise HTTPException(503, _t(lang, "err.revealUnavailable"))
+        return {"ok": True}
 
     # --- pattern hunt -------------------------------------------------------
     # The library belongs to the WORKSPACE: created once, a pattern is ready

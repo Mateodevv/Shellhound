@@ -874,6 +874,7 @@ export interface Dashboard {
   cms_installs: { id: number; root: string; cms: string; version: string }[]
   evidence: EvidenceItem[]
   jobs_running: Job[]
+  analysis_complete?: boolean
   logs: {
     lines: number
     clients: number

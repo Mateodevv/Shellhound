@@ -111,19 +111,34 @@ export function RuleEditor({
         </button>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <Button disabled={pending} onClick={onTest}>
-          <FlaskConical size={13} /> {pending ? tr('hunt.searching') : tr('hunt.workbench.test')}
-        </Button>
-        <Button disabled={pending || !dirty} onClick={onSave}>
-          <Save size={13} /> {tr('hunt.workbench.saveRule')}
-        </Button>
-        <Tooltip className="w-full" hint={applyHint}>
-          <Button className="w-full justify-center" variant="primary"
-            disabled={pending || dirty || draft.source === 'new' || !tested || stale
-              || selectedClusters === 0} onClick={onApply}>
-            <Check size={13} /> {tr('hunt.workbench.applySelected')} ({selectedClusters})
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-1.5">
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.workbench.step.test')}
+          </div>
+          <Button className="w-full justify-center" disabled={pending} onClick={onTest}>
+            <FlaskConical size={13} /> {pending ? tr('hunt.searching') : tr('hunt.workbench.test')}
           </Button>
-        </Tooltip>
+        </div>
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-1.5">
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.workbench.step.save')}
+          </div>
+          <Button className="w-full justify-center" disabled={pending || !dirty} onClick={onSave}>
+            <Save size={13} /> {tr('hunt.workbench.saveRule')}
+          </Button>
+        </div>
+        <div className="rounded-lg border border-[var(--line-strong)] bg-[var(--panel-2)] p-1.5">
+          <div className="mb-1 text-[9px] font-bold uppercase tracking-wider text-[var(--muted)]">
+            {tr('hunt.workbench.step.apply')}
+          </div>
+          <Tooltip className="w-full" hint={applyHint}>
+            <Button className="w-full justify-center" variant="primary"
+              disabled={pending || dirty || draft.source === 'new' || !tested || stale
+                || selectedClusters === 0} onClick={onApply}>
+              <Check size={13} /> {tr('hunt.workbench.applySelected')} ({selectedClusters})
+            </Button>
+          </Tooltip>
+        </div>
       </div>
       {applyHint && (
         <div className="mt-2 text-[10.5px] leading-snug text-[var(--muted)]">

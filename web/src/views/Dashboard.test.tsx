@@ -68,6 +68,29 @@ const DASHBOARD: DashboardData = {
 }
 
 describe('forensic dashboard briefing', () => {
+  it.each([
+    ['registered but unscanned', { evidence: [{ ...DASHBOARD.evidence[0], scanned_at: '' }] }],
+    ['running', { jobs_running: [{ state: 'running' }] }],
+    ['failed or partial rescan', { analysis_complete: false }],
+  ])('does not imply a clean assessment when analysis is %s', async (_label, change) => {
+    vi.mocked(api).mockImplementation(async (path) => path.endsWith('/dashboard')
+      ? { ...DASHBOARD, triage: {}, confirmed_artifacts: [], ...change }
+      : { quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0 })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Analysis not complete')).toBeInTheDocument()
+    expect(screen.queryByText('No compromise confirmed in reviewed evidence')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Every queued artifact/)).not.toBeInTheDocument()
+  })
+
+  it('distinguishes no scanner findings from an analyst review', async () => {
+    vi.mocked(api).mockImplementation(async (path) => path.endsWith('/dashboard')
+      ? { ...DASHBOARD, triage: {}, confirmed_artifacts: [], analysis_complete: true }
+      : { quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0 })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Analysis complete — no findings')).toBeInTheDocument()
+    expect(screen.getByText(/This does not rule out a compromise/)).toBeInTheDocument()
+    expect(screen.queryByText(/Every queued artifact/)).not.toBeInTheDocument()
+  })
   it('separates confirmed compromise from observed context and states evidence limits', async () => {
     const gotoView = vi.fn()
     vi.mocked(api).mockImplementation(async (path) => {
@@ -96,5 +119,31 @@ describe('forensic dashboard briefing', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Notable clients/ }))
     expect(gotoView).toHaveBeenCalledWith('actors')
+  })
+
+  it.each([
+    [{ new: 3, reviewed: 1, confirmed: 0, dismissed: 0 }, 'Assessment in progress', /4 artifacts still need/],
+    [{ new: 0, reviewed: 0, confirmed: 0, dismissed: 4 }, 'No compromise confirmed in reviewed evidence', /Every queued artifact/],
+  ])('states incomplete and completed-clean triage honestly', async (triage, title, detail) => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/dashboard')) return { ...DASHBOARD, triage, confirmed_artifacts: [],
+        confirmed_kinds: {}, confirmed_severity: {} }
+      if (path.endsWith('/coverage')) return {
+        quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0,
+      }
+      throw new Error(`unexpected API call: ${path}`)
+    })
+
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+
+    expect(await screen.findByText(title)).toBeInTheDocument()
+    expect(screen.getByText(detail)).toBeInTheDocument()
+  })
+
+  it('keeps the unstarted case state separate from an assessed-clean case', async () => {
+    vi.mocked(api).mockResolvedValue({ ...DASHBOARD, evidence: [] })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('This case is empty.')).toBeInTheDocument()
+    expect(screen.queryByText('No compromise confirmed in reviewed evidence')).not.toBeInTheDocument()
   })
 })

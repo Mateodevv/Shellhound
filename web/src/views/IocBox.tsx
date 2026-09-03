@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AtSign, Box, ChevronDown, ChevronRight, CornerDownRight, Crosshair,
-  Download, FileDigit, FileSearch, Fingerprint, Globe, Link2, Plus, Radar,
+  Download, FileDigit, FileSearch, Fingerprint, Globe, Link2, ListFilter, Plus, Radar,
   Share2, ShieldOff, Trash2, TriangleAlert, User,
 } from 'lucide-react'
 import {
@@ -69,6 +69,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
   const [hiddenTags, setHiddenTags] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [newValue, setNewValue] = useState('')
   const [newNote, setNewNote] = useState('')
   // Expanded link sections and reputation panels, the briefly highlighted
@@ -364,30 +365,26 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="mr-1 flex items-center gap-1.5 text-lg font-bold">
-          IOC Box
-          <InfoDot title={tr('iocbox.title.what')}
-            body={tr('iocbox.title.body')}
-            hint={tr('iocbox.title.hint')} />
-        </h1>
-        {Object.entries(typeCounts).map(([t, n]) => (
-          <Tooltip key={t} body={tr(`iocType.${t}`)}
-            hint={hiddenTypes.has(t) ? tr('filter.hidden.back')
-                                     : tr('iocbox.type.hide')}>
-            <Chip active={!hiddenTypes.has(t)} dimmed={hiddenTypes.has(t)}
-              onClick={() => setHiddenTypes((prev) => {
-                const next = new Set(prev)
-                if (next.has(t)) next.delete(t)
-                else next.add(t)
-                return next
-              })} count={n}>
-              {t}
-            </Chip>
-          </Tooltip>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="mr-auto">
+          <h1 className="flex items-center gap-1.5 text-lg font-bold">
+            IOC Box
+            <InfoDot title={tr('iocbox.title.what')}
+              body={tr('iocbox.title.body')}
+              hint={tr('iocbox.title.hint')} />
+          </h1>
+          <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+            {tr('iocbox.count', { shown: formatCount(filtered.length), total: formatCount(iocs?.length ?? 0) })}
+          </p>
+        </div>
+        <div className="min-w-[16rem] flex-1 sm:max-w-md">
           <SearchInput value={search} onChange={setSearch} placeholder={tr('iocbox.search')} />
+        </div>
+        <Button onClick={() => setFiltersOpen((open) => !open)} aria-expanded={filtersOpen}
+          aria-controls="ioc-filter-panel">
+          <ListFilter size={14} /> {tr('iocbox.filters', { n: hiddenTypes.size + hiddenTags.size })}
+        </Button>
+        <div className="flex items-center gap-2">
           {filterActive && iocs && (
             <span className="text-[11px] text-[var(--muted)]">
               {tr('iocbox.export.filtered', {
@@ -413,31 +410,48 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         </div>
       </div>
 
-      {Object.keys(tagCounts).length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted)]">
-            Tags:
-            <InfoDot title={tr('iocbox.tags.what')}
-              body={tr('iocbox.tags.body')}
-              hint={tr('iocbox.tags.hint')} />
-          </span>
-          {Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-            <Tooltip key={t}
-              hint={hiddenTags.has(t)
-                ? tr('iocbox.tag.hidden')
-                : tr('iocbox.tag.hide')}>
-              <Chip active={!hiddenTags.has(t)} dimmed={hiddenTags.has(t)}
-                onClick={() => setHiddenTags((prev) => {
-                  const next = new Set(prev)
-                  if (next.has(t)) next.delete(t)
-                  else next.add(t)
-                  return next
-                })} count={n}>
-                {t}
-              </Chip>
-            </Tooltip>
-          ))}
-        </div>
+      {filtersOpen && (
+        <Card id="ioc-filter-panel" surface="raised" className="flex flex-col gap-3 p-4 animate-fade-up">
+          <div>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              {tr('iocbox.filter.types')}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(typeCounts).map(([t, n]) => (
+                <Tooltip key={t} body={tr(`iocType.${t}`)}
+                  hint={hiddenTypes.has(t) ? tr('filter.hidden.back') : tr('iocbox.type.hide')}>
+                  <Chip active={!hiddenTypes.has(t)} dimmed={hiddenTypes.has(t)}
+                    onClick={() => setHiddenTypes((previous) => {
+                      const next = new Set(previous)
+                      if (next.has(t)) next.delete(t); else next.add(t)
+                      return next
+                    })} count={n}>{t}</Chip>
+                </Tooltip>
+              ))}
+            </div>
+          </div>
+          {Object.keys(tagCounts).length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                {tr('iocbox.filter.tags')}
+                <InfoDot title={tr('iocbox.tags.what')} body={tr('iocbox.tags.body')}
+                  hint={tr('iocbox.tags.hint')} />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
+                  <Tooltip key={t} hint={hiddenTags.has(t) ? tr('iocbox.tag.hidden') : tr('iocbox.tag.hide')}>
+                    <Chip active={!hiddenTags.has(t)} dimmed={hiddenTags.has(t)}
+                      onClick={() => setHiddenTags((previous) => {
+                        const next = new Set(previous)
+                        if (next.has(t)) next.delete(t); else next.add(t)
+                        return next
+                      })} count={n}>{t}</Chip>
+                  </Tooltip>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
       )}
 
       {/* ---- what OTHER cases carry too --------------------------------
