@@ -1,5 +1,5 @@
 import type { CaseDetail, Dashboard, Job } from './api'
-import { evidenceAttempt, needsAttention, statsComplete } from './analysis'
+import { evidenceAttempt, needsAttention, jobComplete } from './analysis'
 
 export const EVIDENCE_KINDS = ['webroot', 'access_logs', 'sql_dump'] as const
 
@@ -22,22 +22,23 @@ export function deriveWorkflowAction(
     return { id: 'evidence', view: 'evidence', label: 'case.action.completeEvidence' }
   }
 
-  if (jobs?.some((job) => job.state === 'queued' || job.state === 'running')) {
+  const baseJobs = jobs?.filter((job) => job.scan_context?.mode !== 'retry')
+  if (baseJobs?.some((job) => job.state === 'queued' || job.state === 'running')) {
     return { id: 'running', view: 'evidence', label: 'case.action.viewAnalysis' }
   }
-  if (!jobs?.length) {
+  if (!baseJobs?.length) {
     return { id: 'analysis', view: 'evidence', label: 'case.action.runAnalysis' }
   }
 
-  const newest = [...jobs].sort((a, b) => b.created.localeCompare(a.created))[0]
+  const newest = [...baseJobs].sort((a, b) => b.created.localeCompare(a.created))[0]
   const run = newest.run_id
-    ? jobs.filter((job) => job.run_id === newest.run_id)
+    ? baseJobs.filter((job) => job.run_id === newest.run_id)
     : [newest]
   if (run.some((job) => job.state === 'queued' || job.state === 'running')) {
     return { id: 'running', view: 'evidence', label: 'case.action.viewAnalysis' }
   }
   if (run.some((job) => job.state === 'failed' || job.state === 'cancelled'
-      || (job.state === 'done' && !statsComplete(job.stats)))
+      || (job.state === 'done' && !jobComplete(job)))
       || caseInfo.evidence_items.some((item) => needsAttention(evidenceAttempt(item, jobs)))) {
     return { id: 'issue', view: 'evidence', label: 'case.action.reviewAnalysis' }
   }

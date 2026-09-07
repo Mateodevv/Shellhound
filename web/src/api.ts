@@ -117,6 +117,18 @@ export interface Job {
   started?: string
   finished?: string
   stats: Record<string, unknown>
+  analysis_status?: 'complete' | 'complete_with_warnings' | 'partial' | 'running' | 'failed' | 'cancelled'
+  warning_count?: number
+  current_warning_count?: number
+  accepted_count?: number
+  current_accepted_count?: number
+  warnings_current?: boolean
+  scan_context?: { mode: 'full' | 'new' | 'retry'; parent_job_id?: number }
+  progress_details?: {
+    phase: 'discovering' | 'scanning' | 'finalizing'
+    completed: number
+    total: number | null
+  }
 }
 
 export interface TriageEvent {
@@ -866,6 +878,8 @@ export interface Dashboard {
   evidence: EvidenceItem[]
   jobs_running: Job[]
   analysis_complete?: boolean
+  analysis_warnings?: number
+  analysis_accepted?: number
   logs: {
     lines: number
     clients: number

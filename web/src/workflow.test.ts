@@ -22,6 +22,17 @@ const dashboard = (triage: Record<string, number>): Dashboard => ({ triage } as 
 describe('deriveWorkflowAction', () => {
   const complete = evidence(['webroot', 'access_logs', 'sql_dump'])
 
+  it.each(['running', 'failed', 'cancelled'] as const)('keeps warning-only evidence usable during a %s targeted retry', (state) => {
+    const single = evidence(['webroot'])
+    single.evidence_items[0].stats = { last_attempt: { status: 'complete_with_warnings', warnings: 2 } }
+    const base = { ...job('done'), analysis_status: 'complete_with_warnings' as const,
+      warning_count: 2, stats: { skipped: 2, file_skips: 2 } }
+    const retry = { ...job(state, '2026-01-02', 'retry'), id: 2,
+      scan_context: { mode: 'retry' as const, parent_job_id: 1 } }
+    expect(deriveWorkflowAction(single, [retry, base], dashboard({ new: 1 }))).toMatchObject({ id: 'triage' })
+    expect(deriveWorkflowAction(single, [retry, base], dashboard({}))).toMatchObject({ id: 'report' })
+  })
+
   it('asks for evidence only when no supported source is registered', () => {
     expect(deriveWorkflowAction(evidence([]), [], dashboard({}))).toMatchObject({ id: 'evidence' })
     expect(deriveWorkflowAction(evidence(['reference']), [], dashboard({}))).toMatchObject({ id: 'evidence' })

@@ -9,6 +9,20 @@ const job: Job = {
 }
 
 describe('JobPopup', () => {
+  it('shows file discovery immediately without a fictional percentage, then scan progress', () => {
+    const { rerender } = render(<JobPopup jobs={[{ ...job, progress: 0,
+      progress_details: { phase: 'discovering', completed: 4280, total: null },
+    }]} onShowRuns={vi.fn()} />)
+    expect(screen.getByText(/Finding files… .* found/)).toBeInTheDocument()
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+    rerender(<JobPopup jobs={[{ ...job, progress: 0.5,
+      progress_details: { phase: 'scanning', completed: 2140, total: 4280 },
+    }]} onShowRuns={vi.fn()} />)
+    expect(screen.getByText('50%')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+    expect(screen.getByText(/Scanning files… .* of /)).toBeInTheDocument()
+  })
   it('opens with current jobs and keeps a user collapse across progress updates', () => {
     const onShowRuns = vi.fn()
     const { rerender } = render(<JobPopup jobs={[job]} onShowRuns={onShowRuns} />)

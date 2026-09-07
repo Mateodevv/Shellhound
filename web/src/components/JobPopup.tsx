@@ -3,6 +3,7 @@ import { Activity, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Job } from '../api'
 import { useT } from '../i18n'
 import { ProgressBar } from './ui'
+import { discovering, progressMessage } from '../analysis'
 
 export function JobPopup({ jobs, onShowRuns }: { jobs: Job[]; onShowRuns: () => void }) {
   const tr = useT()
@@ -33,16 +34,20 @@ export function JobPopup({ jobs, onShowRuns }: { jobs: Job[]; onShowRuns: () => 
             {jobs.map((job) => {
               const key = `job.${job.kind}`
               const label = tr(key) === key ? job.kind : tr(key)
+              const message = progressMessage(job, tr)
               return (
                 <div key={job.id}>
                   <div className="mb-1 flex items-center justify-between gap-3 text-[12px]">
-                    <span className="min-w-0 truncate font-semibold" title={label}>{label}</span>
+                    <span className="min-w-0 truncate font-semibold" title={label}>
+                      {label}{job.scan_context?.mode === 'retry' && ` · ${tr('jobs.retry')}`}
+                    </span>
                     <span className="shrink-0 text-[10px] text-[var(--muted)]">
-                      {job.state === 'queued' ? tr('jobs.queued') : `${Math.round(job.progress * 100)}%`}
+                      {job.state === 'queued' ? tr('jobs.queued') : discovering(job)
+                        ? tr('jobs.discovering') : `${Math.round(job.progress * 100)}%`}
                     </span>
                   </div>
-                  {job.message && <div className="mb-2 truncate text-[11px] text-[var(--muted)]" title={job.message}>{job.message}</div>}
-                  <ProgressBar value={job.progress} />
+                  {message && <div className="mb-2 truncate text-[11px] text-[var(--muted)]" title={message}>{message}</div>}
+                  <ProgressBar value={job.progress} indeterminate={discovering(job)} label={`${label}: ${message || tr('jobs.queued')}`} />
                 </div>
               )
             })}

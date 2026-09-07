@@ -99,8 +99,8 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   const confirmed = data.triage.confirmed ?? 0
   const outstanding = (data.triage.new ?? 0) + (data.triage.reviewed ?? 0)
   const evidence = data.evidence.filter((item) => item.kind !== 'reference')
-  const analysisComplete = evidence.length > 0 && evidence.every((item) => item.scanned_at)
-    && !data.jobs_running.length && data.analysis_complete !== false
+  const analysisComplete = data.analysis_complete ?? (evidence.length > 0 && evidence.every((item) => item.scanned_at)
+    && !data.jobs_running.some((job) => job.scan_context?.mode !== 'retry'))
   const verdict = confirmed > 0 ? 'confirmed'
     : outstanding > 0 ? 'inProgress'
       : !analysisComplete ? 'pendingAnalysis'
@@ -157,6 +157,20 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
                     {tr('dashboard.brief.pendingAnalysis.sub')}
                   </p>
                 )}
+                {(data.analysis_warnings ?? 0) > 0 && <div className="mt-3 text-[12px] text-[var(--sev-low)]">
+                  <p>{tr('dashboard.analysisWarnings', { n: data.analysis_warnings! })}</p>
+                  <button type="button" onClick={() => gotoView('evidence')}
+                    className="mt-1 cursor-pointer font-medium text-[var(--accent-text)] hover:underline">
+                    {tr('dashboard.reviewSkipped')}
+                  </button>
+                </div>}
+                {(data.analysis_accepted ?? 0) > 0 && <div className="mt-3 text-[12px] text-[var(--muted)]">
+                  <p>{tr('dashboard.analysisAccepted', { n: data.analysis_accepted! })}</p>
+                  <button type="button" onClick={() => gotoView('evidence')}
+                    className="mt-1 cursor-pointer font-medium text-[var(--accent-text)] hover:underline">
+                    {tr('dashboard.reviewAccepted')}
+                  </button>
+                </div>}
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-1.5">
