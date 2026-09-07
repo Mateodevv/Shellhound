@@ -479,7 +479,8 @@ class GitUpdateTests(unittest.TestCase):
             self.assertIn("already", duplicate.stderr)
             out, err = process.communicate(timeout=10)
             self.assertEqual(0, process.returncode, (out + err).decode(errors="replace"))
-            self.assertEqual(str(self.clone / "relative cases"), json.loads(runtime.read_text())["workspace"])
+            self.assertEqual(str((self.clone / "relative cases").resolve()),
+                             json.loads(runtime.read_text())["workspace"])
             self.assertTrue((self.clone / ".shellhound/fresh.txt").exists())
         finally:
             startup.stop_child(process)
