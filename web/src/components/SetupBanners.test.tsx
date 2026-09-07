@@ -8,30 +8,24 @@ import { GeoBanner } from './GeoBanner'
 vi.mock('../api', () => ({ api: vi.fn(), post: vi.fn() }))
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear() })
 
-it('shows missing keys before consent, hides configured services and opens settings', async () => {
-  vi.mocked(api).mockResolvedValue({ enrichment_ack: false, services: {
-    virustotal: { configured: false, sends: 'hash' },
-    abuseipdb: { configured: true, sends: 'ip' },
-  } })
+it('shows one OpenCTI setup reminder without starting any connection or enrichment', async () => {
+  vi.mocked(api).mockResolvedValue({ configured: false })
   const settings = vi.fn()
   renderWithProviders(<EnrichmentBanners onOpenSettings={settings} />)
-  expect(await screen.findByText('No VirusTotal key.')).toBeInTheDocument()
-  expect(screen.queryByText('No AbuseIPDB key.')).not.toBeInTheDocument()
-  expect(screen.getByText(/review the lookup permission/)).toBeInTheDocument()
+  expect(await screen.findByText('OpenCTI is not configured.')).toBeInTheDocument()
+  expect(screen.queryByText(/VirusTotal|AbuseIPDB/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
   expect(settings).toHaveBeenCalledOnce()
-  fireEvent.click(screen.getByRole('button', { name: 'Dismiss No VirusTotal key.' }))
-  expect(screen.queryByText('No VirusTotal key.')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss OpenCTI is not configured.' }))
+  expect(screen.queryByText('OpenCTI is not configured.')).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
 
-it('shows no reminder when all keys are configured', async () => {
-  vi.mocked(api).mockResolvedValue({ enrichment_ack: true, services: {
-    virustotal: { configured: true }, abuseipdb: { configured: true },
-  } })
+it('shows no reminder when OpenCTI is configured', async () => {
+  vi.mocked(api).mockResolvedValue({ configured: true })
   renderWithProviders(<EnrichmentBanners />)
   await waitFor(() => expect(api).toHaveBeenCalledOnce())
-  expect(screen.queryByText(/No .* key/)).not.toBeInTheDocument()
+  expect(screen.queryByText('OpenCTI is not configured.')).not.toBeInTheDocument()
 })
 
 it('shows missing GeoIP data and disappears when refreshed after installation', async () => {

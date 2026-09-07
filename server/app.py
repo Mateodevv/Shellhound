@@ -33,7 +33,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from server import case_report, correlation, coverage, db, enrich, geoip, huntrules
+from server import case_profile, case_report, correlation, coverage, db, geoip, huntrules
+from server import opencti_service
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
@@ -189,13 +190,17 @@ def create_app(config: Config) -> FastAPI:
         name: str
         reference: str = ""
         notes: str = ""
+        profile: dict | None = None
 
     @app.post("/api/cases", dependencies=[auth])
     def create_case(body: NewCase):
         if not body.name.strip():
             raise HTTPException(400, "case name must not be empty")
-        case_dir = workspace.create_case(config.workspace, body.name,
-                                         body.reference, body.notes)
+        try:
+            case_dir = workspace.create_case(config.workspace, body.name,
+                                             body.reference, body.notes, profile=body.profile)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
         return workspace.case_info(case_dir)
 
     # How long a "how much evidence is this?" scan may take. A webroot can
@@ -277,13 +282,17 @@ def create_app(config: Config) -> FastAPI:
         name: str | None = None
         reference: str | None = None
         notes: str | None = None
+        profile: dict | None = None
 
     @app.patch("/api/cases/{slug}", dependencies=[auth])
     def patch_case(slug: str, body: PatchCase):
         case_dir = case_dir_or_404(slug)
-        return workspace.update_case(
-            case_dir, name=body.name, reference=body.reference,
-            notes=body.notes)
+        try:
+            return workspace.update_case(
+                case_dir, name=body.name, reference=body.reference,
+                notes=body.notes, profile=body.profile)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     @app.get("/api/cases/{slug}/summary", dependencies=[auth])
     def case_close_preview(slug: str):
@@ -469,10 +478,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.post("/api/settings/key", dependencies=[auth])
     def settings_key(body: KeyBody):
-        try:
-            return settingslib.set_key(config.workspace, body.service, body.key)
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
+        raise HTTPException(410, "Direct provider keys are retired. Configure OpenCTI in Settings.")
 
     class AckBody(BaseModel):
         accepted: bool
@@ -481,7 +487,7 @@ def create_app(config: Config) -> FastAPI:
     def settings_ack(body: AckBody):
         """The analyst has read what a lookup sends out. Until this is set,
         `enrich` refuses -- the same gate as the GeoIP confirmation."""
-        return settingslib.set_ack(config.workspace, body.accepted)
+        raise HTTPException(410, "Direct enrichment is retired. Use the separate OpenCTI actions.")
 
     class EnrichBody(BaseModel):
         service: str           # virustotal | abuseipdb
@@ -492,12 +498,8 @@ def create_app(config: Config) -> FastAPI:
     def enrich_one(slug: str, body: EnrichBody):
         """Ask one service about one indicator. Explicit, one at a time --
         there is no sweep and no background refresh."""
-        case_dir = case_dir_or_404(slug)
-        try:
-            return enrich.lookup(config.workspace, case_dir, body.service,
-                                 body.value, body.refresh)
-        except enrich.EnrichError as e:
-            raise HTTPException(502, str(e)) from e
+        case_dir_or_404(slug)
+        raise HTTPException(410, "Direct enrichment is retired. Use OpenCTI; historical results remain available.")
 
     @app.get("/api/cases/{slug}/enrichment", dependencies=[auth])
     def enrichment_list(slug: str):
@@ -516,6 +518,105 @@ def create_app(config: Config) -> FastAPI:
             except ValueError:
                 r["result"] = {}
         return {"entries": rows}
+
+    # OpenCTI reads are local unless the user explicitly posts an operation.
+    # Server-side previews bind exact content to one integration destination.
+    def _cti_call(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        except Exception as exc:
+            raise HTTPException(502, opencti_service._error(exc)) from None
+
+    @app.get("/api/organizations", dependencies=[auth])
+    def organizations_list():
+        return case_profile.list_organizations(config.workspace)
+
+    @app.post("/api/organizations", dependencies=[auth])
+    def organization_create():
+        return _cti_call(case_profile.create_organization, config.workspace)
+
+    @app.get("/api/opencti/settings", dependencies=[auth])
+    def opencti_settings():
+        return settingslib.opencti_public(config.workspace)
+
+    class OpenCTISettings(BaseModel):
+        url: str | None = None
+        token: str | None = None
+        ingester_id: str | None = None
+        sample_uploads: bool | None = None
+
+    @app.patch("/api/opencti/settings", dependencies=[auth])
+    def opencti_settings_update(body: OpenCTISettings):
+        return _cti_call(settingslib.set_opencti, config.workspace,
+                         body.model_dump(exclude_unset=True))
+
+    @app.post("/api/opencti/test", dependencies=[auth])
+    def opencti_test():
+        return _cti_call(opencti_service.connection_test, config.workspace)
+
+    @app.get("/api/cases/{slug}/opencti", dependencies=[auth])
+    def opencti_state(slug: str):
+        return _cti_call(opencti_service.state, config.workspace, case_dir_or_404(slug))
+
+    class OpenCTISelection(BaseModel):
+        ioc_ids: list[int] | None = None
+
+    @app.post("/api/cases/{slug}/opencti/lookup", dependencies=[auth])
+    def opencti_lookup(slug: str, body: OpenCTISelection):
+        return _cti_call(opencti_service.lookup, config.workspace,
+                         case_dir_or_404(slug), body.ioc_ids)
+
+    class OpenCTIPreview(OpenCTISelection):
+        exclude_relationship_ids: list[int] = Field(default_factory=list)
+        indicator_ids: list[int] = Field(default_factory=list)
+        sample_ids: list[str] = Field(default_factory=list)
+        include_notes: bool = False
+        include_evidence: bool = False
+        exclude_note_ioc_ids: list[int] = Field(default_factory=list)
+        exclude_evidence_ioc_ids: list[int] = Field(default_factory=list)
+        exclude_profile_fields: list[str] = Field(default_factory=list)
+
+    @app.post("/api/cases/{slug}/opencti/preview", dependencies=[auth])
+    def opencti_preview(slug: str, body: OpenCTIPreview):
+        return _cti_call(opencti_service.preview, config.workspace,
+                         case_dir_or_404(slug), body.model_dump())
+
+    class OpenCTITransfer(BaseModel):
+        preview_id: str
+
+    @app.post("/api/cases/{slug}/opencti/export", dependencies=[auth])
+    def opencti_transfer(slug: str, body: OpenCTITransfer):
+        return _cti_call(opencti_service.transfer, config.workspace,
+                         case_dir_or_404(slug), body.preview_id)
+
+    class OpenCTIRetry(BaseModel):
+        export_id: str
+
+    @app.post("/api/cases/{slug}/opencti/retry", dependencies=[auth])
+    def opencti_retry(slug: str, body: OpenCTIRetry):
+        return _cti_call(opencti_service.retry, config.workspace,
+                         case_dir_or_404(slug), body.export_id)
+
+    @app.post("/api/cases/{slug}/opencti/enrichment/preview", dependencies=[auth])
+    def opencti_enrichment_preview(slug: str, body: OpenCTISelection):
+        return _cti_call(opencti_service.enrichment_preview, config.workspace,
+                         case_dir_or_404(slug), body.ioc_ids)
+
+    class OpenCTIEnrich(OpenCTISelection):
+        connector_ids: list[str] = Field(default_factory=list)
+        create_missing: bool = False
+
+    @app.post("/api/cases/{slug}/opencti/enrichment/status", dependencies=[auth])
+    def opencti_enrichment_status(slug: str):
+        return _cti_call(opencti_service.refresh_enrichment, config.workspace,
+                         case_dir_or_404(slug))
+
+    @app.post("/api/cases/{slug}/opencti/enrich", dependencies=[auth])
+    def opencti_enrich(slug: str, body: OpenCTIEnrich):
+        return _cti_call(opencti_service.enrich, config.workspace,
+                         case_dir_or_404(slug), body.ioc_ids, body.connector_ids, body.create_missing)
 
     @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
     def log_coverage(slug: str, lang: str = lang_dep, tz: str = tz_dep):
@@ -1610,7 +1711,7 @@ def create_app(config: Config) -> FastAPI:
             stat = os.stat(io_path(path))
             if stat.st_size > _HASH_MAX_BYTES:
                 return {}
-            key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            key = (str(path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
             cached = _file_hash_cache.get(key)
             if cached is not None:
                 return dict(cached)
@@ -1626,9 +1727,23 @@ def create_app(config: Config) -> FastAPI:
                     continue
                 hashers[name] = hasher
             with open(io_path(path), "rb") as fh:
+                before = os.fstat(fh.fileno())
+                count = 0
                 for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    count += len(chunk)
+                    if count > _HASH_MAX_BYTES:
+                        return {}
                     for hasher in hashers.values():
                         hasher.update(chunk)
+                after = os.fstat(fh.fileno())
+                # Windows can report different ctime values for stat and
+                # fstat. Compare ctime within the same handle, and use file
+                # identity, length and mtime across path/handle queries.
+                signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
+                current = os.stat(io_path(path))
+                if (count != before.st_size or before.st_ctime_ns != after.st_ctime_ns or
+                        not signature(before) == signature(after) == signature(stat) == signature(current)):
+                    return {}
             answer = {name: hasher.hexdigest()
                       for name, hasher in hashers.items()}
             if len(_file_hash_cache) >= 256:
@@ -1848,8 +1963,14 @@ def create_app(config: Config) -> FastAPI:
         if kind == "file":
             tags = [ioclib.TAG_FINDING, ioclib.TAG_CONFIRMED]
             manual_webshell = any(
-                f.get("rule_id") == "analyst.file_review" for f in findings)
-            if "webshell" in sources or manual_webshell:
+                f.get("source") == "analyst" and f.get("rule_id") == "analyst.file_review"
+                and f.get("evidence") == "Analyst classified the file as a webshell."
+                for f in findings)
+            manual_malware = any(
+                f.get("source") == "analyst" and f.get("rule_id") == "analyst.file_review"
+                and f.get("evidence") == "Analyst classified the file as a malware sample."
+                for f in findings)
+            if manual_webshell or ("webshell" in sources and not manual_malware):
                 tags.append(ioclib.TAG_WEBSHELL)
             # The path IN THE WEBROOT, never the absolute one. Where the
             # copy sits on the forensic machine is nobody's business outside
@@ -1858,15 +1979,18 @@ def create_app(config: Config) -> FastAPI:
             path_id = db.add_ioc(conn, value, "path", tags, origin=origin)
             _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
-            # The hash from the scan, otherwise computed now: the detail
-            # view shows it anyway, and a confirmed artifact without its
-            # SHA-256 in the box would be a gap in the report.
-            digest = hashes.get(artifact) or _sha256_of(artifact)
+            # An explicit file review describes the bytes inspected now.
+            # Scanner confirmations still refer to their captured snapshot.
+            digest = (_sha256_of(artifact) if manual_webshell or manual_malware
+                      else hashes.get(artifact) or _sha256_of(artifact))
             if digest:
                 hash_id = db.add_ioc(conn, digest, "hash",
                                      [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
                                      origin=f"sha-256 of {os.path.basename(artifact)}")
                 _track_ioc(conn, hash_id, artifact, "hash")
+                if manual_webshell or manual_malware:
+                    conn.execute("UPDATE ioc_sources SET active=0 WHERE artifact=? "
+                                 "AND role='hash' AND ioc_id != ?", (artifact, hash_id))
                 # Path and hash describe THE SAME file. Only here is that
                 # still known: afterwards the box holds two rows one cannot
                 # tell it from.
@@ -2004,8 +2128,12 @@ def create_app(config: Config) -> FastAPI:
                     hashes = json.loads(meta["value"] or "{}") if meta else {}
                     file_hashes = _hashes_of(path)
                     stored_sha256 = hashes.get(path)
-                    if stored_sha256:
-                        file_hashes["sha256"] = stored_sha256
+                    # A scan hash describes the earlier file snapshot. Mixing
+                    # it with freshly calculated MD5/SHA-1 invents a file that
+                    # never existed (and poisons intelligence exports).
+                    info["scanned_sha256"] = stored_sha256 or ""
+                    info["changed_since_scan"] = bool(stored_sha256 and
+                        file_hashes.get("sha256") and stored_sha256 != file_hashes["sha256"])
                     info["hashes"] = file_hashes
                     info["hashes_limited"] = info.get("size", 0) > _HASH_MAX_BYTES
                     # Kept for archives and clients from before the grouped
@@ -2858,7 +2986,11 @@ def create_app(config: Config) -> FastAPI:
             reviewed = {_filesystem_key(r["artifact"]): r
                         for r in db.rows(
                             conn, "SELECT artifact, triage AS state, "
-                                  "triage_note AS note, triaged_at AS at "
+                                  "triage_note AS note, triaged_at AS at, "
+                                  "CASE WHEN triage != 'confirmed' THEN NULL "
+                                  "WHEN evidence = 'Analyst classified the file as a malware sample.' THEN 'malware' "
+                                  "WHEN evidence = 'Analyst classified the file as a webshell.' THEN 'webshell' "
+                                  "ELSE NULL END AS classification "
                                   "FROM findings WHERE artifact_kind = 'file' "
                                   "AND source = 'analyst' "
                                   "AND rule_id = 'analyst.file_review'")}
@@ -2908,6 +3040,7 @@ def create_app(config: Config) -> FastAPI:
     class FileReviewBody(BaseModel):
         path: str = Field(min_length=1)
         state: str
+        classification: str = "webshell"
         note: str = Field(default="", max_length=4000)
 
     @app.post("/api/cases/{slug}/files/review", dependencies=[auth])
@@ -2916,11 +3049,13 @@ def create_app(config: Config) -> FastAPI:
 
         The analyst observation is its own unmanaged finding: a later scanner
         run can neither claim nor retire it. Triage remains the decision axis,
-        so a confirmed manual webshell appears in reports and produces the
+        so an explicitly classified file appears in reports and produces the
         same path/hash provenance as a scanner-backed confirmation.
         """
         if body.state not in ("reviewed", "confirmed", "dismissed"):
             raise HTTPException(400, "state must be reviewed, confirmed or dismissed")
+        if body.classification not in ("webshell", "malware"):
+            raise HTTPException(400, "classification must be webshell or malware")
         note = body.note.strip()
         if body.state in ("confirmed", "dismissed") and not note:
             raise HTTPException(400, "a reason is required for a final file decision")
@@ -2932,16 +3067,26 @@ def create_app(config: Config) -> FastAPI:
         artifact = display_path(target)
         statements = {
             "reviewed": "Analyst reviewed the file; the decision remains open.",
-            "confirmed": "Analyst classified the file as a webshell.",
-            "dismissed": "Analyst reviewed the file and found no webshell evidence.",
+            "confirmed": ("Analyst classified the file as a malware sample."
+                          if body.classification == "malware" else
+                          "Analyst classified the file as a webshell."),
+            "dismissed": "Analyst reviewed the file and dismissed the malicious classification.",
         }
         conn = db.connect(case_dir)
         try:
+            previous = db.one(conn, "SELECT triage,evidence FROM findings WHERE artifact=? "
+                                   "AND source='analyst' AND rule_id='analyst.file_review'",
+                              (artifact,))
             db.upsert_finding(
                 conn, "analyst",
                 db.SEV_HIGH if body.state == "confirmed" else db.SEV_INFO,
                 "Manual file review", "file", artifact,
                 evidence=statements[body.state], rule_id="analyst.file_review")
+            if (previous and previous["triage"] == body.state == "confirmed"
+                    and previous["evidence"] != statements[body.state]):
+                conn.execute("INSERT INTO triage_events (artifact,artifact_kind,from_state,to_state,note,propagated,at) "
+                             "VALUES (?,'file','confirmed','confirmed',?,0,?)",
+                             (artifact, f"Classification changed to {body.classification}: {note}", db.now()))
             conn.commit()
         finally:
             conn.close()
@@ -2954,6 +3099,7 @@ def create_app(config: Config) -> FastAPI:
             propagate=False))
         return {**result, "review": {
             "state": body.state, "note": note,
+            "classification": body.classification if body.state == "confirmed" else None,
             "at": db.now(),
         }}
 

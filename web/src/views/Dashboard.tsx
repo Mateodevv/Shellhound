@@ -19,6 +19,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { Card, EmptyState, Section, Tag } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { LogCoverage } from '../components/LogCoverage'
+import { CaseProfileButton } from '../components/CaseProfile'
 import type { Navigate } from '../App'
 
 type Observation = DashboardData['chronology']['observations'][number]
@@ -115,7 +116,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
 
   if (!evidence.length) {
     return (
-      <EmptyState
+      <div className="flex flex-col gap-3"><div className="flex justify-end"><CaseProfileButton slug={slug} /></div><EmptyState
         icon={<HardDrive size={36} />}
         title={tr('dashboard.empty.title')}
         sub={tr('dashboard.empty.sub')}
@@ -125,13 +126,13 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
             {tr('dashboard.toEvidence')} <ArrowRight size={14} />
           </button>
         }
-      />
+      /></div>
     )
   }
 
   return (
     <div className="flex flex-col gap-7">
-      <Section title={tr('dashboard.brief.title')} sub={tr('dashboard.brief.sub')}>
+      <Section title={tr('dashboard.brief.title')} sub={tr('dashboard.brief.sub')} right={<CaseProfileButton slug={slug} />}>
         <Card className="overflow-hidden border-[var(--line)]">
           <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-5">
             <div className="flex min-w-0 gap-3">

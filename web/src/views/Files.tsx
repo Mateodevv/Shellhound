@@ -1,15 +1,15 @@
 // Files.tsx -- manual inspection of registered evidence, one file at a time.
-// Scanner observations remain available, while case decisions live in the
-// shared Findings workflow instead of being duplicated here.
+// Explicit file classifications use the same audit and receipt path as triage.
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRight, Bug, ChevronRight, Clock3,
   FileCode2, FileSearch, FileText, Fingerprint, FolderOpen, FolderTree,
 } from 'lucide-react'
 import {
-  api, type BrowseFile, type BrowseResponse, type CaseDetail, type FileContent,
+  api, post, type BrowseFile, type BrowseResponse, type CaseDetail, type FileContent,
+  type FileClassification, type FileReviewResult,
 } from '../api'
 import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../format'
 import { useT } from '../i18n'
@@ -178,6 +178,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
         position={selectedIndex >= 0 ? selectedIndex + 1 : 0} total={files.length}
         canPrevious={selectedIndex > 0} canNext={selectedIndex >= 0 && selectedIndex < files.length - 1}
         onPrevious={() => move(-1)} onNext={() => move(1)}
+        onRecorded={triage.recordResult}
         onView={() => selected && setViewing(selected.path)}
         onOpenArtifact={() => selected && selected.worst != null && setArtifact({
           artifact: selected.path, artifact_kind: 'file', worst: selected.worst,
@@ -271,7 +272,7 @@ function FileRow({ file, active, onClick, tr }: {
 }
 
 function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
-  onPrevious, onNext, onView, onOpenArtifact }: {
+  onPrevious, onNext, onView, onOpenArtifact, onRecorded }: {
   slug: string
   file: BrowseFile | null
   position: number
@@ -282,8 +283,17 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
   onNext: () => void
   onView: () => void
   onOpenArtifact: () => void
+  onRecorded: (result: FileReviewResult) => void
 }) {
   const tr = useT()
+  const [reason, setReason] = useState(file?.review?.note ?? '')
+  const classify = useMutation({
+    mutationFn: (classification: FileClassification) => post<FileReviewResult>(
+      `/api/cases/${slug}/files/review`, {
+        path: file!.path, state: 'confirmed', classification, note: reason.trim(),
+      }),
+    onSuccess: onRecorded,
+  })
   const preview = useQuery({
     queryKey: ['file-review-preview', slug, file?.path],
     queryFn: () => api<FileContent>(
@@ -298,6 +308,7 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
 
   const facts = preview.data ?? file
   const copyableContent = preview.data?.binary ? '' : preview.data?.lines?.join('\n') ?? ''
+  const review = classify.data?.review ?? file.review
   return <Card className="min-w-0 overflow-hidden">
     <header className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] px-4 py-3">
       <span className="flex size-9 items-center justify-center rounded-lg bg-[var(--panel-2)] text-[var(--accent-text)]">
@@ -315,10 +326,10 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
       </span>
       <span className="tabular text-[10px] text-[var(--muted)]">{position} / {formatCount(total)}</span>
       <div className="flex gap-1">
-        <Button variant="ghost" disabled={!canPrevious} onClick={onPrevious} title={tr('files.review.previous')}>
+        <Button variant="ghost" disabled={!canPrevious || classify.isPending} onClick={onPrevious} title={tr('files.review.previous')}>
           <ArrowLeft size={14} />
         </Button>
-        <Button variant="ghost" disabled={!canNext} onClick={onNext} title={tr('files.review.next')}>
+        <Button variant="ghost" disabled={!canNext || classify.isPending} onClick={onNext} title={tr('files.review.next')}>
           <ArrowRight size={14} />
         </Button>
       </div>
@@ -390,6 +401,36 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
         {file.triage && <TriageBadge state={file.triage} label={tr(`triage.${file.triage}`)} />}
         <Button variant="ghost" onClick={onOpenArtifact}>{tr('files.detected.open')}</Button>
       </div>}
+
+      <section aria-label={tr('files.classification.title')} className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-[11px] font-semibold">{tr('files.classification.title')}</h2>
+          {review?.state === 'confirmed' && review.classification && <Tag tone="warn">
+            {tr(review.classification === 'malware' ? 'files.review.malware' : 'files.review.webshell')}
+          </Tag>}
+        </div>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">{tr('files.classification.sub')}</p>
+        <label className="mt-3 block text-[11px]">
+          {tr('files.classification.reason')}
+          <textarea value={reason} onChange={(event) => setReason(event.target.value)}
+            maxLength={4000} disabled={classify.isPending} rows={3}
+            placeholder={tr('files.decision.note')}
+            className="mt-1 block w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]" />
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button disabled={!reason.trim() || !preview.isSuccess || classify.isPending}
+            onClick={() => classify.mutate('webshell')}>{tr('files.decision.webshell')}</Button>
+          <Button disabled={!reason.trim() || !preview.isSuccess || classify.isPending}
+            onClick={() => classify.mutate('malware')}>{tr('files.decision.malware')}</Button>
+          {classify.isPending && <span role="status" className="text-[11px] text-[var(--muted)]">{tr('files.classification.saving')}</span>}
+          {classify.isSuccess && <span role="status" className="text-[11px] text-[var(--accent-text)]">
+            {tr('files.classification.saved')}
+          </span>}
+        </div>
+        {classify.isError && <p role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">
+          {String((classify.error as Error)?.message ?? classify.error)}
+        </p>}
+      </section>
 
     </div>
   </Card>

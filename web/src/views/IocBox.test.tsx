@@ -175,9 +175,9 @@ describe('the reputation panel is a lookup, not wallpaper', () => {
     renderWithProviders(<IocBox slug="current-case" gotoView={() => {}} />)
 
     await screen.findByText(HASH_IOC.value, { selector: '.mono span' })
-    expect(screen.queryByText(/Ask VirusTotal/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Look up reputation' }))
-    expect(await screen.findByText(/Ask VirusTotal/)).toBeInTheDocument()
+    expect(screen.queryByText(/Historical results remain available/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Stored intelligence' }))
+    expect(await screen.findByText(/Historical results remain available/)).toBeInTheDocument()
   })
 })
 

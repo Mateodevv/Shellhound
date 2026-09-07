@@ -62,6 +62,7 @@ export function downloadUrl(path: string): string {
 // ---- types -----------------------------------------------------------------
 
 export interface CaseInfo {
+  profile?: import('./opencti').CaseProfile
   slug: string
   dir: string
   name: string
@@ -978,8 +979,11 @@ export interface BrowseFile {
   review: FileReview | null
 }
 
+export type FileClassification = 'webshell' | 'malware'
+
 export interface FileReview {
   state: Exclude<TriageState, 'new'>
+  classification?: FileClassification | null
   note: string
   at: string
 }
@@ -1327,6 +1331,8 @@ export interface ArtifactContext {
   related_ips: RelatedIp[]
   file?: {
     exists: boolean
+    changed_since_scan?: boolean
+    scanned_sha256?: string
     size?: number
     mtime?: string
     sha256?: string

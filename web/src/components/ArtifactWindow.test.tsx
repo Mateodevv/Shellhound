@@ -365,7 +365,7 @@ describe('what the window states about the artifact', () => {
       (path === '/api/settings' ? settings : artifactContext) as never)
 
     mount()
-    expect(await screen.findByRole('button', { name: /Ask VirusTotal/i })).toBeVisible()
+    expect(await screen.findByRole('link', { name: 'Open IOC Box' })).toBeVisible()
     expect(post).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))

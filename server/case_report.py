@@ -18,7 +18,7 @@ from server.chain import case_chain
 WORDS = {
     "report": "Case report",
     "generated": "Generated",
-    "reference": "Reference",
+    "reference": "Case ID",
     "notes": "Case notes",
     "findings": "Findings",
     "artifacts": "Artifacts",
