@@ -1,16 +1,16 @@
 // App.tsx — shell: case selection + the left rail with the five views.
 import { useT } from './i18n'
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, ArrowLeft, ArrowRight, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
+  ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
   SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
 import { useLiveEvents } from './ws'
-import { PageSkeleton, ProgressBar } from './components/ui'
+import { PageSkeleton } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
 import { TimeSwitcher } from './components/TimeSwitcher'
 import { Mark } from './components/Mark'
@@ -22,7 +22,7 @@ import { TriageFollowUp } from './components/triage'
 import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
 import { queryClient } from './queryClient'
-import { deriveWorkflowAction } from './workflow'
+import { JobPopup } from './components/JobPopup'
 
 const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
 const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
@@ -158,7 +158,6 @@ function viewFromUrl(): ViewId {
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const tr = useT()
   const [view, setView] = useState<ViewId>(viewFromUrl)
-  const [liveJobs, setLiveJobs] = useState<Record<number, Partial<Job>>>({})
 
   // The global search belongs to the shell: it has to be reachable from
   // EVERY view, and its hit opens the artifact window directly -- no matter
@@ -182,20 +181,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  useLiveEvents((job) => {
-    setLiveJobs((prev) => {
-      const next = { ...prev, [job.id]: { ...prev[job.id], ...job } }
-      if (job.state && ['done', 'failed', 'cancelled'].includes(job.state)) {
-        // keep it briefly so the bar finishes, then drop
-        setTimeout(() => setLiveJobs((p) => {
-          const rest = { ...p }
-          delete rest[job.id]
-          return rest
-        }), 1500)
-      }
-      return next
-    })
-  })
+  useLiveEvents()
 
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
@@ -234,9 +220,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  const running = useMemo(
-    () => Object.values(liveJobs).filter((j) => j.state === 'running' || j.state === 'queued'),
-    [liveJobs])
+  const running = (jobs ?? []).filter((job) => job.state === 'running' || job.state === 'queued')
 
   const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
     kind: e.kind, path: e.path, label: e.label,
@@ -244,28 +228,13 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const props = { slug, gotoView }
   const triage = dashboard?.triage ?? {}
   const openArtifacts = (triage.new ?? 0) + (triage.reviewed ?? 0)
-  const decidedArtifacts = (triage.confirmed ?? 0) + (triage.dismissed ?? 0)
-  const decisionTotal = openArtifacts + decidedArtifacts
-  const completion = decisionTotal ? decidedArtifacts / decisionTotal : 0
-  const workflowAction = deriveWorkflowAction(caseInfo, jobs, dashboard)
-
-  const followWorkflowAction = () => {
-    if (!workflowAction) return
-    if (workflowAction.id === 'triage') {
-      // Findings resolves this marker against its real displayed queue. That
-      // keeps this shortcut identical to the button inside the workbench.
-      gotoView('findings', { triage: 'new,reviewed', next: '1' })
-      return
-    }
-    gotoView(workflowAction.view)
-  }
 
   return (
     <div className="h-full">
       <div className="flex h-full flex-col md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]">
         <button
           onClick={onBack}
-          className="group hidden h-full items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
+          className="group hidden h-full md:col-start-1 md:row-start-1 items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
         >
           <ArrowLeft size={14} className="text-[var(--muted)] transition-transform group-hover:-translate-x-0.5" />
           <div className="min-w-0">
@@ -276,42 +245,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
           </div>
         </button>
 
-        <header className="z-20 hidden border-b border-[var(--line)] bg-[var(--bg)]/95 px-6 py-3 backdrop-blur md:block">
-          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[15px] font-semibold">{caseInfo?.name ?? slug}</span>
-                {caseInfo?.reference && (
-                  <span className="truncate rounded-md bg-[var(--panel-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
-                    {caseInfo.reference}
-                  </span>
-                )}
-              </div>
-              <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-                {tr(`nav.${view}`)}
-                {view !== 'dashboard' && <> · {tr('case.progress', { done: decidedArtifacts, total: decisionTotal })}</>}
-              </div>
-            </div>
-            {view !== 'dashboard' && <div className="w-36"><ProgressBar value={completion} /></div>}
-            {workflowAction && view !== workflowAction.view && (
-              <button type="button" onClick={followWorkflowAction}
-                className={clsx(
-                  'group inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--primary)] font-semibold text-[var(--primary-text)] transition-all hover:bg-[var(--primary-hover)] disabled:cursor-wait disabled:opacity-60',
-                  view === 'dashboard'
-                    ? 'px-4 py-2.5 text-[13px] shadow-[0_8px_24px_color-mix(in_srgb,var(--primary)_20%,transparent)]'
-                    : 'px-3 py-1.5 text-[12px]')}
-              >
-                {tr(workflowAction.label, { n: workflowAction.count ?? 0 })}
-                {workflowAction.id === 'triage' && (
-                  <ArrowRight size={15}
-                    className="transition-transform group-hover:translate-x-0.5" />
-                )}
-              </button>
-            )}
-          </div>
-        </header>
-
-        <nav className="hidden min-h-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
+        <nav className="md:col-start-1 md:row-start-2 hidden min-h-0 flex-col border-r border-[var(--line)] bg-[var(--panel)] md:flex">
           <CaseNavigation view={view} openArtifacts={openArtifacts}
             onNavigate={gotoView} onSearch={() => setPaletteOpen(true)} />
 
@@ -339,22 +273,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             <TimeSwitcher up />
             <ThemeSwitcher up />
           </div>
-          {running.length > 0 && (
-            <div className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3 animate-fade-up">
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-text)]">
-                <Activity size={12} className="animate-pulse-soft" />
-                {tr('nav.jobsRunning', { n: running.length })}
-              </div>
-              {running.slice(0, 3).map((j) => (
-                <div key={j.id} className="mb-2 last:mb-0">
-                  <div className="mb-1 truncate text-[11px] text-[var(--muted)]">
-                    {j.message || j.kind || `Job #${j.id}`}
-                  </div>
-                  <ProgressBar value={j.progress ?? 0} />
-                </div>
-              ))}
-            </div>
-          )}
+
         </div>
         </nav>
 
@@ -390,8 +309,8 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </button>
         </div>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-2">
-        <div key={view} className={clsx('mx-auto', view === 'hunt'
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-1 md:row-span-2">
+        <div key={view} className={clsx('mx-auto', running.length > 0 && 'pt-16! sm:pt-16!', view === 'hunt'
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
           <Suspense fallback={<PageSkeleton />}>
@@ -412,6 +331,8 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
         </main>
       </div>
+
+      {running.length > 0 && <JobPopup jobs={running} onShowRuns={() => gotoView('evidence')} />}
 
       <CommandPalette
         slug={slug}
@@ -478,7 +399,7 @@ function Root() {
   }, [])
 
   return slug
-    ? <CaseShell slug={slug} onBack={back} />
+    ? <CaseShell key={slug} slug={slug} onBack={back} />
     : <Suspense fallback={<div className="mx-auto max-w-3xl px-6 py-12"><PageSkeleton /></div>}>
         <Start onOpen={open} />
       </Suspense>
