@@ -271,15 +271,25 @@ class ScanRetryApiTests(unittest.TestCase):
         from server.engines import webshell
         from server.events import hub
         real_scan = webshell.scan_file
+        attempted = []
         def fail_second(path, root):
-            if path == str(self.files[1]):
+            # Directory enumeration order differs across filesystems. Interrupt
+            # the second actual attempt, regardless of which filename it has.
+            attempted.append(path)
+            if len(attempted) == 2:
                 raise RuntimeError("synthetic interruption after one committed file")
             return real_scan(path, root)
         with patch.object(webshell, "scan_file", side_effect=fail_second), patch.object(hub, "publish") as publish:
             retry = self.retry(original, {"mode": "all"})
         jobs = self.client.get(self.url + "/jobs").json()
         self.assertEqual("failed", next(j for j in jobs if j["id"] == retry)["state"])
-        self.assertEqual(1, self.details(original)["unresolved"])
+        details = self.details(original)
+        self.assertEqual(1, details["unresolved"])
+        self.assertEqual(2, len(attempted))
+        self.assertEqual([attempted[0]], [entry["path"] for entry in details["items"]
+                                         if entry["status"] == "resolved"])
+        self.assertEqual([attempted[1]], [entry["path"] for entry in details["items"]
+                                         if entry["status"] == "unresolved"])
         self.assertTrue(self.client.get(self.url + "/dashboard").json()["analysis_complete"])
         self.assertTrue(any(call.args[0] == {"type": "invalidate", "scope": "webshell"}
                             for call in publish.call_args_list))
