@@ -133,15 +133,62 @@ def migrate(conn):
         digest = row["value"].lower()
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             continue
+        existing = db.one(conn, "SELECT f.* FROM ioc_file_members m JOIN ioc_files f ON f.ioc_id=m.file_id "
+                          "WHERE m.ioc_id=?", (row["id"],))
+        if existing and conn.execute("SELECT 1 FROM ioc_sources WHERE ioc_id=? AND artifact=? AND role='hash'",
+                                     (existing["ioc_id"], row["artifact"])).fetchone():
+            continue  # Preserve verified metadata and withdrawn observations on later upgrades.
         file_id = register_file(conn, {"SHA-256": digest}, row["artifact"],
                                 hash_id=row["id"], observed_at=row["observed_at"], legacy=True)
-        conn.execute("UPDATE iocs SET legacy_warning=? WHERE id=?",
-                     ("Historical hash provenance; size and other hashes have not been verified.", file_id))
+        if not existing or not existing["verified_at"]:
+            conn.execute("UPDATE iocs SET legacy_warning=? WHERE id=?",
+                         ("Historical hash provenance; size and other hashes have not been verified.", file_id))
         conn.execute("UPDATE ioc_sources SET active=? WHERE ioc_id=? AND artifact=?", (row["source_active"], file_id, row["artifact"]))
         conn.execute("UPDATE ioc_observations SET active=? WHERE ioc_id=? AND local_path=?", (row["source_active"], file_id, row["artifact"]))
+    _migrate_file_relationships(conn)
     for row in db.rows(conn, "SELECT * FROM ioc_links"):
         if not conn.execute("SELECT 1 FROM ioc_relationship_evidence WHERE link_id=?", (row["id"],)).fetchone():
             add_support(conn, row["id"], "Legacy collection relationship", row["note"])
+
+
+def _migrate_file_relationships(conn):
+    """Repair v13 file details using exact provenance, never relative paths alone."""
+    from server import db
+    locations = db.rows(conn, """SELECT DISTINCT m.file_id,l.dst AS path_id,s.artifact
+        FROM ioc_file_members m
+        JOIN ioc_links l ON l.src=m.ioc_id AND l.kind='hash-of' AND l.active=1
+        JOIN ioc_sources s ON s.ioc_id=m.ioc_id AND s.role='hash' AND s.active=1
+        JOIN ioc_sources p ON p.ioc_id=l.dst AND p.artifact=s.artifact AND p.active=1
+        JOIN iocs i ON i.id=l.dst AND i.type='path' AND i.path_context!='local-evidence'
+        JOIN ioc_sources f ON f.ioc_id=m.file_id AND f.artifact=s.artifact AND f.active=1""")
+    for location in locations:
+        file_id, path_id, artifact = location["file_id"], location["path_id"], location["artifact"]
+        observation = db.one(conn, "SELECT id FROM ioc_observations WHERE ioc_id=? AND local_path=? "
+                            "AND kind='file-location' AND active=1 ORDER BY id LIMIT 1", (file_id, artifact))
+        if not observation:
+            continue
+        db.link_iocs(conn, file_id, path_id, "located-at", "Historical hash provenance associates this file with this location.")
+        link = db.one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind='located-at'", (file_id, path_id))
+        add_support(conn, link["id"], "Historical file observation", observation_id=observation["id"])
+        # A merged legacy path may point to different content versions. Leave
+        # that ambiguity on the path instead of choosing a file for the IP.
+        candidates = {r["file_id"] for r in locations if r["path_id"] == path_id and r["artifact"] == artifact}
+        if len(candidates) != 1:
+            continue
+        requesters = db.rows(conn, """SELECT DISTINCT l.src FROM ioc_links l
+            JOIN iocs i ON i.id=l.src AND i.type='ip'
+            JOIN ioc_sources s ON s.ioc_id=l.src AND s.artifact=? AND s.role='requester' AND s.active=1
+            WHERE l.dst=? AND l.kind='requested' AND l.active=1""", (artifact, path_id))
+        for requester in requesters:
+            description = "Historical request to an associated path; file presence at request time, use and execution are not established."
+            previous = db.one(conn, "SELECT id FROM ioc_observations WHERE ioc_id=? AND local_path=? "
+                              "AND kind='http-request' AND source_ref='legacy-request-context'", (requester["src"], artifact))
+            observed = previous["id"] if previous else observe(
+                conn, requester["src"], "http-request", source_ref="legacy-request-context",
+                local_path=artifact, path=db.case_relative_path(conn, artifact), detail=description)
+            db.link_iocs(conn, requester["src"], file_id, "request-context", description)
+            link = db.one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind='request-context'", (requester["src"], file_id))
+            add_support(conn, link["id"], "Historical requester provenance", description, observation_id=observed)
 
 
 def observe(conn, ioc_id, kind, *, evidence_id=None, finding_id=None, source_ref="",

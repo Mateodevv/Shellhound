@@ -221,3 +221,44 @@ class StructuredIocTests(unittest.TestCase):
         again = db.connect(old)
         self.assertEqual(count, again.execute("SELECT count(*) FROM iocs").fetchone()[0])
         again.close()
+
+    def test_v13_relationship_repair_requires_exact_provenance_and_is_idempotent(self):
+        path, path_id, hash_id, file_id = self.collect()
+        other_path, other_id, other_hash, other_file = self.collect("root-b", content=b"other bytes")
+        ip = db.add_ioc(self.conn, "198.51.100.9", "ip")
+        for ioc_id, artifact, role in ((path_id, path, "direct"), (hash_id, path, "hash"),
+                                      (other_id, other_path, "direct"), (other_hash, other_path, "hash"),
+                                      (ip, path, "requester")):
+            self.conn.execute("INSERT OR IGNORE INTO ioc_sources(ioc_id,artifact,role,added) VALUES(?,?,?,?)",
+                              (ioc_id, str(artifact), role, db.now()))
+        db.link_iocs(self.conn, ip, path_id, "requested")
+        db.link_iocs(self.conn, ip, other_id, "requested")  # No matching requester provenance.
+        self.conn.execute("DELETE FROM ioc_links WHERE kind='located-at'")
+        before = db.one(self.conn, "SELECT * FROM ioc_files WHERE ioc_id=?", (file_id,))
+        model.migrate(self.conn)
+        links = db.ioc_links(self.conn)
+        self.assertEqual(2, sum(l["kind"] == "located-at" for l in links))
+        requests = [l for l in links if l["kind"] == "request-context"]
+        self.assertEqual([file_id], [l["dst_id"] for l in requests])
+        self.assertIn("not established", requests[0]["note"])
+        self.assertEqual(before, db.one(self.conn, "SELECT * FROM ioc_files WHERE ioc_id=?", (file_id,)))
+        self.assertEqual("", db.one(self.conn, "SELECT legacy_warning FROM iocs WHERE id=?", (file_id,))["legacy_warning"])
+        model.withdraw(self.conn, requests[0]["id"], "Incorrect historic attribution")
+        counts = [self.conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                  for t in ("iocs", "ioc_links", "ioc_observations", "ioc_relationship_evidence")]
+        model.migrate(self.conn)
+        self.assertFalse(any(l["kind"] == "request-context" for l in db.ioc_links(self.conn)))
+        self.assertEqual(counts, [self.conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                                 for t in ("iocs", "ioc_links", "ioc_observations", "ioc_relationship_evidence")])
+        self.assertNotEqual(file_id, other_file)
+
+    def test_ambiguous_legacy_file_versions_do_not_gain_ip_file_links(self):
+        path, path_id, hash_id, _ = self.collect()
+        _, _, newer_hash, _ = self.collect(content=b"new version")
+        ip = db.add_ioc(self.conn, "198.51.100.9", "ip")
+        for ioc_id, role in ((path_id, "direct"), (hash_id, "hash"), (newer_hash, "hash"), (ip, "requester")):
+            self.conn.execute("INSERT OR IGNORE INTO ioc_sources(ioc_id,artifact,role,added) VALUES(?,?,?,?)",
+                              (ioc_id, str(path), role, db.now()))
+        db.link_iocs(self.conn, ip, path_id, "requested")
+        model.migrate(self.conn)
+        self.assertFalse(any(l["kind"] == "request-context" for l in db.ioc_links(self.conn)))

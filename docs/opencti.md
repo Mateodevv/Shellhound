@@ -43,10 +43,13 @@ transfer withdraws earlier owned statements while preserving shared objects and
 other sources' assertions. Notes/evidence exclusions also apply to assessment
 reasons and relationship evidence.
 
-Schema 13 preserves existing IOC IDs, source UIDs, notes and export receipts.
+Schema 14 preserves existing IOC IDs, source UIDs, notes and export receipts.
 Explicit historical SHA-256 provenance creates file records without inventing
 size, secondary hashes or a classification. Unknown legacy contexts and equivalent
 legacy values are retained with review warnings. Migration never initiates export.
+Historical file-location and request-context relationships require matching source
+artifacts. Ambiguous content versions retain their path context without an inferred
+IP-to-file assertion. Later migrations preserve verified metadata and withdrawals.
 
 Local detail/decision APIs: `GET /api/cases/{slug}/iocs/{id}/detail`,
 `POST /api/cases/{slug}/iocs/{id}/assessments`,
@@ -182,7 +185,7 @@ account for deployment acceptance. Verify repeat exports, revoked/re-confirmed
 assertions, partial retries, manually requested enrichment, markings and sample
 links. Do not use real evidence for initial integration tests.
 
-The acceptance helper creates a separate fixture with eight IOC types, four
+The acceptance helper creates a separate fixture with ten object types, seven
 relationships and inert sample bytes. It reads the saved integration settings;
 tokens are never command-line arguments. From the repository's Python environment:
 
