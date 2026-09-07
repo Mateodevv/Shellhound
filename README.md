@@ -28,7 +28,7 @@ them, when a file was first present, what those clients did next.
 
 ---
 
-**Contents** — [Installation](#installation) · [Workflow](#workflow) ·
+**Contents** — [Installation](#installation) · [Updating](#updating) · [Workflow](#workflow) ·
 [Views](#views) · [Configuration](#configuration) · [Security](#security) ·
 [Development](#development) · [Contributing](#contributing)
 
@@ -36,20 +36,100 @@ them, when a file was first present, what those clients did next.
 
 ## Installation
 
-| Component | Version | Needed for |
-|---|---|---|
-| Python | ≥ 3.10 | Server and engines |
-| Node | ≥ 20 | Building the interface only |
+### 1 · Install the prerequisites once
 
-```bash
+| Component | Requirement | Purpose |
+|---|---|---|
+| [Python](https://www.python.org/downloads/) | 3.10 or newer | Runs Shellhound; enable **Add Python to PATH** on Windows |
+| [Node.js with npm](https://nodejs.org/en/download) | 22.12+ recommended; 20.19+ in the 20.x series also works | Prepares the interface when it changes |
+| [Git](https://git-scm.com/downloads) | Needed for Git updates | Gets newer code when you choose Update |
+
+Reopen your terminal after installing these tools. On Debian/Ubuntu, Python
+also needs the `python3-venv` package. Shellhound does not install system tools
+or require administrator rights.
+
+Clone this repository, or download and extract its source ZIP into a writable
+folder. A clone supports the Update launcher:
+
+```text
 git clone https://github.com/Mateodevv/shellhound.git
-cd shellhound && pip install -r requirements.txt
-cd web && npm ci && npm run build && cd ..
-python -m server.main
 ```
 
-The browser opens at `http://127.0.0.1:8710` with a token in the URL. The
-workspace directory is created on first start.
+### 2 · Start Shellhound
+
+**Windows:** open the project folder and double-click **Start-Shellhound.bat**.
+
+**Linux/macOS:** open a terminal in that folder and run:
+
+```sh
+./shellhound.sh
+```
+
+For a downloaded ZIP whose script is not executable, use `sh shellhound.sh`.
+
+The first start creates a private `.venv` inside the project, installs its
+Python and interface packages, and builds the interface. These package
+downloads may need internet access and take a few minutes. Progress appears
+in the launcher window; if a step fails, it explains what to check. Correct
+the problem and run the same launcher again.
+
+When the server is ready, the browser opens at `http://127.0.0.1:8710`.
+Authentication is handled automatically on localhost; no token needs copying.
+**Keep the launcher window open. Press Ctrl+C there to stop Shellhound.**
+
+Later starts reuse the prepared environment and interface. With no changed or
+missing dependencies, starting and using the workbench works offline. Startup
+does not check GitHub for new versions.
+
+Cases stay in `~/ShellhoundCases` by default. Existing `--workspace` options
+and `SHELLHOUND_WORKSPACE` settings still work; setup never moves or clears
+your cases. For example, in PowerShell:
+
+```powershell
+.\Start-Shellhound.bat --workspace "D:\Cases" --no-browser
+```
+
+## Updating
+
+1. Stop Shellhound with **Ctrl+C** in its launcher/server window.
+2. On Windows, double-click **Update-Shellhound.bat**. On Linux/macOS, run
+   `./shellhound.sh --update`.
+3. Wait for preparation to finish and the browser to open, then refresh any
+   previously open Shellhound tab.
+
+Update pulls the **current branch's configured upstream** and then starts the
+updated launcher. It only accepts a fast-forward: local edits or divergent
+branches are left for you to resolve. It never switches branches, resets your
+work, pushes anything, or modifies case data. Use the same workspace options
+for Update that you use for Start.
+
+**Already use `git pull`?** Keep doing that, then launch normally. Both the
+launchers and `python -m server.main` automatically rebuild an outdated
+interface. No separate npm commands are needed. An existing installation
+receives one initial preparation pass to establish its build record.
+
+For a source ZIP, download a fresh copy into a separate folder and launch it
+with the same case workspace. Installed wheels use the package update route
+below; they do not need Git or Node on the analysis machine.
+
+### Startup troubleshooting
+
+| Message or symptom | What to do |
+|---|---|
+| Python or Node is missing/too old | Install a supported version from the links above, reopen the terminal, and start again. |
+| Python environment setup fails on Linux | Check that `python3-venv` is installed and the project folder is writable. |
+| Packages could not be installed | Check internet/proxy access and the displayed package error, then rerun Start. Dependencies are installed only inside the project. |
+| Interface build fails | Correct the displayed error, then rerun Start. Shellhound preserves the previous build and stops instead of serving it with newer backend code. |
+| Already running / port unavailable | Stop the existing server first. A different application using port 8710 can be accommodated with `--port 9000`. |
+| Update reports local changes or divergence | Commit or set aside your work and resolve the Git state yourself. Use Start to run the current local source. |
+| Update reports no upstream / detached checkout | Select the intended branch and configure its upstream in Git. Update follows that branch, not a hardcoded repository or branch. |
+| Git authentication or network failure | Check your Git credentials and connection. No update is attempted during ordinary Start. |
+| Existing `.venv` is incomplete/incompatible | Stop Shellhound, move that `.venv` aside, and rerun Start with supported Python. Your case workspace is separate; do not remove it. |
+| Browser does not open (for example on a headless machine) | Open the printed address yourself, or use `--no-browser`. |
+
+One managed Shellhound instance runs per source folder. Its operating-system
+lock releases on exit; do not delete lock files to force an update while it
+is running. Separate source folders can run independently on different ports.
 
 ### Your own rules
 
@@ -101,7 +181,11 @@ pip install dist/shellhound-0.2.0-py3-none-any.whl
 shellhound
 ```
 
-Inside the repository the server continues to find `web/dist` directly.
+To update an installed package, stop it and install the newer wheel using
+that environment's Python: `python -m pip install --upgrade PATH_TO_NEW_WHEEL`.
+Then run `shellhound` again with your usual workspace options. Downloading or
+building the wheel is a separate release step; the installed app never builds
+the interface or creates a source environment.
 
 </details>
 
@@ -353,6 +437,7 @@ findings and never moves a severity or a triage decision.
 | `--host HOST` | Default `127.0.0.1`; a different bind requires `--token` |
 | `--token TOKEN` | Fixed access token instead of a random one per start |
 | `--no-browser` | Do not open a browser automatically |
+| `--update` | In a Git source checkout, pull the current upstream before preparing and starting |
 
 | Environment variable | Meaning |
 |---|---|
@@ -372,8 +457,8 @@ for the evidence directory.
 Single-seat tool, no user accounts, no TLS. For access from another machine an
 SSH tunnel is the intended route, not a bind to `0.0.0.0`.
 
-Outbound network access happens in exactly three places, all optional and all
-opt-in:
+During analysis, outbound network access happens in three optional, opt-in
+places:
 
 | Request | Transmitted value |
 |---|---|
@@ -383,10 +468,21 @@ opt-in:
 
 None of them transmits case data beyond the single value of the lookup.
 
+Separately, first setup and changed dependency manifests can download Python
+and npm packages from the configured package registries. Choosing Update
+contacts the branch's Git remote. These operations prepare application code;
+they do not read or upload case data. Ordinary prepared startup does not
+contact GitHub or package registries.
+
 Full threat model and how to report vulnerabilities:
 [SECURITY.md](SECURITY.md).
 
 ## Development
+
+The normal source command remains `python -m server.main`; it uses the same
+preparation as the launchers and runs the server in the project's `.venv`.
+`--help` works before dependencies are installed. Application imports and
+`create_app` do not trigger installation, builds, or Git operations.
 
 Interface with hot reload:
 
@@ -402,11 +498,23 @@ python -m server.main --no-browser --token dev
 
 The interface is then at `http://localhost:5173/?token=dev`.
 
+Manual `npm ci` / `npm run build` and wheel builds remain available. A build
+without a startup receipt is verified by rebuilding once on the next managed
+source start. Generated setup state lives in ignored `.shellhound/`; interface
+builds remain in ignored `web/dist/`. Do not commit either folder.
+
 Tests run without additional dependencies:
 
 ```bash
 python -m unittest discover -s tests -t .
 ```
+
+Use the project's environment (`.venv\Scripts\python.exe` on Windows,
+`.venv/bin/python` on Linux/macOS). The focused startup tests are
+`python -m unittest tests.test_startup`; `python -m tools.startup_smoke` also
+checks real installation/builds and both launch paths in an isolated source
+copy. That smoke test may download dependencies and uses only a synthetic
+workspace.
 
 They build their own evidence: tiny, invented files, each triggering exactly
 one rule. A failure names the broken rule instead of pointing at a large lump
