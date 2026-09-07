@@ -15,6 +15,7 @@ import ntpath
 import re
 import socket
 import ssl
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +27,21 @@ MAX_TAXII_BYTES = 90 * 1024 * 1024
 _TAXII_TYPE = "application/taxii+json;version=2.1"
 _HASH_ALGORITHMS = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
 _CONNECTOR_FIELDS = "id name active auto connector_type connector_scope"
+_DESCRIPTION_LOCK = threading.RLock()
+
+
+def _case_description(existing, reference, description):
+    """Replace only this case's managed section; preserve other authors/cases."""
+    key = hashlib.sha256(reference.encode("utf-8")).hexdigest()
+    start, end = f"<!-- shellhound-case:{key}:start -->", f"<!-- shellhound-case:{key}:end -->"
+    block = f"{start}\n{description}\n{end}" if description else ""
+    if start in existing or end in existing:
+        if existing.count(start) != 1 or existing.count(end) != 1 or existing.index(start) > existing.index(end):
+            raise OpenCTIError("The Shellhound description section was edited or duplicated; review it before retrying.",
+                               code="description_conflict")
+        a, b = existing.index(start), existing.index(end) + len(end)
+        return existing[:a] + block + existing[b:]
+    return existing + ("\n\n" if existing and block else "") + block
 _BASIC_FIELDS = """
 ... on BasicObject { id standard_id entity_type }
 ... on StixCoreRelationship { id standard_id entity_type }
@@ -539,6 +555,45 @@ class OpenCTIClient:
                               if field == "errors" else "Connector progress reported."}
                              for item in result.get(field) or []]
         return result
+
+    def update_case_description(self, source_id, reference, description, marking_id):
+        identifier = _identifier(source_id)
+        if not isinstance(reference, str) or not reference or not isinstance(description, str):
+            raise ValueError("A case reference and description are required")
+        query = """query ShellhoundDescription($id:String!) {
+          stixCyberObservable: stixObjectOrStixRelationship(id:$id) {
+            ... on StixCyberObservable { id x_opencti_description objectMarking { standard_id } }
+          }
+        }"""
+        def read():
+            result = self._graphql(query, {"id": identifier}).get("stixCyberObservable")
+            if not isinstance(result, dict) or not result.get("id"):
+                raise OpenCTIError("The observable description is not visible; check its access rights.", code="not_found")
+            if description and marking_id not in {m.get("standard_id") for m in result.get("objectMarking") or []}:
+                raise OpenCTIError("The observable has a different marking. Case context remains in marked Notes; "
+                                   "review the observable's marking before adding its description.", code="description_marking")
+            text = result.get("x_opencti_description") or ""
+            if not isinstance(text, str):
+                raise OpenCTIError("OpenCTI returned an invalid observable description.", code="invalid_response")
+            return result["id"], text
+        with _DESCRIPTION_LOCK:
+            remote_id, existing = read()
+            desired = _case_description(existing, reference, description)
+            if existing == desired:
+                return {"id": remote_id, "updated": False}
+            # OpenCTI has no compare-and-swap field patch. Detect intervening
+            # edits before writing and serialize this process's case updates.
+            if read() != (remote_id, existing):
+                raise OpenCTIError("The observable description changed during export; resume to merge the latest text.",
+                                   code="description_conflict")
+            result = self._graphql("""mutation ShellhoundDescriptionUpdate($id:ID!,$input:[EditInput]!) {
+              stixCyberObservableEdit(id:$id) { fieldPatch(input:$input) { id x_opencti_description } }
+            }""", {"id": remote_id, "input": [{"key": "x_opencti_description", "value": [desired]}]})
+            updated = (result.get("stixCyberObservableEdit") or {}).get("fieldPatch") or {}
+            if updated.get("id") != remote_id or updated.get("x_opencti_description") != desired:
+                raise OpenCTIError("OpenCTI did not confirm the observable description; resume to verify it.",
+                                   code="description_unverified")
+            return {"id": remote_id, "updated": True}
 
     def create_observable(self, ioc_type, value, marking_id):
         kind, input_name, field, value = _observable(ioc_type, value)

@@ -332,6 +332,46 @@ class OpenCTIClientTests(unittest.TestCase):
                     method(invalid)
         self.assertEqual(2, self.client._opener.open.call_count)
 
+    def test_case_description_merge_preserves_other_authors_and_case_sections(self):
+        foreign = "Existing analyst assessment.\nDo not replace."
+        first = api._case_description(foreign, "PIM-1", "First case")
+        second = api._case_description(first, "PIM-2", "Second case")
+        updated = api._case_description(second, "PIM-1", "Revised case")
+        self.assertTrue(updated.startswith(foreign))
+        self.assertIn("Second case", updated)
+        self.assertNotIn("First case", updated)
+        self.assertEqual(updated, api._case_description(updated, "PIM-1", "Revised case"))
+        removed = api._case_description(updated, "PIM-1", "")
+        self.assertNotIn("Revised case", removed)
+        self.assertIn("Second case", removed)
+        with self.assertRaises(api.OpenCTIError):
+            api._case_description(first + first, "PIM-1", "Cannot safely replace duplicates")
+
+    def test_description_update_is_scoped_verified_and_idempotent(self):
+        obj = {"id": "remote-ip", "x_opencti_description": "Other author", "objectMarking": [{"standard_id": "marking-1"}]}
+        read = {"data": {"stixCyberObservable": obj}}
+        desired = api._case_description("Other author", "PIM-1", "Case summary")
+        self._responses(read, read, {"data": {"stixCyberObservableEdit": {"fieldPatch": {
+            "id": "remote-ip", "x_opencti_description": desired}}}})
+        self.assertTrue(self.client.update_case_description("source-ip", "PIM-1", "Case summary", "marking-1")["updated"])
+        self.assertIn("$id:String!", self._payload(0)["query"])
+        self.assertEqual([{"key": "x_opencti_description", "value": [desired]}], self._payload()["variables"]["input"])
+        self._responses({"data": {"stixCyberObservable": {**obj, "x_opencti_description": desired}}})
+        self.assertFalse(self.client.update_case_description("source-ip", "PIM-1", "Case summary", "marking-1")["updated"])
+
+    def test_description_conflicts_and_marking_mismatch_never_write(self):
+        obj = {"id": "remote-ip", "x_opencti_description": "Other author", "objectMarking": [{"standard_id": "marking-1"}]}
+        self._responses({"data": {"stixCyberObservable": obj}},
+                        {"data": {"stixCyberObservable": {**obj, "x_opencti_description": "Concurrent edit"}}})
+        with self.assertRaisesRegex(api.OpenCTIError, "changed during export"):
+            self.client.update_case_description("source-ip", "PIM-1", "Case summary", "marking-1")
+        self.assertEqual(2, self.client._opener.open.call_count)
+        self.client._opener.reset_mock()
+        self._responses({"data": {"stixCyberObservable": obj}})
+        with self.assertRaisesRegex(api.OpenCTIError, "different marking"):
+            self.client.update_case_description("source-ip", "PIM-1", "Case summary", "stricter-marking")
+        self.assertEqual(1, self.client._opener.open.call_count)
+
     def test_taxii_receipt_keeps_retry_ids_without_upstream_error_details(self):
         valid = {"id": "work-1", "status": "complete", "total_count": 1,
                  "success_count": 0, "failure_count": 1, "pending_count": 0}

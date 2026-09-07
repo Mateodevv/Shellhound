@@ -19,6 +19,7 @@ from server import db
 from server.paths import display_path, io_path
 
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
+OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "domain-name", "url", "email-addr", "file", "software", "artifact"}
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
@@ -568,7 +569,106 @@ def build_preview(case_dir, options=None):
             refs = [incident_id, src, dst]
             if src != dst:
                 refs.append(relation(["ioc-link", source_key], src, dst, description=description))
+            src_obj, dst_obj = row_objects[link["src_id"]][0], row_objects[link["dst_id"]][0]
+            dst_row = next(r for r in rows if r["id"] == link["dst_id"])
+            if (link["kind"] == "requested" and src_obj and src_obj["type"] in ("ipv4-addr", "ipv6-addr")
+                    and dst_row["type"] == "path" and dst_obj and dst_obj["type"] == "file"
+                    and row_objects[link["dst_id"]][2]["confirmed_classification"]):
+                # This is an explicit contextual association, not an assertion
+                # that today's file bytes were served or executed in the past.
+                contextual = (f"IP requested path {dst_row['value']}, where the analyst confirmed a collected malware file. "
+                              "Path-based association only: the request does not prove the collected bytes were present, "
+                              "served or executed at request time.")
+                if edge_note:
+                    contextual += "\n" + edge_note
+                for malware in list(objects.values()):
+                    if malware["type"] == "malware" and dst_obj["id"] in malware.get("sample_refs", []):
+                        refs.append(relation(["request-malware-context", source_key, malware["id"]],
+                                             src_obj["id"], malware["id"], description=contextual))
+                        refs.append(relation(["request-file-context", source_key, dst_obj["id"]],
+                                             src_obj["id"], dst_obj["id"], description=contextual))
             note(f"ioc-link:{source_key}", description, refs)
+
+    # A case-wide CVE does not attribute its exploitation to every observed IP.
+    # Only a confirmed, explicitly IP-scoped CVE finding supports a direct link.
+    cves = {o["name"]: o["id"] for o in objects.values() if o["type"] == "vulnerability"}
+    for row in rows:
+        if not row["selected"] or row["type"] != "ip":
+            continue
+        observable = row_objects[row["id"]][0]
+        if not observable:
+            continue
+        active_artifacts = {s["artifact"] for s in data["sources"] if s["ioc_id"] == row["id"] and s["active"]}
+        for finding in data["findings"]:
+            if (finding["triage"] != "confirmed" or finding["artifact_kind"] != "ip"
+                    or finding["artifact"] != row["value"] or finding["artifact"] not in active_artifacts):
+                continue
+            rule = clean.text(finding["rule"])
+            named = set(re.findall(r"\bCVE-\d{4}-\d{4,}\b", rule + " " + (finding.get("rule_id") or ""), re.I))
+            for name in sorted({value.upper() for value in named} & cves.keys()):
+                description = (f"Confirmed IP-scoped finding references {name}. "
+                               "This links the IP to a CVE-specific finding; successful exploitation is not inferred.")
+                if options.get("include_evidence") and row["id"] not in excluded_evidence:
+                    description += "\nRule: " + rule
+                rel = relation(["ip-cve-finding", row["source_uid"], name, finding["id"]],
+                               observable["id"], cves[name], description=description)
+                note(f"ip-cve:{row['source_uid']}:{name}:{finding['id']}", description,
+                     [incident_id, observable["id"], cves[name], rel])
+
+    # A shared file can represent several selected hashes and discovery paths.
+    # Aggregate their context after deduplication, never from excluded rows.
+    def compact(values, limit=6):
+        values = list(dict.fromkeys(v for v in values if v))
+        result = "; ".join(v[:240] for v in values[:limit])
+        return result + (f"; and {len(values) - limit} more (see Notes)" if len(values) > limit else "")
+
+    for obj in list(objects.values()):
+        if obj["type"] not in OBSERVABLE_TYPES:
+            continue
+        members = [r for r in rows if r["selected"] and obj["id"] in r["object_ids"]]
+        member_ids = {r["id"] for r in members}
+        assessments, origins, values, links = [], [], [], []
+        for row in members:
+            ioc_id = row["id"]
+            classification = row_objects[ioc_id][2]["confirmed_classification"]
+            sources = [s for s in data["sources"] if s["ioc_id"] == ioc_id]
+            assessments.append("Analyst-confirmed " + classification if classification else
+                               "Previous confirmation withdrawn" if sources and not any(s["active"] for s in sources) else
+                               "Associated finding confirmed; malware classification not asserted" if ioc_id in active_confirmed else
+                               "Observation only; maliciousness not established")
+            original = next(r for r in data["iocs"] if r["id"] == ioc_id)
+            if options.get("include_notes") and ioc_id not in excluded_notes:
+                origins.append(clean.text(original.get("origin") or "Shellhound IOC box"))
+            else:
+                origins.append("Shellhound IOC box")
+            values.append(f"{row['type']}: {row['value']}")
+        for edge in edge_rows:
+            if edge["selected"] and member_ids.intersection((edge["src_id"], edge["dst_id"])):
+                src = next(r for r in rows if r["id"] == edge["src_id"])
+                dst = next(r for r in rows if r["id"] == edge["dst_id"])
+                links.append(f"{src['value']} -- {edge['kind']} --> {dst['value']}")
+        for connection in list(objects.values()):
+            if connection["type"] == "relationship" and connection.get("source_ref") == obj["id"]:
+                target = objects.get(connection["target_ref"], {})
+                if target.get("type") == "vulnerability":
+                    links.append(f"CVE-specific finding: {target['name']}")
+                elif target.get("type") == "malware":
+                    links.append("Request-path association with " + target["name"] + "; execution not established")
+        obj["x_opencti_description"] = (
+            f"Shellhound case {reference}\n"
+            f"Origin: {compact(origins) or 'Case profile'}\n"
+            f"Assessment: {compact(assessments) or 'Software listed as affected; exploitation not implied'}\n"
+            f"Observations: {compact(values) or clean.text(obj.get('name', obj['type']))}\n"
+            f"Connections: {compact(links) or 'Associated with this incident; no further IOC link selected'}\n"
+            "Details and supporting evidence are in the linked Shellhound Report and Notes.")
+        if not any(o["type"] == "relationship" and o.get("source_ref") == incident_id
+                   and o.get("target_ref") == obj["id"] for o in objects.values()):
+            relation(["case-observable", obj["id"]], incident_id, obj["id"],
+                     description=f"Observed in Shellhound case {reference}; this association does not establish maliciousness.")
+        for malware in list(objects.values()):
+            if malware["type"] == "malware" and obj["id"] in malware.get("sample_refs", []):
+                relation(["classified-file", malware["id"], obj["id"]], malware["id"], obj["id"],
+                         description="File explicitly classified by the analyst in this case; no malware family is inferred.")
     for missing in sample_ids - set(samples):
         errors.append("A selected sample no longer belongs to this preview; refresh before transfer.")
     if selected is not None and selected - {r["id"] for r in rows}:

@@ -181,7 +181,8 @@ def state(root, case_dir):
         receipts.append({k: receipt[k] for k in ("id", "state", "created", "updated", "error")})
         receipts[-1]["stats"] = {"objects": len(payload.get("objects", [])),
                                 "batches": payload.get("batches", []),
-                                "samples": payload.get("samples", [])}
+                                "samples": payload.get("samples", []),
+                                "descriptions": payload.get("descriptions", [])}
         if payload.get("mapping_destination", receipt["destination"]) != mapping_destination:
             continue
         for ioc in payload.get("iocs", []):
@@ -325,7 +326,7 @@ def preview(root, case_dir, options=None):
     # as withdrawals. Merely excluding an IOC in this export is not withdrawal.
     conn = db.connect(case_dir)
     try:
-        old = db.rows(conn, "SELECT object_json FROM opencti_mappings WHERE destination=?", (_mapping_destination(config),))
+        old = db.rows(conn, "SELECT source_id,standard_id,object_json FROM opencti_mappings WHERE destination=?", (_mapping_destination(config),))
     finally:
         conn.close()
     previous = [json.loads(r["object_json"]) for r in old]
@@ -342,6 +343,11 @@ def preview(root, case_dir, options=None):
                         "indicator_ids": [r["id"] for r in result["iocs"] if r["indicator_supported"]]}
         full = graph.build_preview(case_dir, full_options)
         full_objects = graph.reactivate_objects(previous, full["objects"])
+        full_ids = {o["id"] for o in full_objects}
+        result["description_withdrawals"] = [{"source_id": r["standard_id"] or r["source_id"], "text": "", "state": "new"}
+            for r in old if r["source_id"] not in full_ids and json.loads(r["object_json"]).get("x_opencti_description")]
+        if result["description_withdrawals"]:
+            result["warnings"].append("Case description sections for deleted observations will be removed; other cases' text is retained.")
         withdrawals = graph.withdrawal_objects(previous, full_objects, result["case_reference"])
         result["objects"].extend(withdrawals)
         for report in result["objects"]:
@@ -438,7 +444,10 @@ def _prepare_shared(client, case_dir, receipt, payload):
             return remap.get(value, value)
         return value
 
-    wire = [rewrite(obj) for obj in payload["objects"] if obj["id"] not in reused]
+    # Descriptions are merged separately, including for already shared SCOs.
+    # Never let a TAXII upsert replace another case's description.
+    wire = [rewrite({k: v for k, v in obj.items() if k != "x_opencti_description"})
+            for obj in payload["objects"] if obj["id"] not in reused]
     payload["reused_shared"] = reused
     payload["wire_objects"] = wire
     payload["batches"] = [{"ids": [o["id"] for o in wire[index:index + 100]], "state": "new", "work_id": ""}
@@ -552,6 +561,51 @@ def _queue_export(root, case_dir, receipt):
                 client.link_sample(remote_file["id"], sample["remote_id"], report["id"])
                 sample["state"] = "complete"
                 _save_export(case_dir, receipt, payload)
+            if "descriptions" not in payload:
+                payload["descriptions"] = [{"source_id": o["id"], "text": o["x_opencti_description"], "state": "new"}
+                    for o in payload["objects"] if o.get("x_opencti_description")]
+                payload["descriptions"].extend(payload.get("description_withdrawals", []))
+                conn = db.connect(case_dir)
+                try:
+                    previous_exports = db.rows(conn, "SELECT payload FROM opencti_exports")
+                finally:
+                    conn.close()
+                uploaded = {s["remote_id"]: s for s in payload["samples"] if s.get("remote_id")}
+                for previous_export in previous_exports:
+                    previous_payload = json.loads(previous_export["payload"])
+                    if previous_payload.get("mapping_destination") == payload["mapping_destination"]:
+                        for sample in previous_payload.get("samples", []):
+                            if sample.get("remote_id") and sample.get("state") == "complete":
+                                uploaded.setdefault(sample["remote_id"], sample)
+                for sample in uploaded.values():
+                    file_context = next((o["x_opencti_description"] for o in payload["objects"]
+                                         if o["id"] == sample["file_id"] and o.get("x_opencti_description")
+                                         and (o.get("hashes") or {}).get("SHA-256") == sample["sha256"]), "")
+                    if file_context:
+                        payload["descriptions"].append({"source_id": sample["remote_id"],
+                            "text": file_context + "\nOriginal file content explicitly selected for upload.", "state": "new"})
+                _save_export(case_dir, receipt, payload)
+            for index, entry in enumerate(payload["descriptions"]):
+                if entry["state"] in ("complete", "unavailable"):
+                    continue
+                if ctx.cancelled():
+                    _save_export(case_dir, receipt, payload, "paused")
+                    return {"state": "paused"}
+                target = payload.get("reused_shared", {}).get(entry["source_id"], {}).get("standard_id", entry["source_id"])
+                try:
+                    client.update_case_description(target, payload["case_reference"], entry["text"], payload["marking_id"])
+                except OpenCTIError as exc:
+                    historical_sample = (entry["source_id"] not in reviewed_objects and entry["text"]
+                        and not any(s.get("remote_id") == entry["source_id"] for s in payload["samples"]))
+                    if exc.code != "not_found" or not historical_sample:
+                        raise
+                    entry.update(state="unavailable", error="A previously uploaded artifact is no longer visible. "
+                                 "Its description was skipped; the original file was not uploaded again.")
+                    _save_export(case_dir, receipt, payload)
+                    continue
+                entry["state"] = "complete"
+                _save_export(case_dir, receipt, payload)
+                ctx.progress((index + 1) / max(1, len(payload["descriptions"])), "Updating observable descriptions")
             _save_export(case_dir, receipt, payload, "complete")
             return {"export_id": receipt["id"], "objects": len(objects), "state": "complete"}
         except Exception as exc:

@@ -114,6 +114,57 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.upload_sample.assert_not_called()
         self.client.enrich.assert_not_called()
 
+    def test_descriptions_are_merged_after_import_and_resume_without_reimport(self):
+        self.client.update_case_description.side_effect = [None, OpenCTIError("Description temporarily unavailable")]
+        p = self.preview()
+        r = service.transfer(self.root, self.case, p["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Description temporarily unavailable"):
+            self.jobs.run()
+        receipt = self.receipt(r["export_id"])
+        self.assertEqual("partial", receipt["state"])
+        self.assertEqual(["complete", "new"], [x["state"] for x in receipt["payload"]["descriptions"]])
+        self.assertTrue(all("x_opencti_description" not in o for o in self.client.push.call_args.args[0]))
+        self.client.update_case_description.side_effect = None
+        service.retry(self.root, self.case, r["export_id"])
+        self.jobs.run()
+        self.client.push.assert_called_once()
+        self.assertEqual(3, self.client.update_case_description.call_count)
+        self.assertEqual("complete", self.receipt(r["export_id"])["state"])
+
+    def test_deleted_observation_removes_only_its_case_description(self):
+        self.export()
+        self.conn.execute("DELETE FROM iocs WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        preview = self.preview()
+        self.assertEqual(1, len(preview["description_withdrawals"]))
+        self.assertEqual("", preview["description_withdrawals"][0]["text"])
+        r = service.transfer(self.root, self.case, preview["preview_id"])
+        self.jobs.run()
+        self.assertEqual("complete", self.receipt(r["export_id"])["state"])
+        self.assertTrue(any(call.args[2] == "" for call in self.client.update_case_description.call_args_list))
+
+    def test_existing_uploaded_artifact_gets_context_without_uploading_again(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        sample_id = self.preview()["samples"][0]["id"]
+        self.export(sample_ids=[sample_id])
+        self.client.update_case_description.reset_mock()
+        self.export(sample_ids=[])
+        self.client.upload_sample.assert_called_once()
+        calls = self.client.update_case_description.call_args_list
+        self.assertTrue(any(c.args[0] == "artifact-remote" and "Original file content" in c.args[2] for c in calls))
+        def update(source_id, *_args):
+            if source_id == "artifact-remote":
+                raise OpenCTIError("Artifact no longer exists", code="not_found")
+        self.client.update_case_description.side_effect = update
+        r = self.export(sample_ids=[])
+        receipt = self.receipt(r["export_id"])
+        self.assertEqual("complete", receipt["state"])
+        entry = next(d for d in receipt["payload"]["descriptions"] if d["source_id"] == "artifact-remote")
+        self.assertEqual("unavailable", entry["state"])
+        self.assertIn("not uploaded again", entry["error"])
+        self.client.upload_sample.assert_called_once()
+
     def test_transfer_is_bound_to_case_data_and_destination(self):
         preview = self.preview()
         self.config["url"] = "https://different.example.test"
