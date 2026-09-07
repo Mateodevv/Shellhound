@@ -31,14 +31,16 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from server import case_report, correlation, coverage, db, enrich, geoip, huntrules
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
-from server.analysis import AnalysisReceipts, stats_complete
+from server.analysis import (AnalysisReceipts, current_warning_count, decode_job,
+                             describe_job)
+from server import scan_retries
 from server.paths import display_path, io_path
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
@@ -51,7 +53,7 @@ from server.engines import (cmsinventory, detect, errorlog, logindex,
                             sigmascan, sqldump, yarascan,
                             webrootdiff, webshell)
 from server.events import hub
-from server.jobs import manager
+from server.jobs import CaseBusy, manager
 
 def _csv_safe(value):
     """One CSV cell that a spreadsheet will not execute.
@@ -753,6 +755,13 @@ def create_app(config: Config) -> FastAPI:
 
     @app.post("/api/cases/{slug}/analyze", dependencies=[auth])
     def analyze(slug: str, body: AnalyzeBody | None = None):
+        try:
+            with manager.case_operation(case_dir_or_404(slug)):
+                return _analyze(slug, body)
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def _analyze(slug: str, body: AnalyzeBody | None = None):
         """Run every registered source, or only newly registered evidence.
 
         An omitted body intentionally retains the original full-run API.
@@ -862,7 +871,8 @@ def create_app(config: Config) -> FastAPI:
 
             # The analyst's OWN rules, if there are any. Queued as its own
             # job so a slow rule set never holds up the shipped scan.
-            if yarascan.status(config.workspace).get("rules"):
+            yara_setup = yarascan.status(config.workspace)
+            if yara_setup.get("rules") or yara_setup.get("broken") or yara_setup.get("files"):
                 def run_yara(ctx, paths=paths, case_dir=case_dir):
                     return yarascan.scan(case_dir, paths,
                                          workspace=config.workspace, ctx=ctx,
@@ -896,6 +906,8 @@ def create_app(config: Config) -> FastAPI:
 
         if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
+        contexts = {kind: scan_retries.make_context(kind, webroots, mode, config.workspace)
+                    for kind, _fn, _kinds in tasks}
         initialized = False
         receipts = AnalysisReceipts(
             tasks, chosen, lambda ids, stats: _mark_scanned(case_dir, ids, stats, run_id),
@@ -904,6 +916,7 @@ def create_app(config: Config) -> FastAPI:
         initialized = True
         started = [{"kind": kind, "job": manager.submit(
             case_dir, kind, receipts.wrap(kind, fn), run_id=run_id,
+            scan_context=contexts[kind],
             on_cancel=lambda engine=kind: receipts.cancel(engine))}
             for kind, fn, _kinds in tasks]
         return {"run_id": run_id, "started": started}
@@ -911,33 +924,87 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])
     def jobs_list(slug: str):
         case_dir = case_dir_or_404(slug)
+        manager.recover_interrupted(case_dir)
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn,
-                           "SELECT * FROM jobs ORDER BY id DESC LIMIT 50")
-            for r in rows:
-                r["stats"] = json.loads(r.get("stats") or "{}")
-            return rows
+                           "SELECT * FROM jobs WHERE id IN (SELECT id FROM jobs ORDER BY id DESC LIMIT 50) "
+                           "OR (kind IN ('webshell','yara') AND "
+                           "COALESCE(json_extract(scan_context, '$.mode'), '') != 'retry' AND "
+                           "run_id IN (SELECT json_extract(stats, '$.last_attempt.run_id') FROM evidence)) "
+                           "ORDER BY id DESC")
+            return [{**describe_job(conn, r), **manager.progress_snapshot(case_dir, r["id"])}
+                    if r["state"] in ("running", "queued") else describe_job(conn, r)
+                    for r in rows]
         finally:
             conn.close()
 
     @app.get("/api/cases/{slug}/jobs/{job_id}/skipped", dependencies=[auth])
-    def job_skipped(slug: str, job_id: int, offset: int = 0, limit: int = 100):
+    def job_skipped(slug: str, job_id: int, offset: int = 0, limit: int = 100,
+                    group: str = "all", status: str = "all"):
         conn = db.connect(case_dir_or_404(slug))
         try:
-            job = db.one(conn, "SELECT stats FROM jobs WHERE id = ?", (job_id,))
-            if not job:
-                raise HTTPException(404, "Job not found")
-            stats = json.loads(job.get("stats") or "{}")
-            total = conn.execute("SELECT count(*) FROM job_skips WHERE job_id = ?",
-                                 (job_id,)).fetchone()[0]
-            rows = db.rows(conn,
-                           "SELECT path, reason FROM job_skips WHERE job_id = ? "
-                           "ORDER BY ordinal LIMIT ? OFFSET ?",
-                           (job_id, max(1, min(limit, 200)), max(0, offset)))
-            return {"items": rows, "total": total, "recorded": "skip_details" in stats}
+            busy = bool(db.one(conn, "SELECT id FROM jobs WHERE state IN ('queued','running') LIMIT 1"))
+            return scan_retries.skipped_details(conn, job_id, config.workspace, offset, limit, busy,
+                                                group, status)
+        except scan_retries.RetryError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
         finally:
             conn.close()
+
+    class RetrySkippedBody(BaseModel):
+        mode: str = "all"
+        ids: list[StrictInt] = Field(default_factory=list)
+        group: str = "all"
+        status: str = "pending"
+        allow_large_files: StrictBool = False
+
+    @app.post("/api/cases/{slug}/jobs/{job_id}/retry-skipped", dependencies=[auth])
+    def retry_skipped(slug: str, job_id: int, body: RetrySkippedBody):
+        case_dir = case_dir_or_404(slug)
+        try:
+            with manager.case_operation(case_dir):
+                conn = db.connect(case_dir)
+                try:
+                    kind, context = scan_retries.prepare_retry(
+                        conn, job_id, body.mode, body.ids, config.workspace,
+                        group=body.group, status=body.status, allow_large_files=body.allow_large_files)
+                finally:
+                    conn.close()
+                run_id = uuid.uuid4().hex[:12]
+                retry_id = manager.submit(
+                    case_dir, kind,
+                    lambda ctx: scan_retries.execute_retry(case_dir, config.workspace, kind, context, ctx),
+                    run_id=run_id, scan_context=context)
+                return {"jobs": [retry_id], "run_id": run_id}
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except scan_retries.RetryError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+
+    class AcceptSkippedBody(BaseModel):
+        mode: str = "all"
+        ids: list[StrictInt] = Field(default_factory=list)
+        group: str = "size_limit"
+        status: str = "pending"
+
+    @app.post("/api/cases/{slug}/jobs/{job_id}/accept-skipped", dependencies=[auth])
+    def accept_skipped(slug: str, job_id: int, body: AcceptSkippedBody):
+        case_dir = case_dir_or_404(slug)
+        try:
+            with manager.case_operation(case_dir):
+                conn = db.connect(case_dir)
+                try:
+                    result = scan_retries.accept_skipped(conn, job_id, body.mode, body.ids,
+                                                        group=body.group, status=body.status)
+                finally:
+                    conn.close()
+            hub.publish({"type": "invalidate", "scope": "webshell", "case_slug": slug})
+            return result
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except scan_retries.RetryError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
 
     @app.post("/api/cases/{slug}/jobs/{job_id}/cancel", dependencies=[auth])
     def cancel_job(slug: str, job_id: int):
@@ -1005,18 +1072,19 @@ def create_app(config: Config) -> FastAPI:
             running = db.rows(conn,
                               "SELECT * FROM jobs WHERE state IN ('queued','running') "
                               "ORDER BY id DESC")
-            for r in running:
-                r["stats"] = json.loads(r.get("stats") or "{}")
+            running = [{**decode_job(r), **manager.progress_snapshot(case_dir, r["id"])} for r in running]
             # A receipt predating a failed full rescan must not make the
             # briefing claim that analysis is complete. Keep the latest
             # result per engine; a later unrelated job cannot hide a failure.
             latest_engines = db.rows(conn, """
-                SELECT kind, state, stats FROM jobs WHERE id IN (
+                SELECT * FROM jobs WHERE id IN (
                     SELECT max(id) FROM jobs
                     WHERE kind IN ('webshell','cms','yara','index_logs','errorlog','sigma','sqldb')
+                    AND COALESCE(json_extract(scan_context, '$.mode'), '') != 'retry'
                     GROUP BY kind
                 )
             """)
+            latest_engines = [describe_job(conn, j) for j in latest_engines]
             supported_evidence = [e for e in evidence
                                   if e["kind"] in ("webroot", "access_logs", "sql_dump")]
             present = {e["kind"] for e in supported_evidence}
@@ -1032,9 +1100,13 @@ def create_app(config: Config) -> FastAPI:
             analysis_complete = (
                 bool(supported_evidence)
                 and all(e.get("scanned_at") for e in supported_evidence)
-                and not running
-                and all(j["state"] == "done" and stats_complete(json.loads(j["stats"] or "{}"))
+                and all(e["stats"].get("last_attempt", {}).get("status") not in
+                        ("running", "partial", "failed", "cancelled") for e in supported_evidence)
+                and not any(j["scan_context"].get("mode") != "retry" for j in running)
+                and all(j["analysis_status"] in ("complete", "complete_with_warnings")
                         for j in latest_engines if j["kind"] in required_engines))
+            analysis_warnings = current_warning_count(conn)
+            analysis_accepted = current_warning_count(conn, accepted=True)
         finally:
             conn.close()
 
@@ -1082,6 +1154,8 @@ def create_app(config: Config) -> FastAPI:
             "cms_installs": installs, "evidence": evidence,
             "jobs_running": running,
             "analysis_complete": analysis_complete,
+            "analysis_warnings": analysis_warnings,
+            "analysis_accepted": analysis_accepted,
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
             "chronology": {
