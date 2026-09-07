@@ -39,7 +39,15 @@ A few consequences follow that you need to know:
 
 ## Network contact
 
-SHELLHOUND speaks outward at **two places**, both shut by default and both
+Source installation and updates are separate from case analysis. The startup
+launcher may download required Python/npm packages when first preparing the
+application or when dependencies change. It uses the configured package
+registries and announces these steps. The explicit Update action contacts the
+current Git upstream; ordinary startup never fetches application updates.
+Preparation does not inspect or transmit cases, evidence, workspace settings,
+or API keys. A prepared installation starts offline.
+
+During analysis, SHELLHOUND speaks outward at **two places**, both shut by default and both
 opened by an explicit click.
 
 **The GeoIP country database** from `download.db-ip.com`. A confirmation
