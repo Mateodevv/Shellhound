@@ -68,6 +68,19 @@ const DASHBOARD: DashboardData = {
 }
 
 describe('forensic dashboard briefing', () => {
+  it('shows completed analysis with a persistent warning while a targeted retry runs', async () => {
+    const gotoView = vi.fn()
+    vi.mocked(api).mockImplementation(async (path) => path.endsWith('/dashboard')
+      ? { ...DASHBOARD, triage: {}, confirmed_artifacts: [], analysis_complete: true, analysis_warnings: 2,
+        jobs_running: [{ state: 'running', scan_context: { mode: 'retry' } }] }
+      : { quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0 })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={gotoView} />)
+    expect(await screen.findByText('Analysis complete — no findings')).toBeInTheDocument()
+    expect(screen.getByText(/2 file\(s\) still skipped/)).toBeInTheDocument()
+    expect(screen.queryByText('Analysis not complete')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Review skipped files' }))
+    expect(gotoView).toHaveBeenCalledWith('evidence')
+  })
   it.each([
     ['registered but unscanned', { evidence: [{ ...DASHBOARD.evidence[0], scanned_at: '' }] }],
     ['running', { jobs_running: [{ state: 'running' }] }],
@@ -90,6 +103,17 @@ describe('forensic dashboard briefing', () => {
     expect(await screen.findByText('Analysis complete — no findings')).toBeInTheDocument()
     expect(screen.getByText(/This does not rule out a compromise/)).toBeInTheDocument()
     expect(screen.queryByText(/Every queued artifact/)).not.toBeInTheDocument()
+  })
+  it('keeps accepted coverage gaps visible without an active skipped-file warning', async () => {
+    const gotoView = vi.fn()
+    vi.mocked(api).mockImplementation(async (path) => path.endsWith('/dashboard')
+      ? { ...DASHBOARD, analysis_complete: true, analysis_warnings: 0, analysis_accepted: 2 }
+      : { quiet: { windows: [], checked: true, total: 0 }, files: [], notes: [], tz: 0 })
+    renderWithProviders(<Dashboard slug="case-1" gotoView={gotoView} />)
+    expect(await screen.findByText(/2 file\(s\) were accepted without scanning/)).toBeVisible()
+    expect(screen.queryByText(/still skipped/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Review accepted skips' }))
+    expect(gotoView).toHaveBeenCalledWith('evidence')
   })
   it('separates confirmed compromise from observed context and states evidence limits', async () => {
     const gotoView = vi.fn()
