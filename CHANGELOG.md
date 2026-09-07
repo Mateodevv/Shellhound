@@ -6,6 +6,14 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — analysis details and setup reminders
+
+- Expand a job's skipped files and rules to see paths and reasons. Details are
+  retained per job across retries and loaded in pages; older jobs explain when
+  no historical details were recorded.
+- Show dismissible reminders for missing GeoIP data and optional API keys across
+  case views, with links to setup. External lookups still require consent.
+
 ### Fixed — Windows evidence paths and partial analysis
 
 - Read, browse and reveal long Windows evidence paths without changing stored

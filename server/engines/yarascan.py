@@ -28,7 +28,7 @@ import os
 import re
 
 from server import db, settings as settingslib
-from server.engines.fsutil import get_files_recursive, path_within_any
+from server.engines.fsutil import get_files_recursive, path_within_any, record_skip
 from server.paths import display_path, io_path
 
 import yara
@@ -297,6 +297,8 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
     stats["broken_rules"] = len(broken)
     if broken:
         stats["broken"] = [b["file"] for b in broken]
+        for entry in broken:
+            record_skip(ctx, entry["file"], f"rule did not compile: {entry.get('error', '')}")
     if compiled is None:
         # NOT A CLEAN SCAN -- a scan that could not run. Without this the
         # broken rules lived only in the job stats, so a workspace whose rule
@@ -363,6 +365,7 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
             abs_path = os.path.abspath(display_path(file_path))
             try:
                 if os.path.getsize(io_path(file_path)) > MAX_SCAN_BYTES:
+                    record_skip(ctx, abs_path, "too large for a YARA scan")
                     conn.execute(
                         "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                         ("yara", abs_path, "too large for a YARA scan"))
@@ -377,6 +380,7 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
                     raise ValueError("file grew beyond the YARA scan size limit")
                 matches = compiled.match(data=content, timeout=20)
             except Exception as e:             # yara.Error, OSError, TimeoutError
+                record_skip(ctx, abs_path, f"scan error: {str(e)[:160]}")
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                     ("yara", abs_path, f"scan error: {str(e)[:160]}"))

@@ -11,7 +11,7 @@ import re
 from collections import namedtuple
 
 from server import cmsintelligence, db, ruleswitch
-from server.engines.fsutil import iter_target_files, open_text_auto, path_within_any
+from server.engines.fsutil import iter_target_files, open_text_auto, path_within_any, record_skip
 
 _STREAM_CHUNK = 1 << 20
 
@@ -745,6 +745,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
             try:
                 result = _scan_dump(path, size, total_size, done, ctx)
             except (OSError, EOFError, MemoryError) as e:
+                record_skip(ctx, abs_path, f"read/parse error: {e}")
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                     ("sqldb", abs_path, f"read/parse error: {e}"))

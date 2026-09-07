@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     stats TEXT NOT NULL DEFAULT '{}',
     run_id TEXT NOT NULL DEFAULT ''        -- one click starts one analysis run
 );
+CREATE TABLE IF NOT EXISTS job_skips (
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (job_id, ordinal)
+);
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY,
     fingerprint TEXT UNIQUE NOT NULL,  -- stable across re-scans: source|rule|artifact|line
@@ -457,7 +464,8 @@ _ADDED_COLUMNS = {
 #     Joomla.  Sensitive raw credentials and full content stay in evidence.
 # 10: Pattern Hunt keeps immutable draft-test audits and the analyst's
 #     selected cluster applications separately from generated findings.
-CASE_SCHEMA_VERSION = 10
+# 11: skipped paths and reasons belong to their job, surviving later scans.
+CASE_SCHEMA_VERSION = 11
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -466,7 +474,7 @@ CASE_SCHEMA_VERSION = 10
 # with the idempotent upgrade.
 _CURRENT_SCHEMA_TABLES = {
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
-    "hunt_tests", "hunt_applications", "hunt_application_clusters",
+    "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",
 }
 
 

@@ -86,6 +86,8 @@ def status(workspace):
 
 def scan(case_dir, workspace=None, ctx=None):
     """Run every workspace SIGMA rule against the log index."""
+    from server.engines.fsutil import record_skip
+
     stats = {"rules": 0, "findings": 0, "clients": 0, "broken_rules": 0}
     if workspace is None:
         return stats
@@ -96,6 +98,8 @@ def scan(case_dir, workspace=None, ctx=None):
     stats["broken_rules"] = len(broken)
     if broken:
         stats["broken"] = [b["file"] for b in broken]
+        for entry in broken:
+            record_skip(ctx, entry["file"], f"rule not usable: {entry['error']}")
 
     log_conn = logindex.open_readonly(case_dir)
     if log_conn is None:
@@ -125,6 +129,8 @@ def scan(case_dir, workspace=None, ctx=None):
                 example = sigma.example_uri(
                     log_conn, rule["where"], rule["params"])
             except Exception as e:            # sqlite3.Error and friends
+                record_skip(ctx, rule["file"], f"query failed: {str(e)[:160]}")
+                stats["skipped"] = stats.get("skipped", 0) + 1
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                     ("sigma", rule["file"], f"query failed: {str(e)[:160]}"))
@@ -157,7 +163,7 @@ def scan(case_dir, workspace=None, ctx=None):
         # over an emptied rule folder completes with nothing -- findings of
         # deleted rules stop being current, and the next run of a restored
         # rule brings them back with their triage untouched.
-        if not cancelled:
+        if not cancelled and not stats.get("skipped"):
             db.complete_run(conn, "sigmascan", run)
     finally:
         conn.close()

@@ -267,6 +267,11 @@ def setUpModule():
     EVIDENCE.case_dir = CASE_DIR
     EVIDENCE.build().analyse(confirm=False)
     _widen_the_matrix(CASE_DIR)
+    conn = db.connect(CASE_DIR)
+    conn.execute("INSERT INTO jobs (kind, state, created) VALUES ('webshell', 'done', ?)",
+                 (db.now(),))
+    conn.commit()
+    conn.close()
     _checkpoint(CASE_DIR)
     SNAPSHOT = Path(tempfile.mkdtemp(prefix="shellhound-http-snap-")) / "case"
     shutil.copytree(CASE_DIR, SNAPSHOT, ignore=shutil.ignore_patterns("*-shm"))
@@ -326,6 +331,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/coverage": "",
     "/api/cases/{slug}/enrichment": "",
     "/api/cases/{slug}/jobs": "",
+    "/api/cases/{slug}/jobs/{job_id}/skipped": "",
     "/api/cases/{slug}/activity": "",
     "/api/cases/{slug}/dashboard": "",
     "/api/cases/{slug}/chain": "",
@@ -360,6 +366,7 @@ GET_ROUTES = {
 def _url(route, slug, artifact=None, file_path=None):
     path = (route.replace("{slug}", slug).replace("{name}", YARA_RULE)
             .replace("{request_id}", "1")
+            .replace("{job_id}", "1")
             .replace("{pattern_id}", "joomla-jce-rce"))
     query = (GET_ROUTES[route] or "")
     query = query.replace("{artifact}", q(artifact or "x"))

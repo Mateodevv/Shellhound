@@ -12,10 +12,8 @@
 // matters gets the same treatment. Each is dismissed once, per workstation,
 // and stays dismissed.
 //
-// The enrichment banners deliberately do NOT appear until the analyst has
-// accepted what a lookup sends. Nagging somebody towards sending a hash to a
-// third party before they have read what that costs would invert the gate
-// the settings page is built around.
+// Missing-key reminders also appear before consent. They only navigate to
+// settings; enabling external requests remains a separate, explicit action.
 import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { KeyRound, Settings2, X } from 'lucide-react'
@@ -44,7 +42,7 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
   if (hidden) return null
 
   return (
-    <Card className="flex items-center justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up">
+    <Card className="flex flex-wrap items-center justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up">
       <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
         {icon}
         <span className="min-w-0">
@@ -67,7 +65,7 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
         )}
         <button
           onClick={() => { localStorage.setItem(HIDE_PREFIX + id, '1'); setHidden(true) }}
-          title={tr('setup.dismiss.hint')}
+          title={tr('setup.dismiss.hint')} aria-label={`${tr('setup.dismiss')} ${title}`}
           className="cursor-pointer rounded p-1 text-[var(--muted)] transition-colors hover:text-[var(--fg)]">
           <X size={14} />
         </button>
@@ -76,8 +74,7 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
   )
 }
 
-/** The two lookup services. One banner each, and only once the analyst has
- *  opened the door -- see the note at the top of the file. */
+/** Missing optional API keys, with an explicit route to their setup. */
 export function EnrichmentBanners({ onOpenSettings }: {
   onOpenSettings?: () => void
 }) {
@@ -87,7 +84,7 @@ export function EnrichmentBanners({ onOpenSettings }: {
     queryFn: () => api<SettingsInfo>('/api/settings'),
     staleTime: 60_000,
   })
-  if (!data || !data.enrichment_ack) return null
+  if (!data) return null
 
   const missing = Object.entries(data.services).filter(([, s]) => !s.configured)
   return (
@@ -96,7 +93,7 @@ export function EnrichmentBanners({ onOpenSettings }: {
         <SetupBanner key={name} id={`key.${name}`}
           icon={<KeyRound size={15} className="shrink-0 text-[var(--accent)]" />}
           title={tr(`setup.key.${name}`)}
-          body={tr('setup.key.body', { sends: tr(`settings.kind.${svc.sends}`) })}
+          body={tr(data.enrichment_ack ? 'setup.key.body' : 'setup.key.beforeConsent', { sends: tr(`settings.kind.${svc.sends}`) })}
           onOpenSettings={onOpenSettings} />
       ))}
     </>
