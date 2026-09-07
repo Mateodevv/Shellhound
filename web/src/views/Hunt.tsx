@@ -182,6 +182,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       if (!draft) throw new Error(tr('hunt.workbench.selectRule'))
       return post<HuntTestResponse>(`/api/cases/${slug}/hunt/tests`, {
         pattern_id: draft.sourceId,
+        name: draft.name, cve: draft.cve,
         ...(draft.textMode ? { dsl: draft.dsl } : { rule: draft.rule }),
       })
     },

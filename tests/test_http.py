@@ -478,6 +478,40 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual(before_findings["total"], after_findings["total"])
         self.assertEqual(before_runs, after_runs)
 
+    def test_hunt_test_links_every_matching_ip_to_explicit_cves_before_apply(self):
+        slug = case_copy("hunt-cve-auto")
+        rule = {"client_match": "any", "requests": [{"clauses": [
+            {"field": "method", "operator": "equals", "values": ["GET"]}]}]}
+        case_conn = db.connect(WORKSPACE / slug)
+        before = case_conn.execute("SELECT count(*) FROM findings").fetchone()[0]
+        case_conn.close()
+        status, saved = post_json("/api/patterns", {"name": "Synthetic CVE pattern", "rule": rule,
+                                                  "cve": "CVE-2026-12345"})
+        self.assertEqual(200, status, saved)
+        status, tested = post_json(f"/api/cases/{slug}/hunt/tests", {"pattern_id": saved["entry"]["id"]})
+        self.assertEqual(200, status, tested)
+        self.assertGreater(tested["test"]["clients"], len(tested["result"]["clients"]))
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            links = [l for l in db.ioc_links(case_conn) if l["kind"] == "cve-context"]
+            self.assertEqual(tested["test"]["clients"], len(links), "UI result cap dropped CVE links")
+            self.assertEqual(before, case_conn.execute("SELECT count(*) FROM findings").fetchone()[0])
+            self.assertEqual({"CVE-2026-12345"}, {l["dst_value"] for l in links})
+            self.assertTrue(all(c["in_box"] for c in tested["result"]["clients"]))
+        finally:
+            case_conn.close()
+        # Draft metadata overrides saved metadata; clearing it must not reuse the saved CVE.
+        status, draft = post_json(f"/api/cases/{slug}/hunt/tests", {
+            "pattern_id": saved["entry"]["id"], "rule": rule, "cve": "", "name": "No CVE draft"})
+        self.assertEqual(200, status, draft)
+        case_conn = db.connect(WORKSPACE / slug)
+        try:
+            self.assertEqual(len(links), len([l for l in db.ioc_links(case_conn) if l["kind"] == "cve-context"]))
+            self.assertEqual(0, case_conn.execute("SELECT count(*) FROM ioc_observations WHERE source_ref LIKE ?",
+                              (f"hunt-test:{draft['test']['id']};%",)).fetchone()[0])
+        finally:
+            case_conn.close()
+
     def test_hunt_workbench_audits_then_applies_only_selected_clusters(self):
         slug = case_copy("hunt-workbench-api")
         uri = "/" + EVIDENCE.shell_rel
@@ -518,6 +552,7 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertNotEqual(cluster["cluster_key"], second_cluster["cluster_key"])
         status, saved_response = post_json("/api/patterns", {
             "name": "HTTP workbench synthetic rule",
+            "cve": "CVE-2026-65432",
             "technology": "wordpress", "rule": rule,
         })
         self.assertEqual(200, status, saved_response)
@@ -569,7 +604,7 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual(200, status, versions)
         self.assertEqual([1], [row["version"] for row in versions["versions"]])
 
-        # Batch tests use the normal job channel and remain audit-only too.
+        # Batch tests add CVE context while keeping finding creation explicit.
         status, started = post_json(
             f"/api/cases/{slug}/hunt/batch-tests",
             {"ids": [applied["pattern"]["id"]]})
@@ -587,6 +622,8 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual("done", job["state"])
         case_conn = db.connect(WORKSPACE / slug)
         try:
+            self.assertTrue(any(l["kind"] == "cve-context" and l["dst_value"] == "CVE-2026-65432"
+                                for l in db.ioc_links(case_conn)))
             self.assertEqual(before_rows + expected_clients,
                              case_conn.execute("SELECT count(*) FROM findings").fetchone()[0])
         finally:
