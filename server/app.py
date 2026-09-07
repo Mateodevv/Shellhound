@@ -921,6 +921,24 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
+    @app.get("/api/cases/{slug}/jobs/{job_id}/skipped", dependencies=[auth])
+    def job_skipped(slug: str, job_id: int, offset: int = 0, limit: int = 100):
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            job = db.one(conn, "SELECT stats FROM jobs WHERE id = ?", (job_id,))
+            if not job:
+                raise HTTPException(404, "Job not found")
+            stats = json.loads(job.get("stats") or "{}")
+            total = conn.execute("SELECT count(*) FROM job_skips WHERE job_id = ?",
+                                 (job_id,)).fetchone()[0]
+            rows = db.rows(conn,
+                           "SELECT path, reason FROM job_skips WHERE job_id = ? "
+                           "ORDER BY ordinal LIMIT ? OFFSET ?",
+                           (job_id, max(1, min(limit, 200)), max(0, offset)))
+            return {"items": rows, "total": total, "recorded": "skip_details" in stats}
+        finally:
+            conn.close()
+
     @app.post("/api/cases/{slug}/jobs/{job_id}/cancel", dependencies=[auth])
     def cancel_job(slug: str, job_id: int):
         case_dir = case_dir_or_404(slug)

@@ -1,5 +1,6 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
 import { useT } from '../i18n'
+import { SkippedFiles } from '../components/SkippedFiles'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -695,7 +696,7 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
   })
   const stats = job.stats ?? {}
   const summary = Object.entries(stats)
-    .filter(([, v]) => typeof v === 'number' && (v as number) > 0)
+    .filter(([k, v]) => k !== 'skip_details' && typeof v === 'number' && (v as number) > 0)
     .slice(0, 5)
     .map(([k, v]) => `${k}: ${formatCount(v as number)}`)
     .join(' · ')
@@ -739,6 +740,9 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
               {typeof stats.reason === 'string' && <div>{stats.reason}</div>}
             </div>
           )}
+          {job.state !== 'running' && job.state !== 'queued' &&
+            (Number(stats.skipped) > 0 || Number(stats.broken_rules) > 0 || Number(stats.skip_details) > 0) &&
+            <SkippedFiles slug={slug} jobId={job.id} />}
           {job.state === 'failed' && (
             <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-[var(--danger-text)]">
               {job.error}

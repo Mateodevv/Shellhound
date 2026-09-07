@@ -28,7 +28,7 @@ import re
 
 from server import bundled_rules, db, ruleswitch
 from server.paths import display_path, io_path
-from server.engines.fsutil import get_files_recursive, path_within_any, sha256_of
+from server.engines.fsutil import get_files_recursive, path_within_any, sha256_of, record_skip
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".svg", ".webp"}
@@ -359,6 +359,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
                              inert)
                 stats["inert"] += 1
             if skip_reason:
+                record_skip(ctx, abs_path, skip_reason)
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                     ("webshell", abs_path, skip_reason))

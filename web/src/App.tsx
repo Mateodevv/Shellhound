@@ -23,6 +23,8 @@ import { useTriage } from './components/useTriage'
 import type { EvidenceRoot } from './format'
 import { queryClient } from './queryClient'
 import { JobPopup } from './components/JobPopup'
+import { GeoBanner } from './components/GeoBanner'
+import { EnrichmentBanners } from './components/SetupBanners'
 
 const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
 const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
@@ -313,6 +315,10 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         <div key={view} className={clsx('mx-auto', running.length > 0 && 'pt-16! sm:pt-16!', view === 'hunt'
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
+          {view !== 'settings' && <div className="mb-4 flex flex-col gap-2 empty:hidden">
+            <GeoBanner onOpenSettings={() => gotoView('settings')} />
+            <EnrichmentBanners onOpenSettings={() => gotoView('settings')} />
+          </div>}
           <Suspense fallback={<PageSkeleton />}>
             {view === 'dashboard' && <Dashboard {...props} />}
             {view === 'findings' && <Findings {...props} />}

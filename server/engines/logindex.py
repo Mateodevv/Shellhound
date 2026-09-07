@@ -36,7 +36,7 @@ from pathlib import Path
 from server import db, huntrules, ruleswitch
 from server.engines import accesslog
 from server.i18n import t
-from server.engines.fsutil import (get_files_recursive, is_compressed,
+from server.engines.fsutil import (get_files_recursive, is_compressed, record_skip,
                                    is_scannable_text, open_text_auto)
 
 # 3: days.ok (requests answered with 2xx per day) for the timeline curves.
@@ -448,6 +448,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             except OSError:
                 file_mtime = 0
             if not is_scannable_text(file_path):
+                record_skip(ctx, abs_path, "binary/unreadable file")
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",
@@ -456,6 +457,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 done_size += file_size
                 continue
             if accesslog.sniff_error_log(file_path, open_text_auto):
+                record_skip(ctx, abs_path, accesslog.ERROR_LOG_SKIP_REASON)
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",
@@ -638,6 +640,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                 ctx.progress(0.02 + frac * 0.82,
                                              f"{name}: {stats['lines'] + file_lines:,} lines indexed")
             except (OSError, EOFError) as e:
+                record_skip(ctx, abs_path, f"read error: {e}")
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",

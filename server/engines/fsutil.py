@@ -15,6 +15,13 @@ COMPRESSED_OPENERS = {".gz": gzip.open, ".bz2": bz2.open, ".xz": lzma.open}
 _CHUNK = 65536
 
 
+def record_skip(ctx, path, reason):
+    """Retain per-job details when running with a job context."""
+    callback = getattr(ctx, "skip", None)
+    if callback is not None:
+        callback(path, reason)
+
+
 def get_files_recursive(directory):
     for file_path in Path(io_path(directory)).rglob("*"):
         if file_path.is_file():

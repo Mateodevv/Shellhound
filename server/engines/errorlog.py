@@ -54,7 +54,7 @@ import re
 from datetime import datetime, timezone
 
 from server import db, ruleswitch
-from server.engines.fsutil import is_scannable_text, open_text_auto
+from server.engines.fsutil import is_scannable_text, open_text_auto, record_skip
 
 # Apache:  [Fri Jun 26 05:19:59.123456 2026] [php:error] [pid 123] [client 1.2.3.4:5] PHP Fatal error: ...
 # Nginx:   2026/06/30 11:52:26 [error] 1234#0: *5 FastCGI sent in stderr: "PHP message: ..."
@@ -284,6 +284,8 @@ def scan(case_dir, targets, ctx=None, workspace=None):
             # NOT completed -- this run skipped its work rather than doing
             # it, so it has no opinion about the rows of earlier runs.
             stats["skipped"] = len(logs)
+            for path in logs:
+                record_skip(ctx, os.path.abspath(path), "No webroot registered for file correlations")
             return stats
 
         # artifact -> what the log says about it. Collected first so one file
@@ -332,6 +334,7 @@ def scan(case_dir, targets, ctx=None, workspace=None):
                             if hard and "Fatal" not in agg["example"]:
                                 agg["example"] = entry["message"].strip()[:_EVIDENCE_CAP]
             except (OSError, EOFError, ValueError) as e:
+                record_skip(ctx, os.path.abspath(path), f"read error: {e}")
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                     ("errorlog", os.path.abspath(path), f"read error: {e}"))

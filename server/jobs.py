@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from server import db
 from server.events import hub
+from server.paths import display_path
 
 # Two heavy engines at once is plenty on an analyst workstation; more would
 # just make both slower (regex parsing is CPU-bound).
@@ -30,6 +31,12 @@ class JobContext:
         self.job_id = job_id
         self.cancel_event = threading.Event()
         self._last_db_write = 0.0
+        self.skipped_files = []
+
+    def skip(self, path, reason):
+        # An engine may hold the case write lock. Persist with its final job
+        # state after the engine releases that transaction, never from here.
+        self.skipped_files.append((display_path(path), str(reason)))
 
     def cancelled(self):
         return self.cancel_event.is_set()
@@ -151,6 +158,12 @@ class JobManager:
                 fields["started"] = db.now()
             if state in ("done", "failed", "cancelled"):
                 fields["finished"] = db.now()
+                stats = {**(stats or {}), "skip_details": len(ctx.skipped_files)}
+                conn.executemany(
+                    "INSERT OR REPLACE INTO job_skips (job_id, ordinal, path, reason) "
+                    "VALUES (?,?,?,?)",
+                    ((ctx.job_id, index, path, reason)
+                     for index, (path, reason) in enumerate(ctx.skipped_files)))
                 if state == "done":
                     fields["progress"] = 1.0
             if stats is not None:
