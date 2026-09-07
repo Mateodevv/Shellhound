@@ -2,6 +2,7 @@
 import itertools
 import builtins
 import json
+import os
 import tempfile
 import tracemalloc
 import unittest
@@ -241,6 +242,84 @@ class FileScanRetryTests(unittest.TestCase):
                 scanning = [event for event in ctx.events if event[0] == "scanning"]
                 self.assertEqual(10, scanning[0][2])
                 self.assertEqual("finalizing", ctx.events[-1][0])
+
+    def directory_alias(self, link, target):
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            self.addCleanup(link.rmdir)
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.addCleanup(link.unlink)
+
+    def test_directory_alias_keeps_location_finding_and_analyst_decision(self):
+        uploads = self.site / "uploads"
+        uploads.mkdir()
+        sample = uploads / "sample.php"
+        # An inert token exercises the location heuristic without a payload.
+        sample.write_text("file_put_contents(", encoding="utf-8")
+        case = self.root / "alias-case"
+        self.run_scan("webshell", case)
+        conn = db.connect(case)
+        try:
+            original = db.one(conn, "SELECT id FROM findings WHERE rule_id='webshell.upload_php'")
+            self.assertIsNotNone(original)
+            conn.execute("UPDATE findings SET triage='confirmed', triage_note='Keep this decision' WHERE id=?",
+                         (original["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        self.directory_alias(self.site / "z-cache", uploads)
+        stats = self.run_scan("webshell", case)
+        self.assertEqual(4, stats["scanned"])
+        self.assertEqual(0, stats["skipped"])
+        conn = db.connect(case)
+        try:
+            finding = db.one(conn, f"SELECT f.*, {db.LIVE_PREDICATE} AS live FROM findings f "
+                             f"{db.RETIRE_JOIN} WHERE f.id=?", (original["id"],))
+            self.assertTrue(finding["live"])
+            self.assertEqual("confirmed", finding["triage"])
+            self.assertEqual("Keep this decision", finding["triage_note"])
+        finally:
+            conn.close()
+
+    def test_overlapping_roots_preserve_distinct_location_contexts(self):
+        uploads = self.site / "uploads"
+        uploads.mkdir()
+        sample = uploads / "sample.php"
+        sample.write_text("ordinary marker", encoding="utf-8")
+        files = fsutil.discover_scan_files(
+            [str(uploads), str(self.site), str(self.site)], fsutil.ScanProgress(None), {})
+        contexts = [root for path, root in files if path == str(sample)]
+        self.assertCountEqual([str(uploads), str(self.site)], contexts)
+        self.assertEqual(4, len(files))
+
+    def test_directory_cycles_stop_and_external_aliases_remain_discovery_errors(self):
+        uploads = self.site / "uploads"
+        uploads.mkdir()
+        sample = uploads / "sample.php"
+        sample.write_text("ordinary marker", encoding="utf-8")
+        self.directory_alias(self.site / "z-cache", uploads)
+        self.directory_alias(uploads / "back", self.site)
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "outside.php").write_text("ordinary marker", encoding="utf-8")
+        self.directory_alias(self.site / "external", outside)
+        ctx = RecordingContext()
+        stats = {}
+        # Fail promptly if a regression follows the cycle indefinitely.
+        checks = itertools.count()
+        def cancelled():
+            self.assertLess(next(checks), 100)
+            return False
+        ctx.cancelled = cancelled
+        files = fsutil.discover_scan_files([str(self.site)], fsutil.ScanProgress(ctx), stats)
+        self.assertCountEqual(
+            [str(self.first), str(self.second), str(sample), str(self.site / "z-cache" / "sample.php")],
+            [path for path, _root in files])
+        self.assertTrue(stats["partial"])
+        self.assertEqual(1, stats["discovery_errors"])
+        self.assertEqual("discovery", ctx.skips[0][2])
 
     def test_cancellation_during_discovery_does_not_change_saved_results(self):
         for engine in ("webshell", "yarascan"):

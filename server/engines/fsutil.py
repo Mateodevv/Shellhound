@@ -67,7 +67,7 @@ def discover_scan_files(targets, progress, stats, file_targets=None):
     or cause a directory cycle. Failures to enumerate are incomplete coverage,
     not ordinary file warnings.
     """
-    files, seen_files, seen_dirs = [], set(), set()
+    files, seen_files = [], set()
     progress.update(0, "Finding files… 0 found", "discovering", 0, None, force=True)
 
     def discovery_error(path, root, error):
@@ -76,11 +76,15 @@ def discover_scan_files(targets, progress, stats, file_targets=None):
         record_skip(progress.ctx, display_path(path), str(error), "discovery", root)
 
     def add(path, root):
-        key = canonical_file(path)
+        path = os.path.abspath(display_path(path))
+        root = os.path.abspath(display_path(root))
+        # Names and paths relative to the evidence root affect scanner rules.
+        # Only repeated logical contexts are duplicates; resolving aliases here
+        # could hide an executable extension or a file's upload-directory role.
+        key = (os.path.normcase(path), os.path.normcase(root))
         if key not in seen_files:
             seen_files.add(key)
-            files.append((os.path.abspath(display_path(path)),
-                          os.path.abspath(display_path(root))))
+            files.append((path, root))
         progress.update(0, f"Finding files… {len(files):,} found", "discovering",
                         len(files), None)
 
@@ -109,13 +113,15 @@ def discover_scan_files(targets, progress, stats, file_targets=None):
             if not stat.S_ISDIR(mode):
                 discovery_error(target, target, "evidence root is not a file or directory")
                 continue
-            pending = [target]
+            pending = [(target, frozenset())]
             while pending and not progress.cancelled():
-                directory = pending.pop()
+                directory, ancestors = pending.pop()
                 identity = canonical_file(directory)
-                if identity in seen_dirs:
+                # Stop cycles on this traversal branch, while preserving other
+                # logical paths to the same directory for location-based rules.
+                if identity in ancestors:
                     continue
-                seen_dirs.add(identity)
+                ancestors = ancestors | {identity}
                 try:
                     with os.scandir(io_path(directory)) as entries:
                         for entry in entries:
@@ -129,7 +135,7 @@ def discover_scan_files(targets, progress, stats, file_targets=None):
                                 elif entry.is_file():
                                     add(path, target)
                                 elif entry.is_dir():
-                                    pending.append(path)
+                                    pending.append((path, ancestors))
                                 elif entry.is_symlink():
                                     discovery_error(path, target, "cannot resolve evidence link")
                             except OSError as exc:

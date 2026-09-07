@@ -1,5 +1,6 @@
 """HTTP-level warning receipts and exact-file retries over synthetic evidence."""
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -143,6 +144,40 @@ class ScanRetryApiTests(unittest.TestCase):
         self.assertEqual(1, sum(j["kind"] == "cms" for j in jobs), "retry must not rerun other engines")
         self.assertEqual(original["id"], next(j for j in jobs if j["id"] == retry_id)["scan_context"]["parent_job_id"])
         self.assertEqual("complete", self.client.get(self.url).json()["evidence_items"][0]["stats"]["last_attempt"]["status"])
+
+    def test_retry_all_preserves_and_resolves_each_logical_alias(self):
+        uploads = self.evidence / "uploads"
+        uploads.mkdir()
+        sample = uploads / "sample.php"
+        with sample.open("wb") as handle:
+            handle.truncate(6 * 1024 * 1024)
+        alias = self.evidence / "z-cache"
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(uploads), str(alias))
+        else:
+            alias.symlink_to(uploads, target_is_directory=True)
+        try:
+            jobs = self.scan(yara=True)
+            for file in [*self.files, sample]:
+                file.write_text("ordinary marker", encoding="utf-8")
+            for kind in ("webshell", "yara"):
+                with self.subTest(kind=kind):
+                    job_id = jobs[kind]["id"]
+                    self.assertEqual(4, self.details(job_id)["unresolved"])
+                    retry_id = self.retry(job_id, {"mode": "all"})
+                    retry = next(job for job in self.client.get(self.url + "/jobs").json()
+                                 if job["id"] == retry_id)
+                    self.assertEqual("done", retry["state"])
+                    self.assertEqual(4, retry["stats"]["scanned"])
+                    details = self.details(job_id)
+                    self.assertEqual(0, details["unresolved"])
+                    self.assertTrue(all(entry["status"] == "resolved" for entry in details["items"]))
+        finally:
+            if os.name == "nt":
+                alias.rmdir()
+            else:
+                alias.unlink()
 
     def test_retry_still_skipped_is_retryable_and_survives_manager_restart(self):
         original = self.scan()["webshell"]["id"]

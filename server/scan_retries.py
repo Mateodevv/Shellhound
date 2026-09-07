@@ -257,7 +257,10 @@ def prepare_retry(conn, job_id, mode, ids, workspace, *, group="all", status="pe
             if mode == "all":
                 continue
             raise
-        identity = path_key(target["path"])
+        # Aliases have separate findings and skip ordinals because scanner
+        # rules depend on the logical path. Reject duplicate spellings, not
+        # distinct aliases that happen to resolve to the same physical file.
+        identity = os.path.normcase(os.path.abspath(display_path(target["path"])))
         if identity in seen:
             raise RetryError("Overlapping evidence registrations make this retry ambiguous. Run full analysis.")
         seen.add(identity)
