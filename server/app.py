@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -1916,6 +1917,8 @@ def create_app(config: Config) -> FastAPI:
             "VALUES (?,?,?,?,?) ON CONFLICT(ioc_id, artifact, role) DO UPDATE "
             "SET active = 1, added = excluded.added",
             (ioc_id, artifact, role, 1, db.now()))
+        ioc_model.observe(conn, ioc_id, "source", source_ref=role, local_path=artifact,
+                          detail="Structured collection provenance")
 
     def _retire_collected_iocs(conn, artifacts):
         marks = ",".join("?" * len(artifacts))
@@ -1976,13 +1979,15 @@ def create_app(config: Config) -> FastAPI:
             # copy sits on the forensic machine is nobody's business outside
             # that machine -- and an export would otherwise carry it out.
             value = db.case_relative_path(conn, artifact)
-            path_id = db.add_ioc(conn, value, "path", tags, origin=origin)
+            path_id = db.add_ioc(conn, value, "path", tags, origin=origin,
+                                 context=artifact, path_context="system")
             _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
             # An explicit file review describes the bytes inspected now.
             # Scanner confirmations still refer to their captured snapshot.
             digest = (_sha256_of(artifact) if manual_webshell or manual_malware
                       else hashes.get(artifact) or _sha256_of(artifact))
+            file_id = None
             if digest:
                 hash_id = db.add_ioc(conn, digest, "hash",
                                      [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
@@ -1995,6 +2000,9 @@ def create_app(config: Config) -> FastAPI:
                 # still known: afterwards the box holds two rows one cannot
                 # tell it from.
                 db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
+                file_id = ioc_model.collect_file(conn, artifact, digest, hash_id, path_id,
+                                                 "webshell" if ioclib.TAG_WEBSHELL in tags else
+                                                 "malware" if manual_malware else "", findings)
                 out.append({"value": digest, "type": "hash"})
             # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))
@@ -2008,6 +2016,15 @@ def create_app(config: Config) -> FastAPI:
                 _track_ioc(conn, ip_id, artifact, "requester")
                 db.link_iocs(conn, ip_id, path_id, ioclib.LINK_REQUESTED,
                              f"{hit['hits']}× requested, {hit['ok_hits']}× 2xx")
+                observation = ioc_model.observe(conn, ip_id, "http-request", source_ref=f"path-ioc:{path_id}",
+                                               path="/" + value.lstrip("/"), count=hit["hits"],
+                                               first_seen=hit.get("first_seen", ""), last_seen=hit.get("last_seen", ""),
+                                               detail=f"{hit['ok_hits']} responses with HTTP 2xx; execution not established.")
+                if file_id:
+                    db.link_iocs(conn, ip_id, file_id, "request-context",
+                                 "Requested a path associated with collected file content; execution not established.")
+                    link = db.one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind='request-context'", (ip_id, file_id))
+                    ioc_model.add_support(conn, link["id"], "Exact request-path match", observation_id=observation)
                 out.append({"value": hit["ip"], "type": "ip",
                             "hits": hit["hits"], "ok_hits": hit["ok_hits"]})
         elif kind == "client":
@@ -2020,6 +2037,7 @@ def create_app(config: Config) -> FastAPI:
                 tags.append(ioclib.TAG_SUCCESS)
             client_id = db.add_ioc(conn, artifact, "ip", tags, origin=origin)
             _track_ioc(conn, client_id, artifact, "direct")
+            ioc_model.collect_cves(conn, client_id, findings)
             out.append({"value": artifact, "type": "ip"})
         elif kind == "table":
             table_id = db.add_ioc(
@@ -3132,7 +3150,7 @@ def create_app(config: Config) -> FastAPI:
                     [ioclib.TAG_ANALYST, ioclib.TAG_MODIFIED],
                     note=body.note,
                     # Stored, therefore in the project language.
-                    origin="marked by the analyst in the file browser")
+                    origin="marked by the analyst in the file browser", context=path, path_context="system")
                 added.append({"value": value, "type": "path"})
                 digest = _sha256_of(path)
                 if digest:
@@ -3142,6 +3160,9 @@ def create_app(config: Config) -> FastAPI:
                         # Stored, and therefore English: it travels into every export.
                         origin=f"sha-256 of {os.path.basename(path)}")
                     db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
+                    _track_ioc(conn, hash_id, path, "hash")
+                    _track_ioc(conn, path_id, path, "direct")
+                    ioc_model.collect_file(conn, path, digest, hash_id, path_id)
                     added.append({"value": digest, "type": "hash"})
             conn.commit()
         finally:
@@ -3854,6 +3875,8 @@ def create_app(config: Config) -> FastAPI:
         return {"added": added}
 
     # --- IOC box ------------------------------------------------------------
+    from server import ioc_api, ioc_model
+    ioc_api.register(app, case_dir_or_404, auth, hub)
 
     def _ioc_spans(case_dir, rows):
         """Attach first_seen/last_seen (log-local dates) to address IOCs.
@@ -3864,8 +3887,8 @@ def create_app(config: Config) -> FastAPI:
             case_dir, [r["value"] for r in rows if r["type"] == "ip"])
         for r in rows:
             span = spans.get(r["value"]) if r["type"] == "ip" else None
-            r["first_seen"] = span[0] if span else None
-            r["last_seen"] = span[1] if span else None
+            r["first_seen"] = span[0] if span else r.get("first_seen")
+            r["last_seen"] = span[1] if span else r.get("last_seen")
         return rows
 
     @app.get("/api/cases/{slug}/iocs", dependencies=[auth])
@@ -3874,6 +3897,7 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn, "SELECT * FROM iocs ORDER BY added DESC, id DESC")
+            ioc_model.enrich_rows(conn, rows)
             _ioc_spans(case_dir, rows)
             # Path indicators are stored webroot-relative (what the other
             # side can look for), but the file viewer wants the file where
@@ -3920,6 +3944,8 @@ def create_app(config: Config) -> FastAPI:
         value: str
         type: str = ""
         note: str = ""
+        context: str = ""
+        path_context: str = "unknown"
 
     @app.post("/api/cases/{slug}/iocs", dependencies=[auth])
     def add_ioc(slug: str, body: NewIoc):
@@ -3928,6 +3954,12 @@ def create_app(config: Config) -> FastAPI:
         if not value:
             raise HTTPException(400, "empty value")
         ioc_type = body.type if body.type in ioclib.IOC_TYPES else ioclib.classify(value)
+        if ioc_type == "file":
+            raise HTTPException(400, "Collect a file through the file browser, or add a standalone hash.")
+        if body.path_context not in ioc_model.PATH_CONTEXTS:
+            raise HTTPException(400, "Invalid path context.")
+        if ioc_type == "vulnerability" and not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+            raise HTTPException(400, "A vulnerability value must be a CVE identifier.")
         # Hex has no case. The collectors write hexdigest() and are already
         # lower-case; only the analyst pastes `4323…C`, and without this the
         # same digest lives twice and the cross-case comparison -- exact by
@@ -3938,7 +3970,8 @@ def create_app(config: Config) -> FastAPI:
         conn = db.connect(case_dir)
         try:
             db.add_ioc(conn, value, ioc_type, [ioclib.TAG_ANALYST],
-                       note=body.note, origin="added by the analyst")
+                       note=body.note, origin="added by the analyst", context=body.context,
+                       path_context=body.path_context)
             conn.commit()
         finally:
             conn.close()
@@ -3947,12 +3980,38 @@ def create_app(config: Config) -> FastAPI:
     class PatchIoc(BaseModel):
         type: str | None = None
         note: str | None = None
+        context: str | None = None
+        path_context: str | None = None
 
     @app.patch("/api/cases/{slug}/iocs/{ioc_id}", dependencies=[auth])
     def patch_ioc(slug: str, ioc_id: int, body: PatchIoc):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
+            current = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc_id,))
+            if not current:
+                raise HTTPException(404, "IOC does not exist.")
+            target_type = body.type or current["type"]
+            if target_type == "vulnerability" and not re.fullmatch(r"CVE-\d{4}-\d{4,}", current["value"], re.I):
+                raise HTTPException(400, "A vulnerability value must be a CVE identifier.")
+            if target_type == "file" and current["type"] != "file" or current["type"] == "file" and target_type != "file":
+                raise HTTPException(400, "File content identities cannot be retyped.")
+            if body.path_context is not None and body.path_context not in ioc_model.PATH_CONTEXTS:
+                raise HTTPException(400, "Invalid path context.")
+            if body.type is not None and body.type != current["type"]:
+                for link in db.ioc_links(conn):
+                    allowed = ioc_model.RELATIONS.get(link["kind"])
+                    if allowed and (link["src_id"] == ioc_id and body.type not in allowed[0]
+                                    or link["dst_id"] == ioc_id and body.type not in allowed[1]):
+                        raise HTTPException(409, "Withdraw incompatible relationships before changing this object's type.")
+            if body.type is not None or body.context is not None or body.path_context is not None:
+                context = body.context if body.context is not None else current["context"]
+                key = ioc_model.identity(current["value"], target_type, context, body.path_context or current["path_context"])
+                if conn.execute("SELECT 1 FROM iocs WHERE identity_key=? AND id!=?", (key, ioc_id)).fetchone():
+                    raise HTTPException(409, "This identity already exists; existing objects were retained.")
+                conn.execute("UPDATE iocs SET identity_key=?,context=? WHERE id=?", (key, context, ioc_id))
+            if body.path_context is not None:
+                conn.execute("UPDATE iocs SET path_context=? WHERE id=?", (body.path_context, ioc_id))
             if body.type is not None:
                 if body.type not in ioclib.IOC_TYPES:
                     raise HTTPException(400, f"type must be one of {ioclib.IOC_TYPES}")

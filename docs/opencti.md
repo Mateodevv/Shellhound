@@ -3,6 +3,59 @@
 Shellhound keeps evidence, investigation and triage local. OpenCTI stores shared
 intelligence and runs external enrichment connectors. Local GeoIP remains local.
 
+## Structured IOC objects
+
+The IOC box keeps its compact list. **Details** opens Overview, Observations,
+Relationships and OpenCTI. Opening these tabs never starts enrichment or transfer.
+
+Files have a content identity, coherent hashes and multiple recorded locations.
+The file browser and confirmed findings collect these automatically. Existing hash
+entries remain available inside the file card. Different content at the same path
+is a different file; a matching filename is never sufficient to combine hashes.
+Missing originals do not erase recorded file metadata. Samples still require an
+explicit selection and a fresh matching hash before upload.
+For migrated records, **Verify available file metadata** reads only registered
+local evidence and adds secondary hashes/size when SHA-256 still matches. Changed
+or missing locations are reported; verification does not upload content.
+
+Path context distinguishes HTTP paths, investigated system paths and local evidence
+paths. Local paths never appear in OpenCTI transfers. Account context identifies the
+system in which a username is meaningful; unscoped usernames remain case Notes.
+The context itself is not sent as an account identifier: a stable scoped digest is
+used to prevent merging unrelated accounts.
+
+Each object starts **unassessed**. Analysts can record suspicious, malicious or
+benign assessments with a reason and retained history. This is independent of
+finding triage, file classification and remote intelligence. Indicator selection
+remains a separate export decision.
+
+Relationships carry direction, automatic/manual provenance and supporting evidence.
+Use **Add evidence-backed relationship** to attach a specific log/finding reference,
+optionally an observation and a time range. A CVE can be added to the box by its
+identifier. Request-path context, observed use, execution, exploitation attempts
+and confirmed exploitation remain distinct assertions. An HTTP 2xx response alone
+establishes neither execution nor exploitation. The adapter preserves unsupported
+relationship semantics in a described `related-to` plus a case Note.
+
+Withdrawal requires a reason and is visible in history. A repeated automatic
+collection does not silently undo a withdrawn relationship. The next reviewed
+transfer withdraws earlier owned statements while preserving shared objects and
+other sources' assertions. Notes/evidence exclusions also apply to assessment
+reasons and relationship evidence.
+
+Schema 13 preserves existing IOC IDs, source UIDs, notes and export receipts.
+Explicit historical SHA-256 provenance creates file records without inventing
+size, secondary hashes or a classification. Unknown legacy contexts and equivalent
+legacy values are retained with review warnings. Migration never initiates export.
+
+Local detail/decision APIs: `GET /api/cases/{slug}/iocs/{id}/detail`,
+`POST /api/cases/{slug}/iocs/{id}/assessments`,
+`POST /api/cases/{slug}/ioc-relationships`, and
+`POST /api/cases/{slug}/ioc-relationships/{id}/withdraw`.
+IOC creation/update also accepts `context` and `path_context`; listing adds file
+metadata, membership, summary and assessment. Invalid relationships return 400,
+missing endpoints 404, and conflicting identity corrections 409.
+
 ## Configure the connection
 
 1. Open **Settings → OpenCTI**. Enter the final HTTPS URL, an existing dedicated

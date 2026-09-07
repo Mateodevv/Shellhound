@@ -493,7 +493,8 @@ _ADDED_COLUMNS = {
 #     selected cluster applications separately from generated findings.
 # 11: skipped paths and reasons belong to their job, surviving later scans.
 # 12: stable IOC source identities, provenance cleanup and OpenCTI receipts.
-CASE_SCHEMA_VERSION = 12
+# 13: typed/scoped IOC identities, file content objects and evidence-backed assertions.
+CASE_SCHEMA_VERSION = 13
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -505,6 +506,8 @@ _CURRENT_SCHEMA_TABLES = {
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",
     "opencti_lookups", "opencti_previews", "opencti_exports",
     "opencti_mappings", "opencti_enrichments",
+    "ioc_files", "ioc_observations", "ioc_assessments", "ioc_file_members",
+    "ioc_relationship_evidence", "ioc_relationship_events",
 }
 
 
@@ -610,6 +613,8 @@ def _upgrade(conn):
                  row[7], row[8], row[9], row[10], row[11], row[12], "{}",
                  row[3], digest))
     _relativize_ioc_paths(conn)
+    from server import ioc_model
+    ioc_model.migrate(conn)
     for table in ("iocs", "ioc_links"):
         conn.execute(f"UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE source_uid=''")
         conn.executescript(f"""
@@ -627,6 +632,15 @@ def _upgrade(conn):
             DELETE FROM ioc_sources WHERE ioc_id = OLD.id;
             DELETE FROM ioc_links WHERE src = OLD.id OR dst = OLD.id;
             DELETE FROM opencti_lookups WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_files WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_file_members WHERE ioc_id = OLD.id OR file_id = OLD.id;
+            DELETE FROM ioc_observations WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_assessments WHERE ioc_id = OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS delete_ioc_link_context AFTER DELETE ON ioc_links
+        BEGIN
+            DELETE FROM ioc_relationship_evidence WHERE link_id = OLD.id;
+            DELETE FROM ioc_relationship_events WHERE link_id = OLD.id;
         END;
     """)
     conn.execute(
@@ -901,7 +915,7 @@ def absolute_from_evidence(roots, value):
     return None
 
 
-def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
+def add_ioc(conn, value, ioc_type, tags=(), note="", origin="", *, context="", path_context="unknown"):
     """Insert an IOC or merge tags into the existing entry. Existing type and
     note win -- the analyst's correction must never be overwritten by a sync.
 
@@ -911,12 +925,14 @@ def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
     value = str(value).strip()
     if not value:
         return None
-    existing = one(conn, "SELECT * FROM iocs WHERE value = ?", (value,))
+    from server.ioc_model import identity
+    key = identity(value, ioc_type, context, path_context)
+    existing = one(conn, "SELECT * FROM iocs WHERE identity_key = ?", (key,))
     if existing is None:
         cur = conn.execute(
-            "INSERT INTO iocs (value, type, note, tags, origin, added) "
-            "VALUES (?,?,?,?,?,?)",
-            (value, ioc_type, note, json.dumps(sorted(set(tags))), origin, now()))
+            "INSERT INTO iocs (value, type, note, tags, origin, added,identity_key,context,path_context,source_uid) "
+            "VALUES (?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))",
+            (value, ioc_type, note, json.dumps(sorted(set(tags))), origin, now(), key, context, path_context))
         return cur.lastrowid
     merged = sorted(set(json.loads(existing["tags"] or "[]")) | set(tags))
     conn.execute("UPDATE iocs SET tags = ? WHERE id = ?",
@@ -935,6 +951,9 @@ def link_iocs(conn, src_id, dst_id, kind, note=""):
     conn.execute(
         "INSERT OR IGNORE INTO ioc_links (src, dst, kind, note, added) "
         "VALUES (?,?,?,?,?)", (src_id, dst_id, kind, note[:200], now()))
+    from server.ioc_model import add_support
+    row = one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind=?", (src_id, dst_id, kind))
+    add_support(conn, row["id"], "Automatic collection", note)
 
 
 def ioc_links(conn):
@@ -943,11 +962,14 @@ def ioc_links(conn):
     The INNER JOIN doubles as the cleanup: an edge whose indicator was
     deleted disappears from every view without any delete path having had to
     think of it."""
-    return rows(conn, """
+    from server.ioc_model import supported_links
+    return supported_links(conn, rows(conn, """
         SELECT l.id, l.kind, l.note, l.added, l.source_uid,
+               l.origin, l.active, l.withdrawal_reason,
                l.src AS src_id, s.value AS src_value, s.type AS src_type,
                l.dst AS dst_id, d.value AS dst_value, d.type AS dst_type
           FROM ioc_links l
           JOIN iocs s ON s.id = l.src
           JOIN iocs d ON d.id = l.dst
-         ORDER BY l.id""")
+         WHERE l.active = 1
+         ORDER BY l.id"""))

@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from server import db
+from server import db, ioc_model
 from server.paths import display_path, io_path
 
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
-OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "domain-name", "url", "email-addr", "file", "software", "artifact"}
+OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "domain-name", "url", "email-addr", "file", "software", "artifact", "user-account"}
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
@@ -145,7 +145,10 @@ def _read_case(case_dir):
         for link in links:
             link["source_uid"] = source_links[link["id"]].get("source_uid", "")
         return {
-            "iocs": db.rows(conn, "SELECT * FROM iocs ORDER BY id"),
+            "iocs": ioc_model.enrich_rows(conn, db.rows(conn, "SELECT * FROM iocs ORDER BY id")),
+            "observations": ioc_model.observations(conn),
+            "assessments": db.rows(conn, "SELECT * FROM ioc_assessments ORDER BY id"),
+            "relationship_evidence": db.rows(conn, "SELECT * FROM ioc_relationship_evidence ORDER BY id"),
             "links": links,
             "sources": db.rows(conn, "SELECT s.* FROM ioc_sources s JOIN iocs i ON i.id=s.ioc_id"),
             "evidence": db.rows(conn, "SELECT * FROM evidence ORDER BY id"),
@@ -232,7 +235,7 @@ def _files(data, sanitizer):
     rows = {r["id"]: r for r in data["iocs"]}
     by_row, warnings, cache = {}, {}, {}
     for row in data["iocs"]:
-        if row["type"] not in ("hash", "path"):
+        if row["type"] not in ("hash", "path", "file"):
             continue
         related = [rows[l["dst_id"]] for l in data["links"] if l["kind"] == "hash-of"
                    and l["src_id"] == row["id"] and rows[l["dst_id"]]["type"] == "path"]
@@ -247,7 +250,7 @@ def _files(data, sanitizer):
             if not snap:
                 problems.append(reason)
                 continue
-            if row["type"] == "hash" and str(row["value"]).lower() not in snap["hashes"].values():
+            if row["type"] in ("hash", "file") and str(row["value"]).lower() not in snap["hashes"].values():
                 problems.append("Current file content does not match the collected hash; historical metadata is kept separate.")
                 continue
             snapshots.append({**snap, "path": path, "display_path": sanitizer.path(display_path(path))})
@@ -270,6 +273,11 @@ def _observable(row, sanitized):
     if kind == "ip":
         address = ipaddress.ip_address(value)
         return _sco("ipv4-addr" if address.version == 4 else "ipv6-addr", {"value": str(address)})
+    if kind == "file" and row.get("file"):
+        props = {"hashes": row["file"]["hashes"]}
+        if row["file"]["size"] is not None:
+            props["size"] = row["file"]["size"]
+        return _sco("file", props)
     if kind == "hash":
         if not re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", value):
             raise ValueError("Invalid hash is retained as context.")
@@ -289,6 +297,10 @@ def _observable(row, sanitized):
         if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
             raise ValueError("Invalid URL or embedded credentials; retained as sanitized context.")
         return _sco("url", {"value": sanitized})
+    if kind == "user" and row.get("context"):
+        # Scoped account IDs prevent unrelated systems' admin accounts merging.
+        return _sco("user-account", {"user_id": _digest([row["context"], value]),
+                                     "account_login": sanitized})
     # A username alone is not globally unique. A case-owned context Note
     # deliberately prevents merging two unrelated systems' 'admin' accounts.
     return None
@@ -432,7 +444,7 @@ def build_preview(case_dir, options=None):
     active_confirmed = {s["ioc_id"] for s in data["sources"] if s["active"]
                         and s["role"] in ("direct", "hash") and s["artifact"] in confirmed_files}
     confirmed_hashes = {snapshot["sha256"] for row in data["iocs"]
-                        if row["type"] == "hash" and row["id"] in active_confirmed
+        if row["type"] in ("hash", "file") and row["id"] in active_confirmed
                         for snapshot in files.get(row["id"], [])}
     active_classified = {
         kind: {s["ioc_id"] for s in data["sources"] if s["active"]
@@ -441,7 +453,7 @@ def build_preview(case_dir, options=None):
     }
     classified_hashes = {
         kind: {snapshot["sha256"] for row in data["iocs"]
-               if row["type"] == "hash" and row["id"] in ioc_ids
+               if row["type"] in ("hash", "file") and row["id"] in ioc_ids
                for snapshot in files.get(row["id"], [])}
         for kind, ioc_ids in active_classified.items()
     }
@@ -450,6 +462,8 @@ def build_preview(case_dir, options=None):
         source_key = source_keys[ioc_id]
         chosen = selected is None or ioc_id in selected
         value = clean.path(row["value"]) if row["type"] == "path" else clean.text(row["value"])
+        if row.get("path_context") == "local-evidence":
+            value = "[local evidence location withheld]"
         row_warnings = list(file_warnings.get(ioc_id, []))
         if value != str(row["value"]):
             row_warnings.append("Local paths or credentials were removed from this value.")
@@ -461,6 +475,12 @@ def build_preview(case_dir, options=None):
         verified = files.get(ioc_id, [])
         if verified:
             observable = _sco("file", {"hashes": verified[0]["hashes"], "size": verified[0]["size"]})
+        if row.get("path_context") == "local-evidence":
+            observable = None
+            verified = []
+        if row["type"] == "vulnerability" and re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+            observable = sdo("vulnerability", ["cve", value.upper()], name=value.upper(),
+                             external_references=[{"source_name": "cve", "external_id": value.upper()}])
         ids = []
         if observable:
             observable["object_marking_refs"] = [marking]
@@ -469,12 +489,22 @@ def build_preview(case_dir, options=None):
                 add(observable)
         primary = ids[0] if ids else incident_id
         context = f"Shellhound IOC {ioc_id}: {row['type']} — {value}"
+        context += "\nCase assessment: " + row.get("assessment", "unassessed")
+        if row.get("file") and row["file"]["names"]:
+            context += "\nFile names: " + clean.text(", ".join(row["file"]["names"]))
+        if row.get("path_context") not in (None, "unknown"):
+            context += "\nPath context: " + row["path_context"]
+        if row.get("legacy_warning"):
+            row_warnings.append(row["legacy_warning"])
         if ioc_id in active_confirmed:
             context += "\nAssociated file confirmed by the analyst; no malware family is inferred from its name."
         if options.get("include_notes") and ioc_id not in excluded_notes:
             for key in ("origin", "note"):
                 if row.get(key):
                     context += f"\n{key.title()}: {clean.text(row[key])}"
+            for assessment in data["assessments"]:
+                if assessment["ioc_id"] == ioc_id:
+                    context += f"\nAssessment {assessment['created']}: {assessment['state']} — {clean.text(assessment['reason'])}"
         sources = [s for s in data["sources"] if s["ioc_id"] == ioc_id]
         if sources and not any(s["active"] for s in sources):
             context += "\nPrevious confirmation has been withdrawn; this is retained historical context."
@@ -484,6 +514,10 @@ def build_preview(case_dir, options=None):
             for f in data["findings"]:
                 if f["artifact"] in artifacts:
                     context += "\n" + clean.text(f["rule"]) + ": " + clean.text(f["evidence"])
+            for observation in data["observations"]:
+                if observation["ioc_id"] == ioc_id and row.get("path_context") != "local-evidence":
+                    context += "\nObservation: " + clean.text(_json({k: observation[k] for k in (
+                        "kind", "evidence_id", "finding_id", "source_ref", "path", "first_seen", "last_seen", "count", "detail", "active")}))
         context_refs = [incident_id] if row["type"] == "path" else [incident_id, primary]
         context_obj = sdo("note", [reference, f"ioc:{source_key}"], content=context,
                           object_refs=list(dict.fromkeys(context_refs)),
@@ -508,21 +542,24 @@ def build_preview(case_dir, options=None):
             else:
                 errors.append(f"IOC {ioc_id} cannot be represented as a STIX Indicator.")
         classification = ""
+        if row.get("file") and ioc_id in active_classified.get(row["file"]["classification"], set()):
+            classification = row["file"]["classification"]
         if verified and any(ioc_id in active_ids for active_ids in active_classified.values()):
             # Prefer the explicit, more specific webshell classification when
             # multiple confirmed occurrences describe the same verified bytes.
             classification = next((kind for kind in ("webshell", "malware")
                                    if verified[0]["sha256"] in classified_hashes[kind]), "")
         if chosen and classification:
+            classified_sha = row["value"] if row["type"] == "file" else verified[0]["sha256"]
             label = "web shell" if classification == "webshell" else "malware"
-            malware_id = add(sdo("malware", [reference, classification, verified[0]["sha256"]],
-                                 name=f"Confirmed {label} " + verified[0]["sha256"][:12],
+            malware_id = add(sdo("malware", [reference, classification, classified_sha],
+                                 name=f"Confirmed {label} " + classified_sha[:12],
                                  is_family=False,
                                  malware_types=["webshell" if classification == "webshell" else "unknown"],
                                  sample_refs=[primary],
                                  description=f"{label.capitalize()} classification confirmed in this Shellhound case; no family attribution."))
             ids.append(malware_id)
-            relation([classification, verified[0]["sha256"]], incident_id, malware_id, "related-to")
+            relation([classification, classified_sha], incident_id, malware_id, "related-to")
         for snapshot in verified:
             sample_id = _digest([reference, "sample", snapshot["sha256"]])
             sample = {"id": sample_id, "display_path": snapshot["display_path"],
@@ -546,8 +583,9 @@ def build_preview(case_dir, options=None):
         row_objects[ioc_id] = [observable, context_obj, {"confirmed_classification": classification}]
         rows.append({"id": ioc_id, "source_uid": source_key, "type": row["type"], "value": value, "selected": chosen,
                      "object_ids": ids, "indicator_supported": bool(pattern),
-                     "indicator_suggested": bool(row["type"] == "hash" and verified and ioc_id in active_confirmed
-                                                 and verified[0]["sha256"] in confirmed_hashes),
+                     "indicator_suggested": bool(row["type"] in ("hash", "file") and (
+                         row.get("assessment") == "malicious" or verified and ioc_id in active_confirmed
+                         and verified[0]["sha256"] in confirmed_hashes)),
                      "warnings": row_warnings})
 
     edge_rows = []
@@ -562,6 +600,20 @@ def build_preview(case_dir, options=None):
             src, dst = associations[link["src_id"]], associations[link["dst_id"]]
             label = f"IOC {link['src_id']} {link['kind']} IOC {link['dst_id']}"
             description = label + ("\n" + edge_note if edge_note else "")
+            description += "\nAssertion source: " + link.get("origin", "automatic")
+            if link["kind"] in ("requested", "request-context"):
+                description += "\nPath-based request association only; file content at request time and execution are not established."
+            elif link["kind"] == "exploit-attempt":
+                description += "\nEvidence of an exploitation attempt; successful exploitation is not asserted."
+            elif link["kind"] == "exploitation-confirmed":
+                description += "\nAnalyst-confirmed exploitation, supported by the selected case evidence."
+            if (options.get("include_evidence") and link["src_id"] not in excluded_evidence
+                    and link["dst_id"] not in excluded_evidence):
+                for support in data["relationship_evidence"]:
+                    if support["link_id"] == link["id"]:
+                        description += "\nEvidence: " + clean.text(support["reference"] + ": " + support["detail"])
+                        if support["first_seen"] or support["last_seen"]:
+                            description += "\nObserved: " + support["first_seen"] + " — " + support["last_seen"]
             if link["kind"] in ("hash-of", "requested"):
                 description += "\nHistorical collection relationship; it does not identify the path's current file contents or prove execution."
             # 'requested' is evidence of an HTTP request, not 'communicates-with'
@@ -570,6 +622,11 @@ def build_preview(case_dir, options=None):
             if src != dst:
                 refs.append(relation(["ioc-link", source_key], src, dst, description=description))
             src_obj, dst_obj = row_objects[link["src_id"]][0], row_objects[link["dst_id"]][0]
+            if link["kind"] in ("request-context", "used", "executed") and src_obj and dst_obj:
+                for malware in list(objects.values()):
+                    if malware["type"] == "malware" and dst_obj["id"] in malware.get("sample_refs", []):
+                        refs.append(relation(["file-malware-assertion", source_key, malware["id"]],
+                                             src_obj["id"], malware["id"], description=description))
             dst_row = next(r for r in rows if r["id"] == link["dst_id"])
             if (link["kind"] == "requested" and src_obj and src_obj["type"] in ("ipv4-addr", "ipv6-addr")
                     and dst_row["type"] == "path" and dst_obj and dst_obj["type"] == "file"
@@ -637,6 +694,7 @@ def build_preview(case_dir, options=None):
                                "Associated finding confirmed; malware classification not asserted" if ioc_id in active_confirmed else
                                "Observation only; maliciousness not established")
             original = next(r for r in data["iocs"] if r["id"] == ioc_id)
+            assessments.append("Case assessment: " + original.get("assessment", "unassessed"))
             if options.get("include_notes") and ioc_id not in excluded_notes:
                 origins.append(clean.text(original.get("origin") or "Shellhound IOC box"))
             else:

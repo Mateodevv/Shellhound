@@ -356,6 +356,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/access/clips": "",
     "/api/cases/{slug}/access/clips/export": "",
     "/api/cases/{slug}/iocs": "",
+    "/api/cases/{slug}/iocs/{ioc_id}/detail": None,  # fixture-dependent; covered in test_opencti_api
     "/api/cases/{slug}/iocs/cross-case": "",
     "/api/cases/{slug}/iocs/export": "",
     "/api/cases/{slug}/cms": "",

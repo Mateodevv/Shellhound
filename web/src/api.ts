@@ -602,6 +602,13 @@ export interface IocLink {
 }
 
 export interface Ioc {
+  assessment?: 'unassessed' | 'suspicious' | 'malicious' | 'benign'
+  context?: string
+  path_context?: string
+  legacy_warning?: string
+  summary?: string
+  file_ids?: number[]
+  file?: { hashes: Record<string, string>; names: string[]; size: number | null; classification: string; verified_at: string } | null
   id: number
   value: string
   type: string

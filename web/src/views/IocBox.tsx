@@ -24,10 +24,11 @@ import type { ViewId } from '../App'
 import { defang } from '../defang'
 import { useOpenCti } from '../opencti'
 import { OpenCtiToolbar, OpenCtiStatus, OpenCtiDetails } from '../components/OpenCti'
+import { IocDetails } from '../components/IocDetails'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
   ip: Globe, hash: Fingerprint, url: Link2, domain: Globe, email: AtSign,
-  path: FileDigit, user: User, other: Box,
+  path: FileDigit, user: User, other: Box, file: FileDigit, vulnerability: ShieldOff,
 }
 
 const TAG_TONE: Record<string, 'danger' | 'warn' | 'accent' | undefined> = {
@@ -69,10 +70,13 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
   const cti = useOpenCti(slug)
   const [selection, setSelection] = useState<Set<number> | null>(null)
   const [ctiDetail, setCtiDetail] = useState<number | null>(null)
+  const [detailId, setDetailId] = useState<number | null>(null)
   const selectedIds = (iocs ?? []).filter((ioc) => selection === null || selection.has(ioc.id)).map((ioc) => ioc.id)
   const toggleSelected = (id: number) => setSelection((previous) => {
     const next = new Set(previous ?? (iocs ?? []).map((ioc) => ioc.id))
-    if (next.has(id)) next.delete(id); else next.add(id)
+    const selected = !next.has(id)
+    const members = [id, ...(iocs ?? []).filter(i => i.file_ids?.includes(id)).map(i => i.id)]
+    members.forEach(member => { if (selected) next.add(member); else next.delete(member) })
     return next
   })
   // Hide switches as everywhere: a click hides the type resp. the tag, the
@@ -158,6 +162,12 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
     const dockParent = new Map<number, number>()
     for (const i of filtered) {
       if (i.type !== 'hash') continue
+      const fileId = i.file_ids?.find(id => visible.has(id))
+      if (fileId != null) {
+        docked.set(fileId, [...(docked.get(fileId) ?? []), i])
+        dockParent.set(i.id, fileId)
+        continue
+      }
       const file = (i.links ?? []).find(
         (l) => l.kind === 'hash-of' && l.type === 'path' && visible.has(l.id))
       if (file && byId.has(file.id)) {
@@ -243,10 +253,11 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
         <Icon size={docked ? 13 : 15} className="shrink-0 text-[var(--muted)]" />
         <select
           value={ioc.type}
+          disabled={ioc.type === 'file'}
           onChange={(e) => saveType.mutate({ id: ioc.id, type: e.target.value })}
           className="shrink-0 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-[11px] uppercase text-[var(--muted)] outline-none transition-colors hover:border-[var(--line)] cursor-pointer"
         >
-          {['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other'].map((t) => (
+          {['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other', 'vulnerability', ...(ioc.type === 'file' ? ['file'] : [])].map((t) => (
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
@@ -287,6 +298,9 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
         {/* The value travels from here into a ticket, a firewall rule or a
             search box. Typing it out would be a source of errors for a
             SHA-256, and selecting it fails on the truncate. */}
+        <button onClick={() => setDetailId(ioc.id)} className="shrink-0 rounded-md border border-[var(--line)] px-2 py-1 text-[11px] text-[var(--accent-text)]"
+          aria-label={`Details for ${ioc.value}`}>Details</button>
+        <span className={`text-[11px] ${ioc.assessment === 'malicious' ? 'text-[var(--danger)]' : ioc.assessment === 'suspicious' ? 'text-[var(--warn)]' : 'text-[var(--muted)]'}`}>{ioc.assessment ?? 'unassessed'}</span>
         <CopyButton value={ioc.value} label={tr('iocbox.copy')}
           className="shrink-0" />
         {/* The same value with nothing clickable in it, for mails and
@@ -587,12 +601,12 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
                   six months later". It used to live as the note's
                   placeholder and vanished behind the first sentence anybody
                   wrote. */}
-              {ioc.origin && (
+              {(ioc.summary || ioc.origin) && (
                 <div className="-mt-1.5 flex items-baseline gap-2 px-4 pb-2 pl-11 text-[11px] text-[var(--muted)]">
                   <span className="shrink-0 text-[10px] uppercase tracking-wider opacity-70">
                     {tr('iocbox.origin')}
                   </span>
-                  <span className="min-w-0 truncate" title={ioc.origin}>{ioc.origin}</span>
+                  <span className="min-w-0 truncate" title={ioc.summary || ioc.origin}>{ioc.summary || ioc.origin}</span>
                 </div>
               )}
               {/* Only hashes and addresses can be asked about outside. A
@@ -693,6 +707,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId)
       {ctiDetail !== null && <Modal open onClose={() => setCtiDetail(null)} title={iocs?.find((entry) => entry.id === ctiDetail)?.value ?? tr('cti.title')}>
         <OpenCtiDetails lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ctiDetail)} />
       </Modal>}
+      {detailId !== null && <IocDetails key={detailId} slug={slug} id={detailId} iocs={iocs ?? []} onClose={() => setDetailId(null)} />}
       <FileViewer slug={slug} path={viewingPath} layer={1}
         onClose={() => setViewingPath(null)} />
     </div>

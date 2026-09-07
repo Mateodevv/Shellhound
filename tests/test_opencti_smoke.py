@@ -14,8 +14,8 @@ class OpenCTISmokeTests(unittest.TestCase):
             with patch.object(opencti_smoke, "OpenCTIClient") as client, patch.object(opencti_smoke.service, "connection_test") as connection:
                 proof = opencti_smoke.run(root, offline=True, output_root=root / "smoke", emit=lambda _value: None)
             self.assertEqual("offline-preview", proof["state"])
-            self.assertEqual(8, proof["preview"]["iocs"])
-            self.assertEqual(4, proof["preview"]["relationships"])
+            self.assertEqual(10, proof["preview"]["iocs"])
+            self.assertEqual(7, proof["preview"]["relationships"])
             client.assert_not_called()
             connection.assert_not_called()
             case = Path(proof["fixture_dir"])

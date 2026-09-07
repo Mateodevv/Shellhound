@@ -162,7 +162,7 @@ def _observable(ioc_type, value):
             raise ValueError("Invalid IP address") from exc
         kind = "IPv4-Addr" if address.version == 4 else "IPv6-Addr"
         return kind, kind.replace("-", ""), "value", str(address)
-    if ioc_type == "hash":
+    if ioc_type in ("hash", "file"):
         if len(value) not in _HASH_ALGORITHMS or not re.fullmatch(r"[A-Fa-f0-9]+", value):
             raise ValueError("Only MD5, SHA-1 and SHA-256 hashes are supported")
         algorithm = _HASH_ALGORITHMS[len(value)]
@@ -378,8 +378,13 @@ class OpenCTIClient:
                 for item in values if item.get("connector_type") == "INTERNAL_ENRICHMENT"]
 
     def lookup(self, ioc_type, value):
+        if ioc_type == "vulnerability":
+            if not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+                raise ValueError("Invalid CVE identifier")
+            matches = self._shared_matches("vulnerabilities", [{"key": ["name"], "values": [value.upper()], "operator": "eq", "mode": "or"}])
+            return [resolved for match in matches for resolved in [self.resolve(match["id"])] if resolved]
         kind, _, field, value = _observable(ioc_type, value)
-        types = ["StixFile", "Artifact"] if ioc_type == "hash" else [kind]
+        types = ["StixFile", "Artifact"] if ioc_type in ("hash", "file") else [kind]
         query = """query ShellhoundLookup($types:[String],$filters:FilterGroup,$after:ID) {
           stixCyberObservables(types:$types,filters:$filters,first:100,after:$after) {
             edges { node { FIELDS } } pageInfo { hasNextPage endCursor }
@@ -491,6 +496,9 @@ class OpenCTIClient:
                                            code="file_identity")
                     existing = candidate
             return existing
+        if kind == "user-account":
+            matches = self._shared_matches("stixCyberObservables", [exact("user_id", obj["user_id"])], types=["User-Account"])
+            return checked(matches[0]) if matches else None
         ioc_types = {"ipv4-addr": "ip", "ipv6-addr": "ip", "domain-name": "domain",
                      "email-addr": "email", "url": "url"}
         if kind in ioc_types:
@@ -596,9 +604,11 @@ class OpenCTIClient:
             return {"id": remote_id, "updated": True}
 
     def create_observable(self, ioc_type, value, marking_id):
+        if ioc_type == "vulnerability":
+            raise ValueError("Transfer this CVE to OpenCTI before requesting enrichment.")
         kind, input_name, field, value = _observable(ioc_type, value)
         payload = ({"hashes": [{"algorithm": field.split(".", 1)[1], "hash": value}]}
-                   if ioc_type == "hash" else {field: value})
+                   if ioc_type in ("hash", "file") else {field: value})
         query = ("mutation ShellhoundCreate($input:" + input_name + "AddInput!,$markings:[String]) {"
                  "stixCyberObservableAdd(type:\"" + kind + "\"," + input_name + ":$input,"
                  "objectMarking:$markings,createIndicator:false,update:false) {"
