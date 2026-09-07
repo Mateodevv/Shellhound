@@ -131,6 +131,7 @@ describe('Pattern Hunt forensic workbench', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
     const name = await screen.findByDisplayValue('Bundled sample')
     fireEvent.change(name, { target: { value: 'Edited sample' } })
+    fireEvent.change(screen.getByPlaceholderText('CVE-…'), { target: { value: 'CVE-2026-12345' } })
     expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
     expect(screen.getByRole('button', { name: 'Save rule' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
@@ -138,6 +139,8 @@ describe('Pattern Hunt forensic workbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
       path.endsWith('/hunt/tests'))).toBe(true))
+    expect(vi.mocked(post)).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests',
+      expect.objectContaining({ name: 'Edited sample', cve: 'CVE-2026-12345' }))
     expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
     expect(screen.getByText(/Save the rule first/)).toBeInTheDocument()

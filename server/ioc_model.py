@@ -4,7 +4,7 @@ import ipaddress
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 ASSESSMENTS = ("unassessed", "suspicious", "malicious", "benign")
@@ -312,6 +312,42 @@ def collect_cves(conn, ioc_id, findings):
                                   source_ref=finding.get("fingerprint", ""), detail=finding.get("rule", ""))
             add_support(conn, link["id"], f"Finding {finding.get('id', finding.get('fingerprint', ''))}",
                         finding.get("rule", ""), observation_id=observation)
+
+
+def pattern_cves(entry):
+    return sorted({name.upper() for name in re.findall(
+        r"\bCVE-\d{4}-\d{4,}\b", str((entry or {}).get("cve") or ""), re.I)})
+
+
+def collect_hunt_cves(conn, entry, test_id, client, rule_hash, index_fingerprint):
+    """A tested pattern's explicit CVEs are context, never a malicious verdict."""
+    from server import db
+    names = pattern_cves(entry)
+    if not names or not client.get("hits"):
+        return
+    try:
+        address = str(ipaddress.ip_address(client["ip"]))
+    except ValueError:
+        return
+    ip_id = db.add_ioc(conn, address, "ip", ["hunt"], origin="Pattern Hunt match")
+    def timestamp(epoch):
+        return datetime.fromtimestamp(epoch, timezone.utc).isoformat() if epoch else ""
+    first, last = timestamp(client.get("first_epoch")), timestamp(client.get("last_epoch"))
+    reference = f"Pattern Hunt test #{test_id}"
+    detail = (f"{entry.get('name') or 'Draft pattern'}; CVE metadata: {', '.join(names)}; "
+              f"{client['hits']} matching requests, {client.get('ok_hits', 0)} answered 2xx; "
+              f"example log line {client.get('line_no') or 'unknown'}. "
+              "Pattern match only; exploitation and maliciousness are not established.")
+    observation = observe(conn, ip_id, "pattern-hunt",
+        source_ref=(f"hunt-test:{test_id};pattern:{entry.get('id', '')};version:{entry.get('version', 0)};"
+                    f"rule:{rule_hash};index:{index_fingerprint}"),
+        local_path=client.get("source_path") or "", path=client.get("uri") or "",
+        first_seen=first, last_seen=last, count=client["hits"], detail=detail)
+    for name in names:
+        cve = db.add_ioc(conn, name, "vulnerability", origin="Explicit CVE metadata of a matched Pattern Hunt rule")
+        db.link_iocs(conn, ip_id, cve, "cve-context", "IP matched a pattern associated with this CVE; exploitation is not asserted.")
+        link = db.one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind='cve-context'", (ip_id, cve))
+        add_support(conn, link["id"], reference, detail, observation_id=observation, first_seen=first, last_seen=last)
 
 
 def verify_file(conn, ioc_id):

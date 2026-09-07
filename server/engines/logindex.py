@@ -2465,6 +2465,30 @@ def match_rule(case_dir, rule, limit=200):
         conn.close()
 
 
+def iter_rule_clients(case_dir, rule):
+    """All matched clients with a concrete log reference, without the UI cap."""
+    conn = _open_ro(case_dir)
+    if conn is None:
+        return
+    try:
+        _prepare_rule_match(conn, rule)
+        for row in conn.execute("""WITH matched AS (
+            SELECT r.ip,count(*) hits,min(r.rowid) request_id,
+                   sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits,
+                   min(CASE WHEN r.epoch>0 THEN r.epoch END) first_epoch,
+                   max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch
+            FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid GROUP BY r.ip)
+            SELECT i.ip,m.hits,m.ok_hits,m.first_epoch,m.last_epoch,m.request_id,
+                   s.path source_path,r.line_no,u.text uri
+            FROM matched m JOIN ips i ON i.id=m.ip
+            JOIN requests r ON r.rowid=m.request_id
+            LEFT JOIN sources s ON s.id=r.source LEFT JOIN strings u ON u.id=r.uri
+            ORDER BY i.ip"""):
+            yield dict(row)
+    finally:
+        conn.close()
+
+
 def rule_clusters(case_dir, rule, cursor="", limit=200,
                   sort="requests", direction="desc"):
     """Cursor page of stable, explainable request clusters for a v2 rule."""

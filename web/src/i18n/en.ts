@@ -1896,7 +1896,7 @@ export const en: Record<string, string> = {
   'hunt.workbench.restore': 'Restore as new version',
   'hunt.workbench.comparePrevious': 'Compare with previous version',
   'hunt.workbench.testFirst': 'Test the current draft first.',
-  'hunt.workbench.testFirstSub': 'A test records audit metrics only. It does not create findings.',
+  'hunt.workbench.testFirstSub': 'Tests record audit metrics and link matching IPs to the pattern’s CVEs in the IOC box. They do not confirm exploitation or transfer data to OpenCTI.',
   'hunt.workbench.noTest': 'No audited test selected',
   'hunt.workbench.client': 'Client',
   'hunt.workbench.selected': 'selected',

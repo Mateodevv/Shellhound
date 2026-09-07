@@ -37,6 +37,15 @@ and confirmed exploitation remain distinct assertions. An HTTP 2xx response alon
 establishes neither execution nor exploitation. The adapter preserves unsupported
 relationship semantics in a described `related-to` plus a case Note.
 
+Pattern Hunt tests (individual and batch) automatically add every matched IP and
+link it to valid CVE identifiers explicitly entered in the pattern's CVE field.
+This includes clients beyond the displayed result limit and the current draft's
+CVE metadata. Each link retains the test, rule/index fingerprints, request count,
+time range and an example log reference. A match creates CVE context, not a verdict
+or proof of exploitation. Patterns without CVEs or without hits add no such links.
+Retesting preserves explicit relationship withdrawals. Transfer remains a separate
+reviewed action; tests never contact OpenCTI or enrichment services.
+
 Withdrawal requires a reason and is visible in history. A repeated automatic
 collection does not silently undo a withdrawn relationship. The next reviewed
 transfer withdraws earlier owned statements while preserving shared objects and

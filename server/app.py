@@ -2549,20 +2549,29 @@ def create_app(config: Config) -> FastAPI:
         rule: dict | None = None
         dsl: str = ""
         batch_id: str = ""
+        name: str | None = None
+        cve: str | None = None
 
     def test_rule_from_body(body: HuntTestBody):
         entry = patternlib.find(config.workspace, body.pattern_id) \
             if body.pattern_id else None
+        source = entry
+        if body.name is not None or body.cve is not None:
+            entry = {**(entry or {}),
+                     **({"name": body.name} if body.name is not None else {}),
+                     **({"cve": body.cve} if body.cve is not None else {})}
         if body.rule is None and not body.dsl.strip():
-            if not entry:
+            if not source:
                 raise HTTPException(400, "a hunt test needs a rule")
-            return entry["rule"], entry
+            return source["rule"], entry
         return parsed_hunt_rule(body.rule, body.dsl), entry
 
     def store_hunt_test(case_dir, rule, entry=None, batch_id=""):
+        fingerprint = logindex.index_fingerprint(case_dir)
         match = logindex.match_rule(case_dir, rule)
         stamp = db.now()
-        fingerprint = logindex.index_fingerprint(case_dir)
+        if fingerprint != logindex.index_fingerprint(case_dir):
+            raise HTTPException(409, "the access-log index changed; test again")
         encoded = json.dumps(match["rule"], ensure_ascii=False,
                              sort_keys=True, separators=(",", ":"))
         conn = db.connect(case_dir)
@@ -2583,6 +2592,12 @@ def create_app(config: Config) -> FastAPI:
                  json.dumps(match["coverage"], separators=(",", ":")),
                  str(batch_id or "")))
             test_id = cur.lastrowid
+            if ioc_model.pattern_cves(entry):
+                for client in logindex.iter_rule_clients(case_dir, rule):
+                    ioc_model.collect_hunt_cves(conn, entry, test_id, client, match["rule_hash"], fingerprint)
+                if fingerprint != logindex.index_fingerprint(case_dir):
+                    raise HTTPException(409, "the access-log index changed; test again")
+                enrich_hunt_match(conn, match)
             conn.commit()
         finally:
             conn.close()
@@ -2601,6 +2616,8 @@ def create_app(config: Config) -> FastAPI:
                                   or match.get("clients_truncated")
                                   or match.get("uris_truncated")),
                 "batch_id": str(batch_id or "")}
+        if ioc_model.pattern_cves(entry):
+            hub.publish({"type": "invalidate", "scope": "iocs"})
         return {"test": test, "result": match}
 
     @app.post("/api/cases/{slug}/hunt/tests", dependencies=[auth])

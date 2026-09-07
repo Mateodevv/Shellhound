@@ -42,6 +42,40 @@ class StructuredIocTests(unittest.TestCase):
         self.assertNotEqual(db.add_ioc(self.conn, "/sample", "path", context="server", path_context="system"),
                             db.add_ioc(self.conn, "/sample", "path", context="server", path_context="http-request"))
 
+    def test_hunt_cves_export_as_context_with_audit_support_and_no_verdict(self):
+        entry = {"id": "qa-rule", "version": 2, "name": "Synthetic pattern",
+                 "cve": "cve-2026-12345, CVE-2026-12346, CVE-2026-12345"}
+        client = {"ip": "198.51.100.9", "hits": 3, "ok_hits": 3, "first_epoch": 1700000000,
+                  "last_epoch": 1700000010, "source_path": "C:\\PrivateCustomer\\access.log",
+                  "line_no": 17, "uri": "/synthetic"}
+        with patch("urllib.request.urlopen", side_effect=AssertionError("Unexpected network")):
+            model.collect_hunt_cves(self.conn, entry, 5, client, "rule-sha", "index-sha")
+            model.collect_hunt_cves(self.conn, entry, 5, client, "rule-sha", "index-sha")
+        self.assertEqual(3, self.conn.execute("SELECT count(*) FROM iocs").fetchone()[0])
+        ip = db.one(self.conn, "SELECT * FROM iocs WHERE type='ip'")
+        self.assertEqual("unassessed", ip["assessment"])
+        detail = model.detail(self.conn, ip["id"])
+        self.assertEqual(1, len(detail["observations"]))
+        self.assertEqual(3, detail["observations"][0]["count"])
+        self.assertEqual(2, len(detail["relationships"]))
+        self.assertEqual({"cve-context"}, {l["kind"] for l in detail["relationships"]})
+        self.conn.commit()
+        preview = graph.build_preview(self.case, {"include_evidence": True})
+        self.assertNotIn("PrivateCustomer", json.dumps(preview))
+        self.assertIn("Pattern Hunt test #5", json.dumps(preview))
+        self.assertEqual(2, sum(o["type"] == "relationship" and o["source_ref"].startswith("ipv4-addr--")
+                               and o["target_ref"].startswith("vulnerability--") for o in preview["objects"]))
+        for link in detail["relationships"]:
+            model.withdraw(self.conn, link["id"], "Reviewed false positive")
+        model.collect_hunt_cves(self.conn, entry, 6, client, "rule-sha", "index-sha")
+        self.assertEqual([], db.ioc_links(self.conn))
+
+    def test_hunt_without_explicit_cve_or_without_hits_creates_no_iocs(self):
+        client = {"ip": "198.51.100.9", "hits": 1}
+        model.collect_hunt_cves(self.conn, {"name": "CVE-2026-12345"}, 1, client, "r", "i")
+        model.collect_hunt_cves(self.conn, {"cve": "CVE-2026-12345"}, 1, {**client, "hits": 0}, "r", "i")
+        self.assertEqual(0, self.conn.execute("SELECT count(*) FROM iocs").fetchone()[0])
+
     def test_automatic_cve_link_loses_support_when_finding_is_dismissed(self):
         ip = db.add_ioc(self.conn, "198.51.100.9", "ip")
         db.upsert_finding(self.conn, "logs", 1, "Request references CVE-2026-12345", "client", "198.51.100.9")
