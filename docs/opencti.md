@@ -15,11 +15,18 @@ intelligence and runs external enrichment connectors. Local GeoIP remains local.
    overview shows a manual trigger. The connection test lists active automatic
    enrichments; transfers remain blocked until these are changed.
 3. The integration account needs read access to visible knowledge, TAXII push
-   permission, connector enrichment permission, and (only when enabled) artifact
+   permission, **Access connectors** (`MODULES`) to inspect connector metadata,
+   **Ask for knowledge enrichment** (`KNOWLEDGE_KNENRICHMENT`), and (only when enabled) artifact
    upload permission. Grant access to the selected TLP marking as well. A token
    with narrower visibility can legitimately return no visible result.
 4. Use **Test connection**. This reads capabilities and connector metadata; it
    neither sends evidence nor triggers enrichment.
+
+If the test reports that connection and TAXII write access succeeded but
+connector metadata was denied, the token is valid. Check **Access connectors**
+in the integration user's assigned role under **Settings → Security → Roles**.
+Until the connector configuration can be inspected, transfer remains blocked;
+the connector check must not be skipped.
 
 The token lives in workspace `settings.json`, outside case archives. Responses
 and previews never return it. Changing the URL clears the old token. TLS remains

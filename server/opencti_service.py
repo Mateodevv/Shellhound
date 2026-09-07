@@ -16,7 +16,7 @@ from pathlib import Path
 
 from server import db, opencti_graph as graph, settings, workspace
 from server.jobs import manager
-from server.opencti_client import OpenCTIClient
+from server.opencti_client import OpenCTIClient, OpenCTIError
 from server.paths import io_path
 
 _LOCK = threading.RLock()
@@ -136,7 +136,11 @@ def _manual_only(client):
 def connection_test(root):
     client = OpenCTIClient(_config(root))
     result = client.test()
-    connectors = _connectors(client)
+    try:
+        connectors = _connectors(client)
+    except OpenCTIError as exc:
+        raise OpenCTIError("Connection and TAXII write access succeeded. " + str(exc),
+                          code=exc.code, status=exc.status, retry_after=exc.retry_after) from None
     automatic = [c["name"] for c in connectors if c.get("active") and c.get("auto")]
     return {**result, "ok": True, "connectors": connectors,
             "warnings": (["Automatic enrichment must be disabled before transfer: " +

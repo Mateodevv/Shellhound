@@ -102,6 +102,14 @@ def _identifier(value, field="identifier"):
     return value
 
 
+def _work_identifier(value):
+    # OpenCTI work IDs contain the connector UUID and an ISO UTC timestamp.
+    if isinstance(value, str) and re.fullmatch(
+            r"work_[A-Za-z0-9_-]{1,100}_\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z", value):
+        return value
+    return _identifier(value, "work ID")
+
+
 def _edges(connection):
     if not isinstance(connection, dict):
         return []
@@ -337,7 +345,15 @@ class OpenCTIClient:
         return {"version": version, "collection": collection}
 
     def connectors(self):
-        values = self._graphql("query ShellhoundConnectors { connectors { " + _CONNECTOR_FIELDS + " } }").get("connectors") or []
+        try:
+            values = self._graphql("query ShellhoundConnectors { connectors { " + _CONNECTOR_FIELDS + " } }").get("connectors") or []
+        except OpenCTIError as exc:
+            if exc.code != "permission":
+                raise
+            raise OpenCTIError(
+                "OpenCTI denied access to connector metadata. The integration user's role needs "
+                "'Access connectors' (MODULES). Check this capability in OpenCTI Settings > Security > Roles.",
+                code="permission", status=exc.status, retry_after=exc.retry_after) from None
         return [{"id": item["id"], "name": item.get("name", ""),
                  "active": bool(item.get("active")), "auto": bool(item.get("auto")),
                  "connector_type": item.get("connector_type"),
@@ -504,14 +520,15 @@ class OpenCTIClient:
                                             content_type=_TAXII_TYPE, raw=True))
 
     def taxii_status(self, work_id):
-        return _taxii_receipt(self._request(f"/taxii2/root/status/{_identifier(work_id, 'work ID')}/"), work_id)
+        identifier = urllib.parse.quote(_work_identifier(work_id), safe="")
+        return _taxii_receipt(self._request(f"/taxii2/root/status/{identifier}/"), work_id)
 
     def work(self, work_id):
         data = self._graphql("""query ShellhoundWork($id:ID!) { work(id:$id) {
           id status timestamp received_time processed_time completed_time
           tracking { import_expected_number import_processed_number }
           messages { timestamp message sequence } errors { timestamp message sequence }
-        } }""", {"id": _identifier(work_id, "work ID")})
+        } }""", {"id": _work_identifier(work_id)})
         result = data.get("work")
         if result is None:
             raise OpenCTIError("The OpenCTI work is unavailable or not visible.", code="not_found", status=404)
