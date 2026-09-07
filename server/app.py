@@ -111,15 +111,11 @@ def _find_web_dist():
     works without a Node toolchain on the forensic machine and development in
     the repository stays unchanged."""
     here = Path(__file__).resolve().parent
-    # A source checkout can also contain a staged server/static left behind by
-    # a package build.  Prefer the live web build there; an installed package
-    # has no sibling web/dist and naturally falls through to server/static.
-    for candidate in (here.parent / "web" / "dist", here / "static"):
-        if (candidate / "index.html").is_file():
-            return candidate
-    # Nothing built: the server runs anyway (the API is complete), and the
-    # start page says what is missing.
-    return here.parent / "web" / "dist"
+    # A checkout must never fall back to an older wheel-staging copy.
+    from server.startup import is_source_checkout
+    if is_source_checkout(here.parent):
+        return here.parent / "web" / "dist"
+    return here / "static"
 
 
 WEB_DIST = _find_web_dist()
@@ -4547,7 +4543,8 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def spa_root():
-        return _index_html()
+        # This page contains the per-start token and current asset names.
+        return HTMLResponse(_index_html(), headers={"Cache-Control": "no-store"})
 
     @app.get("/favicon.svg")
     def favicon():

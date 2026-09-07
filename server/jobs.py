@@ -82,6 +82,7 @@ class JobManager:
                                        thread_name_prefix="engine")
         self.live = {}          # (case_dir, job_id) -> JobContext
         self._lock = threading.Lock()
+        self._idle = threading.Condition(self._lock)
 
     def submit(self, case_dir, kind, fn, evidence_id=None, run_id=""):
         """Queue `fn(ctx)` as a job. fn returns a stats dict (stored as JSON)
@@ -130,6 +131,18 @@ class JobManager:
         with self._lock:
             return [j for j, k in keys.items() if k in self.live]
 
+    def cancel_all_and_wait(self):
+        """Drain jobs after the HTTP server has stopped accepting work.
+
+        Workers own their database transactions and final job status. Let them
+        unwind instead of terminating a process while those writes are pending.
+        Keep the pool reusable for applications served again in the same process.
+        """
+        with self._idle:
+            for ctx in self.live.values():
+                ctx.cancel_event.set()
+            self._idle.wait_for(lambda: not self.live)
+
     def _set_state(self, ctx, state, error="", stats=None):
         conn = db.connect(ctx.case_dir)
         try:
@@ -154,8 +167,11 @@ class JobManager:
             hub.publish({"type": "job", "job": job})
 
     def _run(self, ctx, kind, fn):
-        self._set_state(ctx, "running")
         try:
+            if ctx.cancelled():
+                self._set_state(ctx, "cancelled")
+                return
+            self._set_state(ctx, "running")
             stats = fn(ctx) or {}
             state = "cancelled" if ctx.cancelled() else "done"
             self._set_state(ctx, state, stats=stats)
@@ -163,8 +179,9 @@ class JobManager:
         except Exception:
             self._set_state(ctx, "failed", error=traceback.format_exc(limit=8))
         finally:
-            with self._lock:
+            with self._idle:
                 self.live.pop(_key(ctx.case_dir, ctx.job_id), None)
+                self._idle.notify_all()
 
 
 manager = JobManager()
