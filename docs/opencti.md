@@ -71,6 +71,22 @@ retained in referenced context Notes. Source UUIDs survive edits. File hashes
 come from one verified snapshot; ambiguous evidence roots or changed file
 versions are visible problems instead of guessed associations.
 
+Each exported observable has a compact description with the case ID, origin,
+assessment and selected connections. Detailed analyst notes and evidence stay
+in Notes and retain the preview's exclusions. Descriptions use one managed
+section per case; repeat exports replace that section while preserving other
+authors and other cases. A shared observable with a different marking requires
+review before adding case context to its description. Description failures are
+recorded as partial transfers and can be resumed without repeating imports or
+sample uploads. Previously uploaded, hash-matched samples also receive context.
+
+Every observable is directly associated with the Incident. An IP requesting a
+path with a confirmed malware file is additionally linked to that File and
+Malware using explicitly contextual `related-to` relationships. These do not
+claim that the collected bytes were present, served or executed at request time.
+A direct IP-to-CVE link requires a confirmed, active IP-scoped finding naming
+that CVE; a CVE in the case profile alone is connected through the Incident.
+
 The file actions **Mark as webshell** and **Mark as malware** explicitly classify
 verified file contents. Their export includes a File and a Malware object;
 the generic malware action leaves the malware type unknown and makes no family

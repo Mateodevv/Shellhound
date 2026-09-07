@@ -111,13 +111,17 @@ function TransferReceiptDetails({ stats }: { stats: Record<string, unknown> }) {
   const tr = useT()
   const batches = (Array.isArray(stats?.batches) ? stats.batches : []) as { state: string; ids: string[]; work_id?: string; status?: { success_count?: number; failure_count?: number; pending_count?: number } }[]
   const samples = (Array.isArray(stats?.samples) ? stats.samples : []) as { id: string; display_path: string; state: string }[]
-  if (!batches.length && !samples.length) return null
+  const descriptions = (Array.isArray(stats?.descriptions) ? stats.descriptions : []) as { source_id: string; state: string; error?: string }[]
+  if (!batches.length && !samples.length && !descriptions.length) return null
   return <details className="w-full rounded border border-[var(--line)] p-2"><summary className="cursor-pointer">{tr('cti.transferDetails')}</summary>
     <div className="mt-2 flex flex-col gap-2">{batches.map((batch, index) => <div key={index}>
       <p>{tr('cti.batch', { n: index + 1, count: batch.ids?.length ?? 0 })} · {batch.state}</p>
       {batch.status && <p className="text-[var(--muted)]">{tr('cti.batchCounts', { done: batch.status.success_count ?? 0, failed: batch.status.failure_count ?? 0, pending: batch.status.pending_count ?? 0 })}</p>}
       {batch.work_id && <p className="break-all text-[var(--muted)]">{tr('cti.workId')}: <code>{batch.work_id}</code></p>}
-    </div>)}{samples.map((sample) => <p key={sample.id}>{sample.display_path} · {sample.state}</p>)}</div>
+    </div>)}{samples.map((sample) => <p key={sample.id}>{sample.display_path} · {sample.state}</p>)}
+    {!!descriptions.length && <p>{tr('cti.descriptionCounts', { done: descriptions.filter((d) => d.state === 'complete').length, total: descriptions.length })}</p>}
+    {descriptions.filter((d) => d.error).map((d) => <p key={d.source_id} className="text-[var(--warn)]">{d.error}</p>)}
+    </div>
   </details>
 }
 

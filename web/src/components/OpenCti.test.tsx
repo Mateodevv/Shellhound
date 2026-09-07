@@ -79,6 +79,7 @@ describe('reviewed transfer', () => {
     vi.mocked(api).mockImplementation(async (path) => path === '/api/opencti/settings' ? { configured: true } as never : {
       lookups: [], sync: [], jobs: [], exports: [{ id: 'export-partial', state: 'partial', created: '2026-09-07', updated: '2026-09-07', stats: {
         batches: [{ state: 'failed', ids: ['file--1', 'note--2'], work_id: 'existing-work-42', status: { success_count: 1, failure_count: 1, pending_count: 0 } }],
+        descriptions: [{ source_id: 'ip-1', state: 'complete' }, { source_id: 'old-artifact', state: 'unavailable', error: 'Previous artifact no longer visible; no reupload.' }],
       } }],
     } as never)
     renderWithProviders(<OpenCtiToolbar slug="case" iocs={[hash]} selectedIds={[2]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
@@ -86,6 +87,8 @@ describe('reviewed transfer', () => {
     fireEvent.click(screen.getByText('Transfer details'))
     expect(screen.getByText('1 imported · 1 failed · 0 pending')).toBeInTheDocument()
     expect(screen.getByText('existing-work-42')).toBeInTheDocument()
+    expect(screen.getByText('Observable descriptions: 1 of 2 updated')).toBeInTheDocument()
+    expect(screen.getByText('Previous artifact no longer visible; no reupload.')).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
   it.each(['pending', 'paused'])('can resume an existing %s transfer without creating another preview', async (state) => {

@@ -52,6 +52,7 @@ export const en: Record<string, string> = {
   'cti.transferDetails': 'Transfer details',
   'cti.batch': 'Batch {n} · {count} objects',
   'cti.batchCounts': '{done} imported · {failed} failed · {pending} pending',
+  'cti.descriptionCounts': 'Observable descriptions: {done} of {total} updated',
   'cti.workId': 'OpenCTI work ID',
   'cti.caseIdHint': 'Required before transferring to OpenCTI. Repeated transfers update this case.',
   'cti.pseudonym': 'Affected organization pseudonym',

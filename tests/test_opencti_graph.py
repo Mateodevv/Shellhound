@@ -407,6 +407,82 @@ class OpenCTIGraphTests(unittest.TestCase):
             self.assertNotIn(forbidden, exported)
         self.assertIn("Misconfiguration", exported)
 
+    def test_observables_have_compact_context_and_explicit_incident_relationships(self):
+        preview = self.preview()
+        observables = [o for o in preview["objects"] if o["type"] in graph.OBSERVABLE_TYPES]
+        links = [o for o in preview["objects"] if o["type"] == "relationship"]
+        for obj in observables:
+            text = obj["x_opencti_description"]
+            self.assertIn("PIM-5165", text)
+            self.assertIn("Origin:", text)
+            self.assertIn("Assessment:", text)
+            self.assertTrue(any(r["source_ref"] == preview["incident_id"] and r["target_ref"] == obj["id"]
+                                for r in links))
+        ip = next(o for o in observables if o["type"] == "ipv4-addr")
+        self.assertIn("Observation only", ip["x_opencti_description"])
+        self.assertIn("requested", ip["x_opencti_description"])
+        file = next(o for o in observables if o["type"] == "file")
+        self.assertIn("uploads/example.php", file["x_opencti_description"])
+        self.assertIn("Analyst-confirmed webshell", file["x_opencti_description"])
+        self.assertTrue(any(r["source_ref"].startswith("malware--") and r["target_ref"] == file["id"] for r in links))
+
+    def test_description_respects_exclusions_and_keeps_detailed_evidence_in_notes(self):
+        self.conn.execute("UPDATE iocs SET origin='private origin', note='long private analyst narrative' WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        preview = self.preview(include_notes=True, include_evidence=True, exclude_note_ioc_ids=[self.ip_id],
+                               ioc_ids=[self.ip_id])
+        ip = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
+        self.assertNotIn("private origin", ip["x_opencti_description"])
+        self.assertNotIn("uploads/example.php", ip["x_opencti_description"])
+        self.assertNotIn("long private", json.dumps(preview["objects"]))
+        preview = self.preview(include_notes=True)
+        ip = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
+        self.assertIn("private origin", ip["x_opencti_description"])
+        self.assertNotIn("long private analyst narrative", ip["x_opencti_description"])
+        self.assertTrue(any("long private analyst narrative" in o.get("content", "") for o in preview["objects"]))
+
+    def test_ip_request_links_to_confirmed_file_and_malware_as_context_only(self):
+        preview = self.preview(include_notes=True)
+        ip = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
+        links = [o for o in preview["objects"] if o["type"] == "relationship" and o["source_ref"] == ip["id"]
+                 and o["target_ref"].split("--")[0] in ("file", "malware")]
+        self.assertEqual(2, len(links))
+        for link in links:
+            self.assertEqual("related-to", link["relationship_type"])
+            self.assertIn("does not prove", link["description"])
+            self.assertIn("0 successful responses", link["description"])
+        edge = next(e for e in preview["relationships"] if e["kind"] == "requested")
+        excluded = self.preview(exclude_relationship_ids=[edge["id"]])
+        self.assertFalse(any(o["id"] in {r["id"] for r in links} for o in excluded["objects"]))
+        self.conn.execute("UPDATE findings SET triage='dismissed'")
+        self.conn.execute("UPDATE ioc_sources SET active=0")
+        self.conn.commit()
+        withdrawn = self.preview()
+        self.assertFalse(any(o["id"] in {r["id"] for r in links} for o in withdrawn["objects"]))
+
+    def test_ip_cve_link_requires_confirmed_ip_scoped_provenance(self):
+        info = workspace.case_info(self.case)
+        info["profile"]["vulnerabilities"] = [{"name": "CVE-2026-12345", "status": "confirmed"}]
+        with patch("server.workspace.case_info", return_value=info):
+            initial = self.preview()
+            ip = next(o for o in initial["objects"] if o["type"] == "ipv4-addr")
+            def direct(preview):
+                return [o for o in preview["objects"] if o["type"] == "relationship" and o["source_ref"] == ip["id"]
+                        and o["target_ref"].startswith("vulnerability--")]
+            self.assertFalse(direct(initial))
+            db.upsert_finding(self.conn, "sigma", 2, "CVE-2026-12345 detection", "ip", "198.51.100.42",
+                              rule_id="cve-specific-rule")
+            self.conn.execute("INSERT INTO ioc_sources(ioc_id,artifact,role,active,added) VALUES(?,?,?,1,?)",
+                              (self.ip_id, "198.51.100.42", "direct", db.now()))
+            self.conn.commit()
+            self.assertFalse(direct(self.preview()))
+            self.conn.execute("UPDATE findings SET triage='confirmed' WHERE source='sigma'")
+            self.conn.commit()
+            self.assertEqual(1, len(direct(self.preview())))
+            self.conn.execute("UPDATE ioc_sources SET active=0 WHERE ioc_id=?", (self.ip_id,))
+            self.conn.commit()
+            self.assertFalse(direct(self.preview()))
+
     def test_url_credentials_are_never_an_observable_or_unredacted_context(self):
         self.conn.execute("UPDATE iocs SET value='https://alice:supersecret@example.test/a' WHERE id=?", (self.url_id,))
         self.conn.commit()
