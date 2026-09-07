@@ -10,6 +10,7 @@ that state packs a half-written database.
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock
 from pathlib import Path
 
 from server import db
@@ -45,6 +46,17 @@ class RegistryTests(unittest.TestCase):
         second = self.manager.submit(self.b, "test", self._blocking_job)
         self.assertEqual(first, second,
                          "job ids are per case; the collision is expected")
+
+    def test_cancelled_queued_job_records_its_attempt_without_running_the_engine(self):
+        self.manager.submit(self.a, "blocker", self._blocking_job)
+        self.manager.submit(self.b, "blocker", self._blocking_job)
+        engine, cancelled = Mock(), Mock()
+        job = self.manager.submit(self.a, "queued", engine, on_cancel=cancelled)
+        self.assertTrue(self.manager.cancel(self.a, job))
+        self.release.set()
+        self.assertEqual([], self.manager.wait_for(self.a, [job], timeout=5))
+        engine.assert_not_called()
+        cancelled.assert_called_once_with()
 
     def test_both_cases_stay_in_the_registry(self):
         job_a = self.manager.submit(self.a, "test", self._blocking_job)

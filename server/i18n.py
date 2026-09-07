@@ -70,6 +70,8 @@ CATALOGUE: dict[str, str] = {
     "index.oldVersion": "index comes from an older version",
     "err.jobsRunning": "Jobs are still running that could not be stopped in time. Please wait a moment and close the case again.",
     "err.fileNotFound": "file not found",
+    "err.fileAccessDenied": "access to this evidence file was denied; check permissions and security software",
+    "err.filePathUnavailable": "the evidence path could not be resolved; check the drive, network connection and path",
     "err.outsideEvidence": "This file lies outside the registered evidence of this case and is not read.",
     "err.notRegularFile": "not a regular file",
     "err.revealUnavailable": "the local file manager is unavailable",

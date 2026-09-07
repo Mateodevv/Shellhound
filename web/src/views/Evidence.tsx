@@ -17,6 +17,7 @@ import { InfoDot, Tooltip } from '../components/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
 import { EVIDENCE_KINDS } from '../workflow'
+import { evidenceAttempt, needsAttention, statsComplete } from '../analysis'
 
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
@@ -100,8 +101,9 @@ export function Evidence({ slug }: {
   // Keep old records readable by the backend, but do not expose them as
   // evidence or offer new ones in the current analyst workflow.
   const evidence = useMemo(() =>
-    (caseInfo?.evidence_items ?? []).filter((item) => item.kind !== 'reference'),
-  [caseInfo?.evidence_items])
+    (caseInfo?.evidence_items ?? []).filter((item) => item.kind !== 'reference')
+      .map((item) => ({ ...item, stats: { ...item.stats, last_attempt: evidenceAttempt(item, jobs) } })),
+  [caseInfo?.evidence_items, jobs])
   useEffect(() => {
     if (!caseInfo || pathSeededFor === slug) return
     const seed = evidence.find((item) => item.kind === 'webroot') ?? evidence[0]
@@ -118,14 +120,16 @@ export function Evidence({ slug }: {
   const pendingEvidence = useMemo(() => evidence
     .filter((item) => !item.scanned_at)
     .sort((a, b) => (b.added || '').localeCompare(a.added || '') || b.id - a.id), [evidence])
-  const analyzedEvidence = useMemo(() => evidence
-    .filter((item) => Boolean(item.scanned_at)), [evidence])
+  const attentionEvidence = evidence.filter((item) => needsAttention(evidenceAttempt(item)))
+  const newEvidence = pendingEvidence.filter((item) => !needsAttention(evidenceAttempt(item)))
+  const analyzedEvidence = evidence.filter((item) => Boolean(item.scanned_at) && !needsAttention(evidenceAttempt(item)))
+  const retryFull = attentionEvidence.some((item) => Boolean(item.scanned_at))
   const hasAnalysisHistory = Boolean(jobs?.length)
   const analysisActive = Boolean(jobs?.some((job) =>
     job.state === 'queued' || job.state === 'running'))
   const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
   const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
-    || (hasAnalysisHistory && pendingEvidence.length === 0)
+    || (hasAnalysisHistory && pendingEvidence.length === 0 && !retryFull)
   const registered = new Set(evidence.map((item) =>
     `${item.kind}\u0000${item.path.replace(/\\/g, '/').toLowerCase()}`))
   const availableCandidates = detected ? (['webroot', 'access_logs', 'sql_dump'] as const)
@@ -143,12 +147,12 @@ export function Evidence({ slug }: {
           <div className="relative flex">
             <Button variant="primary" disabled={primaryDisabled}
               className={hasAnalysisHistory ? 'rounded-r-none' : undefined}
-              onClick={() => analyze.mutate(primaryMode)}>
-              <Play size={14} /> {tr(!hasAnalysisHistory
+              onClick={() => retryFull ? setConfirmReanalyze(true) : analyze.mutate(primaryMode)}>
+              <Play size={14} /> {tr(attentionEvidence.length > 0 ? 'evidence.retryAnalysis' : !hasAnalysisHistory
                 ? 'evidence.analyze'
                 : pendingEvidence.length
                   ? 'evidence.analyzeNew'
-                  : 'evidence.noNew', { n: pendingEvidence.length })}
+                  : 'evidence.noNew', { n: retryFull ? evidence.length : pendingEvidence.length })}
             </Button>
             {hasAnalysisHistory && (
               <Button variant="primary" disabled={!evidence.length || analyze.isPending || analysisActive}
@@ -222,7 +226,7 @@ export function Evidence({ slug }: {
       </Section>
 
       <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]"
-        open={!evidenceReady || pendingEvidence.length > 0 || undefined}>
+        open={!evidenceReady || pendingEvidence.length > 0 || attentionEvidence.length > 0 || undefined}>
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold marker:content-none">
           <ChevronRight size={15} className="transition-transform group-open:rotate-90" />
           {tr('evidence.manage')}
@@ -230,14 +234,30 @@ export function Evidence({ slug }: {
         </summary>
           <div className="flex flex-col gap-5 border-t border-[var(--line-soft)] p-4">
             <div className="flex flex-col gap-2">
-            {pendingEvidence.length > 0 && (<>
+            {attentionEvidence.length > 0 && (<>
+              <div className="flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--sev-low)]">
+                {tr('evidence.attention.title')}
+                <span className="rounded-full bg-[var(--review-soft)] px-2 py-0.5 text-[10px] tabular">
+                  {attentionEvidence.length}
+                </span>
+              </div>
+              {attentionEvidence.map((e) => (
+                <EvidenceCard
+                  key={e.id}
+                  item={e}
+                  onRename={(label) => renameEvidence.mutate({ id: e.id, label })}
+                  onRemove={() => removeEvidence.mutate(e.id)}
+                />
+              ))}
+            </>)}
+            {newEvidence.length > 0 && (<>
               <div className="flex items-center gap-2 pb-1 text-[12px] font-semibold text-[var(--sev-low)]">
                 {tr('evidence.new.title')}
                 <span className="rounded-full bg-[var(--review-soft)] px-2 py-0.5 text-[10px] tabular">
-                  {pendingEvidence.length}
+                  {newEvidence.length}
                 </span>
               </div>
-              {pendingEvidence.map((e) => (
+              {newEvidence.map((e) => (
                 <EvidenceCard
                   key={e.id}
                   item={e}
@@ -478,7 +498,12 @@ function EvidenceCard({ item, onRename, onRemove }: {
             </span>
           </Tooltip>
         )}
-        {item.scanned_at ? (
+        {evidenceAttempt(item) && evidenceAttempt(item)?.status !== 'complete' ? (
+          <Tooltip title={tr(`evidence.attempt.${evidenceAttempt(item)?.status}`)}
+            body={tr('evidence.attempt.help')}>
+            <Tag tone="warn">{tr(`evidence.attempt.${evidenceAttempt(item)?.status}`)}</Tag>
+          </Tooltip>
+        ) : item.scanned_at ? (
           <Tooltip title={tr('evidence.lastAnalyzed')} body={absoluteTime(item.scanned_at)}>
             <span className="flex items-center gap-1 whitespace-nowrap text-[var(--ok)]">
               <CheckCircle2 size={13} /> {relativeTime(item.scanned_at)}
@@ -627,7 +652,8 @@ function AnalysisRun({ run, slug, initiallyOpen }: {
   const [open, setOpen] = useState(initiallyOpen)
   const running = run.jobs.some((job) => job.state === 'running' || job.state === 'queued')
   const failed = run.jobs.some((job) => job.state === 'failed')
-  const complete = run.jobs.filter((job) => job.state === 'done').length
+  const incomplete = run.jobs.some((job) => job.state === 'cancelled' || (job.state === 'done' && !statsComplete(job.stats)))
+  const complete = run.jobs.filter((job) => job.state === 'done' && statsComplete(job.stats)).length
   const progress = run.jobs.reduce((sum, job) => sum + job.progress, 0) / run.jobs.length
   return (
     <Card className="overflow-hidden">
@@ -639,7 +665,8 @@ function AnalysisRun({ run, slug, initiallyOpen }: {
           ? <XCircle size={15} className="text-[var(--sev-high)]" />
           : running
             ? <span className="h-2 w-2 animate-pulse-soft rounded-full bg-[var(--accent)]" />
-            : <CheckCircle2 size={15} className="text-[var(--ok)]" />}
+            : incomplete ? <TriangleAlert size={15} className="text-[var(--sev-low)]" />
+              : <CheckCircle2 size={15} className="text-[var(--ok)]" />}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <span className="text-[13px] font-semibold">{tr('evidence.run')}</span>
@@ -651,8 +678,8 @@ function AnalysisRun({ run, slug, initiallyOpen }: {
             })}
           </div>
         </div>
-        <Tag tone={failed ? 'danger' : running ? 'warn' : 'accent'}>
-          {failed ? tr('evidence.run.failed') : running ? tr('evidence.run.running') : tr('evidence.run.done')}
+        <Tag tone={failed ? 'danger' : running || incomplete ? 'warn' : 'accent'}>
+          {failed ? tr('evidence.run.failed') : running ? tr('evidence.run.running') : incomplete ? tr('evidence.run.partial') : tr('evidence.run.done')}
         </Tag>
       </button>
       {running && <div className="px-4 pb-3"><ProgressBar value={progress} /></div>}
@@ -675,7 +702,9 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
   return (
     <div className="border-t border-[var(--line)] px-4 py-3">
       <div className="flex items-center gap-3">
-        {job.state === 'done' && <CheckCircle2 size={15} className="text-[var(--ok)]" />}
+        {job.state === 'done' && (statsComplete(stats)
+          ? <CheckCircle2 size={15} className="text-[var(--ok)]" />
+          : <TriangleAlert size={15} className="text-[var(--sev-low)]" />)}
         {job.state === 'failed' && <XCircle size={15} className="text-[var(--sev-high)]" />}
         {job.state === 'cancelled' && <XCircle size={15} className="text-[var(--muted)]" />}
         {(job.state === 'running' || job.state === 'queued') && (
@@ -703,6 +732,12 @@ function JobRow({ job, slug }: { job: Job; slug: string }) {
           )}
           {job.state === 'done' && summary && (
             <div className="mt-0.5 truncate text-[11px] text-[var(--muted)]">{summary}</div>
+          )}
+          {job.state === 'done' && !statsComplete(stats) && (
+            <div className="mt-1 text-[11px] text-[var(--sev-low)]">
+              {tr('evidence.run.partial.help', { skipped: Number(stats.skipped || 0), broken: Number(stats.broken_rules || 0) })}
+              {typeof stats.reason === 'string' && <div>{stats.reason}</div>}
+            </div>
           )}
           {job.state === 'failed' && (
             <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-[var(--danger-text)]">

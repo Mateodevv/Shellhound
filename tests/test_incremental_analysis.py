@@ -141,6 +141,52 @@ class IncrementalSchedulingTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_partial_attempt_is_recorded_without_marking_the_source_complete(self):
+        eid, _ = self._register("webroot", "partly-readable", scanned=False)
+        result, queued = self._schedule()
+        with patch.object(app_module.webshell, "scan", return_value={"scanned": 10, "skipped": 1}), \
+                patch.object(app_module.cmsinventory, "scan", return_value={"installs": 1}):
+            for _, fn in queued:
+                fn(_Context())
+        self.assertFalse(self._scanned_at(eid))
+        conn = db.connect(self.case_dir)
+        try:
+            attempt = json.loads(conn.execute("SELECT stats FROM evidence WHERE id = ?", (eid,)).fetchone()[0])["last_attempt"]
+            self.assertEqual("partial", attempt["status"])
+            self.assertEqual(result["run_id"], attempt["run_id"])
+            self.assertEqual(1, attempt["engines"]["webshell"]["stats"]["skipped"])
+        finally:
+            conn.close()
+
+        _, retry = self._schedule()
+        with patch.object(app_module.webshell, "scan", return_value={"scanned": 11, "skipped": 0}), \
+                patch.object(app_module.cmsinventory, "scan", return_value={}):
+            for _, fn in retry:
+                fn(_Context())
+        self.assertTrue(self._scanned_at(eid))
+        conn = db.connect(self.case_dir)
+        try:
+            stats = json.loads(conn.execute("SELECT stats FROM evidence WHERE id = ?", (eid,)).fetchone()[0])
+            self.assertEqual("complete", stats["last_attempt"]["status"])
+        finally:
+            conn.close()
+
+    def test_older_run_cannot_overwrite_a_newer_attempt(self):
+        eid, _ = self._register("webroot", "overlapping-run", scanned=False)
+        _, old = self._schedule()
+        newest, _ = self._schedule()
+        with patch.object(app_module.webshell, "scan", return_value={}), \
+                patch.object(app_module.cmsinventory, "scan", return_value={}):
+            for _, fn in old:
+                fn(_Context())
+        self.assertFalse(self._scanned_at(eid))
+        conn = db.connect(self.case_dir)
+        try:
+            stats = json.loads(conn.execute("SELECT stats FROM evidence WHERE id = ?", (eid,)).fetchone()[0])
+            self.assertEqual(newest["run_id"], stats["last_attempt"]["run_id"])
+            self.assertEqual("running", stats["last_attempt"]["status"])
+        finally:
+            conn.close()
     def test_webroot_receipt_waits_for_cms_and_yara_in_any_completion_order(self):
         new_id, _ = self._register("webroot", "new-site", scanned=False)
         for order in (("webshell", "cms", "yara"), ("yara", "cms", "webshell")):

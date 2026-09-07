@@ -39,6 +39,7 @@ from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.analysis import AnalysisReceipts, stats_complete
+from server.paths import display_path, io_path
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
                               uri_targets, web_path)
@@ -206,7 +207,7 @@ def create_app(config: Config) -> FastAPI:
 
     def _evidence_meta(path):
         """(files, bytes, partial) for a file or directory, time-boxed."""
-        p = Path(path)
+        p = Path(io_path(path))
         try:
             if p.is_file():
                 return 1, p.stat().st_size, False
@@ -261,7 +262,7 @@ def create_app(config: Config) -> FastAPI:
             evidence = db.rows(conn, "SELECT * FROM evidence ORDER BY kind, path")
             for e in evidence:
                 e["stats"] = json.loads(e.get("stats") or "{}")
-                e["exists"] = os.path.exists(e["path"])
+                e["exists"] = os.path.exists(io_path(e["path"]))
                 if e["exists"]:
                     _refresh_meta(conn, e)
         finally:
@@ -378,7 +379,7 @@ def create_app(config: Config) -> FastAPI:
         if body.kind not in EVIDENCE_KINDS:
             raise HTTPException(400, f"kind must be one of {EVIDENCE_KINDS}")
         path = str(Path(body.path).expanduser())
-        if not os.path.exists(path):
+        if not os.path.exists(io_path(path)):
             raise HTTPException(400, _t(lang, "err.evidenceMissing", path=path))
         conn = db.connect(case_dir)
         try:
@@ -646,19 +647,19 @@ def create_app(config: Config) -> FastAPI:
                         "dirs": [{"name": d, "path": d} for d in drives],
                         "truncated": False}
             path = "/"
-        p = Path(path).expanduser()
+        p = Path(io_path(Path(path).expanduser()))
         if not p.is_dir():
             raise HTTPException(400, f"not a directory: {p}")
         dirs, files, truncated = _list_dir(p)
-        parent = str(p.parent) if p.parent != p else None
-        return {"path": str(p), "parent": parent, "dirs": dirs,
+        parent = display_path(p.parent) if p.parent != p else None
+        return {"path": display_path(p), "parent": parent, "dirs": dirs,
                 "files": files, "truncated": truncated}
 
     def _list_dir(p):
         """(dirs, files, truncated) of one directory, alphabetically."""
         dirs, files, seen = [], [], 0
         try:
-            with os.scandir(p) as it:
+            with os.scandir(io_path(p)) as it:
                 for entry in it:
                     seen += 1
                     if seen > _LISTING_CAP:
@@ -667,7 +668,7 @@ def create_app(config: Config) -> FastAPI:
                                 True)
                     try:
                         if entry.is_dir(follow_symlinks=False):
-                            dirs.append({"name": entry.name, "path": entry.path})
+                            dirs.append({"name": entry.name, "path": display_path(entry.path)})
                         elif entry.is_file(follow_symlinks=False):
                             try:
                                 stat = entry.stat(follow_symlinks=False)
@@ -676,7 +677,7 @@ def create_app(config: Config) -> FastAPI:
                             except OSError:
                                 size = 0
                                 metadata = _file_metadata(None)
-                            files.append({"name": entry.name, "path": entry.path,
+                            files.append({"name": entry.name, "path": display_path(entry.path),
                                           "size": size, **metadata})
                     except OSError:
                         continue
@@ -698,13 +699,17 @@ def create_app(config: Config) -> FastAPI:
             out.setdefault(r["kind"], []).append(r)
         return out
 
-    def _mark_scanned(case_dir, ids, stats):
+    def _mark_scanned(case_dir, ids, stats, run_id):
         conn = db.connect(case_dir)
         try:
             for eid in ids:
+                row = db.one(conn, "SELECT stats FROM evidence WHERE id = ?", (eid,))
+                attempt = json.loads(row["stats"] or "{}").get("last_attempt", {}) if row else {}
+                if attempt.get("run_id") != run_id:
+                    continue
                 conn.execute(
                     "UPDATE evidence SET scanned_at = ?, stats = ? WHERE id = ?",
-                    (db.now(), json.dumps(stats), eid))
+                    (db.now(), json.dumps({**stats, "last_attempt": attempt}), eid))
             conn.commit()
         finally:
             conn.close()
@@ -723,6 +728,25 @@ def create_app(config: Config) -> FastAPI:
         except ValueError:
             return False
         return common == a or common == b
+
+    def _record_analysis_attempt(case_dir, ids, run_id, attempt, initialize=False):
+        # Keep the previous successful receipt. Partial attempts remain retryable
+        # and cannot be mistaken for sources that have never been analyzed.
+        conn = db.connect(case_dir)
+        try:
+            for eid in ids:
+                row = db.one(conn, "SELECT stats FROM evidence WHERE id = ?", (eid,))
+                if row is None:
+                    continue
+                stats = json.loads(row["stats"] or "{}")
+                if not initialize and stats.get("last_attempt", {}).get("run_id") != run_id:
+                    continue
+                stats["last_attempt"] = {**attempt, "run_id": run_id, "at": db.now()}
+                conn.execute("UPDATE evidence SET stats = ? WHERE id = ?",
+                             (json.dumps(stats), eid))
+            conn.commit()
+        finally:
+            conn.close()
 
     class AnalyzeBody(BaseModel):
         mode: str = "all"
@@ -872,10 +896,15 @@ def create_app(config: Config) -> FastAPI:
 
         if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
+        initialized = False
         receipts = AnalysisReceipts(
-            tasks, chosen, lambda ids, stats: _mark_scanned(case_dir, ids, stats))
+            tasks, chosen, lambda ids, stats: _mark_scanned(case_dir, ids, stats, run_id),
+            lambda ids, attempt: _record_analysis_attempt(
+                case_dir, ids, run_id, attempt, initialize=not initialized))
+        initialized = True
         started = [{"kind": kind, "job": manager.submit(
-            case_dir, kind, receipts.wrap(kind, fn), run_id=run_id)}
+            case_dir, kind, receipts.wrap(kind, fn), run_id=run_id,
+            on_cancel=lambda engine=kind: receipts.cancel(engine))}
             for kind, fn, _kinds in tasks]
         return {"run_id": run_id, "started": started}
 
@@ -1558,9 +1587,9 @@ def create_app(config: Config) -> FastAPI:
         because its path stayed put.
         """
         try:
-            if not os.path.isfile(path):
+            if not os.path.isfile(io_path(path)):
                 return {}
-            stat = os.stat(path)
+            stat = os.stat(io_path(path))
             if stat.st_size > _HASH_MAX_BYTES:
                 return {}
             key = (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
@@ -1578,7 +1607,7 @@ def create_app(config: Config) -> FastAPI:
                 except ValueError:  # Algorithm disabled by the local provider
                     continue
                 hashers[name] = hasher
-            with open(path, "rb") as fh:
+            with open(io_path(path), "rb") as fh:
                 for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                     for hasher in hashers.values():
                         hasher.update(chunk)
@@ -1881,7 +1910,7 @@ def create_app(config: Config) -> FastAPI:
         content, but it travels as TEXT in JSON and React renders it escaped
         -- same rule as the evidence excerpts."""
         try:
-            with open(path, "rb") as fh:
+            with open(io_path(path), "rb") as fh:
                 raw = fh.read(_PREVIEW_MAX_BYTES + 1)
         except OSError as e:
             return {"error": str(e)}
@@ -1942,10 +1971,10 @@ def create_app(config: Config) -> FastAPI:
             hunt = []
             if kind == "file":
                 path = artifact
-                info = {"exists": os.path.isfile(path)}
+                info = {"exists": os.path.isfile(io_path(path))}
                 if info["exists"]:
                     try:
-                        st = os.stat(path)
+                        st = os.stat(io_path(path))
                         info["size"] = st.st_size
                         info["mtime"] = datetime.fromtimestamp(
                             st.st_mtime).isoformat(timespec="seconds")
@@ -1966,7 +1995,7 @@ def create_app(config: Config) -> FastAPI:
                     info["sha256"] = file_hashes.get("sha256", "")
                     info["in_upload_dir"] = webshell.in_upload_dir(path)
                     try:
-                        with open(path, "rb") as fh:
+                        with open(io_path(path), "rb") as fh:
                             head = fh.read(webshell.GUARD_SNIFF_BYTES)
                         info["cms_guard"] = bool(webshell.CMS_GUARD_RE.search(head))
                     except OSError:
@@ -2046,12 +2075,16 @@ def create_app(config: Config) -> FastAPI:
 
     def _within_evidence(case_dir, path, lang="en"):
         try:
-            target = Path(path).resolve(strict=True)
-        except (OSError, RuntimeError):
+            target = Path(io_path(path)).resolve(strict=True)
+        except FileNotFoundError:
             raise HTTPException(404, _t(lang, "err.fileNotFound"))
+        except PermissionError:
+            raise HTTPException(403, _t(lang, "err.fileAccessDenied"))
+        except (OSError, RuntimeError):
+            raise HTTPException(400, _t(lang, "err.filePathUnavailable"))
         for root in _evidence_roots(case_dir):
             try:
-                root_resolved = Path(root).resolve(strict=True)
+                root_resolved = Path(io_path(root)).resolve(strict=True)
             except (OSError, RuntimeError):
                 continue
             if target == root_resolved:
@@ -2085,7 +2118,7 @@ def create_app(config: Config) -> FastAPI:
         except OSError as e:
             raise HTTPException(400, f"file not readable: {e}")
 
-        out = {"path": str(target), "size": size, "offset": offset,
+        out = {"path": display_path(target), "size": size, "offset": offset,
                "length": len(chunk), "eof": offset + len(chunk) >= size,
                "mode": mode, "window": window,
                "binary": b"\x00" in chunk[:8192], **_file_metadata(stat),
@@ -2129,7 +2162,7 @@ def create_app(config: Config) -> FastAPI:
         if not target.is_file():
             raise HTTPException(400, _t(lang, "err.notRegularFile"))
         if os.name == "nt":
-            command = ["explorer.exe", f"/select,{target}"]
+            command = ["explorer.exe", f"/select,{display_path(target)}"]
         elif sys.platform == "darwin":
             command = ["open", "-R", str(target)]
         else:
@@ -2841,12 +2874,12 @@ def create_app(config: Config) -> FastAPI:
             return entry
 
         # Within a root you may go up -- but only as far as the root.
-        parent = str(target.parent)
+        parent = display_path(target.parent)
         try:
             _within_evidence(case_dir, parent, lang)
         except HTTPException:
             parent = None
-        return {"path": str(target), "parent": parent, "roots": roots,
+        return {"path": display_path(target), "parent": parent, "roots": roots,
                 "dirs": dirs, "files": [annotate(f) for f in files],
                 "truncated": truncated}
 
@@ -2878,7 +2911,7 @@ def create_app(config: Config) -> FastAPI:
         target = _within_evidence(case_dir, body.path, lang)
         if not target.is_file():
             raise HTTPException(400, _t(lang, "err.notRegularFile"))
-        artifact = str(target)
+        artifact = display_path(target)
         statements = {
             "reviewed": "Analyst reviewed the file; the decision remains open.",
             "confirmed": "Analyst classified the file as a webshell.",
@@ -2923,7 +2956,7 @@ def create_app(config: Config) -> FastAPI:
         for raw in body.paths:
             target = _within_evidence(case_dir, raw, lang)
             if target.is_file():
-                targets.append(str(target))
+                targets.append(display_path(target))
 
         conn = db.connect(case_dir)
         added = []

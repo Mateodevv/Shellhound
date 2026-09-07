@@ -6,6 +6,7 @@ import lzma
 import hashlib
 import os
 from pathlib import Path
+from server.paths import display_path, io_path
 
 # `.xz` is listed in DUMP_SUFFIXES, so a dump named that way was offered to
 # the detector and then read as raw compressed bytes: it found no SQL and
@@ -15,13 +16,13 @@ _CHUNK = 65536
 
 
 def get_files_recursive(directory):
-    for file_path in Path(directory).rglob("*"):
+    for file_path in Path(io_path(directory)).rglob("*"):
         if file_path.is_file():
-            yield str(file_path)
+            yield display_path(file_path)
 
 
 def iter_target_files(target):
-    if os.path.isfile(target):
+    if os.path.isfile(io_path(target)):
         yield str(target)
     else:
         yield from get_files_recursive(target)
@@ -35,9 +36,9 @@ def path_within_any(path, targets):
     also handles path-component boundaries (``site`` never matches
     ``site-old``) and different Windows drives without string-prefix tricks.
     """
-    candidate = os.path.normcase(os.path.realpath(os.path.abspath(str(path))))
+    candidate = os.path.normcase(os.path.realpath(io_path(path)))
     for target in targets:
-        root = os.path.normcase(os.path.realpath(os.path.abspath(str(target))))
+        root = os.path.normcase(os.path.realpath(io_path(target)))
         try:
             if os.path.commonpath((candidate, root)) == root:
                 return True
@@ -72,12 +73,12 @@ def open_text_auto(file_path, encoding="utf-8-sig", errors="replace"):
     rotated logs together produces -- is NOT covered here and still invents a
     client; closing that means stripping U+FEFF in the line parsers."""
     opener = COMPRESSED_OPENERS.get(Path(file_path).suffix.lower(), open)
-    return opener(file_path, mode="rt", encoding=encoding, errors=errors)
+    return opener(io_path(file_path), mode="rt", encoding=encoding, errors=errors)
 
 
 def looks_binary(file_path, sniff_bytes=8192):
     try:
-        with open(file_path, "rb") as f:
+        with open(io_path(file_path), "rb") as f:
             return b"\x00" in f.read(sniff_bytes)
     except OSError:
         return True
@@ -90,7 +91,7 @@ def is_scannable_text(file_path):
 def sha256_of(file_path):
     h = hashlib.sha256()
     try:
-        with open(file_path, "rb") as f:
+        with open(io_path(file_path), "rb") as f:
             for block in iter(lambda: f.read(_CHUNK), b""):
                 h.update(block)
         return h.hexdigest()

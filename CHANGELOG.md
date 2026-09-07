@@ -6,6 +6,15 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — Windows evidence paths and partial analysis
+
+- Read, browse and reveal long Windows evidence paths without changing stored
+  artifact identities. File scans and custom YARA rules also handle long Unicode
+  paths. Access errors are no longer reported as missing files.
+- Track analysis attempts separately from successful receipts. Partial, failed
+  and cancelled work remains visible and retryable; skipped files no longer leave
+  a green "Complete" run beside a misleading "not analyzed yet" source.
+
 ### Changed — English interface
 
 - Removed the German translation and language selector. Interface copy,
