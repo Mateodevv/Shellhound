@@ -397,8 +397,10 @@ def build_preview(case_dir, options=None):
             # OpenCTI deduplicates vulnerabilities by their CVE name.
             vuln_id = add(sdo("vulnerability", ["cve", name], name=name,
                               external_references=[{"source_name": "cve", "external_id": name}]))
+            # OpenCTI does not allow Incident -> exploits -> Vulnerability.
+            # Keep the exploitation assessment in the owned link and Note.
             relation(["vulnerability", name], incident_id, vuln_id,
-                     "exploits" if status == "confirmed" else "related-to", description)
+                     "related-to", description)
             note(f"vulnerability:{name}", description, [incident_id, vuln_id])
         else:
             note(f"vulnerability:{index}", description, [incident_id])
