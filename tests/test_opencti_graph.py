@@ -390,7 +390,17 @@ class OpenCTIGraphTests(unittest.TestCase):
                                    exclude_evidence_ioc_ids=[self.path_id, self.hash_id],
                                    exclude_profile_fields=["summary", "software"])
         objects = preview["objects"]
-        self.assertEqual(1, sum(o.get("relationship_type") == "exploits" for o in objects))
+        vulnerability_links = [o for o in objects if o["type"] == "relationship"
+                               and o["source_ref"].startswith("incident--")
+                               and o["target_ref"].startswith("vulnerability--")]
+        self.assertEqual(2, len(vulnerability_links))
+        self.assertTrue(all(o["relationship_type"] == "related-to" for o in vulnerability_links))
+        self.assertEqual({"Exploitation confirmed: CVE-2026-12345",
+                          "Exploitation suspected: CVE-2026-12346"},
+                         {o["description"] for o in vulnerability_links})
+        vulnerability_notes = [o["content"] for o in objects if o["type"] == "note"]
+        for link in vulnerability_links:
+            self.assertIn(link["description"], vulnerability_notes)
         self.assertEqual(2, sum(o["type"] == "vulnerability" for o in objects))
         exported = json.dumps(objects)
         for forbidden in ("private note", "private excerpt", "Hidden summary", "Example CMS"):
