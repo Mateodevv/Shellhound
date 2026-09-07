@@ -550,8 +550,8 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
   )
 }
 
-export function SearchInput({ value, onChange, placeholder }: {
-  value: string; onChange: (v: string) => void; placeholder?: string
+export function SearchInput({ value, onChange, placeholder, className }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; className?: string
 }) {
   return (
     <input
@@ -561,7 +561,7 @@ export function SearchInput({ value, onChange, placeholder }: {
       className={clsx(
         'w-56 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px]',
         'placeholder:text-[var(--muted)]/60 outline-none transition-colors',
-        'focus:border-[var(--accent)]/70')}
+        'focus:border-[var(--accent)]/70', className)}
     />
   )
 }

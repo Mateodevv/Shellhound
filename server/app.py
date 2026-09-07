@@ -2643,12 +2643,15 @@ def create_app(config: Config) -> FastAPI:
         return item
 
     @app.get("/api/cases/{slug}/hunt/tests", dependencies=[auth])
-    def hunt_test_list(slug: str, pattern_id: str = "", limit: int = 100):
+    def hunt_test_list(slug: str, pattern_id: str = "", limit: int = 100, test_id: int | None = None):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
             where = "WHERE pattern_id = ?" if pattern_id else ""
             params = [pattern_id] if pattern_id else []
+            if test_id is not None:
+                where += (" AND " if where else "WHERE ") + "id = ?"
+                params.append(test_id)
             rows = db.rows(
                 conn, "SELECT * FROM hunt_tests " + where +
                 " ORDER BY id DESC LIMIT ?", params + [max(1, min(limit, 500))])
@@ -3986,13 +3989,13 @@ def create_app(config: Config) -> FastAPI:
             value = value.lower()
         conn = db.connect(case_dir)
         try:
-            db.add_ioc(conn, value, ioc_type, [ioclib.TAG_ANALYST],
+            ioc_id = db.add_ioc(conn, value, ioc_type, [ioclib.TAG_ANALYST],
                        note=body.note, origin="added by the analyst", context=body.context,
                        path_context=body.path_context)
             conn.commit()
         finally:
             conn.close()
-        return {"ok": True, "type": ioc_type}
+        return {"ok": True, "type": ioc_type, "id": ioc_id}
 
     class PatchIoc(BaseModel):
         type: str | None = None
@@ -4063,6 +4066,19 @@ def create_app(config: Config) -> FastAPI:
     def export_iocs(slug: str, format: str = "csv", lang: str = lang_dep,
                     tz: str = tz_dep, hide_types: str = "",
                     hide_tags: str = "", search: str = ""):
+        return render_ioc_export(slug, format, lang, tz, hide_types, hide_tags, search)
+
+    class IocDownload(BaseModel):
+        ids: list[int]
+        format: str = "csv"
+
+    @app.post("/api/cases/{slug}/iocs/export", dependencies=[auth])
+    def export_selected_iocs(slug: str, body: IocDownload, lang: str = lang_dep, tz: str = tz_dep):
+        if body.format not in ("csv", "json", "stix"):
+            raise HTTPException(400, "Unknown export format")
+        return render_ioc_export(slug, body.format, lang, tz, selected_ids=set(body.ids))
+
+    def render_ioc_export(slug, format, lang, tz, hide_types="", hide_tags="", search="", selected_ids=None):
         """Export the box -- or exactly what the analyst is looking at.
 
         The filter parameters carry the SAME semantics as the view: a type
@@ -4079,6 +4095,10 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
         _ioc_spans(case_dir, rows)
+        if selected_ids is not None:
+            rows = [r for r in rows if r["id"] in selected_ids]
+            kept = {r["id"] for r in rows}
+            links = [l for l in links if l["src_id"] in kept and l["dst_id"] in kept]
         hidden_types = {t for t in hide_types.split(",") if t}
         hidden_tags = {t for t in hide_tags.split(",") if t}
         needle = search.strip().lower()

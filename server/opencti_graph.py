@@ -584,7 +584,7 @@ def build_preview(case_dir, options=None):
         rows.append({"id": ioc_id, "source_uid": source_key, "type": row["type"], "value": value, "selected": chosen,
                      "object_ids": ids, "indicator_supported": bool(pattern),
                      "indicator_suggested": bool(row["type"] in ("hash", "file") and (
-                         row.get("assessment") == "malicious" or verified and ioc_id in active_confirmed
+                         row.get("assessment") == "malicious" and row.get("assessment_manual") or verified and ioc_id in active_confirmed
                          and verified[0]["sha256"] in confirmed_hashes)),
                      "warnings": row_warnings})
 

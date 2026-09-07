@@ -52,8 +52,9 @@ export function OpenCtiDetails({ lookup }: { lookup?: OpenCtiLookup }) {
   </div>
 }
 
-export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, onSettings }: {
+export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, onSettings, mode = 'full' }: {
   slug: string; iocs: Ioc[]; selectedIds: number[]; onSelectAll: () => void; onClear: () => void; onSettings: () => void
+  mode?: 'full' | 'actions' | 'activity'
 }) {
   const tr = useT()
   const qc = useQueryClient()
@@ -75,17 +76,18 @@ export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, 
   const ready = !!conf.data?.configured && selectedIds.length > 0 && !busy
   const recentJobs = status.data?.jobs?.slice(0, 8) ?? []
   return <Card className="flex flex-col gap-3 border-[var(--accent)]/30 p-3">
-    <div className="flex flex-wrap items-center gap-2"><strong className="mr-auto text-[13px]">{tr('cti.title')}</strong><CaseProfileButton slug={slug} />
+    {mode !== 'activity' && <><div className="flex flex-wrap items-center gap-2"><strong className="mr-auto text-[13px]">{tr('cti.title')}</strong>{mode === 'full' && <CaseProfileButton slug={slug} />}
       <Button disabled={!ready} onClick={() => { setQueued(false); lookup.mutate() }}><Search size={13} />{tr('cti.check')}</Button>
       <Button disabled={!ready} onClick={() => prepare.mutate()}><Upload size={13} />{tr('cti.export')}</Button>
       <Button disabled={!ready} onClick={() => prepareEnrichment.mutate()}><Radar size={13} />{tr('cti.enrich')}</Button>
     </div>
-    <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]"><span>{tr('cti.scope', { n: selectedIds.length })}</span>
-      <Button variant="ghost" onClick={onSelectAll} disabled={selectedIds.length === iocs.length}>{tr('cti.all')}</Button><Button variant="ghost" onClick={onClear} disabled={!selectedIds.length}>{tr('cti.clear')}</Button>
-    </div>
+    <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]"><span>{selectedIds.length} {tr('iocWorkspace.ioc_entries_in_this_action')}</span>
+      {mode === 'full' && <><Button variant="ghost" onClick={onSelectAll} disabled={selectedIds.length === iocs.length}>{tr('cti.all')}</Button><Button variant="ghost" onClick={onClear} disabled={!selectedIds.length}>{tr('cti.clear')}</Button></>}
+    </div></>}
     {conf.data && !conf.data.configured && <div className="flex items-center gap-2 text-[12px]"><span>{tr('cti.noConfig')}</span><Button variant="ghost" onClick={onSettings}>{tr('cti.setup')}</Button></div>}
     <CtiError error={conf.error || lookup.error || prepare.error || prepareEnrichment.error || retry.error || refreshEnrichment.error || status.error} />
     {queued && <p role="status" className="text-[12px] text-[var(--muted)]">{tr('cti.queued')}</p>}
+    {mode !== 'actions' && <>
     {!!recentJobs.length && <details open={recentJobs.some((job) => ['queued', 'running'].includes(job.state))} className="text-[12px]"><summary className="cursor-pointer font-semibold">{tr('cti.jobs')}</summary>
       <div className="mt-2 flex flex-col gap-1">{recentJobs.map((job) => <div key={job.id} className="flex flex-wrap gap-2"><Tag tone={job.state === 'failed' ? 'danger' : undefined}>{job.state}</Tag><span>{job.kind}</span><span>{job.message}</span>{job.error && <CtiError error={job.error} />}</div>)}</div>
     </details>}
@@ -102,6 +104,7 @@ export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, 
       {['failed', 'partial', 'error', 'pending', 'paused'].includes(entry.state) && <Button disabled={retry.isPending} onClick={() => retry.mutate(entry.id)}>{tr('cti.retry')}</Button>}
       <TransferReceiptDetails stats={entry.stats} />
     </div>)}</div></details>}
+    </>}
     {preview && <OpenCtiExportDialog slug={slug} initial={preview.data} initialOptions={preview.options} onClose={() => setPreview(null)} onQueued={() => { setPreview(null); refreshed() }} />}
     {enrichment && <EnrichmentDialog slug={slug} data={enrichment.data} ids={enrichment.ids} onClose={() => setEnrichment(null)} onQueued={() => { setEnrichment(null); refreshed() }} />}
   </Card>

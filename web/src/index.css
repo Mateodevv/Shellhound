@@ -121,3 +121,15 @@ body {
 
 .mono { font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace; }
 .tabular { font-variant-numeric: tabular-nums; }
+
+/* IOC workspace: independent object and detail scrolling. */
+.ioc-workspace { container-type: inline-size; }
+.ioc-split { display: flex; flex-direction: column; height: max(560px, calc(100dvh - 205px)); }
+.ioc-list, .ioc-detail { flex: 1; }
+.ioc-divider { display: none; touch-action: none; }
+.ioc-list-hidden-mobile, .ioc-detail-hidden-mobile { display: none; }
+@container (min-width: 900px) {
+  .ioc-split { display: grid; grid-template-columns: min(var(--ioc-list-width), 42%) 5px minmax(0, 1fr); }
+  .ioc-list-hidden-mobile { display: flex; }
+  .ioc-detail-hidden-mobile, .ioc-divider { display: block; }
+}

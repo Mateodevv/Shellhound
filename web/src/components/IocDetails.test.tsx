@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, post, type Ioc } from '../api'
 import { renderWithProviders } from '../test/setup'
+import { IocField } from './IocField'
 import { IocDetails } from './IocDetails'
 
 vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn(), patch: vi.fn() }))
@@ -22,20 +23,38 @@ beforeEach(() => {
 const show = () => renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} />)
 
 describe('Structured IOC details', () => {
+  it('explains the field with a descriptive tooltip on keyboard focus', async () => {
+    const { container } = renderWithProviders(<IocField name="Origin">Pattern Hunt</IocField>)
+    fireEvent.focus(container.querySelector('[tabindex="0"]')!)
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent('The analysis, hunt or analyst action that added this object to the case.')
+    expect(tooltip.children).toHaveLength(1)
+  })
+
   it('loads local detail without starting enrichment or transfers', async () => {
     show()
-    await screen.findByText('Case assessment:')
+    await screen.findByText('Case assessment')
     expect(post).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'Save assessment' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('tab', { name: 'Observations' }))
+    expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Evidence' }))
     expect(await screen.findByText('Five requests')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'OpenCTI' }))
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('cancels an assessment draft without submitting it', async () => {
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Change assessment' }))
+    fireEvent.change(screen.getByLabelText('Assessment reason'), { target: { value: 'Unfinished assessment' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(post).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
+  })
+
   it('saves a separate assessment with an explicit reason', async () => {
     show()
-    await screen.findByText('Case assessment:')
+    await screen.findByText('Case assessment')
+    fireEvent.click(screen.getByRole('button', { name: 'Change assessment' }))
     fireEvent.change(screen.getByLabelText('New assessment'), { target: { value: 'suspicious' } })
     fireEvent.change(screen.getByLabelText('Assessment reason'), { target: { value: 'Hostile request in log line 5' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save assessment' }))
@@ -46,8 +65,9 @@ describe('Structured IOC details', () => {
 
   it('filters relationship targets and requires a source reference', async () => {
     show()
-    await screen.findByText('Case assessment:')
+    await screen.findByText('Case assessment')
     fireEvent.click(screen.getByRole('tab', { name: 'Relationships' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add evidence-backed relationship' }))
     fireEvent.change(screen.getByLabelText('Relationship'), { target: { value: 'executed' } })
     expect(screen.queryByRole('option', { name: 'vulnerability: CVE-2026-12345', hidden: false })).toBeInTheDocument() // source selector only
     expect(screen.getByLabelText('Target').querySelectorAll('option')).toHaveLength(1)

@@ -59,6 +59,15 @@ export function downloadUrl(path: string): string {
        + `&tz=${encodeURIComponent(activeTimeMode())}`
 }
 
+export async function downloadSelection(path: string, ids: number[], format: string, filename: string) {
+  const response = await fetch(path, { method: 'POST', headers: { 'X-Token': TOKEN, 'X-TZ': activeTimeMode(), 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, format }) })
+  if (!response.ok) throw new ApiError(response.status, 'The selected objects could not be downloaded.')
+  const url = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 // ---- types -----------------------------------------------------------------
 
 export interface CaseInfo {
@@ -602,6 +611,7 @@ export interface IocLink {
 }
 
 export interface Ioc {
+  assessment_manual?: boolean
   assessment?: 'unassessed' | 'suspicious' | 'malicious' | 'benign'
   context?: string
   path_context?: string

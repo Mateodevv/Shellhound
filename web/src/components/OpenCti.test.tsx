@@ -14,6 +14,8 @@ const hash: Ioc = { ...file, id: 2, type: 'hash', value: 'a'.repeat(64), links: 
 const preview: OpenCtiPreview = { preview_id: 'preview-1', case_reference: 'PIM-5165', fingerprint: 'fp', objects: [{ id: 'file--a', type: 'file', name: 'shell.php' }], iocs: [{ id: 1, value: file.value, type: 'path', selected: true, object_ids: ['file--a'], indicator_supported: false, indicator_suggested: false, warnings: [] }, { id: 2, value: hash.value, type: 'hash', selected: true, object_ids: ['file--a'], indicator_supported: true, indicator_suggested: true, warnings: [] }], relationships: [{ id: 4, src_id: 2, dst_id: 1, kind: 'hash-of', note: '', selected: true }], samples: [{ id: 'sample-1', display_path: 'web/shell.php', sha256: hash.value, size: 20, selected: false, available: true, reason: '', file_id: 'file--a' }], warnings: [], errors: [] }
 beforeEach(() => {
   vi.clearAllMocks()
+  sessionStorage.clear()
+  history.replaceState(null, '', '/')
   vi.mocked(api).mockImplementation(async (path) => {
     if (path === '/api/opencti/settings') return { configured: true, url: 'https://cti.example', ingester_id: 'ingester' } as never
     if (path.endsWith('/iocs/cross-case')) return { entries: [], matched_iocs: 0, cases_skipped: 0 } as never
@@ -27,20 +29,22 @@ beforeEach(() => {
 describe('OpenCTI user intent', () => {
   it('checks the complete IOC selection, including collapsed hashes, only after a click', async () => {
     renderWithProviders(<IocBox slug="case" gotoView={() => {}} />)
+    await screen.findByRole('checkbox', { name: `Select ${file.value}` })
+    fireEvent.click(screen.getByRole('button', { name: 'Select all filtered' }))
     const check = await screen.findByRole('button', { name: 'Check in OpenCTI' })
     await waitFor(() => expect(check).toBeEnabled())
     expect(screen.queryByRole('checkbox', { name: `Select ${hash.value} for OpenCTI` })).not.toBeInTheDocument()
-    expect(screen.getByText(/2 IoCs selected, including collapsed/)).toBeInTheDocument()
+    expect(screen.getByText('2 objects selected')).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(check)
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/lookup', { ioc_ids: [1, 2] }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/lookup', { ioc_ids: expect.arrayContaining([1, 2]) }))
   })
   it('can clear then select an individual IOC without silently adding descendants', async () => {
     renderWithProviders(<IocBox slug="case" gotoView={() => {}} />)
-    await screen.findByRole('checkbox', { name: `Select ${file.value} for OpenCTI` })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
-    expect(screen.getByRole('button', { name: 'Check in OpenCTI' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('checkbox', { name: `Select ${file.value} for OpenCTI` }))
+    await screen.findByRole('checkbox', { name: `Select ${file.value}` })
+    expect(screen.queryByRole('button', { name: 'Check in OpenCTI' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select ${file.value}` }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check in OpenCTI' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Check in OpenCTI' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/lookup', { ioc_ids: [1] }))
   })

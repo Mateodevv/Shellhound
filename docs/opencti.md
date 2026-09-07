@@ -5,8 +5,16 @@ intelligence and runs external enrichment connectors. Local GeoIP remains local.
 
 ## Structured IOC objects
 
-The IOC box keeps its compact list. **Details** opens Overview, Observations,
-Relationships and OpenCTI. Opening these tabs never starts enrichment or transfer.
+The IOC box uses a paginated object list beside a persistent detail pane. Type tabs,
+positive filters and search cover the whole case. Files are searchable by name and
+hash. Overview, Evidence, Relationships and OpenCTI separate the investigation
+steps; tooltips explain individual fields. Object links retain a back history and
+filters. Opening a row is separate from checkbox selection, which starts empty.
+Select page or Select all filtered explicitly to prepare a batch action. The action
+count includes file hash entries. New arrivals never join an existing selection.
+Opening details never starts enrichment or transfer. On narrow screens, Back
+restores the object list. Activity contains transfer receipts and full/filtered
+downloads; POST /api/cases/{slug}/iocs/export accepts ids and format for downloads.
 
 Files have a content identity, coherent hashes and multiple recorded locations.
 The file browser and confirmed findings collect these automatically. Existing hash
@@ -24,8 +32,11 @@ system in which a username is meaningful; unscoped usernames remain case Notes.
 The context itself is not sent as an account identifier: a stable scoped digest is
 used to prevent merging unrelated accounts.
 
-Each object starts **unassessed**. Analysts can record suspicious, malicious or
-benign assessments with a reason and retained history. This is independent of
+Each object starts **malicious**, following the IOC-box default policy. Analysts can
+change the assessment with a reason and retained history. Migration applies this
+default to old unassessed objects without assessment history; manual assessments
+remain intact. Indicator suggestions from assessments require an explicit manual
+malicious assessment. This is independent of
 finding triage, file classification and remote intelligence. Indicator selection
 remains a separate export decision.
 
@@ -52,7 +63,7 @@ transfer withdraws earlier owned statements while preserving shared objects and
 other sources' assertions. Notes/evidence exclusions also apply to assessment
 reasons and relationship evidence.
 
-Schema 14 preserves existing IOC IDs, source UIDs, notes and export receipts.
+Schema 15 preserves existing IOC IDs, source UIDs, notes and export receipts.
 Explicit historical SHA-256 provenance creates file records without inventing
 size, secondary hashes or a classification. Unknown legacy contexts and equivalent
 legacy values are retained with review warnings. Migration never initiates export.
