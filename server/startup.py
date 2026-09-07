@@ -108,7 +108,7 @@ def redact(text):
                   r"\1[redacted]", text)
 
 
-def stop_child(process):
+def stop_child(process, *, timeout=5):
     if process.poll() is not None:
         return
     try:
@@ -116,8 +116,17 @@ def stop_child(process):
             process.send_signal(signal.CTRL_BREAK_EVENT)
         else:
             os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
+        if timeout is None:
+            # Server jobs must finish recording cancellation before an update
+            # can acquire the checkout lock. Keep signals responsive on Windows.
+            while process.poll() is None:
+                try:
+                    process.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    pass
+        else:
+            process.wait(timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -160,7 +169,7 @@ def command(arguments, *, cwd, label, capture=True, env=None, timeout=300):
                     announce(f"{label} is still running...")
                     last_progress = time.monotonic()
     except BaseException:
-        stop_child(process)
+        stop_child(process, timeout=5 if capture else None)
         raise
     if process.returncode:
         detail = "\n" + "\n".join(redact(output or "").splitlines()[-12:]) if capture else ""
@@ -349,7 +358,7 @@ def prepare_frontend(root):
     if not (tools_present and installed_hash and old.get("inputs") == dependency_key
             and old.get("installed") == installed_hash):
         announce("Installing required interface packages (internet may be needed).")
-        command([*npm, "ci", "--no-audit", "--no-fund"], cwd=web,
+        command([*npm, "ci", "--include=dev", "--no-audit", "--no-fund"], cwd=web,
                 label="Interface package installation")
         write_receipt(npm_receipt, {"inputs": dependency_key,
                                   "installed": hashlib.sha256(installed_lock.read_bytes()).hexdigest()})

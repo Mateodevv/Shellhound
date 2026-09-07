@@ -76,6 +76,9 @@ the problem and run the same launcher again.
 When the server is ready, the browser opens at `http://127.0.0.1:8710`.
 Authentication is handled automatically on localhost; no token needs copying.
 **Keep the launcher window open. Press Ctrl+C there to stop Shellhound.**
+If an analysis is running, stopping cancels it and waits for its pending writes
+to finish. Wait until the launcher exits before starting again or updating;
+cancelled analyses can be rerun after the next start.
 
 Later starts reuse the prepared environment and interface. With no changed or
 missing dependencies, starting and using the workbench works offline. Startup

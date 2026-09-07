@@ -34,6 +34,10 @@ def run_once(root, *, launcher=False, offline=False):
     environment = os.environ.copy()
     environment["SHELLHOUND_NO_PAUSE"] = "1"
     environment["PYTHONUTF8"] = "1"
+    # Build tools are devDependencies but are required for source launches,
+    # even when the caller's npm settings normally omit development packages.
+    environment["NODE_ENV"] = "production"
+    environment["npm_config_omit"] = "dev"
     if offline:
         # Any accidental package installation must fail quickly, rather than
         # quietly passing because this CI worker happens to have internet.

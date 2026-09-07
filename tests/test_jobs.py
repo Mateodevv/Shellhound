@@ -57,9 +57,12 @@ class RegistryTests(unittest.TestCase):
     def test_cancel_only_touches_its_own_case(self):
         job_a = self.manager.submit(self.a, "test", self._blocking_job)
         job_b = self.manager.submit(self.b, "test", self._blocking_job)
+        with self.manager._lock:
+            ctx_a = self.manager.live[(str(self.a), job_a)]
+            ctx_b = self.manager.live[(str(self.b), job_b)]
         self.assertTrue(self.manager.cancel(self.a, job_a))
-        self.assertTrue(self.manager.live[(str(self.a), job_a)].cancelled())
-        self.assertFalse(self.manager.live[(str(self.b), job_b)].cancelled(),
+        self.assertTrue(ctx_a.cancelled())
+        self.assertFalse(ctx_b.cancelled(),
                          "cancelling in one case cancelled the other")
 
     def test_a_finished_job_does_not_clear_the_other_case(self):
@@ -100,6 +103,47 @@ class RegistryTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual("run-together", row["run_id"])
+
+    def test_shutdown_cancels_running_and_queued_jobs_and_waits_for_cleanup(self):
+        started = [threading.Event(), threading.Event()]
+        cleaned = []
+        def work(index):
+            def run(ctx):
+                started[index].set()
+                ctx.cancel_event.wait(timeout=5)
+                self.release.wait(timeout=5)
+                cleaned.append(index)
+            return run
+        ids = [self.manager.submit(self.a, "test", work(i)) for i in range(2)]
+        for ready in started:
+            self.assertTrue(ready.wait(timeout=5))
+        queued_ran = threading.Event()
+        ids.append(self.manager.submit(self.a, "test", lambda ctx: queued_ran.set()))
+        stopped = threading.Event()
+        def shutdown():
+            self.manager.cancel_all_and_wait()
+            stopped.set()
+        thread = threading.Thread(target=shutdown)
+        thread.start()
+        try:
+            with self.manager._lock:
+                contexts = list(self.manager.live.values())
+            for ctx in contexts:
+                self.assertTrue(ctx.cancel_event.wait(timeout=5))
+            self.assertFalse(stopped.is_set(), "shutdown returned before worker cleanup")
+        finally:
+            self.release.set()
+            thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual([0, 1], sorted(cleaned))
+        self.assertFalse(queued_ran.is_set(), "queued analysis ran after shutdown")
+        conn = db.connect(self.a)
+        try:
+            rows = db.rows(conn, "SELECT state, finished FROM jobs ORDER BY id")
+            self.assertEqual(["cancelled"] * len(ids), [row["state"] for row in rows])
+            self.assertTrue(all(row["finished"] for row in rows))
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

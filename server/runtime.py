@@ -7,12 +7,13 @@ import threading
 import webbrowser
 
 from server.config import Config
-from server.startup import StartupError, announce
+from server.startup import StartupError, announce, termination_signals
 
 
 def run(args):
     import uvicorn
     from server.app import create_app
+    from server.jobs import manager
 
     config = Config(workspace=args.workspace, host=args.host, port=args.port, token=args.token)
     sock = socket.socket(socket.AF_INET6 if ":" in config.host else socket.AF_INET, socket.SOCK_STREAM)
@@ -48,11 +49,15 @@ def run(args):
 
         watcher = threading.Thread(target=ready, daemon=True)
         watcher.start()
-        try:
-            server.run(sockets=[sock])
-        finally:
-            done.set()
-            watcher.join(timeout=1)
+        # Uvicorn restores and re-raises its shutdown signal. Convert SIGBREAK
+        # and SIGTERM to Python unwinding so pending analysis jobs can clean up.
+        with termination_signals():
+            try:
+                server.run(sockets=[sock])
+            finally:
+                done.set()
+                watcher.join(timeout=1)
+                manager.cancel_all_and_wait()
         if not server.started:
             raise StartupError("The server did not become ready. Check the startup error and try again.")
         return 0

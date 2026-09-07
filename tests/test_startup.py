@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -311,6 +312,92 @@ class StartupBoundaryTests(unittest.TestCase):
                         server.should_exit = True
                     thread.join(timeout=10)
                 self.assertFalse(thread.is_alive())
+
+    def test_managed_shutdown_drains_jobs_before_unlock_and_restart(self):
+        from server import db
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            args = ["--workspace", str(root), "--port", str(port), "--no-browser"]
+            child = [sys.executable, "-m", "tests.startup_job_fixture", *args]
+            script = ("from pathlib import Path; from server.startup import "
+                      "CheckoutLock,command,termination_signals\n"
+                      f"with CheckoutLock(Path({folder!r})), termination_signals():\n"
+                      f" command({child!r},cwd=Path.cwd(),label='server',capture=False)\n")
+            options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {
+                "start_new_session": True}
+            with (root / "server.log").open("w") as output:
+                process = subprocess.Popen([sys.executable, "-c", script], stdout=output,
+                                           stderr=subprocess.STDOUT, **options)
+                try:
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        try:
+                            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1):
+                                break
+                        except OSError:
+                            self.assertIsNone(process.poll(), (root / "server.log").read_text())
+                            time.sleep(0.05)
+                    else:
+                        self.fail("server did not become ready")
+                    self.assertTrue((root / "job-started").exists())
+                    if os.name == "nt":
+                        process.send_signal(signal.CTRL_BREAK_EVENT)
+                    else:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    deadline = time.monotonic() + 10
+                    while not (root / "job-cancelling").exists() and time.monotonic() < deadline:
+                        self.assertIsNone(process.poll(), "launcher exited without draining jobs")
+                        time.sleep(0.05)
+                    self.assertTrue((root / "job-cancelling").exists())
+                    # The old supervisor killed the worker after five seconds.
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        process.wait(timeout=5.5)
+                    with self.assertRaisesRegex(startup.StartupError, "already"):
+                        with startup.CheckoutLock(root):
+                            pass
+                    (root / "release-job").touch()
+                    process.wait(timeout=10)
+                    self.assertTrue((root / "job-cleaned-up").exists())
+                    with startup.CheckoutLock(root):
+                        pass
+                    conn = db.connect(root / "shutdown-case")
+                    try:
+                        job = db.one(conn, "SELECT state, finished FROM jobs")
+                        self.assertEqual("cancelled", job["state"])
+                        self.assertTrue(job["finished"])
+                    finally:
+                        conn.close()
+                finally:
+                    (root / "release-job").touch()
+                    startup.stop_child(process, timeout=10)
+
+            # A new runtime must expose terminal state, with no orphaned job
+            # keeping the analysis controls disabled after a restart.
+            with (root / "restart.log").open("w") as output:
+                process = subprocess.Popen([sys.executable, "-m", "server.runtime", *args,
+                                            "--token", "shutdown-test"], stdout=output,
+                                           stderr=subprocess.STDOUT, **options)
+                try:
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/cases/shutdown-case/jobs",
+                        headers={"X-Token": "shutdown-test"})
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        try:
+                            with urllib.request.urlopen(request, timeout=1) as response:
+                                jobs = json.load(response)
+                            break
+                        except OSError:
+                            self.assertIsNone(process.poll(), (root / "restart.log").read_text())
+                            time.sleep(0.05)
+                    else:
+                        self.fail("restart did not become ready")
+                    self.assertEqual(["cancelled"], [job["state"] for job in jobs])
+                finally:
+                    startup.stop_child(process)
 
 
 class PythonPreparationTests(unittest.TestCase):
