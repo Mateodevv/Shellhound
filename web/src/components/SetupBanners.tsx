@@ -42,8 +42,8 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
   if (hidden) return null
 
   return (
-    <Card className="flex flex-wrap items-center justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up">
-      <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
+    <Card className="flex flex-col items-start justify-between gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3 animate-fade-up sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 text-[13px]">
         {icon}
         <span className="min-w-0">
           <span className="font-semibold">{title}</span> {body}
