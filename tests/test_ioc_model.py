@@ -53,7 +53,7 @@ class StructuredIocTests(unittest.TestCase):
             model.collect_hunt_cves(self.conn, entry, 5, client, "rule-sha", "index-sha")
         self.assertEqual(3, self.conn.execute("SELECT count(*) FROM iocs").fetchone()[0])
         ip = db.one(self.conn, "SELECT * FROM iocs WHERE type='ip'")
-        self.assertEqual("unassessed", ip["assessment"])
+        self.assertEqual("malicious", ip["assessment"])
         detail = model.detail(self.conn, ip["id"])
         self.assertEqual(1, len(detail["observations"]))
         self.assertEqual(3, detail["observations"][0]["count"])
@@ -137,7 +137,7 @@ class StructuredIocTests(unittest.TestCase):
 
     def test_assessments_require_reason_and_do_not_change_findings(self):
         ioc = db.add_ioc(self.conn, "198.51.100.9", "ip", ["confirmed"])
-        self.assertEqual("unassessed", model.detail(self.conn, ioc)["object"]["assessment"])
+        self.assertEqual("malicious", model.detail(self.conn, ioc)["object"]["assessment"])
         with self.assertRaises(ValueError):
             model.assess(self.conn, ioc, "malicious", "  ")
         model.assess(self.conn, ioc, "malicious", "Specific hostile request")
@@ -145,6 +145,21 @@ class StructuredIocTests(unittest.TestCase):
         detail = model.detail(self.conn, ioc)
         self.assertEqual(["benign", "malicious"], [r["state"] for r in detail["assessments"]])
         self.assertEqual(["confirmed"], detail["object"]["tags"])
+
+    def test_default_migration_and_recollection_preserve_explicit_assessments(self):
+        defaults = db.add_ioc(self.conn, "198.51.100.10", "ip")
+        manual = db.add_ioc(self.conn, "198.51.100.11", "ip")
+        self.assertEqual("malicious", model.detail(self.conn, defaults)["object"]["assessment"])
+        model.assess(self.conn, manual, "unassessed", "Requires another review")
+        self.conn.execute("UPDATE iocs SET assessment='unassessed' WHERE id=?", (defaults,))
+        model.migrate(self.conn)
+        self.assertEqual("malicious", model.detail(self.conn, defaults)["object"]["assessment"])
+        self.assertFalse(model.detail(self.conn, defaults)["object"]["assessment_manual"])
+        model.migrate(self.conn)
+        db.add_ioc(self.conn, "198.51.100.11", "ip", ["hunt"])
+        self.assertEqual("unassessed", model.detail(self.conn, manual)["object"]["assessment"])
+        self.assertTrue(model.detail(self.conn, manual)["object"]["assessment_manual"])
+        self.assertEqual(1, self.conn.execute("SELECT count(*) FROM ioc_assessments").fetchone()[0])
 
     def test_relationship_requires_evidence_and_valid_endpoints(self):
         ip = db.add_ioc(self.conn, "198.51.100.9", "ip")
@@ -230,7 +245,7 @@ class StructuredIocTests(unittest.TestCase):
         for table in ("ioc_assessments", "ioc_observations", "ioc_relationship_evidence", "ioc_relationship_events"):
             self.assertEqual(0, self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
 
-    def test_legacy_migration_preserves_ids_source_uids_and_unassessed_state(self):
+    def test_legacy_migration_preserves_ids_source_uids_and_applies_default(self):
         old = self.root / "legacy"
         old.mkdir()
         conn = sqlite3.connect(old / "case.db")
@@ -245,7 +260,7 @@ class StructuredIocTests(unittest.TestCase):
             row = db.one(migrated, "SELECT * FROM iocs WHERE id=7")
             self.assertEqual("stable-source", row["source_uid"])
             self.assertEqual("old note", row["note"])
-            self.assertEqual("unassessed", row["assessment"])
+            self.assertEqual("malicious", row["assessment"])
             file_row = db.one(migrated, "SELECT * FROM iocs WHERE type='file'")
             self.assertTrue(file_row["legacy_warning"])
             self.assertEqual(0, db.one(migrated, "SELECT active FROM ioc_sources WHERE ioc_id=?", (file_row["id"],))["active"])

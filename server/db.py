@@ -494,7 +494,9 @@ _ADDED_COLUMNS = {
 # 11: skipped paths and reasons belong to their job, surviving later scans.
 # 12: stable IOC source identities, provenance cleanup and OpenCTI receipts.
 # 13: typed/scoped IOC identities, file content objects and evidence-backed assertions.
-CASE_SCHEMA_VERSION = 14
+# 14: Pattern Hunt test observations retain their explicit CVE context.
+# 15: IOC-box objects default to malicious; manual assessments remain unchanged.
+CASE_SCHEMA_VERSION = 15
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a

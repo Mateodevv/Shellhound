@@ -200,7 +200,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     refetchInterval: 4000,
   })
 
+  const leaveCase = () => {
+    if (window.dispatchEvent(new Event('shellhound:before-navigate', { cancelable: true }))) onBack()
+  }
+
   const gotoView = useCallback<Navigate>((next, params = {}) => {
+    if (!window.dispatchEvent(new Event('shellhound:before-navigate', { cancelable: true }))) return
     const url = new URL(location.href)
     url.searchParams.set('case', slug)
     url.searchParams.set('view', next)
@@ -235,7 +240,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     <div className="h-full">
       <div className="flex h-full flex-col md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]">
         <button
-          onClick={onBack}
+          onClick={leaveCase}
           className="group hidden h-full md:col-start-1 md:row-start-1 items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
         >
           <ArrowLeft size={14} className="text-[var(--muted)] transition-transform group-hover:-translate-x-0.5" />
@@ -280,7 +285,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
-        <button onClick={onBack} aria-label={tr('nav.switchCase')}
+        <button onClick={leaveCase} aria-label={tr('nav.switchCase')}
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <ArrowLeft size={16} />
         </button>
@@ -312,7 +317,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-1 md:row-span-2">
-        <div key={view} className={clsx('mx-auto', running.length > 0 && 'pt-16! sm:pt-16!', view === 'hunt'
+        <div key={view} className={clsx('mx-auto', running.length > 0 && 'pt-16! sm:pt-16!', (view === 'hunt' || view === 'iocbox')
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
           {view !== 'settings' && <div className="mb-4 flex flex-col gap-2 empty:hidden">
@@ -331,7 +336,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'database' && <DatabaseView {...props} />}
             {view === 'evidence' && <Evidence {...props} />}
             {view === 'timeline' && <Timeline {...props} />}
-            {view === 'report' && <Report {...props} onClosed={onBack} />}
+            {view === 'report' && <Report {...props} onClosed={leaveCase} />}
             {view === 'settings' && <Settings />}
           </Suspense>
         </div>

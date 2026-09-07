@@ -119,6 +119,13 @@ def migrate(conn):
         if name not in {r[1] for r in conn.execute("PRAGMA table_info(ioc_links)")}:
             conn.execute(f"ALTER TABLE ioc_links ADD COLUMN {name} {decl}")
     conn.executescript(SCHEMA)
+    # Defaults change once; explicit analyst decisions remain authoritative.
+    conn.execute("UPDATE iocs SET assessment='malicious' WHERE assessment='unassessed' "
+                 "AND NOT EXISTS(SELECT 1 FROM ioc_assessments a WHERE a.ioc_id=iocs.id)")
+    conn.executescript("""CREATE TRIGGER IF NOT EXISTS iocs_default_assessment AFTER INSERT ON iocs
+        WHEN NEW.assessment='unassessed' BEGIN
+          UPDATE iocs SET assessment='malicious' WHERE id=NEW.id;
+        END;""")
     conn.executescript("""CREATE TRIGGER IF NOT EXISTS iocs_identity AFTER INSERT ON iocs
         WHEN NEW.identity_key='' BEGIN
           UPDATE iocs SET identity_key=json_array(NEW.type,NEW.value,
@@ -263,12 +270,14 @@ def register_file(conn, hashes, artifact="", *, hash_id=None, path_id=None, size
 def enrich_rows(conn, rows):
     from server import db
     files = {f["ioc_id"]: f for f in db.rows(conn, "SELECT * FROM ioc_files")}
+    assessed = {a[0] for a in conn.execute("SELECT DISTINCT ioc_id FROM ioc_assessments")}
     members = {}
     spans = {o["ioc_id"]: o for o in db.rows(conn, "SELECT ioc_id,min(nullif(first_seen,'')) AS first_seen,"
                                           "max(nullif(last_seen,'')) AS last_seen FROM ioc_observations GROUP BY ioc_id")}
     for m in db.rows(conn, "SELECT * FROM ioc_file_members"):
         members.setdefault(m["ioc_id"], []).append(m["file_id"])
     for row in rows:
+        row["assessment_manual"] = row["id"] in assessed
         row["first_seen"] = spans.get(row["id"], {}).get("first_seen")
         row["last_seen"] = spans.get(row["id"], {}).get("last_seen")
         row["file_ids"] = members.get(row["id"], [])

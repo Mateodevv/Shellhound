@@ -117,6 +117,18 @@ function mocks() {
 }
 
 describe('Pattern Hunt forensic workbench', () => {
+  it('opens an older linked test without executing another hunt', async () => {
+    sessionStorage.clear()
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=41')
+    mocks()
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async path => path.endsWith('/hunt/tests?test_id=41') ? { tests: [TEST] } : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={() => {}} />)
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clusters', expect.anything()))
+    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
+    history.replaceState(null, '', '/')
+  })
+
   it('does not query while editing and applies only an explicitly selected cluster', async () => {
     sessionStorage.clear()
     sessionStorage.setItem('shellhound:hunt-workbench:case-1', JSON.stringify({

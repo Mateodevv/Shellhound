@@ -478,6 +478,19 @@ class EndpointSurfaceTests(unittest.TestCase):
         self.assertEqual(before_findings["total"], after_findings["total"])
         self.assertEqual(before_runs, after_runs)
 
+    def test_ioc_download_uses_explicit_selection_and_prunes_relationships(self):
+        slug = case_copy("ioc-selection-export")
+        status, created = post_json(f"/api/cases/{slug}/iocs", {"value": "selection-export.example"})
+        self.assertEqual(200, status, created)
+        self.assertIsInstance(created["id"], int)
+        status, selected = post_json(f"/api/cases/{slug}/iocs/export", {"ids": [created["id"]], "format": "json"})
+        self.assertEqual(200, status, selected)
+        self.assertEqual(["selection-export.example"], [i["value"] for i in selected["iocs"]])
+        self.assertEqual([], selected["iocs"][0]["related"])
+        status, empty = post_json(f"/api/cases/{slug}/iocs/export", {"ids": [], "format": "json"})
+        self.assertEqual(200, status, empty)
+        self.assertEqual([], empty["iocs"])
+
     def test_hunt_test_links_every_matching_ip_to_explicit_cves_before_apply(self):
         slug = case_copy("hunt-cve-auto")
         rule = {"client_match": "any", "requests": [{"clauses": [
@@ -491,6 +504,9 @@ class EndpointSurfaceTests(unittest.TestCase):
         status, tested = post_json(f"/api/cases/{slug}/hunt/tests", {"pattern_id": saved["entry"]["id"]})
         self.assertEqual(200, status, tested)
         self.assertGreater(tested["test"]["clients"], len(tested["result"]["clients"]))
+        detail_status, linked = get_json(f"/api/cases/{slug}/hunt/tests?test_id={tested['test']['id']}")
+        self.assertEqual(200, detail_status)
+        self.assertEqual([tested['test']['id']], [t['id'] for t in linked['tests']])
         case_conn = db.connect(WORKSPACE / slug)
         try:
             links = [l for l in db.ioc_links(case_conn) if l["kind"] == "cve-context"]

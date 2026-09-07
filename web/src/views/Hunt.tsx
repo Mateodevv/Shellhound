@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Columns3, Library, PanelRight, type LucideIcon } from 'lucide-react'
@@ -52,8 +52,18 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     queryKey: ['hunt-tests', slug],
     queryFn: () => api<{ tests: HuntTest[] }>(`/api/cases/${slug}/hunt/tests?limit=500`),
   })
+  const linkedTest = Number(new URLSearchParams(location.search).get('section')) || 0
+  const linkedRecord = useQuery({
+    queryKey: ['hunt-tests', slug, linkedTest],
+    queryFn: () => api<{ tests: HuntTest[] }>(`/api/cases/${slug}/hunt/tests?test_id=${linkedTest}`),
+    enabled: linkedTest > 0,
+  })
+  useEffect(() => {
+    if (linkedRecord.error) setError(linkedRecord.error.message)
+    else if (linkedTest && linkedRecord.data && !linkedRecord.data.tests.length) setError('The linked hunt test is no longer available.')
+  }, [linkedRecord.error, linkedRecord.data, linkedTest])
   const patterns = useMemo(() => library.data?.patterns ?? [], [library.data])
-  const audits = useMemo(() => tests.data?.tests ?? [], [tests.data])
+  const audits = useMemo(() => { const rows = tests.data?.tests ?? []; return [...rows, ...(linkedRecord.data?.tests ?? []).filter(t => !rows.some(r => r.id === t.id))] }, [tests.data, linkedRecord.data])
   const draft = session.draft
   const activeTest = audits.find((test) => test.id === session.testId) ?? null
   const selected = useMemo(() => new Set(session.selectedClusters), [session.selectedClusters])
@@ -111,8 +121,22 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     void qc.invalidateQueries({ queryKey: ['hunt-tests', slug] })
   }, [batchJob, qc, slug])
 
+  const linkedLoaded = useRef(0)
   useEffect(() => {
-    if (!patterns.length || session.draft) return
+    if (!linkedTest || linkedLoaded.current === linkedTest) return
+    const test = audits.find(item => item.id === linkedTest)
+    if (!test) return
+    linkedLoaded.current = linkedTest
+    const pattern = patterns.find(item => item.id === test.pattern_id)
+    const next = pattern ? { ...patternDraft(pattern), rule: test.rule, dsl: test.dsl } : emptyDraft({ name: `Hunt test #${test.id}`, rule: test.rule, dsl: test.dsl })
+    const hash = draftHash(next)
+    setCleanHash(hash)
+    setSession(state => ({ ...state, draft: next, selectedId: test.pattern_id, testId: test.id, testedHash: hash, selectedClusters: [], editorOpen: false, resultCollapsed: false }))
+    setFocus('results')
+  }, [linkedTest, audits, patterns])
+
+  useEffect(() => {
+    if (!patterns.length || session.draft || linkedTest) return
     const initial = patterns.find((pattern) => pattern.id === session.selectedId)
       ?? patterns.find((pattern) => pattern.enabled && !pattern.archived)
       ?? patterns[0]
@@ -124,7 +148,7 @@ export function Hunt({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     setSession((state) => ({ ...state, selectedId: initial.id, draft: next, editorOpen: false,
       testId: last?.id ?? null, testedHash: last?.rule_hash === initial.rule_hash ? hash : '',
       selectedClusters: [] }))
-  }, [audits, patterns, session.draft, session.selectedId])
+  }, [audits, patterns, session.draft, session.selectedId, linkedTest])
 
   useEffect(() => {
     if (!session.draft || cleanHash) return
