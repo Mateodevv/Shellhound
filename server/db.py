@@ -31,6 +31,31 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT
 );
+CREATE TABLE IF NOT EXISTS opencti_lookups (
+    ioc_id INTEGER PRIMARY KEY, identity TEXT NOT NULL,
+    checked_at TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_previews (
+    id TEXT PRIMARY KEY, created TEXT NOT NULL, fingerprint TEXT NOT NULL,
+    options TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_exports (
+    id TEXT PRIMARY KEY, state TEXT NOT NULL, created TEXT NOT NULL,
+    updated TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_mappings (
+    source_id TEXT NOT NULL, remote_id TEXT NOT NULL DEFAULT '',
+    standard_id TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL,
+    object_json TEXT NOT NULL, exported_at TEXT NOT NULL,
+    destination TEXT NOT NULL, PRIMARY KEY (source_id, destination)
+);
+CREATE TABLE IF NOT EXISTS opencti_enrichments (
+    id TEXT PRIMARY KEY, ioc_id INTEGER NOT NULL, identity TEXT NOT NULL,
+    entity_id TEXT NOT NULL, connector_id TEXT NOT NULL, work_id TEXT NOT NULL,
+    state TEXT NOT NULL, updated TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+    destination TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,                -- webroot | access_logs | sql_dump
@@ -409,6 +434,8 @@ def log_db_path(case_dir):
 # (or restored from an archive) needs them added explicitly -- otherwise the
 # first query against a new column would fail on a real analyst's case.
 _ADDED_COLUMNS = {
+    "iocs": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
+    "ioc_links": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
     "evidence": [
         ("label", "TEXT DEFAULT ''"),
         ("files", "INTEGER DEFAULT 0"),
@@ -465,7 +492,8 @@ _ADDED_COLUMNS = {
 # 10: Pattern Hunt keeps immutable draft-test audits and the analyst's
 #     selected cluster applications separately from generated findings.
 # 11: skipped paths and reasons belong to their job, surviving later scans.
-CASE_SCHEMA_VERSION = 11
+# 12: stable IOC source identities, provenance cleanup and OpenCTI receipts.
+CASE_SCHEMA_VERSION = 12
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -475,6 +503,8 @@ CASE_SCHEMA_VERSION = 11
 _CURRENT_SCHEMA_TABLES = {
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",
+    "opencti_lookups", "opencti_previews", "opencti_exports",
+    "opencti_mappings", "opencti_enrichments",
 }
 
 
@@ -580,6 +610,25 @@ def _upgrade(conn):
                  row[7], row[8], row[9], row[10], row[11], row[12], "{}",
                  row[3], digest))
     _relativize_ioc_paths(conn)
+    for table in ("iocs", "ioc_links"):
+        conn.execute(f"UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE source_uid=''")
+        conn.executescript(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_source_uid AFTER INSERT ON {table}
+            WHEN NEW.source_uid = '' BEGIN
+                UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE id=NEW.id;
+            END;
+        """)
+    # Old manual deletes did not remove provenance; rowid reuse could then
+    # attach a different IOC to an unrelated artifact.
+    conn.execute("DELETE FROM ioc_sources WHERE ioc_id NOT IN (SELECT id FROM iocs)")
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS delete_ioc_provenance AFTER DELETE ON iocs
+        BEGIN
+            DELETE FROM ioc_sources WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_links WHERE src = OLD.id OR dst = OLD.id;
+            DELETE FROM opencti_lookups WHERE ioc_id = OLD.id;
+        END;
+    """)
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -895,7 +944,7 @@ def ioc_links(conn):
     deleted disappears from every view without any delete path having had to
     think of it."""
     return rows(conn, """
-        SELECT l.id, l.kind, l.note, l.added,
+        SELECT l.id, l.kind, l.note, l.added, l.source_uid,
                l.src AS src_id, s.value AS src_value, s.type AS src_type,
                l.dst AS dst_id, d.value AS dst_value, d.type AS dst_type
           FROM ioc_links l

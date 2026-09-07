@@ -315,6 +315,9 @@ def tearDownModule():
 # A value of None means "not an API answer": the two below serve the built
 # interface and are asserted separately.
 GET_ROUTES = {
+    "/api/organizations": "",
+    "/api/opencti/settings": "",
+    "/api/cases/{slug}/opencti": "",
     "/api/state": "",
     "/api/archives": "",
     "/api/settings": "",

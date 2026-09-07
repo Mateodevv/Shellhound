@@ -13,7 +13,7 @@ import {
 } from '../api'
 import { formatCount } from '../format'
 import {
-  Button, Chip, Card, CopyButton, EmptyState, IocTag, SearchInput,
+  Button, Chip, Card, CopyButton, EmptyState, IocTag, SearchInput, Modal,
 } from '../components/ui'
 import { InfoDot, Tooltip } from '../components/Tooltip'
 import { IpFlag } from '../components/IpFlag'
@@ -22,6 +22,8 @@ import { FileViewer } from '../components/FileViewer'
 import { TraceWindow } from '../components/TraceWindow'
 import type { ViewId } from '../App'
 import { defang } from '../defang'
+import { useOpenCti } from '../opencti'
+import { OpenCtiToolbar, OpenCtiStatus, OpenCtiDetails } from '../components/OpenCti'
 
 const TYPE_ICON: Record<string, typeof Globe> = {
   ip: Globe, hash: Fingerprint, url: Link2, domain: Globe, email: AtSign,
@@ -53,7 +55,7 @@ function shortValue(value: string): string {
   return value.length > 26 ? `${value.slice(0, 10)}…${value.slice(-10)}` : value
 }
 
-export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
+export function IocBox({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
   const tr = useT()
   const qc = useQueryClient()
   const { data: iocs } = useQuery({
@@ -63,6 +65,15 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const { data: crossCase } = useQuery({
     queryKey: ['iocs', 'cross-case', slug],
     queryFn: () => api<CrossCaseIocResponse>(`/api/cases/${slug}/iocs/cross-case`),
+  })
+  const cti = useOpenCti(slug)
+  const [selection, setSelection] = useState<Set<number> | null>(null)
+  const [ctiDetail, setCtiDetail] = useState<number | null>(null)
+  const selectedIds = (iocs ?? []).filter((ioc) => selection === null || selection.has(ioc.id)).map((ioc) => ioc.id)
+  const toggleSelected = (id: number) => setSelection((previous) => {
+    const next = new Set(previous ?? (iocs ?? []).map((ioc) => ioc.id))
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
   })
   // Hide switches as everywhere: a click hides the type resp. the tag, the
   // next click brings it back, several of them stack.
@@ -99,7 +110,10 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
   const toggleOpen = toggleIn(setOpened)
   const toggleEnrich = toggleIn(setEnrichOpen)
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['iocs'] })
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['opencti', slug] })
+    return qc.invalidateQueries({ queryKey: ['iocs'] })
+  }
   const add = useMutation({
     mutationFn: () => post(`/api/cases/${slug}/iocs`, { value: newValue, note: newNote }),
     onSuccess: () => { setNewValue(''); setNewNote(''); invalidate() },
@@ -225,6 +239,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
     const Icon = TYPE_ICON[ioc.type] ?? Box
     return (
       <div className="flex items-center gap-3">
+        <input type="checkbox" aria-label={tr('cti.select', { value: ioc.value })} checked={selection === null || selection.has(ioc.id)} onChange={() => toggleSelected(ioc.id)} />
         <Icon size={docked ? 13 : 15} className="shrink-0 text-[var(--muted)]" />
         <select
           value={ioc.type}
@@ -239,6 +254,7 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
           <span className="min-w-0 truncate">{ioc.value}</span>
         </span>
+        <OpenCtiStatus value={ioc.value} lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ioc.id)} sync={cti.data?.sync?.find((entry) => entry.ioc_id === ioc.id)?.status} onClick={() => setCtiDetail(ioc.id)} />
         {/* When the address was ACTIVE -- the recipient's first question
             about an indicator, and the log index has known the answer all
             along. Dates in the log's own local time. */}
@@ -409,6 +425,8 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
           ))}
         </div>
       </div>
+
+      <OpenCtiToolbar slug={slug} iocs={iocs ?? []} selectedIds={selectedIds} onSelectAll={() => setSelection(null)} onClear={() => setSelection(new Set())} onSettings={() => gotoView('settings')} />
 
       {filtersOpen && (
         <Card id="ioc-filter-panel" surface="raised" className="flex flex-col gap-3 p-4 animate-fade-up">
@@ -672,6 +690,9 @@ export function IocBox({ slug }: { slug: string; gotoView: (v: ViewId) => void }
         <TraceWindow slug={slug} ips={[traceIp]} onClose={() => setTraceIp(null)} />
       )}
 
+      {ctiDetail !== null && <Modal open onClose={() => setCtiDetail(null)} title={iocs?.find((entry) => entry.id === ctiDetail)?.value ?? tr('cti.title')}>
+        <OpenCtiDetails lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ctiDetail)} />
+      </Modal>}
       <FileViewer slug={slug} path={viewingPath} layer={1}
         onClose={() => setViewingPath(null)} />
     </div>

@@ -125,8 +125,8 @@ export function Evidence({ slug }: {
   const newEvidence = pendingEvidence.filter((item) => !needsAttention(evidenceAttempt(item)))
   const analyzedEvidence = evidence.filter((item) => Boolean(item.scanned_at) && !needsAttention(evidenceAttempt(item)))
   const retryFull = attentionEvidence.some((item) => Boolean(item.scanned_at))
-  const hasAnalysisHistory = Boolean(jobs?.length)
-  const analysisActive = Boolean(jobs?.some((job) =>
+  const hasAnalysisHistory = runs.length > 0
+  const analysisActive = runs.some((run) => run.jobs.some((job) =>
     job.state === 'queued' || job.state === 'running'))
   const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
   const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
@@ -399,7 +399,7 @@ export function Evidence({ slug }: {
           {runs.map((run, index) => (
             <AnalysisRun key={run.id} run={run} slug={slug} initiallyOpen={index === 0} />
           ))}
-          {jobs && !jobs.length && (
+          {jobs && !runs.length && (
             <div className="text-[13px] text-[var(--muted)]">{tr('evidence.noJobs')}</div>
           )}
         </div>
@@ -635,6 +635,9 @@ interface RunGroup { id: string; created: string; jobs: Job[] }
 function groupJobs(jobs: Job[]): RunGroup[] {
   const groups = new Map<string, RunGroup>()
   for (const job of jobs) {
+    // Intelligence requests have their own receipts in the IOC box; they
+    // neither scan evidence nor complete an analysis engine.
+    if (job.kind.startsWith('opencti-')) continue
     // Cases from before run_id are still readable. Jobs created by one click
     // share a second, which is a better legacy boundary than displaying the
     // unrelated database row ids as if they were runs.

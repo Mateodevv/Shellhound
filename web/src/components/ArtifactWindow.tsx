@@ -1,7 +1,7 @@
 // ArtifactWindow.tsx -- one bounded evidence workspace and an explicit save.
 //
-// Hostile files are only ever rendered as inert JSON text. VirusTotal remains
-// manual and receives only SHA-256; "show in file manager" selects the file
+// Hostile files are only ever rendered as inert JSON text. Intelligence
+// panels read stored results; "show in file manager" selects the file
 // and never executes it. The same review window is shared by every view.
 import { plural, useT } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
@@ -341,6 +341,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
 
   const fileFacts = file && (
     <div className="grid grid-cols-2 gap-2">
+      {file.changed_since_scan && <div className="col-span-2 rounded-lg border border-[var(--warn)]/40 p-3 text-[12px] text-[var(--warn)]">
+        <p>{tr('cti.fileChanged')}</p>{file.scanned_sha256 && <p className="mono mt-1 break-all" title={tr('cti.scannedHash')}>{file.scanned_sha256}</p>}
+      </div>}
       <MetaCell label={tr('artifact.size')}>
         {file.exists ? formatBytes(file.size) : tr('artifact.fileMissing')}
       </MetaCell>

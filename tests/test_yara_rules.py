@@ -158,7 +158,7 @@ class OffSwitchTests(unittest.TestCase):
         """settings.load() drops what it does not know, so every key the file
         may carry has to be part of the model."""
         yarascan.set_rule_enabled(self.ws, "demo.yar", False)
-        settingslib.set_ack(self.ws, True)
+        settingslib.set_opencti(self.ws, {"url": "https://cti.example.test"})
         self.assertEqual({"demo.yar"}, settingslib.yara_disabled(self.ws))
 
     def test_status_separates_no_rules_from_all_switched_off(self):
