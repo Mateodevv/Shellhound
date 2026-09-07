@@ -20,7 +20,9 @@ class WindowsEvidencePathTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=io_path(tempfile.gettempdir()))
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Hosted Windows runners use an 8.3 alias such as RUNNER~1 for TEMP.
+        # The evidence fence resolves aliases, so compare canonical paths.
+        self.root = Path(self.temp.name).resolve()
         self.evidence = self.root / "Evidence #123 ä"
         self.deep = self.evidence
         while len(display_path(self.deep)) < 290:
