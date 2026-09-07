@@ -16,23 +16,54 @@ class AnalysisReceipts:
     still select the evidence. No worker waits for a queued sibling.
     """
 
-    def __init__(self, tasks, evidence, mark_scanned):
+    def __init__(self, tasks, evidence, mark_scanned, record_attempt=None):
         self.required = {}
         for engine, _fn, kinds in tasks:
             for kind in kinds:
                 self.required.setdefault(kind, set()).add(engine)
         self.evidence = evidence
         self.mark_scanned = mark_scanned
+        self.record_attempt = record_attempt
+        self.outcomes = {}
         self.finished = {}
         self.marked = set()
         self.lock = threading.Lock()
+        self._record()
+
+    def _record(self):
+        if self.record_attempt is None:
+            return
+        for kind, required in self.required.items():
+            engines = {name: self.outcomes.get(name, {"state": "running"})
+                       for name in sorted(required)}
+            states = {entry["state"] for entry in engines.values()}
+            status = next((state for state in ("running", "failed", "cancelled", "partial")
+                           if state in states), "complete")
+            self.record_attempt([row["id"] for row in self.evidence[kind]],
+                                {"status": status, "engines": engines})
+
+    def cancel(self, engine):
+        """A queued engine may be cancelled before its wrapper ever runs."""
+        with self.lock:
+            self.outcomes[engine] = {"state": "cancelled"}
+            self._record()
 
     def wrap(self, engine, fn):
         def run(ctx):
-            stats = fn(ctx) or {}
-            if ctx.cancelled() or not stats_complete(stats):
-                return stats
+            try:
+                stats = fn(ctx) or {}
+            except Exception:
+                with self.lock:
+                    self.outcomes[engine] = {"state": "failed"}
+                    self._record()
+                raise
             with self.lock:
+                state = ("cancelled" if ctx.cancelled() else
+                         "complete" if stats_complete(stats) else "partial")
+                self.outcomes[engine] = {"state": state, "stats": stats}
+                if state != "complete":
+                    self._record()
+                    return stats
                 self.finished[engine] = (stats, ctx)
                 for kind, required in self.required.items():
                     if kind in self.marked or not required.issubset(self.finished):
@@ -46,5 +77,6 @@ class AnalysisReceipts:
                         name: self.finished[name][0] for name in sorted(required)}
                     self.mark_scanned([row["id"] for row in self.evidence[kind]], receipt)
                     self.marked.add(kind)
+                self._record()
             return stats
         return run

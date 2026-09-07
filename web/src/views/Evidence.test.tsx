@@ -152,3 +152,52 @@ describe('evidence registration', () => {
       '/api/cases/case-1/analyze', { mode: 'all' }))
   })
 })
+
+
+describe('incomplete evidence analysis', () => {
+  it.each([false, true])('shows partial scans accurately and retries them (previous receipt: %s)', async (previousReceipt) => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/jobs')) return [{
+        id: 1, run_id: 'partial-run', kind: 'webshell', state: 'done', progress: 1,
+        message: '', error: '', created: '2026-09-02T10:00:00',
+        stats: { scanned: 4631, findings: 12, skipped: 1 },
+      }]
+      return { ...CASE, evidence_items: [{
+        id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '2026-09-01T10:00:00',
+        scanned_at: previousReceipt ? '2026-09-01T11:00:00' : '', exists: true,
+        stats: { last_attempt: { status: 'partial', at: '2026-09-02T10:00:01' } },
+      }] }
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Partially analyzed')).toBeInTheDocument()
+    expect(screen.getByText('Analysis needs attention')).toBeInTheDocument()
+    expect(screen.getByText('Incomplete')).toBeInTheDocument()
+    expect(screen.getByText(/1 skipped file/)).toBeInTheDocument()
+    expect(screen.queryByText('not analyzed yet')).not.toBeInTheDocument()
+    expect(screen.queryByText('Complete')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry pending analysis (1)' }))
+    if (previousReceipt) {
+      expect(await screen.findByRole('dialog', { name: 'Reanalyze the complete case?' })).toBeVisible()
+      expect(post).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Reanalyze all evidence' }))
+    }
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/analyze', {
+      mode: previousReceipt ? 'all' : 'new',
+    }))
+  })
+
+  it('recognizes partial scans in cases created before attempt records existed', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/jobs')) return [{
+        id: 1, run_id: 'legacy-run', kind: 'webshell', state: 'done', progress: 1,
+        created: '2026-09-02T10:00:00', stats: { scanned: 100, skipped: 1 },
+      }]
+      return { ...CASE, evidence_items: [{
+        id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '2026-09-01T10:00:00',
+        scanned_at: '', exists: true, stats: {},
+      }] }
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Partially analyzed')).toBeInTheDocument()
+  })
+})

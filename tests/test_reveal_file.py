@@ -98,6 +98,19 @@ class RevealFileTests(unittest.TestCase):
         self.assertEqual(503, raised.exception.status_code)
         self.assertIn("file manager", raised.exception.detail)
 
+    def test_access_and_resolution_errors_are_not_reported_as_missing_files(self):
+        for error, status, message in ((PermissionError("denied"), 403, "access"),
+                                       (OSError("drive unavailable"), 400, "resolved")):
+            with self.subTest(error=error), patch.object(Path, "resolve", side_effect=error), \
+                    patch.object(app_module.subprocess, "Popen") as launch:
+                # Resolve the case before injecting the evidence path failure.
+                with patch.object(workspace, "resolve_case", return_value=self.case_dir):
+                    with self.assertRaises(HTTPException) as raised:
+                        self._call(self.file)
+            self.assertEqual(status, raised.exception.status_code)
+            self.assertIn(message, raised.exception.detail)
+            launch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

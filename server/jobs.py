@@ -84,7 +84,7 @@ class JobManager:
         self._lock = threading.Lock()
         self._idle = threading.Condition(self._lock)
 
-    def submit(self, case_dir, kind, fn, evidence_id=None, run_id=""):
+    def submit(self, case_dir, kind, fn, evidence_id=None, run_id="", on_cancel=None):
         """Queue `fn(ctx)` as a job. fn returns a stats dict (stored as JSON)
         and may raise -- the traceback lands in the job row, never in a 500."""
         conn = db.connect(case_dir)
@@ -103,7 +103,7 @@ class JobManager:
             self.live[_key(case_dir, job_id)] = ctx
         hub.publish({"type": "job", "job": {"id": job_id, "kind": kind,
                                             "state": "queued", "progress": 0}})
-        self.pool.submit(self._run, ctx, kind, fn)
+        self.pool.submit(self._run, ctx, kind, fn, on_cancel)
         return job_id
 
     def cancel(self, case_dir, job_id):
@@ -166,9 +166,11 @@ class JobManager:
             job["stats"] = json.loads(job.get("stats") or "{}")
             hub.publish({"type": "job", "job": job})
 
-    def _run(self, ctx, kind, fn):
+    def _run(self, ctx, kind, fn, on_cancel=None):
         try:
             if ctx.cancelled():
+                if on_cancel is not None:
+                    on_cancel()
                 self._set_state(ctx, "cancelled")
                 return
             self._set_state(ctx, "running")

@@ -27,6 +27,7 @@ import os
 import re
 
 from server import bundled_rules, db, ruleswitch
+from server.paths import display_path, io_path
 from server.engines.fsutil import get_files_recursive, path_within_any, sha256_of
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
@@ -208,7 +209,7 @@ def scan_file(file_path, root=None):
     Every finding carries the id of the rule that produced it, so `scan` can
     drop the ones this workspace has switched off in one place instead of
     each rule having to remember to ask."""
-    abs_path = os.path.abspath(file_path)
+    abs_path = os.path.abspath(display_path(file_path))
     site_path = _site_path(abs_path, root)
     base_name = os.path.basename(file_path).lower()
     ext = os.path.splitext(base_name)[1]
@@ -227,7 +228,7 @@ def scan_file(file_path, root=None):
         return findings, None, None
 
     try:
-        size = os.path.getsize(file_path)
+        size = os.path.getsize(io_path(file_path))
     except OSError as e:
         if is_php and in_upload_dir(site_path):
             findings.append(("webshell.unreadable", 0,
@@ -243,7 +244,7 @@ def scan_file(file_path, root=None):
         return findings, f"too large for content scan ({size} bytes)", None
 
     try:
-        with open(file_path, "rb") as f:
+        with open(io_path(file_path), "rb") as f:
             raw = f.read()
     except OSError as e:
         if is_php and in_upload_dir(site_path):
@@ -307,7 +308,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
     # need the path below that root, not the one on this machine.
     files = []
     for target in targets:
-        if os.path.isfile(target):
+        if os.path.isfile(io_path(target)):
             files.append((target, os.path.dirname(target)))
         else:
             files.extend((f, target) for f in get_files_recursive(target))
@@ -344,7 +345,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
                              f"{stats['findings']} findings")
             stats["scanned"] += 1
             findings, skip_reason, inert = scan_file(file_path, root)
-            abs_path = os.path.abspath(file_path)
+            abs_path = os.path.abspath(display_path(file_path))
             for rule_id, severity, rule, line, evidence in findings:
                 if rule_id in off:
                     continue

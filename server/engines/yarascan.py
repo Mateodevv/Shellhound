@@ -29,6 +29,7 @@ import re
 
 from server import db, settings as settingslib
 from server.engines.fsutil import get_files_recursive, path_within_any
+from server.paths import display_path, io_path
 
 import yara
 
@@ -324,7 +325,7 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
 
     files = []
     for target in targets:
-        if os.path.isfile(target):
+        if os.path.isfile(io_path(target)):
             files.append(target)
         else:
             files.extend(get_files_recursive(target))
@@ -359,15 +360,22 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
                 ctx.progress(0.02 + (i / total) * 0.95,
                              f"{i:,}/{total:,} files — {stats['findings']} findings")
             stats["scanned"] += 1
-            abs_path = os.path.abspath(file_path)
+            abs_path = os.path.abspath(display_path(file_path))
             try:
-                if os.path.getsize(file_path) > MAX_SCAN_BYTES:
+                if os.path.getsize(io_path(file_path)) > MAX_SCAN_BYTES:
                     conn.execute(
                         "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                         ("yara", abs_path, "too large for a YARA scan"))
                     stats["skipped"] += 1
                     continue
-                matches = compiled.match(file_path, timeout=20)
+                # Python handles Windows extended/Unicode paths; the native
+                # YARA filename API does not do so reliably. Preserve the
+                # existing size limit even if the file grows after getsize.
+                with open(io_path(file_path), "rb") as handle:
+                    content = handle.read(MAX_SCAN_BYTES + 1)
+                if len(content) > MAX_SCAN_BYTES:
+                    raise ValueError("file grew beyond the YARA scan size limit")
+                matches = compiled.match(data=content, timeout=20)
             except Exception as e:             # yara.Error, OSError, TimeoutError
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",

@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from server import db
+from server.paths import display_path, io_path
 from server.engines.fsutil import path_within_any
 
 WORDPRESS = "WordPress"
@@ -68,7 +69,7 @@ def find_installs(target_dir):
     Every install carries the FILE its version was read from -- a version one
     cannot go back and verify has no place in a report."""
     wordpress, joomla4, joomla3 = {}, {}, {}
-    for dirpath, _dirnames, filenames in os.walk(target_dir):
+    for dirpath, _dirnames, filenames in os.walk(io_path(target_dir)):
         files = {name.lower(): name for name in filenames}
         d = Path(dirpath)
         name = d.name.lower()
@@ -94,6 +95,9 @@ def find_installs(target_dir):
     installs += [{"type": JOOMLA, "root": root, "version": found[0],
                   "source": found[1]}
                  for root, found in joomla_roots.items()]
+    for install in installs:
+        install["root"] = Path(display_path(install["root"]))
+        install["source"] = Path(display_path(install["source"]))
     return sorted(installs, key=lambda i: str(i["root"]))
 
 
@@ -304,7 +308,7 @@ def scan(case_dir, targets, ctx=None, authoritative=True):
                 ctx.progress(0.05, f"Searching CMS installations in {target}…")
             installs = find_installs(target)
             for n, install in enumerate(installs):
-                root = str(install["root"])
+                root = display_path(install["root"])
                 version = install["version"] or "(unknown)"
                 if ctx is not None:
                     ctx.progress(0.2 + 0.75 * (n / max(1, len(installs))),
@@ -313,7 +317,7 @@ def scan(case_dir, targets, ctx=None, authoritative=True):
                     "INSERT OR REPLACE INTO cms_installs (root, cms, version,"
                     " version_source) VALUES (?,?,?,?)",
                     (root, install["type"], version,
-                     str(install.get("source") or "")))
+                     display_path(install.get("source") or "")))
                 install_id = cur.lastrowid
                 stats["installs"] += 1
                 if version == "(unknown)":
@@ -321,12 +325,12 @@ def scan(case_dir, targets, ctx=None, authoritative=True):
                 inventory_fn = (inventory_wordpress if install["type"] == WORDPRESS
                                 else inventory_joomla)
                 for ext_type, name, slug, ext_version, path, source in inventory_fn(
-                        Path(install["root"])):
+                        Path(io_path(install["root"]))):
                     conn.execute(
                         "INSERT INTO cms_items (install_id, type, name, slug,"
                         " version, path, version_source) VALUES (?,?,?,?,?,?,?)",
                         (install_id, ext_type, name, slug, ext_version,
-                         str(path), str(source or "")))
+                         display_path(path), display_path(source or "")))
                     stats["items"] += 1
                     if ext_version == "(unknown)":
                         stats["unknown_versions"] += 1
