@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import db, opencti_graph as graph, opencti_service as service, workspace
+from server import db, ioc_model, opencti_graph as graph, opencti_service as service, workspace
 from server.config import Config
 from server.jobs import manager
 from server.opencti_client import OpenCTIClient
@@ -69,6 +69,17 @@ def _fixture(output_root):
         for kind, role in (("hash", "hash"), ("path", "direct")):
             conn.execute("INSERT INTO ioc_sources(ioc_id,artifact,role,active,added) VALUES(?,?,?,1,?)",
                          (ids[kind], str(file), role, db.now()))
+        file_id = ioc_model.collect_file(conn, str(file), values["hash"], ids["hash"], ids["path"], "webshell")
+        ioc_model.assess(conn, file_id, "benign", "Synthetic inert acceptance bytes; the classification above tests mapping only.")
+        ioc_model.relationship(conn, ids["ip"], file_id, "request-context", "Synthetic request record 1",
+                               "Synthetic mapping test; neither execution nor exploitation is asserted.")
+        # A real CVE identifier is used solely to test relationship compatibility.
+        # This explicitly synthetic case asserts no activity against a real system.
+        cve_id = db.add_ioc(conn, "CVE-2021-44228", "vulnerability", note="Synthetic mapping test only")
+        ioc_model.relationship(conn, ids["ip"], cve_id, "cve-context", "Synthetic fixture record 2",
+                               "Compatibility test, not evidence of exploitation.")
+        conn.execute("UPDATE iocs SET context=?,identity_key=? WHERE id=?", (
+            "synthetic-system-" + suffix, ioc_model.identity(values["user"], "user", "synthetic-system-" + suffix), ids["user"]))
         conn.commit()
     finally:
         conn.close()
@@ -130,7 +141,9 @@ def run(workspace_root, *, transfer=False, sample=False, offline=False, resume=N
         _write(case / "opencti-preview.json", preview)
         proof["preview"] = {"iocs": len(preview["iocs"]), "relationships": len(preview["relationships"]),
                             "objects": len(preview["objects"]), "fingerprint": preview["fingerprint"]}
-        if proof["preview"]["iocs"] != 8 or proof["preview"]["relationships"] != 4:
+        expected_types = {"ip", "domain", "url", "email", "path", "user", "hash", "other"}
+        expected_links = {"hash-of", "requested", "host-in", "account-of"}
+        if not expected_types <= {r["type"] for r in preview["iocs"]} or not expected_links <= {r["kind"] for r in preview["relationships"]}:
             raise ValueError("Synthetic fixture graph is incomplete.")
         if not offline:
             client = OpenCTIClient(service._config(workspace_root))

@@ -56,7 +56,7 @@ export interface OpenCtiPreview {
   warnings: string[]; errors: string[]
 }
 export interface OpenCtiEnrichmentPreview {
-  entities: { ioc_id: number; id: string | null; value: string; type: string; requires_creation: boolean }[]
+  entities: { ioc_id: number; id: string | null; value: string; type: string; requires_creation: boolean; requires_transfer?: boolean }[]
   connectors: OpenCtiConnector[]; warnings: string[]
 }
 

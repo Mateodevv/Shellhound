@@ -130,6 +130,7 @@ function EnrichmentDialog({ slug, data, ids, onClose, onQueued }: { slug: string
   const [connectors, setConnectors] = useState<string[]>([])
   const [createMissing, setCreateMissing] = useState(false)
   const missing = data.entities.filter((entity) => entity.requires_creation)
+  const needsTransfer = data.entities.some((entity) => entity.requires_transfer)
   const available = data.connectors.filter((connector) => connector.active)
   const run = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/enrich`, { ioc_ids: ids, connector_ids: connectors, create_missing: createMissing }), onSuccess: onQueued })
   return <Modal open title={tr('cti.enrichPreview')} onClose={onClose}><div className="flex flex-col gap-4 text-[12px]">
@@ -143,6 +144,6 @@ function EnrichmentDialog({ slug, data, ids, onClose, onQueued }: { slug: string
         <span>{connector.name} · {connector.scope.join(', ')}{connector.auto && <span className="block text-[var(--warn)]">{tr('cti.automatic')}</span>}</span>
       </label>)}
     </fieldset><CtiError error={run.error} />
-    <div className="flex justify-end gap-2"><Button onClick={onClose}>{tr('common.cancel')}</Button><Button variant="primary" disabled={!connectors.length || (!!missing.length && !createMissing) || run.isPending} onClick={() => run.mutate()}>{tr('cti.startEnrich')}</Button></div>
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{tr('common.cancel')}</Button><Button variant="primary" disabled={needsTransfer || !connectors.length || (!!missing.length && !createMissing) || run.isPending} onClick={() => run.mutate()}>{tr('cti.startEnrich')}</Button></div>
   </div></Modal>
 }

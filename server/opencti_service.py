@@ -65,7 +65,22 @@ def _config(root):
 
 
 def _identity(row):
-    return _digest([row.get("source_uid"), row["type"], row["value"]])
+    parts = [row.get("source_uid"), row["type"], row["value"]]
+    if row.get("context"):
+        parts.append(row["context"])
+    return _digest(parts)
+
+
+def _unsupported(row):
+    return row["type"] in ("path", "other") or row["type"] == "user" and not row.get("context")
+
+
+def _lookup_row(client, row):
+    if row["type"] == "user" and row.get("context"):
+        match = client.find_existing_shared(graph._observable(row, row["value"]))
+        resolved = client.resolve(match["id"]) if match else None
+        return [resolved] if resolved else []
+    return client.lookup(row["type"], row["value"])
 
 
 def _iocs(case_dir, ids=None):
@@ -94,10 +109,13 @@ def _revisions(case_dir):
                            "triage,triage_note,triaged_at,engine,seen_run "
                            "FROM findings ORDER BY id")
         meta = db.rows(conn, "SELECT key,value FROM meta WHERE key IN ('webshell_hashes','profile') OR key LIKE 'engine_done:%' ORDER BY key")
+        structured = {table: db.rows(conn, f"SELECT * FROM {table} ORDER BY rowid") for table in (
+            "ioc_files", "ioc_file_members", "ioc_observations", "ioc_assessments",
+            "ioc_relationship_evidence", "ioc_relationship_events")}
     finally:
         conn.close()
     profile = workspace.case_info(case_dir).get("profile", {})
-    common_revision = _digest([decisions, meta, profile])
+    common_revision = _digest([decisions, meta, profile, structured])
     by_source, by_link, file_stats = {}, {}, {}
     for source in sources:
         by_source.setdefault(source["ioc_id"], []).append(source)
@@ -280,10 +298,10 @@ def lookup(root, case_dir, ioc_ids=None):
                 break
             payload = {"ioc_id": ioc["id"], "checked_at": db.now(), "stale": False, "entities": [], "error": ""}
             try:
-                if ioc["type"] in ("path", "user", "other"):
+                if _unsupported(ioc):
                     payload["status"] = "unsupported"
                 else:
-                    entities = client.lookup(ioc["type"], ioc["value"])
+                    entities = _lookup_row(client, ioc)
                     payload["entities"] = [_entity(e) for e in entities]
                     payload["status"] = "own" if _only_own(entities, owned_ids) else ("known" if entities else "unknown")
             except Exception as exc:
@@ -316,6 +334,11 @@ def _error(exc):
 
 
 def preview(root, case_dir, options=None):
+    # Bring a legacy case to the current local schema before taking the
+    # immutable graph snapshot. Otherwise migration midway through preview
+    # would immediately invalidate its source IDs and fingerprint.
+    conn = db.connect(case_dir)
+    conn.close()
     options = dict(options or {})
     result = graph.build_preview(case_dir, options)
     result["graph_fingerprint"] = result["fingerprint"]
@@ -708,13 +731,16 @@ def enrichment_preview(root, case_dir, ioc_ids=None):
     entities = []
     warnings = []
     for row in rows:
-        if row["type"] in ("path", "user", "other"):
+        if _unsupported(row):
             warnings.append(f"IOC {row['id']} is contextual and has no external enrichment target.")
             continue
-        matches = client.lookup(row["type"], row["value"])
+        matches = _lookup_row(client, row)
         entities.append({"ioc_id": row["id"], "id": matches[0]["id"] if matches else None,
-                         "value": row["value"], "type": row["type"], "requires_creation": not matches})
-    types = {_ioc_entity_type(row) for row in rows if row["type"] not in ("path", "user", "other")}
+                         "value": row["value"], "type": row["type"], "requires_creation": not matches,
+                         "requires_transfer": not matches and row["type"] in ("user", "vulnerability")})
+        if not matches and row["type"] in ("user", "vulnerability"):
+            warnings.append(f"Transfer IOC {row['id']} (account or CVE) before starting enrichment, or remove it from this selection.")
+    types = {_ioc_entity_type(row) for row in rows if not _unsupported(row)}
     connectors = [c for c in _connectors(client) if c.get("active") and not c.get("auto")
                   and any(_scope_matches(c, kind) for kind in types)]
     if any(e["requires_creation"] for e in entities):
@@ -723,8 +749,8 @@ def enrichment_preview(root, case_dir, ioc_ids=None):
 
 
 def _ioc_entity_type(row):
-    return {"ip": "IPv6-Addr" if ":" in row["value"] else "IPv4-Addr", "hash": "StixFile",
-            "domain": "Domain-Name", "url": "Url", "email": "Email-Addr"}.get(row["type"], "")
+    return {"ip": "IPv6-Addr" if ":" in row["value"] else "IPv4-Addr", "hash": "StixFile", "file": "StixFile", "vulnerability": "Vulnerability",
+            "domain": "Domain-Name", "url": "Url", "email": "Email-Addr", "user": "User-Account"}.get(row["type"], "")
 
 
 def _scope_matches(connector, entity_type):
@@ -755,7 +781,7 @@ def _poll_enrichment(client, case_dir, entry, ctx):
 
 
 def _refresh_lookup(client, case_dir, row, config):
-    entities = client.lookup(row["type"], row["value"])
+    entities = _lookup_row(client, row)
     payload = {"ioc_id": row["id"], "checked_at": db.now(), "stale": False,
                "entities": [_entity(e) for e in entities],
                "status": "own" if _only_own(entities, _mapped_ids(case_dir, config)) else ("known" if entities else "unknown"), "error": ""}
@@ -815,12 +841,14 @@ def enrich(root, case_dir, ioc_ids, connector_ids, create_missing=False):
         for row in rows:
             if ctx.cancelled():
                 break
-            if row["type"] in ("path", "user", "other"):
+            if _unsupported(row):
                 continue
             if not any(_scope_matches(connectors[key], _ioc_entity_type(row)) for key in connector_ids):
                 continue
-            matches = client.lookup(row["type"], row["value"])
+            matches = _lookup_row(client, row)
             if not matches:
+                if row["type"] in ("user", "vulnerability"):
+                    raise ValueError("Transfer this account or CVE to OpenCTI before requesting enrichment.")
                 if not create_missing:
                     raise ValueError("An unknown IOC requires explicit permission to create an observable. Review enrichment again.")
                 _manual_only(client)

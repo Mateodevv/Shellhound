@@ -17,6 +17,26 @@ from tests.test_http import _LiveServer
 
 
 class OpenCTIHTTPTests(unittest.TestCase):
+    def test_structured_ioc_api_validation_and_offline_details(self):
+        base = f"/api/cases/{self.slug}"
+        for value, kind in (("198.51.100.9", "ip"), ("CVE-2026-12345", "vulnerability")):
+            self.assertEqual(200, self.request("POST", base + "/iocs", {"value": value, "type": kind})[0])
+        rows = self.request("GET", base + "/iocs")[1]
+        ip = next(r["id"] for r in rows if r["type"] == "ip")
+        cve = next(r["id"] for r in rows if r["type"] == "vulnerability")
+        self.assertEqual(401, self.request("POST", base + f"/iocs/{ip}/assessments", {"state": "malicious", "reason": "Finding 1"}, token="bad")[0])
+        self.assertEqual(400, self.request("POST", base + f"/iocs/{ip}/assessments", {"state": "malicious", "reason": " "})[0])
+        self.assertEqual(200, self.request("POST", base + f"/iocs/{ip}/assessments", {"state": "suspicious", "reason": "Finding 1"})[0])
+        code, link = self.request("POST", base + "/ioc-relationships", {"src": ip, "dst": cve, "kind": "exploit-attempt", "reference": "Access log line 5"})
+        self.assertEqual(200, code)
+        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+            code, detail = self.request("GET", base + f"/iocs/{ip}/detail")
+        self.assertEqual(200, code)
+        self.assertEqual("suspicious", detail["object"]["assessment"])
+        self.assertEqual("manual", detail["relationships"][0]["origin"])
+        self.assertEqual(200, self.request("POST", base + f"/ioc-relationships/{link['id']}/withdraw", {"reason": "Wrong attribution"})[0])
+        self.assertEqual(404, self.request("GET", base + "/iocs/999999/detail")[0])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
