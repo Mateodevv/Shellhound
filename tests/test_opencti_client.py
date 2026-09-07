@@ -88,6 +88,17 @@ class OpenCTIClientTests(unittest.TestCase):
             self.assertNotIn("test-secret-token", str(caught.exception))
             self.assertNotIn("private customer", str(caught.exception))
 
+    def test_connector_permission_error_names_the_required_capability(self):
+        self._responses({"errors": [{"message": "test-secret-token private account",
+                                    "extensions": {"code": "FORBIDDEN_ACCESS"}}]})
+        with self.assertRaises(api.OpenCTIError) as caught:
+            self.client.connectors()
+        self.assertEqual("permission", caught.exception.code)
+        self.assertIn("Access connectors", str(caught.exception))
+        self.assertIn("MODULES", str(caught.exception))
+        self.assertNotIn("test-secret-token", str(caught.exception))
+        self.assertNotIn("private account", str(caught.exception))
+
     def test_graphql_errors_hide_error_details_even_with_partial_data(self):
         self._responses({"data": {"connectors": []}, "errors": [{
             "message": "secret=test-secret-token customer=Private", "extensions": {"code": "FORBIDDEN"}}]})
@@ -305,6 +316,21 @@ class OpenCTIClientTests(unittest.TestCase):
             self.assertEqual("invalid_response", caught.exception.code)
         self._responses(valid)
         self.assertEqual(valid, self.client.taxii_status("work-1"))
+
+    def test_timestamped_work_ids_support_taxii_and_graphql_without_path_injection(self):
+        work_id = "work_8559f65f-41db-5d06-90d7-d12a4111ec34_2026-09-07T19:25:55.281Z"
+        status = {"id": work_id, "status": "complete", "total_count": 1,
+                  "success_count": 1, "failure_count": 0, "pending_count": 0}
+        self._responses(status, {"data": {"work": {"id": work_id, "status": "complete"}}})
+        self.assertEqual(status, self.client.taxii_status(work_id))
+        self.assertIn("19%3A25%3A55.281Z/", self._request().full_url)
+        self.assertEqual(work_id, self.client.work(work_id)["id"])
+        self.assertEqual(work_id, self._payload()["variables"]["id"])
+        for invalid in ("../work", work_id + "/other", work_id + "?token=x", work_id + "#x", work_id + "\n"):
+            for method in (self.client.taxii_status, self.client.work):
+                with self.subTest(value=invalid), self.assertRaises(ValueError):
+                    method(invalid)
+        self.assertEqual(2, self.client._opener.open.call_count)
 
     def test_taxii_receipt_keeps_retry_ids_without_upstream_error_details(self):
         valid = {"id": "work-1", "status": "complete", "total_count": 1,

@@ -96,6 +96,24 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client_factory.assert_not_called()
         self.assertEqual(1, self.conn.execute("SELECT count(*) FROM opencti_previews").fetchone()[0])
 
+    def test_connector_denial_preserves_successful_connection_steps_and_blocks_transfer(self):
+        self.client.test.return_value = {"version": "7.test", "collection": {"can_write": True}}
+        self.client.connectors.side_effect = OpenCTIError(
+            "The integration user's role needs 'Access connectors' (MODULES).",
+            code="permission", status=403)
+        with self.assertRaises(OpenCTIError) as caught:
+            service.connection_test(self.root)
+        self.assertIn("Connection and TAXII write access succeeded", str(caught.exception))
+        self.assertIn("Access connectors", str(caught.exception))
+        self.assertEqual(403, caught.exception.status)
+        result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Access connectors"):
+            self.jobs.run()
+        self.assertEqual("failed", self.receipt(result["export_id"])["state"])
+        self.client.push.assert_not_called()
+        self.client.upload_sample.assert_not_called()
+        self.client.enrich.assert_not_called()
+
     def test_transfer_is_bound_to_case_data_and_destination(self):
         preview = self.preview()
         self.config["url"] = "https://different.example.test"
