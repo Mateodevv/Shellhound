@@ -264,6 +264,13 @@ dropped shell are five observations about one thing, not five decisions.
 
 ![Findings](assets/docs/findings.png)
 
+To decide a folder at once, check the box beside its name, then choose
+**True positive: Collect**, **skipped for now**, or **false positive** in the selection
+bar. You can add one shared note. Subfolders are included even when collapsed;
+a partially checked box means only some files are selected. Selection follows
+the current category and filters and covers the loaded list (up to 2,000
+artifacts). Check the selected count before applying the decision.
+
 | Key | Action |
 |---|---|
 | <kbd>j</kbd> / <kbd>k</kbd> | Next / previous artifact |

@@ -103,6 +103,15 @@ interface DirectoryNode {
   worst: number
 }
 
+/** Use the filtered tree, including collapsed descendants, so similarly
+ * named paths in other folders, evidence roots or categories stay separate. */
+function directoryArtifactNames(directory: DirectoryNode): string[] {
+  return [
+    ...directory.artifacts.map((artifact) => artifact.artifact),
+    ...directory.children.flatMap(directoryArtifactNames),
+  ]
+}
+
 // Row types of the virtualised list.
 type Item =
   | { t: 'c'; c: CatGroup }
@@ -557,12 +566,13 @@ export function Findings({ slug, gotoView }: {
     }
   }
 
-  const toggleCategoryChecked = (c: CatGroup) => {
-    const names = c.artifacts.map((a) => a.artifact)
-    const all = names.every((n) => checked.has(n))
-    const next = new Set(checked)
-    for (const n of names) { if (all) next.delete(n); else next.add(n) }
-    setChecked(next)
+  const toggleChecked = (names: string[]) => {
+    setChecked((previous) => {
+      const all = names.every((name) => previous.has(name))
+      const next = new Set(previous)
+      for (const name of names) { if (all) next.delete(name); else next.add(name) }
+      return next
+    })
   }
 
   const counts = data?.counts
@@ -719,18 +729,26 @@ export function Findings({ slug, gotoView }: {
         </div>
       )}
 
+      {/* Keep the limit visible during selection as well: a folder checkbox
+          covers the loaded list, not undisplayed results beyond its cap. */}
+      {data && data.total > LIST_CAP && (
+        <div className="text-[11px] text-[var(--sev-low)]">
+          {tr('findings.capped', { n: formatCount(LIST_CAP) })}
+        </div>
+      )}
+
       {checked.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-4 py-2 animate-fade-up">
           <span className="text-[13px] font-semibold">
             {tr('findings.selected', { n: formatCount(checked.size) })}
           </span>
-          <Button variant="incident" onClick={() => bulkTriage('confirmed')}>
+          <Button variant="incident" disabled={t.saving} onClick={() => bulkTriage('confirmed')}>
             <Check size={14} /> {tr('artifact.truePositiveCollect')}
           </Button>
-          <Button variant="review" onClick={() => bulkTriage('reviewed')}>
+          <Button variant="review" disabled={t.saving} onClick={() => bulkTriage('reviewed')}>
             <Eye size={14} /> {tr('triage.reviewed')}
           </Button>
-          <Button variant="outline" onClick={() => bulkTriage('dismissed')}>
+          <Button variant="outline" disabled={t.saving} onClick={() => bulkTriage('dismissed')}>
             <X size={14} /> {tr('triage.dismissed')}
           </Button>
           <input
@@ -740,19 +758,12 @@ export function Findings({ slug, gotoView }: {
             className="min-w-56 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="ghost" onClick={() => setChecked(new Set())}>{tr('common.clearSelection')}</Button>
+          <span className="w-full text-[11px] text-[var(--muted)]">
+            {tr('findings.folder.scope')}
+          </span>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]">
-          {/* A LIST THAT QUIETLY SHRINKS IS A LIST NOBODY CAN TRUST. The
-              request is capped at 2000 while the count beside it describes
-              the whole set, so above that the header stated a number the
-              list did not contain and said nothing about it. */}
-          {data && data.total > LIST_CAP && (
-            <span className="rounded-md bg-[var(--sev-low)]/15 px-1.5 py-0.5
-                             text-[var(--sev-low)]">
-              {tr('findings.capped', { n: formatCount(LIST_CAP) })}
-            </span>
-          )}
           <button
             className="cursor-pointer rounded px-1.5 py-0.5 hover:bg-[var(--panel-2)] hover:text-[var(--fg)]"
             onClick={() => {
@@ -816,7 +827,7 @@ export function Findings({ slug, gotoView }: {
                   <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)]"
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
-                    onChange={() => toggleCategoryChecked(c)}
+                    onChange={() => toggleChecked(names)}
                     title={tr('findings.checkCategory')} />
                   <button onClick={() => toggleCategory(c)}
                     aria-label={open ? tr('findings.collapse') : tr('findings.expand')}
@@ -875,14 +886,25 @@ export function Findings({ slug, gotoView }: {
             if (item.t === 'd') {
               const open = !collapsedDirs.has(item.d.key)
               const tint = SEVERITY_VAR[item.d.worst]
+              const names = directoryArtifactNames(item.d)
+              const allChecked = names.length > 0 && names.every((name) => checked.has(name))
+              const someChecked = !allChecked && names.some((name) => checked.has(name))
               return (
                 <div key={'d' + item.d.key}
                   className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-[var(--line-soft)] pr-2 text-[12px] hover:bg-[var(--panel-2)] sm:pr-4"
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-25" style={{ background: tint }} />
                   <span className="hidden shrink-0 sm:block"
-                    style={{ width: `${item.depth * 18 + 32}px` }} />
-                  <span className="w-1 shrink-0 sm:hidden" />
+                    style={{ width: `${item.depth * 18}px` }} />
+                  <input type="checkbox" className="ml-1 shrink-0 cursor-pointer accent-[var(--accent)] sm:ml-4"
+                    checked={allChecked}
+                    ref={(el) => { if (el) el.indeterminate = someChecked }}
+                    onChange={() => toggleChecked(names)}
+                    aria-label={tr('findings.folder.select', {
+                      path: item.d.path, n: formatCount(names.length),
+                      files: artifactNoun(tr, 'file', names.length),
+                    })}
+                    title={tr('findings.folder.scope')} />
                   <button
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded py-1 text-left"
                     aria-label={open
@@ -936,6 +958,7 @@ export function Findings({ slug, gotoView }: {
                   <span className="hidden shrink-0 sm:block" style={{ width: `${item.depth * 18}px` }} />
                   <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={checked.has(a.artifact)}
+                    aria-label={tr('findings.file.select', { path: a.artifact })}
                     onChange={(e) => {
                       const next = new Set(checked)
                       if (e.target.checked) next.add(a.artifact)
