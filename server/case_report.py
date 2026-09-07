@@ -16,40 +16,52 @@ from server.chain import case_chain
 
 
 WORDS = {
-    "en": {
-        "report": "Case report", "generated": "Generated", "reference": "Reference",
-        "notes": "Case notes", "findings": "Findings", "artifacts": "Artifacts",
-        "confirmed": "Confirmed", "iocs": "Indicators", "evidence": "Evidence inventory",
-        "source": "Source", "kind": "Kind", "files": "Files", "bytes": "Bytes",
-        "scanned": "Last analysed", "partial": "partial count",
-        "no_hash": "Source paths are omitted. This version does not record evidence-source hashes.",
-        "decisions": "Confirmed artifacts", "artifact": "Artifact", "severity": "Severity",
-        "rules": "Rules", "decision_note": "Decision note", "chronology": "Chronology",
-        "time": "Time", "event": "Event", "detail": "Detail", "limitations": "Limits and gaps",
-        "indicators": "IOC box", "type": "Type", "value": "Value", "tags": "Tags",
-        "origin": "Origin", "related": "Related", "hunts": "Pattern hunts",
-        "pattern": "Pattern", "ran": "Run at", "hits": "Hits", "clients": "Clients",
-        "cross": "Matches in other open cases", "case": "Case", "none": "None",
-        "zone": "Time reading", "tool": "SHELLHOUND version",
-        "high": "HIGH", "medium": "MEDIUM", "low": "LOW", "info": "INFO",
-    },
-    "de": {
-        "report": "Fallbericht", "generated": "Erstellt", "reference": "Referenz",
-        "notes": "Fallnotizen", "findings": "Findings", "artifacts": "Artefakte",
-        "confirmed": "Bestätigt", "iocs": "Indikatoren", "evidence": "Evidence-Inventar",
-        "source": "Quelle", "kind": "Art", "files": "Dateien", "bytes": "Bytes",
-        "scanned": "Zuletzt analysiert", "partial": "Teilzählung",
-        "no_hash": "Quellpfade werden ausgelassen. Diese Version speichert keine Hashes der Evidence-Quellen.",
-        "decisions": "Bestätigte Artefakte", "artifact": "Artefakt", "severity": "Schwere",
-        "rules": "Regeln", "decision_note": "Entscheidungsnotiz", "chronology": "Chronologie",
-        "time": "Zeit", "event": "Ereignis", "detail": "Detail", "limitations": "Grenzen und Lücken",
-        "indicators": "IOC Box", "type": "Typ", "value": "Wert", "tags": "Tags",
-        "origin": "Herkunft", "related": "Verknüpft", "hunts": "Muster-Jagden",
-        "pattern": "Muster", "ran": "Ausgeführt", "hits": "Treffer", "clients": "Clients",
-        "cross": "Treffer in anderen offenen Fällen", "case": "Fall", "none": "Keine",
-        "zone": "Zeitdarstellung", "tool": "SHELLHOUND-Version",
-        "high": "HOCH", "medium": "MITTEL", "low": "NIEDRIG", "info": "INFO",
-    },
+    "report": "Case report",
+    "generated": "Generated",
+    "reference": "Reference",
+    "notes": "Case notes",
+    "findings": "Findings",
+    "artifacts": "Artifacts",
+    "confirmed": "Confirmed",
+    "iocs": "Indicators",
+    "evidence": "Evidence inventory",
+    "source": "Source",
+    "kind": "Kind",
+    "files": "Files",
+    "bytes": "Bytes",
+    "scanned": "Last analysed",
+    "partial": "partial count",
+    "no_hash": "Source paths are omitted. This version does not record evidence-source hashes.",
+    "decisions": "Confirmed artifacts",
+    "artifact": "Artifact",
+    "severity": "Severity",
+    "rules": "Rules",
+    "decision_note": "Decision note",
+    "chronology": "Chronology",
+    "time": "Time",
+    "event": "Event",
+    "detail": "Detail",
+    "limitations": "Limits and gaps",
+    "indicators": "IOC box",
+    "type": "Type",
+    "value": "Value",
+    "tags": "Tags",
+    "origin": "Origin",
+    "related": "Related",
+    "hunts": "Pattern hunts",
+    "pattern": "Pattern",
+    "ran": "Run at",
+    "hits": "Hits",
+    "clients": "Clients",
+    "cross": "Matches in other open cases",
+    "case": "Case",
+    "none": "None",
+    "zone": "Time reading",
+    "tool": "SHELLHOUND version",
+    "high": "HIGH",
+    "medium": "MEDIUM",
+    "low": "LOW",
+    "info": "INFO"
 }
 
 
@@ -99,7 +111,7 @@ def _redactor(roots):
 
 def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
     """Collect report data without evidence content or analyst host paths."""
-    lang = "de" if lang == "de" else "en"
+    lang = "en"
     case_dir = Path(case_dir)
     info = workspace.case_info(case_dir)
     summary = workspace.case_summary(case_dir)
@@ -203,7 +215,7 @@ REPORT_SECTIONS = {
 def render(case_dir: Path, lang="en", tz_mode="log", cross_case=None,
            sections=None) -> str:
     data = collect(case_dir, lang, tz_mode, cross_case)
-    w = WORDS[data["lang"]]
+    w = WORDS
     info, summary = data["info"], data["summary"]
     severity = (w["high"], w["medium"], w["low"], w["info"])
     chain = data["chain"]

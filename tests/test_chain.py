@@ -199,14 +199,14 @@ class ChainTests(unittest.TestCase):
 
     # --- the language -------------------------------------------------------
 
-    def test_the_prose_follows_the_language(self):
+    def test_legacy_language_preference_keeps_the_english_chronology(self):
         self._confirm_all()
         en = case_chain(self.ev.case_dir, "en")
         de = case_chain(self.ev.case_dir, "de")
         self.assertEqual([e["at"] for e in en["events"]],
                          [e["at"] for e in de["events"]],
                          "the measured times must not depend on the language")
-        self.assertNotEqual(en["gaps"], de["gaps"])
+        self.assertEqual(en, de)
 
     # --- the small pieces ---------------------------------------------------
 

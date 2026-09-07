@@ -12,7 +12,6 @@ import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from 
 import { useLiveEvents } from './ws'
 import { PageSkeleton, ProgressBar } from './components/ui'
 import { ThemeSwitcher } from './components/ThemeSwitcher'
-import { LanguageSwitcher } from './components/LanguageSwitcher'
 import { TimeSwitcher } from './components/TimeSwitcher'
 import { Mark } from './components/Mark'
 import { CommandPalette } from './components/CommandPalette'
@@ -338,7 +337,6 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
               <SlidersHorizontal size={14} /> {tr('nav.settings')}
             </button>
             <TimeSwitcher up />
-            <LanguageSwitcher up />
             <ThemeSwitcher up />
           </div>
           {running.length > 0 && (

@@ -6,6 +6,13 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — English interface
+
+- Removed the German translation and language selector. Interface copy,
+  number/time formatting, reports, and API narratives now use English.
+  Legacy language preferences are ignored; analyst notes and evidence content
+  remain unchanged.
+
 ### Changed — guided workflow and incremental review
 
 - Reworked the existing interface into a four-stage case workflow with clearer

@@ -1,5 +1,4 @@
 // format.ts — display helpers.
-import { activeLang } from './i18n'
 
 export function formatBytes(n?: number | null): string {
   if (!n) return '0 B'
@@ -12,8 +11,7 @@ export function formatBytes(n?: number | null): string {
 
 export function formatCount(n?: number | null): string {
   if (n == null) return '0'
-  // Thousands separators follow the chosen language, not the machine.
-  return n.toLocaleString(activeLang() === 'de' ? 'de-AT' : 'en-GB')
+  return n.toLocaleString('en-GB')
 }
 
 // ---- time ------------------------------------------------------------------
@@ -55,7 +53,7 @@ export function storedTimeMode(): TimeMode {
 let currentMode: TimeMode = 'utc'
 
 /** The active mode outside React -- exports and the API layer need it and
- *  cannot use a hook, the same arrangement as the language. */
+ *  cannot use a hook. */
 export function activeTimeMode(): TimeMode {
   return currentMode
 }
@@ -107,19 +105,18 @@ export function formatDay(epoch?: number | null, tz = 0): string {
 export function formatSpan(from?: number | null, to?: number | null): string {
   if (!from || !to) return '—'
   const s = Math.max(0, to - from)
-  const de = activeLang() === 'de'
   const unit = (n: number, one: string, many: string) =>
     `${n} ${n === 1 ? one : many}`
   // THE UNIT IS CHOSEN FROM THE ROUNDED VALUE, not from the raw one. Picking
   // it first and rounding afterwards produced "60 minutes" for 3599 seconds
   // and "24 hours" for 86399 -- the very readings the next branch exists to
   // express, and a gap reported as 24 hours reads as a day nobody looked at.
-  if (s < 60) return unit(s, de ? 'Sekunde' : 'second', de ? 'Sekunden' : 'seconds')
+  if (s < 60) return unit(s, 'second', 'seconds')
   const minutes = Math.round(s / 60)
-  if (minutes < 60) return unit(minutes, de ? 'Minute' : 'minute', de ? 'Minuten' : 'minutes')
+  if (minutes < 60) return unit(minutes, 'minute', 'minutes')
   const hours = Math.round(s / 3600)
-  if (hours < 24) return unit(hours, de ? 'Stunde' : 'hour', de ? 'Stunden' : 'hours')
-  return unit(Math.round(s / 86400), de ? 'Tag' : 'day', de ? 'Tage' : 'days')
+  if (hours < 24) return unit(hours, 'hour', 'hours')
+  return unit(Math.round(s / 86400), 'day', 'days')
 }
 
 /** "3 minutes ago" -- clock times are for reports; for the interface what
@@ -130,20 +127,19 @@ export function relativeTime(iso?: string | null): string {
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return String(iso)
   const secs = Math.round((Date.now() - then) / 1000)
-  const de = activeLang() === 'de'
   const ago = (n: number, one: string, many: string) =>
-    de ? `vor ${n} ${n === 1 ? one : many}` : `${n} ${n === 1 ? one : many} ago`
-  if (secs < 45) return de ? 'gerade eben' : 'just now'
+    `${n} ${n === 1 ? one : many} ago`
+  if (secs < 45) return 'just now'
   const mins = Math.round(secs / 60)
-  if (mins < 60) return ago(mins, de ? 'Minute' : 'minute', de ? 'Minuten' : 'minutes')
+  if (mins < 60) return ago(mins, 'minute', 'minutes')
   const hours = Math.round(mins / 60)
-  if (hours < 24) return ago(hours, de ? 'Stunde' : 'hour', de ? 'Stunden' : 'hours')
+  if (hours < 24) return ago(hours, 'hour', 'hours')
   const days = Math.round(hours / 24)
-  if (days < 31) return ago(days, de ? 'Tag' : 'day', de ? 'Tage' : 'days')
+  if (days < 31) return ago(days, 'day', 'days')
   const months = Math.round(days / 30)
-  if (months < 12) return ago(months, de ? 'Monat' : 'month', de ? 'Monate' : 'months')
+  if (months < 12) return ago(months, 'month', 'months')
   const years = Math.round(months / 12)
-  return ago(years, de ? 'Jahr' : 'year', de ? 'Jahre' : 'years')
+  return ago(years, 'year', 'years')
 }
 
 export function absoluteTime(iso?: string | null): string {
@@ -190,8 +186,7 @@ export function baseName(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() ?? path
 }
 
-// Severity names are the same in both languages -- they come from the
-// engines and appear verbatim in exports.
+// Severity names come from the engines and appear verbatim in exports.
 export const SEVERITY_LABEL: Record<number, string> = {
   0: 'HIGH', 1: 'MEDIUM', 2: 'LOW', 3: 'INFO',
 }

@@ -16,16 +16,14 @@ import { useGeo } from '../geo'
 import { useFlagUrl } from '../flags'
 import { Tooltip } from './Tooltip'
 
-// The server names the range in the interface language, so both spellings
-// have to be known here -- with only the German ones, the English interface
-// fell through to the catch-all "spez" for almost every special range.
+// Special ranges use the server's English descriptions.
 const SPECIAL_SHORT: [string, string][] = [
-  ['Dokumentations', 'doc'], ['Documentation', 'doc'],
-  ['Privates Netz', 'priv'], ['Private network', 'priv'],
+  ['Documentation', 'doc'],
+  ['Private network', 'priv'],
   ['Loopback', 'lo'],
   ['Link-local', 'll'],
   ['Multicast', 'mc'],
-  ['Reserviert', 'res'], ['Reserved', 'res'],
+  ['Reserved', 'res'],
 ]
 
 export function IpFlag({ ip }: { ip?: string | null }) {
@@ -35,7 +33,7 @@ export function IpFlag({ ip }: { ip?: string | null }) {
   if (!info) return null
 
   if (info.special) {
-    const short = SPECIAL_SHORT.find(([k]) => info.name.startsWith(k))?.[1] ?? 'spez'
+    const short = SPECIAL_SHORT.find(([k]) => info.name.startsWith(k))?.[1] ?? 'spec'
     return (
       <Tooltip title={info.name.split(' — ')[0]}
         // A cryptic badge with a tooltip that only repeats the badge is

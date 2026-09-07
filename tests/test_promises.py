@@ -6,17 +6,15 @@ every one of them was, at some point, true in the place somebody thought to
 test and false one function further along. A promise that holds in the one
 spot with a test is not a promise, it is a coincidence -- so these tests
 sweep: over every export the tool offers, over every shape in
-`hostile_shapes()`, over both interface languages and both readings of the
-clock.
+`hostile_shapes()`, over legacy request preferences and both readings of the clock.
 
 The five promises:
 
   1. NO ABSOLUTE HOST PATH LEAVES THE MACHINE. Exported paths are
      webroot-relative, because otherwise the directory layout of the
      analyst's forensic VM travels to whoever receives the bundle.
-  2. WHAT IS STORED IS ENGLISH. Only rendered prose follows the interface
-     language; a case file whose wording depends on which language happened
-     to be selected at the time of a click is worthless as evidence.
+  2. TOOL-GENERATED CASE TEXT IS ENGLISH. Legacy language preferences
+     must change neither rendered text nor stored case data.
   3. EVERY CONFIRMED ARTIFACT IS ACCOUNTED FOR in the chronology -- as a
      dated event or under "undated", never nowhere.
   4. A THIRD PARTY'S OPINION NEVER MOVES A SEVERITY. This toolkit reports
@@ -302,29 +300,7 @@ def registered_folder_names(case_dir):
 
 # --- promise 2 --------------------------------------------------------------
 
-_PLACEHOLDER = re.compile(r"\{[a-zA-Z_]+\}")
-# Long enough that a fragment is a phrase rather than a word two languages
-# happen to share.
-_MIN_FRAGMENT = 10
 _GERMAN_LETTERS = "äöüÄÖÜß"
-
-
-def german_fragments():
-    """Literal German phrases out of the server's own catalogue.
-
-    Derived rather than listed: a hand-written word list goes stale the day
-    somebody adds a translation, and the thing worth detecting is precisely
-    "a string from the German catalogue ended up in the case". Fragments that
-    also appear in the English rendering of some key are dropped -- those are
-    words the two languages share and prove nothing."""
-    german, english = set(), set()
-    for entry in i18n.CATALOGUE.values():
-        for lang, bucket in (("en", english), ("de", german)):
-            for chunk in _PLACEHOLDER.split(entry.get(lang, "") or ""):
-                text = chunk.strip(" .,:;—-·()")
-                if len(text) >= _MIN_FRAGMENT:
-                    bucket.add(text)
-    return sorted(german - english)
 
 
 # Columns whose value is a clock reading. Two runs of the same pipeline
@@ -402,23 +378,14 @@ class StoredRowsComparisonTests(unittest.TestCase):
 
 
 class StoredDataStaysEnglishTests(unittest.TestCase):
-    """PROMISE 2: the interface language changes nothing that is persisted.
-
-    Findings, IOC origins, triage notes and the record of a hunt travel into
-    the case archive and into every export. A German phrase in any of them is
-    not a cosmetic slip: it makes two case files of the same incident
-    non-comparable, and it puts a sentence into a report in a language the
-    recipient did not ask for. The rule is written into `server/i18n.py` at
-    length; this checks it against the whole database rather than against the
-    handful of strings someone remembered.
-    """
+    """Legacy language preferences must not change persisted case facts."""
 
     @classmethod
     def setUpClass(cls):
         cls.evidence = HostileEvidence(mixed_case=True, two_dumps=True,
                                        duplicate_log_name=True).build()
         cls.app = create_app(Config(workspace=cls.evidence.root, token="t"))
-        cls.cases = {lang: cls._run(lang) for lang in i18n.LANGUAGES}
+        cls.cases = {lang: cls._run(lang) for lang in ("en", "de")}
 
     @classmethod
     def tearDownClass(cls):
@@ -470,19 +437,13 @@ class StoredDataStaysEnglishTests(unittest.TestCase):
         endpoint(app, "/api/cases/{slug}/iocs/export")(slug, "json", lang, "log")
         return case_dir
 
-    def test_the_two_languages_store_exactly_the_same_rows(self):
-        """The plainest reading of the promise: run the case in German and in
-        English and diff the databases."""
-        german = stored_rows(self.cases["de"])
+    def test_legacy_language_preference_does_not_change_stored_rows(self):
+        legacy = stored_rows(self.cases["de"])
         english = stored_rows(self.cases["en"])
-        self.assertEqual(sorted(german), sorted(english),
-                         "the two runs do not even hold the same tables")
-        for table in german:
+        self.assertEqual(sorted(legacy), sorted(english))
+        for table in legacy:
             with self.subTest(table=table):
-                self.assertEqual(
-                    english[table], german[table],
-                    f"the German run stored something different in {table} "
-                    f"-- the language reached the case file")
+                self.assertEqual(english[table], legacy[table])
 
     def test_the_case_is_full_enough_for_that_comparison_to_mean_something(self):
         """Two empty databases are also identical."""
@@ -492,28 +453,9 @@ class StoredDataStaysEnglishTests(unittest.TestCase):
             self.assertTrue(rows[table],
                             f"{table} is empty, so comparing it proves nothing")
 
-    def test_no_stored_string_is_written_in_german(self):
-        """The catalogue against the database.
-
-        Even with the two runs identical, both could be German -- the engines
-        would then simply be wrong in the same way twice. So the German half
-        of the catalogue is held against every text value the case holds."""
-        fragments = german_fragments()
-        self.assertGreater(len(fragments), 40,
-                           "the catalogue yielded almost nothing to look for")
-        for where, value in stored_strings(self.cases["de"]):
-            for fragment in fragments:
-                self.assertNotIn(
-                    fragment, value,
-                    f"{where} holds the German phrasing {fragment!r} -- it "
-                    f"travels into the archive and into every export")
-
     def test_no_stored_string_carries_a_german_letter(self):
-        """The cheap catch the fragment list cannot make.
-
-        A reworded German string is not in the catalogue in that exact form
-        any more, but it still spells its umlauts. Nothing in this evidence
-        contains one, so any occurrence came from the tool."""
+        """The synthetic evidence has no umlauts; generated descriptions
+        must not introduce translated prose into the case."""
         for where, value in stored_strings(self.cases["de"]):
             found = [c for c in _GERMAN_LETTERS if c in value]
             self.assertEqual(

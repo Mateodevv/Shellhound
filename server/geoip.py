@@ -178,12 +178,11 @@ def download(workspace):
 def lookup(workspace, ip, lang="en"):
     """{'iso': 'de'|None, 'name': str, 'special': bool}, or None for junk.
 
-    The cache is keyed by LANGUAGE AND ADDRESS: the country names and the
-    descriptions of the special ranges depend on the language, and a cache
-    keyed by address alone would hand out whichever language happened to
-    ask first."""
+    Country names and special-range descriptions always use English.
+    The language argument is accepted for compatibility with older callers."""
+    lang = "en"
     ip = str(ip).strip()
-    key = (lang, ip)
+    key = ip
     if key in _cache:
         return _cache[key]
     try:
@@ -204,7 +203,7 @@ def lookup(workspace, ip, lang="en"):
             country = rec.get("country") or rec.get("registered_country") or {}
             iso = (country.get("iso_code") or "").lower()
             names = country.get("names") or {}
-            name = names.get(lang) or names.get("en") or iso.upper()
+            name = names.get("en") or iso.upper()
             if iso:
                 out = {"iso": iso, "name": name, "special": False}
             else:

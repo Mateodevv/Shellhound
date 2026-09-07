@@ -1,11 +1,4 @@
-// api.ts — fetch wrapper + shared types for the SHELLHOUND API.
-//
-// Every call carries the chosen language in `X-Lang`. Parts of the case
-// narrative are assembled on the server -- the chronology, the GeoIP
-// descriptions, the observations on an account -- and can only be phrased
-// where the data is. A download link cannot set headers and gets `?lang=`
-// from `downloadUrl()` instead.
-import { activeLang } from './i18n'
+// api.ts — fetch wrapper and shared types. Requests carry the token and time reading.
 import { activeTimeMode } from './format'
 
 declare global {
@@ -30,7 +23,6 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
     ...init,
     headers: {
       'X-Token': TOKEN,
-      'X-Lang': activeLang(),
       // Part of the chronology is prose the server renders times into.
       'X-TZ': activeTimeMode(),
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -64,7 +56,6 @@ export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE
 export function downloadUrl(path: string): string {
   const sep = path.includes('?') ? '&' : '?'
   return `${path}${sep}token=${encodeURIComponent(TOKEN)}`
-       + `&lang=${encodeURIComponent(activeLang())}`
        + `&tz=${encodeURIComponent(activeTimeMode())}`
 }
 

@@ -10,7 +10,6 @@ import { createElement, type ReactElement, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
-import { I18nProvider } from '../i18n'
 
 // The token is read once at module scope in api.ts, before any test can set
 // it, so it has to exist before the first import of that module.
@@ -61,7 +60,7 @@ if (!Element.prototype.scrollIntoView) {
 }
 
 beforeEach(() => {
-  // Remembered choices (language, theme, time mode) live in localStorage, and
+  // Remembered choices (theme and time mode) live in localStorage, and
   // one test's choice leaking into the next is a failure that only appears in
   // a particular file order.
   localStorage.clear()
@@ -92,12 +91,9 @@ export function testQueryClient(): QueryClient {
   })
 }
 
-/** The providers every view in this application is mounted under. Rendering
- *  a component without them throws inside `useT`, which fails the test for a
- *  reason that has nothing to do with what it is checking. */
+/** Mount views with an isolated query client. */
 export function renderWithProviders(ui: ReactElement, qc = testQueryClient()) {
   const wrap = ({ children }: { children: ReactNode }) =>
-    createElement(I18nProvider, null,
-      createElement(QueryClientProvider, { client: qc }, children))
+    createElement(QueryClientProvider, { client: qc }, children)
   return { qc, ...render(ui, { wrapper: wrap }) }
 }

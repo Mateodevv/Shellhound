@@ -1,17 +1,13 @@
 // literals.test.ts -- the guard against prose that never went through tr().
 //
-// "Import fehlgeschlagen:" stood hardcoded and German in Start.tsx, the
-// "Aufnehmen" button before it, "Gesichtet" in the findings list -- always
-// the same class of defect: a JSX text literal written in whichever language
-// the author was thinking in, invisible until someone switches the
-// interface. A catalogue key forgotten in ONE language falls back to
-// English; a literal falls back to nothing.
+// User-facing prose belongs in the shared English catalogue, where wording
+// stays consistent and missing keys can be checked across the application.
 //
 // The scan is textual, not an AST walk -- deliberately cheap. It extracts
 // JSX text nodes (the stretches between > and < that contain no braces) and
 // flags two shapes: anything carrying German-specific characters, and any
 // multi-word prose that is not on the short allowlist of terms the
-// interface uses untranslated in both languages.
+// interface uses as-is.
 /// <reference types="node" />
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -21,11 +17,10 @@ import { join, relative } from 'node:path'
 // web/ directory as its working directory, and that is stable.
 const SRC = join(process.cwd(), 'src')
 
-/** Terms that stand in the interface as-is, in both languages. */
+/** Proper names and established terms that stand in the interface as-is. */
 const ALLOWED = new Set([
   'True Positive', 'False Positive', 'IOC Box',
-  // Proper names: the view heading (nav.cms says the same in both
-  // catalogues) and the country database's product name.
+  // The view heading and the country database's product name.
   'CMS Inventory', 'DB-IP Country Lite',
 ])
 
@@ -53,9 +48,7 @@ function findings(file: string): string[] {
   const out: string[] = []
   // A JSX text node: from a closing > (or the } of an interpolation) to
   // the next opening < (or the { of one). The interpolation ends matter:
-  // the defect that motivated this guard read
-  // `Import fehlgeschlagen: {String(error)}` -- prose ending at a brace,
-  // which a plain >…< scan walks straight past.
+  // prose can end at a brace, which a plain >…< scan walks straight past.
   for (const match of code.matchAll(/[>}]([^<>{}]+)[<{]/g)) {
     const text = match[1].replace(/\s+/g, ' ').trim()
     // The allowlist is compared without the glue a text node carries

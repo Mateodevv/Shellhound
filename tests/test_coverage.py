@@ -133,11 +133,11 @@ class FileAnomalyTests(unittest.TestCase):
         self.assertTrue(notes)
         self.assertTrue(any("cut.log" in n for n in notes))
 
-    def test_the_notes_follow_the_language(self):
+    def test_legacy_language_preference_keeps_english_notes(self):
         rows = ['5 "-" "curl"\n'] + [line(BASE + i * 5) for i in range(60)]
         (self.logs / "cut.log").write_text("".join(rows), encoding="utf-8")
         self._index()
-        self.assertNotEqual(coverage.report(self.case, "en")["notes"],
+        self.assertEqual(coverage.report(self.case, "en")["notes"],
                             coverage.report(self.case, "de")["notes"])
 
     def test_coverage_produces_no_findings(self):
