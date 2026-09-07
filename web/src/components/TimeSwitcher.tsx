@@ -1,6 +1,6 @@
 // TimeSwitcher.tsx -- which reading of the timestamps is on screen.
 //
-// Built like the language and theme switchers, and sitting next to them,
+// Built like the theme switcher, and sitting next to it,
 // because it is the same kind of choice: it changes how something is
 // PRESENTED and never what was measured. The stored data is an epoch in UTC
 // plus the offset that stood in the log line; both readings are derived from
@@ -33,7 +33,7 @@ export function TimeSwitcher({ up }: { up?: boolean }) {
     try { localStorage.setItem(TIME_KEY, mode) } catch { /* non-fatal */ }
     // Part of the chronology is prose the SERVER assembled, with the times
     // already rendered into it. Those have to come back in the new reading,
-    // so the cache goes -- the same answer the language switch gives.
+    // so the cached responses must be refreshed.
     qc.invalidateQueries()
   }, [mode, qc])
 

@@ -28,8 +28,7 @@ import { TimelineChart, type TimelinePoint } from './TimelineChart'
 
 const CLIENT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9']
 
-// Keys only at module level: a label translated here would be frozen in
-// whichever language was active when the module loaded.
+// Shared catalogue keys for the request-column labels.
 const STATUS_FILTERS = [
   { id: '', key: 'common.all' },
   { id: '2xx', key: null },

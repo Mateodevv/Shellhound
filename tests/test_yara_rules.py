@@ -231,13 +231,11 @@ class ExplanationCoverageTests(unittest.TestCase):
                    if not any(k.lower() in r["name"].lower() for k, _ in keys)]
         self.assertEqual([], missing)
 
-    def test_every_key_the_mapping_names_exists_in_both_languages(self):
-        for lang in ("en", "de"):
-            text = (self.ROOT / "web" / "src" / "i18n" / f"{lang}.ts").read_text(
-                encoding="utf-8")
-            for _, key in self._rule_keys():
-                for part in (".what", ".why"):
-                    self.assertIn(f"'{key}{part}'", text, f"{lang}: {key}{part}")
+    def test_every_key_the_mapping_names_exists_in_english(self):
+        text = (self.ROOT / "web" / "src" / "i18n" / "en.ts").read_text(encoding="utf-8")
+        for _, key in self._rule_keys():
+            for part in (".what", ".why"):
+                self.assertIn(f"'{key}{part}'", text, f"{key}{part}")
 
 
 if __name__ == "__main__":

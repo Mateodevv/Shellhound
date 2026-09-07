@@ -149,11 +149,7 @@ def create_app(config: Config) -> FastAPI:
     # --- language -----------------------------------------------------------
 
     def request_lang(request: Request) -> str:
-        """The language the prose assembled HERE is written in.
-
-        The browser sends it as a header on every API call; a download link
-        cannot set headers and sends `?lang=` instead. Anything the server
-        STORES stays English regardless -- see server/i18n.py."""
+        """Legacy language preferences resolve to English for every response."""
         return lang_of(request.headers.get("x-lang")
                        or request.query_params.get("lang"))
 
@@ -162,8 +158,7 @@ def create_app(config: Config) -> FastAPI:
     def request_tz(request: Request) -> str:
         """Which reading of the timestamps the prose assembled HERE uses.
 
-        Travels exactly like the language, and for the same reason: parts of
-        the chronology are sentences with times rendered into them, and a
+        Parts of the chronology are sentences with times rendered into them, and a
         sentence cannot be re-rendered in the browser. What is STORED is
         untouched -- an epoch in UTC plus the offset from the log line."""
         raw = (request.headers.get("x-tz")
@@ -173,10 +168,7 @@ def create_app(config: Config) -> FastAPI:
     tz_dep = Depends(request_tz)
 
     def _pattern_error(exc, lang):
-        """A validation message in the language of the request.
-
-        The exception carries its own English text; the key only turns it
-        into another language when the catalogue knows one."""
+        """Use shared English validation copy when the exception has a key."""
         return _t(lang, exc.key) if exc.key else str(exc)
 
     def case_dir_or_404(slug: str) -> Path:

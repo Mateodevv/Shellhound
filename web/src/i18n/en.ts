@@ -1,13 +1,10 @@
-// en.ts — English catalogue. This is the source of truth: every key exists
-// here first, and every other language falls back to it.
+// en.ts — shared English interface copy.
 //
 // Content rule, same discipline as in the engines: an explanation may only
 // state what the rule itself establishes. "Is a backdoor" would be wrong;
 // "can execute commands if it is reachable" is the finding.
 export const en: Record<string, string> = {
   // --- generic -------------------------------------------------------------
-  'app.language': 'Language',
-  'app.language.hint': 'Applies to the interface and to the case narrative the server assembles (chronology, GeoIP, log alerts). Stored case data — rule names, notes, origins — stays as it was recorded.',
   'common.close': 'Close',
   'common.cancel': 'Cancel',
   'common.later': 'Later',

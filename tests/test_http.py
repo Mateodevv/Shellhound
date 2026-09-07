@@ -122,12 +122,13 @@ class _LiveServer:
         self.thread.join(timeout=15)
 
 
-def request(method, path, body=None, token=TOKEN):
+def request(method, path, body=None, token=TOKEN, extra_headers=None):
     """One request. Returns (status, headers, bytes) for every outcome --
     a 4xx is an ANSWER here and not an exception, because most of what this
     file asserts is which refusal came back."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json"}
+    headers.update(extra_headers or {})
     if token is not None:
         headers["X-Token"] = token
     req = urllib.request.Request(BASE + path, data=data, method=method,
@@ -1765,6 +1766,18 @@ class AccessLogExplorerEndpointTests(unittest.TestCase):
         self.assertEqual(digest, headers.get("x-content-sha256"))
         self.assertIn(digest, manifest)
         self.assertIn(ATTACKER, csv_bytes.decode("utf-8"))
+
+
+class EnglishResponseTests(unittest.TestCase):
+    def test_legacy_language_headers_and_download_links_return_english(self):
+        for suffix, headers in (("?lang=de", {}), ("", {"X-Lang": "DE-AT"})):
+            with self.subTest(suffix=suffix, headers=headers):
+                status, _, body = request("GET", f"/api/cases/{CASE}/report.html{suffix}",
+                                          extra_headers=headers)
+                self.assertEqual(200, status)
+                self.assertIn(b'<html lang="en">', body)
+                self.assertIn(b"Case report", body)
+                self.assertNotIn(b"Fallbericht", body)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ them, when a file was first present, what those clients did next.
 | **Input** | Copy of the webroot, access logs, database export of the CMS |
 | **Output** | Findings and triage state, chronology, a portable HTML case report, IOC export as CSV, JSON or STIX 2.1 |
 | **Operation** | Entirely on the analysis machine, on `127.0.0.1`. No service, no account, no telemetry |
-| **Interface** | English and German, switchable in the sidebar |
+| **Interface** | English |
 
 ![Dashboard](assets/docs/dashboard.png)
 
@@ -550,10 +550,8 @@ docs/rules.md      Every rule with trigger, statement and limits
 - Evidence is never served. Findings carry text excerpts; file contents are
   transferred as JSON data.
 - Filtered artifacts are always delivered in full.
-- Everything the case stores is written in English: origins, notes, evidence
-  lines. Only rendered prose follows the interface language. An archive whose
-  wording depends on the language selected at the time of a click is worthless
-  as evidence.
+- Interface text, reports, and tool-generated case descriptions use English.
+  Analyst notes and evidence retain their original content.
 
 ## Contributing
 

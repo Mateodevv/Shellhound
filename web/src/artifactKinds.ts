@@ -4,8 +4,7 @@
 // a component break Fast Refresh for the whole file, and these are needed
 // where that window is not open at all (findings rows, suggestion window).
 //
-// The label lives in the catalogue under `kind.<kind>`, not here — a
-// module-level constant would freeze the language at module load.
+// Labels share the interface catalogue under `kind.<kind>`.
 import { Bug, FileCode2, ServerCog, Table2, Users } from 'lucide-react'
 
 export const KIND_ICON: Record<string, typeof Bug> = {

@@ -17,7 +17,7 @@ current case IOC box ─┐
 other case IOC boxes ─┴─read-only──> correlation.py ──> API + report section
 ```
 
-The report route passes the current language and time reading to the same
+The English report passes the current time reading to the same
 chronology and coverage functions used by the dashboard. The report therefore
 cannot silently describe a different timeline from the one on screen.
 

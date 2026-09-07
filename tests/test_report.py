@@ -49,10 +49,12 @@ class HtmlReportTests(unittest.TestCase):
         self.assertNotIn(str(self.evidence), html)
         self.assertNotIn("not exported", html)
 
-    def test_bytes_and_digest_are_stable_for_one_render(self):
+    def test_legacy_language_preference_produces_an_english_report(self):
         body, digest = case_report.render_bytes(self.case, "de", "log")
         self.assertEqual(64, len(digest))
-        self.assertIn(b"Fallbericht", body)
+        self.assertIn(b"Case report", body)
+        self.assertIn(b'<html lang="en">', body)
+        self.assertNotIn(b"Fallbericht", body)
 
 
 if __name__ == "__main__":
