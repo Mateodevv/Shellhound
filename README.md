@@ -237,6 +237,39 @@ either mode. Jobs run in the background, report progress and can be cancelled;
 all engines started by one click share one expandable analysis run and durable
 run id.
 
+Webshell and custom YARA scans first show **Finding files…** with a live file
+count, then switch to a scanning percentage. You can cancel during either step.
+
+If individual files cannot be read, exceed the 5 MiB content limit, or time out,
+a finished scan shows **Complete with warnings**. Open **Skipped files and
+rules** to review the paths and reasons. These files have not been cleared;
+the warning remains visible in Evidence, the dashboard, and report coverage notes.
+An unreadable evidence root, broken rules, a crashed engine, or cancellation
+still leaves analysis incomplete.
+
+The skipped-file list separates **Size limit** from **Other skips**. Tick individual
+files or use **Select all** (across all pages, with individual unticking supported).
+For size skips, choose **Accept size skip** to dismiss the warning for this
+investigation, or **Scan despite size limit** to scan the selected files once with
+a higher limit. Acceptance is recorded as a coverage gap; it does not mark the file
+as scanned or clean. Use **Show → Accepted** to review or scan those files later.
+
+The explicit larger-file scan allows up to **256 MiB per selected file** and keeps
+the existing **20-second YARA timeout**. It does not change the default 5 MiB limit
+for future analyses. Files above 256 MiB can still be accepted as coverage gaps.
+If a larger-file scan instead fails to read a file or times out, its warning moves
+to **Other skips** for review.
+
+After correcting an access or other problem, open **Other skips**, select the
+affected files, and choose **Retry selected**. Only those files from that scanner
+are retried; other engines and files keep their results. Successful retries resolve
+their warnings while the original scan history, analyst decisions, and notes remain
+available. Normal retries retain the scanner's default size and time limits.
+
+Changed rules/settings or older scans without a trustworthy source snapshot
+need **Reanalyze all evidence** before targeted retries are available. Stop or
+finish an active analysis before starting another analysis or retry in that case.
+
 ### 2 · Findings
 
 Review the artifact queue. Filters and saved views stay behind their named

@@ -26,9 +26,13 @@ half-finished rule at 23:00 should lose that rule, not the run.
 """
 import os
 import re
+import stat
 
 from server import db, settings as settingslib
-from server.engines.fsutil import get_files_recursive, path_within_any, record_skip
+from server.engines.fsutil import (
+    ScanProgress, canonical_file, discover_scan_files, record_skip,
+)
+from server.engines.scan_limits import scan_byte_limit, size_skip_reason
 from server.paths import display_path, io_path
 
 import yara
@@ -280,7 +284,8 @@ def _evidence(match):
     return out[:400]
 
 
-def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
+def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True,
+         file_targets=None):
     """Run every rule in the workspace over every file under `targets`.
 
     Findings land on the FILE artifact, like the webshell scan -- so triage,
@@ -288,104 +293,94 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
     second work list.
     """
     stats = {"scanned": 0, "findings": 0, "flagged_files": 0, "rules": 0,
-             "skipped": 0, "broken_rules": 0, "available": True}
+             "skipped": 0, "file_skips": 0, "broken_rules": 0, "available": True}
     if workspace is None:
         return stats
 
+    progress = ScanProgress(ctx)
+    progress.update(0, "Preparing YARA rules…", "discovering", 0, None, force=True)
     compiled, broken, rule_count = _compile(workspace)
     stats["rules"] = rule_count
     stats["broken_rules"] = len(broken)
     if broken:
         stats["broken"] = [b["file"] for b in broken]
         for entry in broken:
-            record_skip(ctx, entry["file"], f"rule did not compile: {entry.get('error', '')}")
-    if compiled is None:
-        # NOT A CLEAN SCAN -- a scan that could not run. Without this the
-        # broken rules lived only in the job stats, so a workspace whose rule
-        # files all fail to compile looked, in the case itself, exactly like a
-        # workspace where YARA found nothing.
-        conn = db.connect(case_dir)
-        try:
-            if authoritative:
-                conn.execute("DELETE FROM skipped WHERE source = 'yara'")
-            else:
-                names = {entry["file"] for entry in broken}
-                ids = [row["id"] for row in conn.execute(
-                    "SELECT id, path FROM skipped WHERE source = 'yara'").fetchall()
-                    if row["path"] in names or path_within_any(row["path"], targets)]
-                conn.executemany("DELETE FROM skipped WHERE id = ?",
-                                 ((row_id,) for row_id in ids))
-            for entry in broken:
-                conn.execute(
-                    "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
-                    ("yara", entry["file"],
-                     f"rule file does not compile: {entry.get('error', '')}"[:400]))
-            conn.commit()
-        finally:
-            conn.close()
+            record_skip(ctx, entry["file"], f"rule did not compile: {entry.get('error', '')}",
+                        category="rule")
+    retry = file_targets is not None
+    limits = {canonical_file(entry["path"]): scan_byte_limit(
+        MAX_SCAN_BYTES, entry["max_bytes"])
+        for entry in (file_targets or []) if "max_bytes" in entry}
+    files = (discover_scan_files(targets, progress, stats, file_targets)
+             if compiled is not None and not (retry and broken) else [])
+    total = len(files)
+    if progress.cancelled():
         return stats
-
-    files = []
-    for target in targets:
-        if os.path.isfile(io_path(target)):
-            files.append(target)
-        else:
-            files.extend(get_files_recursive(target))
-    total = len(files) or 1
 
     conn = db.connect(case_dir)
     try:
         run = db.begin_run(conn, "yarascan")
-        cancelled = False
-        if authoritative:
-            conn.execute("DELETE FROM skipped WHERE source = 'yara'")
-        else:
-            names = {entry["file"] for entry in broken}
-            ids = [row["id"] for row in conn.execute(
-                "SELECT id, path FROM skipped WHERE source = 'yara'").fetchall()
-                if row["path"] in names or path_within_any(row["path"], targets)]
-            conn.executemany("DELETE FROM skipped WHERE id = ?",
-                             ((row_id,) for row_id in ids))
+        skip_rows = db.rows(conn, "SELECT id, path FROM skipped WHERE source = 'yara'")
+        skips_by_path = {}
+        for row in skip_rows:
+            skips_by_path.setdefault(canonical_file(row["path"]), []).append(row["id"])
         # One line per broken rule file, in the same place every other
         # unchecked thing goes: a rule that did not run is not a rule that
         # found nothing.
         for entry in broken:
+            conn.execute("DELETE FROM skipped WHERE source = 'yara' AND path = ?",
+                         (entry["file"],))
             conn.execute(
                 "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
                 ("yara", entry["file"], f"rule did not compile: {entry['error']}"))
+        if compiled is None or (retry and broken):
+            conn.commit()
+            return stats
+        progress.update(0.02, f"0/{total:,} files — 0 findings", "scanning", 0, total,
+                        force=True)
         flagged = set()
-        for i, file_path in enumerate(files):
-            if ctx is not None and i % 200 == 0:
-                if ctx.cancelled():
-                    cancelled = True
-                    break
-                ctx.progress(0.02 + (i / total) * 0.95,
-                             f"{i:,}/{total:,} files — {stats['findings']} findings")
+        for i, (file_path, root) in enumerate(files):
+            if progress.cancelled():
+                break
+            progress.update(0.02 + (i / max(total, 1)) * 0.95,
+                            f"{i:,}/{total:,} files — {stats['findings']} findings",
+                            "scanning", i, total)
             stats["scanned"] += 1
             abs_path = os.path.abspath(display_path(file_path))
+            limit = limits.get(canonical_file(file_path), MAX_SCAN_BYTES)
+            skip_reason = ""
+            matches = []
             try:
-                if os.path.getsize(io_path(file_path)) > MAX_SCAN_BYTES:
-                    record_skip(ctx, abs_path, "too large for a YARA scan")
-                    conn.execute(
-                        "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
-                        ("yara", abs_path, "too large for a YARA scan"))
-                    stats["skipped"] += 1
-                    continue
+                file_stat = os.stat(io_path(file_path))
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise ValueError("file is no longer a regular file")
+                if file_stat.st_size > limit:
+                    raise ValueError(size_skip_reason("yara", file_stat.st_size, limit))
                 # Python handles Windows extended/Unicode paths; the native
                 # YARA filename API does not do so reliably. Preserve the
-                # existing size limit even if the file grows after getsize.
+                # selected byte ceiling even if the file grows after stat.
                 with open(io_path(file_path), "rb") as handle:
-                    content = handle.read(MAX_SCAN_BYTES + 1)
-                if len(content) > MAX_SCAN_BYTES:
+                    content = handle.read(limit + 1)
+                if len(content) > limit:
                     raise ValueError("file grew beyond the YARA scan size limit")
                 matches = compiled.match(data=content, timeout=20)
-            except Exception as e:             # yara.Error, OSError, TimeoutError
-                record_skip(ctx, abs_path, f"scan error: {str(e)[:160]}")
+            except (OSError, ValueError, yara.Error) as e:
+                skip_reason = f"scan error: {str(e)[:160]}"
+            except MemoryError:
+                skip_reason = ("not enough memory to scan this file; close other applications "
+                               "and retry, or inspect it with a tool for larger files")
+            identity = canonical_file(abs_path)
+            if skip_reason or not broken:
+                conn.executemany("DELETE FROM skipped WHERE id = ?",
+                                 ((row_id,) for row_id in skips_by_path.pop(identity, [])))
+            if skip_reason:
+                db.protect_file(conn, "yarascan", abs_path, run)
+                record_skip(ctx, abs_path, skip_reason, root=root)
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
-                    ("yara", abs_path, f"scan error: {str(e)[:160]}"))
+                    ("yara", abs_path, skip_reason))
                 stats["skipped"] += 1
-                continue
+                stats["file_skips"] += 1
             for match in list(matches)[:_MATCH_CAP]:
                 # The analyst's own rules have no catalogue id -- they are
                 # managed as FILES and switched off as files. The id column
@@ -397,16 +392,31 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True):
                                   engine="yarascan", run=run)
                 stats["findings"] += 1
                 flagged.add(abs_path)
-            if i % 500 == 0:
+            if retry and not skip_reason:
+                db.complete_file(conn, "yarascan", abs_path, run)
+            if retry or i % 500 == 0:
                 conn.commit()
+            if retry:
+                callback = getattr(ctx, "file_result", None)
+                if callback is not None:
+                    callback(abs_path, root, "skipped" if skip_reason else "resolved",
+                             reason=skip_reason)
         stats["flagged_files"] = len(flagged)
+        progress.update(0.98, "Saving scan results…", "finalizing",
+                        stats["scanned"], total, force=True)
+        complete = not progress.cancelled() and not stats.get("partial") and not broken
+        if authoritative and not retry and complete:
+            discovered = {canonical_file(path) for path, _root in files}
+            stale = [row_id for key, ids in skips_by_path.items() if key not in discovered
+                     for row_id in ids]
+            conn.executemany("DELETE FROM skipped WHERE id = ?", ((i,) for i in stale))
         conn.commit()
         # A cancelled run has no opinion about the files it never reached,
         # so only a completed one may retire the rows it did not reproduce.
         # The compile-failure path above never gets here -- a scan that
         # could not run is not a scan that found nothing.
-        if authoritative and not cancelled:
-            db.complete_run(conn, "yarascan", run)
+        if authoritative and not retry and complete:
+            db.complete_file_scan(conn, "yarascan", run)
     finally:
         conn.close()
     return stats

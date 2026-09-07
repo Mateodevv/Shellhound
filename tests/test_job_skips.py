@@ -42,10 +42,15 @@ class JobSkipTests(unittest.TestCase):
             first = self.run_job(lambda ctx: webshell.scan(self.case, [str(evidence)], ctx))
         with patch.object(webshell, "scan_file", return_value=([], None, None)):
             second = self.run_job(lambda ctx: webshell.scan(self.case, [str(evidence)], ctx))
-        self.assertEqual({"items": [{"path": str(target), "reason": "too large"}],
-                          "total": 1, "recorded": True}, self.details(self.case.name, first))
-        self.assertEqual({"items": [], "total": 0, "recorded": True},
-                         self.details(self.case.name, second))
+        first_details = self.details(self.case.name, first)
+        self.assertEqual(1, first_details["total"])
+        self.assertTrue(first_details["recorded"])
+        self.assertEqual((str(target), "too large"),
+                         (first_details["items"][0]["path"], first_details["items"][0]["reason"]))
+        second_details = self.details(self.case.name, second)
+        self.assertEqual([], second_details["items"])
+        self.assertEqual(0, second_details["total"])
+        self.assertTrue(second_details["recorded"])
 
     def test_failed_job_keeps_details_and_pages_without_polling_payload_growth(self):
         def fail(ctx):
@@ -75,7 +80,11 @@ class JobSkipTests(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
-        self.assertEqual({"items": [], "total": 0, "recorded": False}, self.details(self.case.name, 1))
+        legacy = self.details(self.case.name, 1)
+        self.assertEqual([], legacy["items"])
+        self.assertEqual(0, legacy["total"])
+        self.assertFalse(legacy["recorded"])
+        self.assertEqual(0, legacy["retryable"])
         with self.assertRaises(HTTPException) as err:
             self.details(self.case.name, 999)
         self.assertEqual(404, err.exception.status_code)

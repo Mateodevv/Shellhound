@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from server import coverage, db, iocs as ioclib, workspace
+from server.analysis import current_warning_count
 from server.artifacts import web_path
 from server.chain import case_chain
 
@@ -117,6 +118,8 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
     summary = workspace.case_summary(case_dir)
     conn = db.connect(case_dir)
     try:
+        skipped_files = current_warning_count(conn)
+        accepted_skips = current_warning_count(conn, accepted=True)
         evidence = db.rows(
             conn, "SELECT id, kind, label, files, bytes, scanned_at, meta_partial "
                   "FROM evidence ORDER BY kind, id")
@@ -185,6 +188,16 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
     chain["gaps"] = [redact(gap) for gap in chain.get("gaps") or []]
     cov = coverage.report(case_dir, lang, tz_mode)
     cov["notes"] = [redact(note) for note in cov.get("notes") or []]
+    if skipped_files:
+        cov["notes"].append(
+            f"{skipped_files} evidence files remain unexamined by one or more file scanners. "
+            "Analysis completed with warnings where these were the only limitations; "
+            "review the skipped-files lists in analysis history. These files are not cleared.")
+    if accepted_skips:
+        cov["notes"].append(
+            f"{accepted_skips} evidence files have analyst-accepted size skips in one or more file scanners. "
+            "These files remain unexamined by those scanners, not cleared. "
+            "The acceptance and original skip reasons are retained in analysis history.")
 
     return {
         "info": info, "summary": summary, "evidence": evidence,

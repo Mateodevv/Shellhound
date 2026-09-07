@@ -12,7 +12,7 @@ const REPORT_SECTIONS = [
   'indicators', 'hunts', 'cross',
 ] as const
 
-export function Report({ slug, onClosed }: {
+export function Report({ slug, onClosed, gotoView }: {
   slug: string
   gotoView: Navigate
   onClosed?: () => void
@@ -75,6 +75,19 @@ export function Report({ slug, onClosed }: {
             {ready ? tr('report.ready') : tr('report.needsReview')}
           </Tag>
         </Card>
+        {(dashboard?.analysis_warnings ?? 0) > 0 && <Card className="mb-4 flex flex-wrap items-center gap-3 px-4 py-3">
+          <TriangleAlert size={18} className="shrink-0 text-[var(--sev-low)]" />
+          <p className="min-w-0 flex-1 text-[12px] text-[var(--muted)]">
+            {tr('dashboard.analysisWarnings', { n: dashboard!.analysis_warnings! })}
+          </p>
+          <Button onClick={() => gotoView('evidence')}>{tr('dashboard.reviewSkipped')}</Button>
+        </Card>}
+        {(dashboard?.analysis_accepted ?? 0) > 0 && <Card className="mb-4 flex flex-wrap items-center gap-3 px-4 py-3">
+          <p className="min-w-0 flex-1 text-[12px] text-[var(--muted)]">
+            {tr('dashboard.analysisAccepted', { n: dashboard!.analysis_accepted! })}
+          </p>
+          <Button onClick={() => gotoView('evidence')}>{tr('dashboard.reviewAccepted')}</Button>
+        </Card>}
         <Card className="mb-4 p-4">
           <label className="text-[13px] font-semibold" htmlFor="case-report-notes">
             {tr('report.caseNotes')}
