@@ -1,51 +1,80 @@
 # server/main.py
-"""Entry point: `python -m server.main` starts the panel and opens the browser.
+"""Public entry point; help and source setup need only the standard library."""
+from __future__ import annotations
 
-    python -m server.main                        # default workspace, port 8710
-    python -m server.main --workspace D:\\Cases  # explicit workspace
-    python -m server.main --port 9000 --no-browser
-"""
 import argparse
-import threading
-import webbrowser
+import os
+from pathlib import Path
+import sys
 
-import uvicorn
-
-from server.app import create_app
-from server.config import DEFAULT_PORT, Config
+from server.config import DEFAULT_PORT
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="SHELLHOUND — web-native DFIR workbench for webserver "
-                    "compromises.")
-    parser.add_argument("--workspace", help="folder holding the cases "
-                        "(default: ~/ShellhoundCases or SHELLHOUND_WORKSPACE)")
+def argument_parser():
+    parser = argparse.ArgumentParser(allow_abbrev=False,
+        description="SHELLHOUND — prepare the application and open the local workbench.")
+    parser.add_argument("--workspace", help="case folder (default: ~/ShellhoundCases "
+                        "or SHELLHOUND_WORKSPACE)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--token", help="fixed access token (default: random "
-                        "per start; required for non-loopback binds)")
+    parser.add_argument("--token", help="fixed access token; required outside localhost")
     parser.add_argument("--no-browser", action="store_true",
-                        help="do not open the browser automatically")
-    args = parser.parse_args()
+                        help="start without opening the browser")
+    parser.add_argument("--update", action="store_true",
+                        help="pull this branch's upstream, then prepare and start (Git checkout only)")
+    return parser
 
-    config = Config(workspace=args.workspace, host=args.host, port=args.port,
-                    token=args.token)
-    if not config.loopback and not args.token:
+
+def main(argv=None, *, _checkout_lock_held=False):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = argument_parser()
+    args = parser.parse_args(argv)
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    if args.host not in ("127.0.0.1", "::1", "localhost") and not args.token:
         parser.error("a non-loopback bind requires an explicit --token")
+    if sys.version_info < (3, 10):
+        parser.error("Python 3.10 or newer is required. Install it and start again.")
 
-    app = create_app(config)
-    url = f"http://{config.host}:{config.port}/"
-    print(f"[*] SHELLHOUND panel: {url}")
-    print(f"[*] Workspace: {config.workspace}")
-    if not config.loopback:
-        print(f"[!] Non-loopback bind — access requires ?token={config.token}")
+    from server.startup import StartupError, termination_signals
+    try:
+        with termination_signals():
+            return _start(args, argv, lock_held=_checkout_lock_held)
+    except StartupError as exc:
+        print(f"[!] {exc}", file=sys.stderr, flush=True)
+        return 1
+    except KeyboardInterrupt:
+        print("\n[*] Shellhound stopped.", flush=True)
+        return 130
+    except OSError:
+        print("[!] Shellhound could not access a required file or start a program. "
+              "Check folder permissions and installed tools, then start again.",
+              file=sys.stderr, flush=True)
+        return 1
 
-    if not args.no_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
-    uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
+def _start(args, argv, *, lock_held=False):
+    from server.startup import StartupError, is_source_checkout, run_source
+    root = Path(__file__).resolve().parent.parent
+    if is_source_checkout(root):
+        # Resolve against the caller's directory before either process handoff.
+        workspace = (args.workspace or os.environ.get("SHELLHOUND_WORKSPACE")
+                     or Path.home() / "ShellhoundCases")
+        args.workspace = str(Path(workspace).expanduser().resolve())
+        argv = ["--workspace", args.workspace, "--host", args.host, "--port", str(args.port)]
+        if args.token is not None:
+            argv.append("--token=" + args.token)
+        if args.no_browser:
+            argv.append("--no-browser")
+        if args.update:
+            argv.append("--update")
+        return run_source(root, args, argv, lock_held=lock_held)
+    if args.update:
+        raise StartupError("This is an installed package, not a Git checkout. "
+                           "Install the newer wheel with this environment's pip.")
+    from server.runtime import run
+    return run(args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
