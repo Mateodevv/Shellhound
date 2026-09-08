@@ -133,7 +133,7 @@ it('selects all size skips across pages, allows individual unticking, and accept
   await waitFor(() => expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases/case/jobs/7/accept-skipped', {
     mode: 'selected', ids: ids.slice(0, 100), group: 'size_limit', status: 'pending',
   }))
-  expect(await screen.findByRole('status')).toHaveTextContent('history and coverage gaps are kept')
+  expect(await screen.findByRole('status')).toHaveTextContent('decisions are saved')
 })
 
 it('can accept large skips when scanning is blocked', async () => {

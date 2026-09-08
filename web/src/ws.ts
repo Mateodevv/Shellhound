@@ -10,7 +10,8 @@ type Event = JobEvent | InvalidateEvent
 // Which query keys a finished engine invalidates. "Everything relevant"
 // beats a stale view; the queries are cheap reads of local SQLite.
 const SCOPE_KEYS: Record<string, string[]> = {
-  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace'],
+  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request'],
+  hunt: ['dashboard', 'hunt-batches', 'hunt-batch', 'hunt-tests', 'jobs'],
   webshell: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
   yara: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
   cms: ['dashboard', 'cms', 'jobs', 'case'],
@@ -50,6 +51,11 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
             }))
           }
           onJobRef.current?.(event.job)
+          if (event.job.kind === 'hunt') {
+            for (const key of ['hunt-batches', 'hunt-batch', 'hunt-tests']) {
+              qc.invalidateQueries({ queryKey: event.case_slug ? [key, event.case_slug] : [key] })
+            }
+          }
           if (event.job.state && event.job.state !== 'running') {
             qc.invalidateQueries({ queryKey: ['jobs'] })
             qc.invalidateQueries({ queryKey: ['dashboard'] })

@@ -157,6 +157,8 @@ describe('evidence registration', () => {
 describe('incomplete evidence analysis', () => {
   it('keeps accepted-only coverage history accessible after its attention warning is dismissed', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
+      if (path.includes('/skipped?')) return { items: [], total: 0, recorded: true, unresolved: 0,
+        counts: { size_limit: 2, other: 0, accepted: 2 } }
       if (path.endsWith('/jobs')) return [{
         id: 1, run_id: 'accepted-run', kind: 'webshell', state: 'done', progress: 1,
         created: '2026-09-02T10:00:00', stats: { scanned: 4, skipped: 2, file_skips: 2 },
@@ -170,11 +172,14 @@ describe('incomplete evidence analysis', () => {
       }] }
     })
     renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
-    expect(await screen.findByText('Accepted coverage gaps')).toBeVisible()
-    expect(screen.getByText(/2 accepted without scanning/)).toBeVisible()
-    expect(screen.getByText(/files remain unexamined/)).toBeVisible()
-    expect(screen.getAllByRole('button', { name: 'Show skipped files and rules' }).some((button) =>
-      !button.closest('details'))).toBe(true)
+    const resolved = await screen.findByText('Resolved scan skips')
+    expect(resolved.closest('details')).not.toHaveAttribute('open')
+    expect(screen.queryByText('Accepted coverage gaps')).not.toBeInTheDocument()
+    expect(screen.queryByText(/2 accepted without scanning/)).not.toBeInTheDocument()
+    fireEvent.click(resolved)
+    expect(await screen.findByText(/2 accepted without scanning/)).toBeVisible()
+    expect(screen.getByText(/They no longer need attention/)).toBeVisible()
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([path]) => path.includes('/skipped?') && path.includes('status=accepted'))).toBe(true))
     expect(screen.queryByText('Skipped files to review')).not.toBeInTheDocument()
     expect(screen.queryByText('Analysis needs attention')).not.toBeInTheDocument()
   })
