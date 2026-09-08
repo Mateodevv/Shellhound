@@ -184,7 +184,7 @@ export function Chip({ active, onClick, children, count, dimmed }: {
 }
 
 export function Button({ children, onClick, variant = 'default', disabled, className, title, style, type,
-                         onMouseLeave, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls }: {
+                         onMouseLeave, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls, 'aria-pressed': ariaPressed }: {
   children: ReactNode
   onClick?: () => void
   variant?: 'default' | 'primary' | 'danger' | 'ghost' | 'incident' | 'review' | 'outline'
@@ -201,6 +201,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   onMouseLeave?: () => void
   'aria-expanded'?: boolean
   'aria-controls'?: string
+  'aria-pressed'?: boolean
 }) {
   return (
     <button
@@ -211,6 +212,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       title={title}
       aria-label={ariaLabel ?? title}
       aria-expanded={ariaExpanded}
+      aria-pressed={ariaPressed}
       aria-controls={ariaControls}
       style={style}
       className={clsx(
@@ -314,12 +316,19 @@ export function Collapsible({ open, onToggle, title, sub, right, count, children
   )
 }
 
-export function ProgressBar({ value, tone }: { value: number; tone?: string }) {
+export function ProgressBar({ value, tone, indeterminate = false, label }: {
+  value: number; tone?: string; indeterminate?: boolean; label?: string
+}) {
+  const percent = Math.round(Math.max(0, Math.min(1, value)) * 100)
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-2)]">
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={indeterminate ? undefined : percent}
+      className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-2)]">
       <div
-        className="h-full rounded-full transition-[width] duration-500 ease-out"
-        style={{ width: `${Math.round(value * 100)}%`, background: tone ?? 'var(--accent)' }}
+        className={clsx('h-full rounded-full', indeterminate
+          ? 'animate-progress-indeterminate motion-reduce:animate-none'
+          : 'transition-[width] duration-500 ease-out motion-reduce:transition-none')}
+        style={{ width: indeterminate ? '40%' : `${percent}%`, background: tone ?? 'var(--accent)' }}
       />
     </div>
   )

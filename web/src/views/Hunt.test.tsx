@@ -1,222 +1,362 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
-import {
-  api, del, patch, post, type ActorDetail, type HuntPattern, type HuntRuleV2, type HuntTest,
-} from '../api'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { api, del, patch, post, type HuntBatch, type HuntPattern, type HuntRuleV2, type HuntTest } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Hunt } from './Hunt'
+import { DEFAULT_SESSION, emptyDraft, patternDraft, saveSession } from './hunt/state'
 
-vi.mock('../api', async (orig) => ({
-  ...(await orig<typeof import('../api')>()),
-  api: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn(),
-}))
-
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => {
-    const items = Array.from({ length: count }, (_, index) => ({
-      index, key: index, start: index * 43, size: 43, end: (index + 1) * 43,
-    }))
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => count * 43,
-      measureElement: () => {},
-    }
-  },
-}))
+vi.mock('../api', async (original) => ({ ...(await original<typeof import('../api')>()),
+  api: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn() }))
 
 const RULE: HuntRuleV2 = { client_match: 'any', requests: [{ clauses: [
-  { field: 'uri', operator: 'equals', values: ['/wp-content/uploads/drop.php'] },
+  { field: 'uri', operator: 'equals', values: ['/training-marker'] },
 ] }] }
-
 const PATTERN: HuntPattern = {
-  id: 'bundled-sample', patterns: ['/wp-content/uploads/drop.php'], match: 'any',
-  request: { methods: [], user_agents: [] }, name: 'Bundled sample', cve: '',
-  description: 'The request matches the selected path.', added: '2026-01-01',
-  source: 'bundled', enabled: true, rule: RULE, rule_hash: 'rule-hash',
-  dsl: 'client any\nrequest\n  uri equals ["/wp-content/uploads/drop.php"]\nend',
-  technology: 'wordpress', version: 1, archived: false, own_enabled: true,
-  created_at: '2026-01-01', updated_at: '2026-01-01', derived_from: null,
+  id: 'sample', patterns: ['/training-marker'], match: 'any', request: { methods: [], user_agents: [] },
+  name: 'Training marker', cve: '', description: 'Requests for the training marker.', added: '2026-01-01',
+  source: 'own', enabled: true, rule: RULE, rule_hash: 'rule-hash',
+  dsl: 'client any\nrequest\n  uri equals ["/training-marker"]\nend', technology: 'generic', version: 1,
+  archived: false, own_enabled: true, created_at: '2026-01-01', updated_at: '2026-01-01', derived_from: null,
 }
-
-const TEST: HuntTest = {
-  id: 41, pattern_id: PATTERN.id, pattern_version: 1, rule_hash: 'rule-hash',
-  rule: RULE, dsl: PATTERN.dsl, tested_at: '2026-08-31T10:00:00',
-  index_fingerprint: 'index-1', hits: 3, ok_hits: 2, clients: 1,
-  ok_clients: 1, uris: 1, first_epoch: 1_700_000_000,
-  last_epoch: 1_700_000_060, tz: 0, truncated: false,
-  coverage: { requests: 30, fields: { uri: { present: 30, total: 30, ratio: 1 } } },
-  batch_id: '',
-}
-
-const CLUSTER = {
-  cluster_key: 'cluster-1', client: '203.0.113.42', method: 'GET',
-  uri_pattern: '/wp-content/uploads/drop.php', status_class: '2xx',
-  requests: 2, ok_hits: 2, first_epoch: 1_700_000_000,
-  last_epoch: 1_700_000_060, tz: 0, request_id: 7,
-  example_uri: '/wp-content/uploads/drop.php',
-}
-
-const ACTOR_DETAIL = {
-  actor: {
-    ip_id: 1, ip: CLUSTER.client, requests: 8,
-    first_epoch: CLUSTER.first_epoch, last_epoch: CLUSTER.last_epoch, tz: 0,
-    err4: 0, err5: 0, bytes: 1000, bytes_unknown: 0, posts: 0,
-    login_posts: 0, login_redirects: 0, admin_ok: 0, login_statuses: '[]',
-    scanner_uas: '[]', sqli_attempts: 1, sqli_ok: 1,
-    traversal_attempts: 0, traversal_ok: 0, upload_php_attempts: 6,
-    upload_php_ok: 6, cms_dir_php_attempts: 0, cms_dir_php_ok: 0,
-    login_first: null, login_last: null, login_burst: 0, agents: 1,
-    alerts: [], sparkline: [1, 3, 4], in_box: false, triage: null,
-  },
-  alerts: [],
-  top_paths: [{ uri: CLUSTER.example_uri, n: 6, ok: 6 }],
-  top_agents: [{ agent: 'Mozilla/5.0', n: 8 }],
-  triage: null, triage_note: '', triaged_at: '', worst: null,
-  findings: [], in_box: false, relations: [],
-} as ActorDetail
-
-const OWN: HuntPattern = {
-  ...PATTERN, id: 'own-variant', source: 'own', name: 'Edited sample',
-  version: 1, derived_from: { id: PATTERN.id, version: 1, source: 'bundled' },
-}
-
+const TEST: HuntTest = { id: 41, pattern_id: PATTERN.id, pattern_version: 1, rule_hash: PATTERN.rule_hash,
+  rule: RULE, dsl: PATTERN.dsl, tested_at: '2026-09-08T10:00:00', index_fingerprint: 'index-1',
+  hits: 3, clients: 1, ok_hits: 2, first_epoch: 1_700_000_000, last_epoch: 1_700_000_060,
+  tz: 0, coverage: { requests: 30, fields: {} }, batch_id: 'run-1' }
+const RUN: HuntBatch = { batch_id: 'run-1', job_id: 7, state: 'done', created: '2026-09-08T10:00:00',
+  started: '2026-09-08T10:00:00', finished: '2026-09-08T10:00:01', progress: 1,
+  index_fingerprint: 'index-1', fresh: true, roster_known: true,
+  counts: { total: 1, checked: 1, matched: 1, failed: 0, remaining: 0 },
+  patterns: [{ id: PATTERN.id, name: PATTERN.name, cve: '', description: PATTERN.description,
+    technology: 'generic', version: 1, rule_hash: PATTERN.rule_hash, status: 'done', error: '', test: TEST }], error: '' }
+const CLUSTER = { cluster_key: 'group-1', client: '203.0.113.42', method: 'GET', uri_pattern: '/training-marker',
+  status_class: '2xx', requests: 2, ok_hits: 2, first_epoch: TEST.first_epoch, last_epoch: TEST.last_epoch,
+  tz: 0, request_id: 7, example_uri: '/training-marker' }
+let allRuns: HuntBatch[]
+let applied: unknown
+let paginateGroups = false
 function mocks() {
   vi.mocked(api).mockImplementation(async (path) => {
     if (path === '/api/patterns') return { patterns: [PATTERN], path: 'patterns.json' }
-    if (path.includes('/hunt/tests?')) return { tests: [] }
-    if (path.endsWith('/versions')) return { versions: [{ version: 1 }] }
-    if (path.includes('/access/request/7')) return {
-      request: { ...CLUSTER, request_key: 'source:7', source_id: 1, line_no: 7,
-        epoch: CLUSTER.first_epoch, status: 200, size: 12, referrer: '-', agent: 'curl',
-        source: 'access.log', signals: [] },
-      before: [], after: [], raw_line: '203.0.113.42 GET /wp-content/uploads/drop.php 200',
-      raw_truncated: false,
-    }
-    if (path.includes('/actor?ip=')) return {
-      ...ACTOR_DETAIL,
-    }
-    throw new Error(`unexpected API call: ${path}`)
+    if (/\/api\/cases\/[^/]+$/.test(path)) return { evidence_items: [{ id: 1, kind: 'access_logs', scanned_at: '2026-09-08' }],
+      log_index: { exists: true, fresh: true, lines: 30, clients: 1 } }
+    if (path.endsWith('/dashboard')) return { logs: null }
+    if (path.endsWith('/jobs')) return []
+    if (path.includes('/hunt/tests?')) return { tests: [TEST] }
+    if (path.endsWith('/hunt/batch-tests')) return { runs: allRuns }
+    if (path.includes('/hunt/batch-tests/')) return allRuns.find((r) => path.endsWith(r.batch_id))
+    if (path.endsWith('/versions')) return { versions: [] }
+    throw new Error(`Unexpected API call: ${path}`)
   })
-  vi.mocked(post).mockImplementation(async (path) => {
-    if (path.endsWith('/hunt/tests')) return { test: TEST, result: {
-      hits: 3, ok_hits: 2, clients_total: 1, ok_clients: 1, uri_total: 1,
-      clients: [], uris: [], first_epoch: TEST.first_epoch, last_epoch: TEST.last_epoch,
-      tz: 0, timeline: [], truncated: false, clients_truncated: false,
-      uris_truncated: false, rule: RULE, rule_hash: TEST.rule_hash,
-      coverage: TEST.coverage,
-    } }
-    if (path.endsWith('/clusters')) return { clusters: [CLUSTER], total: 1, next_cursor: null }
-    if (path.endsWith('/clone')) return OWN
-    if (path.endsWith('/apply')) return {
-      application_id: 5, pattern: OWN, findings: 1, already_applied: false,
+  vi.mocked(post).mockImplementation(async (path, body) => {
+    if (path.endsWith('/batch-tests')) {
+      const batchId = `run-${allRuns.length + 1}`
+      allRuns = [{ ...RUN, batch_id: batchId, job_id: allRuns.length + 7 }, ...allRuns]
+      return { job_id: allRuns[0].job_id, batch_id: batchId, patterns: 1 }
     }
-    throw new Error(`unexpected POST call: ${path}`)
+    if (path.endsWith('/clients')) return { clients: [{ ...CLUSTER }], total: 1, next_cursor: null }
+    if (path.endsWith('/clusters')) {
+      const next = (body as { cursor: string }).cursor === 'page-2'
+      return { clusters: [{ ...CLUSTER, cluster_key: next ? 'group-2' : 'group-1', uri_pattern: next ? '/second-marker' : CLUSTER.uri_pattern }],
+        total: paginateGroups ? 51 : 1, next_cursor: paginateGroups && !next ? 'page-2' : null }
+    }
+    if (path.endsWith('/hunt/tests')) return { test: { ...TEST, batch_id: '' }, result: {} }
+    if (path.endsWith('/apply')) { applied = body; return { findings: 1, already_applied: false } }
+    throw new Error(`Unexpected POST call: ${path}`)
   })
-  vi.mocked(patch).mockResolvedValue(OWN)
+  vi.mocked(patch).mockResolvedValue(PATTERN)
   vi.mocked(del).mockResolvedValue({})
 }
 
-describe('Pattern Hunt forensic workbench', () => {
-  it('opens an older linked test without executing another hunt', async () => {
-    sessionStorage.clear()
+beforeEach(() => {
+  vi.clearAllMocks(); sessionStorage.clear(); history.replaceState(null, '', '/?case=case-1&view=hunt')
+  allRuns = [structuredClone(RUN)]; applied = undefined; paginateGroups = false; mocks()
+})
+
+describe('Pattern Hunt investigation workflow', () => {
+  it('opens IOC query evidence without replacing the saved editor draft', async () => {
+    saveSession('case-1', { ...DEFAULT_SESSION, draft: emptyDraft({ name: 'Keep my draft' }) })
     history.replaceState(null, '', '/?case=case-1&view=hunt&section=41')
-    mocks()
     const original = vi.mocked(api).getMockImplementation()!
-    vi.mocked(api).mockImplementation(async path => path.endsWith('/hunt/tests?test_id=41') ? { tests: [TEST] } : original(path))
-    renderWithProviders(<Hunt slug="case-1" gotoView={() => {}} />)
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clusters', expect.anything()))
-    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
-    history.replaceState(null, '', '/')
+    vi.mocked(api).mockImplementation(async path => path.endsWith('/hunt/tests?limit=500') ? { tests: [] } : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Saved query #41')).toBeVisible()
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients', expect.anything()))
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
+    expect(new URLSearchParams(location.search).get('section')).toBe('41')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Back to Pattern Hunt' })[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByDisplayValue('Keep my draft')).toBeVisible()
   })
 
-  it('does not query while editing and applies only an explicitly selected cluster', async () => {
-    sessionStorage.clear()
-    sessionStorage.setItem('shellhound:hunt-workbench:case-1', JSON.stringify({
-      resultCollapsed: true,
-    }))
+  it('passes explicit draft CVE metadata when previewing a query', async () => {
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByPlaceholderText('CVE-…'), { target: { value: 'CVE-2026-12345' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview in this case' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests', expect.objectContaining({ name: PATTERN.name, cve: 'CVE-2026-12345' })))
+  })
+
+  it('opens the dashboard-linked run instead of the saved selection and preserves the draft', async () => {
+    allRuns = [{ ...RUN, batch_id: 'newer-run' }, RUN]
+    saveSession('case-1', { ...DEFAULT_SESSION, batchId: 'newer-run', runPatternId: 'sample',
+      draft: emptyDraft({ name: 'Keep my unsaved investigation' }), page: 'editor' })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=runs&batch=run-1')
+    const mounted = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Run' })).toHaveValue('run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect matches' }))
+    await waitFor(() => expect(new URLSearchParams(location.search).get('pattern')).toBe('sample'))
+    mounted.unmount()
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'Back to run overview' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByDisplayValue('Keep my unsaved investigation')).toBeVisible()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
+  })
+
+  it('keeps both summaries visible when a check starts and opens details explicitly', async () => {
+    allRuns = []
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    const summary = await screen.findByRole('region', { name: 'Pattern check' })
+    const start = await within(summary).findByRole('button', { name: 'Check all patterns (1)' })
+    await waitFor(() => expect(start).toBeEnabled())
+    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    fireEvent.click(start)
+    const details = await within(summary).findByRole('button', { name: 'View full results' })
+    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Inspect matches' })).not.toBeInTheDocument()
+    fireEvent.click(details)
+    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
+    expect(await screen.findByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the overview on a sidebar visit while keeping the selected run and draft', async () => {
+    const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Keep this draft' } })
+    first.unmount()
     history.replaceState(null, '', '/?case=case-1&view=hunt')
-    mocks()
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByDisplayValue('Keep this draft')).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('opens full results from the match summary and omits a finished remaining count', async () => {
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    const summary = await screen.findByRole('button', { name: 'Matches worth a closer look' })
+    expect(screen.queryByText('Remaining')).not.toBeInTheDocument()
+    fireEvent.click(summary)
+    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeEnabled()
+    expect(screen.queryByText('Remaining')).not.toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('explains missing indexing beside the start action and still allows managing patterns', async () => {
+    allRuns = []
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation((path) => /\/api\/cases\/[^/]+$/.test(path)
+      ? Promise.resolve({ evidence_items: [{ kind: 'access_logs' }], log_index: { exists: false, fresh: false } }) : original(path))
     const gotoView = vi.fn()
     renderWithProviders(<Hunt slug="case-1" gotoView={gotoView} />)
-
-    expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
-    const name = await screen.findByDisplayValue('Bundled sample')
-    fireEvent.change(name, { target: { value: 'Edited sample' } })
-    fireEvent.change(screen.getByPlaceholderText('CVE-…'), { target: { value: 'CVE-2026-12345' } })
-    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/hunt/tests'))).toBe(false)
-    expect(screen.getByRole('button', { name: 'Save rule' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Test' }))
-    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
-      path.endsWith('/hunt/tests'))).toBe(true))
-    expect(vi.mocked(post)).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests',
-      expect.objectContaining({ name: 'Edited sample', cve: 'CVE-2026-12345' }))
-    expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Apply selected (0)' })).toBeDisabled()
-    expect(screen.getByText(/Save the rule first/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save rule' }))
-    expect(await screen.findByText('Create an own variant')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save own variant' }))
-    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) =>
-      path.endsWith('/clone'))).toBe(true))
-    expect(screen.getByText(/Select at least one request cluster on the right/)).toBeInTheDocument()
-    expect(screen.queryByText('Request inspector')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Requests · Sort ascending' }))
-    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>
-      path.endsWith('/clusters')
-      && (body as { sort: string; direction: string }).sort === 'requests'
-      && (body as { sort: string; direction: string }).direction === 'asc')).toBe(true))
-    fireEvent.click(await screen.findByRole('button', { name: '203.0.113.42' }))
-    expect(await screen.findByRole('button', { name: 'Activity' })).toHaveAttribute(
-      'aria-pressed', 'true')
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect((await screen.findAllByText('/wp-content/uploads/drop.php')).length).toBeGreaterThan(1)
-    expect(gotoView).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Close (Esc)' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    const checkbox = await screen.findByLabelText('Select request cluster')
-    fireEvent.click(checkbox)
-    expect(screen.getByRole('button', { name: 'Apply selected (1)' })).toBeEnabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
-
-    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) =>
-      path.endsWith('/apply')
-      && (body as { cluster_keys: string[]; pattern_id: string }).cluster_keys.join() === 'cluster-1'
-      && (body as { pattern_id: string }).pattern_id === OWN.id)).toBe(true))
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument())
+    const start = await screen.findByRole('button', { name: 'Check all patterns (1)' })
+    expect(start).toBeDisabled()
+    fireEvent.click(await screen.findByRole('button', { name: 'View analysis' }))
+    expect(gotoView).toHaveBeenCalledWith('evidence')
+    fireEvent.click(screen.getByRole('button', { name: 'Open pattern library' }))
+    expect(await screen.findByRole('button', { name: 'Add a pattern' })).toBeEnabled()
+    expect(post).not.toHaveBeenCalled()
   })
 
-  it('restores the open draft when the analyst leaves and returns', async () => {
-    sessionStorage.clear()
-    history.replaceState(null, '', '/?case=case-state&view=hunt')
-    mocks()
-    const first = renderWithProviders(<Hunt slug="case-state" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit rule' }))
-    const name = await screen.findByDisplayValue('Bundled sample')
-    fireEvent.change(name, { target: { value: 'Draft kept across tabs' } })
-    await waitFor(() => expect(JSON.parse(
-      sessionStorage.getItem('shellhound:hunt-workbench:case-state') || '{}')
-      .draft.name).toBe('Draft kept across tabs'))
+  it.each(['running', 'cancelled', 'failed'] as const)('preserves partial results and the library for a %s check', async (state) => {
+    allRuns[0] = { ...RUN, state, progress: 0.5, counts: { total: 2, checked: 1, matched: 1, failed: state === 'failed' ? 1 : 0, remaining: 1 } }
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'View full results' })).toBeEnabled()
+    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    expect(screen.queryByText('Check complete')).not.toBeInTheDocument()
+    if (state === 'running') {
+      expect(screen.getByText('Remaining')).toBeInTheDocument()
+      expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0.5')
+      expect(screen.getByRole('button', { name: 'Stop check' })).toBeEnabled()
+    } else expect(screen.getByText('Not checked')).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('starts all or one enabled pattern explicitly without adding findings', async () => {
+    allRuns = []
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    const checkAll = await screen.findByRole('button', { name: 'Check all patterns (1)' })
+    await waitFor(() => expect(checkAll).toBeEnabled())
+    expect(post).not.toHaveBeenCalled()
+    fireEvent.click(checkAll)
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) => path.endsWith('/batch-tests') && JSON.stringify(body) === '{}')).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Open pattern library' }))
+    const single = await screen.findByRole('button', { name: /Check this pattern/ })
+    fireEvent.click(single)
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) => path.endsWith('/batch-tests') && (body as { ids?: string[] }).ids?.join() === PATTERN.id)).toBe(true))
+    expect(applied).toBeUndefined()
+  })
+
+  it('adds only the current page selection and clears it when changing pages', async () => {
+    paginateGroups = true
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
+    fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
+    await screen.findByLabelText('Select GET /training-marker 2xx')
+    fireEvent.click(screen.getByLabelText('Select this page'))
+    expect(screen.getByRole('button', { name: 'Add selected to Findings (1)' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('/second-marker')
+    expect(screen.getByRole('button', { name: 'Add selected to Findings (0)' })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText('Select GET /second-marker 2xx'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add selected to Findings (1)' }))
+    await waitFor(() => expect(applied).toEqual({ cluster_keys: ['group-2'], pattern_id: PATTERN.id, expected_version: 1 }))
+  })
+
+  it('restores a selected historical run without mixing in newer pattern results', async () => {
+    const old = { ...structuredClone(RUN), batch_id: 'older', created: '2026-09-07T10:00:00' }
+    old.patterns[0].name = 'Earlier pattern name'; old.patterns[0].test!.hits = 1
+    allRuns.push(old)
+    const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Run' }), { target: { value: 'older' } })
+    await screen.findByText('Earlier pattern name')
     first.unmount()
-
-    renderWithProviders(<Hunt slug="case-state" gotoView={vi.fn()} />)
-    expect(await screen.findByDisplayValue('Draft kept across tabs')).toBeInTheDocument()
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Earlier pattern name')).toBeInTheDocument()
+    expect(screen.queryByText('Training marker')).not.toBeInTheDocument()
   })
 
-  it('always expands results when the editor is closed, even with an old collapsed session', async () => {
-    sessionStorage.clear()
-    sessionStorage.setItem('shellhound:hunt-workbench:case-collapsed', JSON.stringify({
-      resultCollapsed: true,
-    }))
-    history.replaceState(null, '', '/?case=case-collapsed&view=hunt')
-    mocks()
-    renderWithProviders(<Hunt slug="case-collapsed" gotoView={vi.fn()} />)
+  it('shows stale historical counts while blocking evidence inspection', async () => {
+    allRuns[0].fresh = false
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeDisabled()
+    expect(screen.getByText(/These are historical counts/)).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
 
-    expect(await screen.findByText('No audited test selected')).toBeInTheDocument()
-    expect(await screen.findByText('Selected rule')).toBeInTheDocument()
-    expect(screen.getByText('The request matches the selected path.')).toBeInTheDocument()
-    expect(screen.queryByTitle('Hits and evidence')).not.toBeInTheDocument()
+  it('preserves an edited draft across navigation and refresh without searching', async () => {
+    const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Unsaved investigator note' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByDisplayValue('Unsaved investigator note')).toBeInTheDocument()
+    first.unmount()
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByDisplayValue('Unsaved investigator note')).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each(['preview', 'save'])('keeps newer draft edits when a delayed %s finishes', async (operation) => {
+    let finish!: (result: unknown) => void
+    const response = new Promise((resolve) => { finish = resolve })
+    const originalPost = vi.mocked(post).getMockImplementation()!
+    if (operation === 'preview') vi.mocked(post).mockImplementation((path, body) => path.endsWith('/hunt/tests') ? response : originalPost(path, body))
+    else vi.mocked(patch).mockReturnValue(response)
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Submitted draft' } })
+    fireEvent.click(screen.getByRole('button', { name: operation === 'preview' ? 'Preview in this case' : 'Save pattern' }))
+    fireEvent.change(screen.getByDisplayValue('Submitted draft'), { target: { value: 'Newer unsaved draft' } })
+    await act(async () => { finish(operation === 'preview' ? { test: TEST, result: {} } : { ...PATTERN, version: 2, name: 'Submitted draft' }); await response })
+    expect(await screen.findByDisplayValue('Newer unsaved draft')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back to editor' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled()
+    if (operation === 'save') {
+      fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
+      await waitFor(() => expect(vi.mocked(patch).mock.calls.at(-1)?.[1]).toMatchObject({ expected_version: 2, name: 'Newer unsaved draft' }))
+    }
+  })
+
+  it('does not leak a selected run or draft into another case', async () => {
+    const view = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Case one draft' } })
+    view.rerender(<Hunt slug="case-2" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'View full results' })).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Case one draft')).not.toBeInTheDocument()
+  })
+
+  it.each(['new', 'bundled'] as const)('keeps newer edits attached to the pattern created from a %s draft', async (source) => {
+    const draft = source === 'new'
+      ? emptyDraft({ name: 'Submitted pattern', rule: RULE, dsl: PATTERN.dsl })
+      : { ...patternDraft({ ...PATTERN, source: 'bundled' }), name: 'Submitted pattern' }
+    saveSession('case-1', { ...DEFAULT_SESSION, draft })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=editor')
+    const saved = { ...PATTERN, id: 'created-pattern', name: draft.name }
+    let finish!: (result: unknown) => void
+    const response = new Promise((resolve) => { finish = resolve })
+    const originalPost = vi.mocked(post).getMockImplementation()!
+    vi.mocked(post).mockImplementation((path, body) =>
+      path === '/api/patterns' || path === '/api/patterns/sample/clone' ? response : originalPost(path, body))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: source === 'new' ? 'Save pattern' : 'Save as workspace pattern' }))
+    if (source === 'bundled') {
+      fireEvent.click(screen.getByRole('button', { name: 'Save own variant' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    }
+    fireEvent.change(screen.getByDisplayValue('Submitted pattern'), { target: { value: 'Newer investigator edits' } })
+    await act(async () => { finish(source === 'new' ? { entry: saved } : saved); await response })
+    expect(await screen.findByDisplayValue('Newer investigator edits')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
+    await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/patterns/created-pattern',
+      expect.objectContaining({ expected_version: 1, name: 'Newer investigator edits' })))
+    expect(vi.mocked(post).mock.calls.filter(([path]) => path === '/api/patterns' || path.endsWith('/clone'))).toHaveLength(1)
+  })
+
+  it('does not attach a delayed creation to a different new draft', async () => {
+    saveSession('case-1', { ...DEFAULT_SESSION, draft: emptyDraft({ name: 'First draft', rule: RULE, dsl: PATTERN.dsl }) })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=editor')
+    let finish!: (result: unknown) => void
+    const response = new Promise((resolve) => { finish = resolve })
+    const originalPost = vi.mocked(post).getMockImplementation()!
+    vi.mocked(post).mockImplementation((path, body) => path === '/api/patterns' ? response : originalPost(path, body))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save pattern' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a pattern' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard draft and continue' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Separate draft' } })
+    await act(async () => { finish({ entry: { ...PATTERN, id: 'created-pattern', name: 'First draft' } }); await response })
+    expect(await screen.findByDisplayValue('Separate draft')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
+    await waitFor(() => expect(vi.mocked(post).mock.calls.filter(([path]) => path === '/api/patterns')).toHaveLength(2))
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  it('hides cached request context when the saved search becomes stale', async () => {
+    let stale = false
+    const originalApi = vi.mocked(api).getMockImplementation()!
+    const originalPost = vi.mocked(post).getMockImplementation()!
+    vi.mocked(api).mockImplementation((path) => path.includes('/access/request/') ? Promise.resolve({
+      request: { request_id: 7, client: CLUSTER.client, epoch: TEST.first_epoch, tz: 0, method: 'GET',
+        uri: '/training-marker', status: 200, source: 'training-context.log', line_no: 2 }, before: [], after: [],
+    }) : originalApi(path))
+    vi.mocked(post).mockImplementation((path, body) => path.endsWith('/clusters') && stale
+      ? Promise.reject(new Error('The log index changed. Run this check again.')) : originalPost(path, body))
+    const { qc } = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
+    fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect first request' }))
+    expect(await screen.findByRole('button', { name: 'Activity after this request' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Request and surrounding activity' })).toHaveFocus()
+    stale = true
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['hunt-clusters', 'case-1'] }) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('The log index changed')
+    expect(screen.queryByRole('heading', { name: 'Request and surrounding activity' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Activity after this request' })).not.toBeInTheDocument()
   })
 })

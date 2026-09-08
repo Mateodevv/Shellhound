@@ -86,14 +86,41 @@ CREATE TABLE IF NOT EXISTS jobs (
     created TEXT NOT NULL,
     started TEXT, finished TEXT,
     stats TEXT NOT NULL DEFAULT '{}',
-    run_id TEXT NOT NULL DEFAULT ''        -- one click starts one analysis run
+    run_id TEXT NOT NULL DEFAULT '',       -- one click starts one analysis run
+    scan_context TEXT NOT NULL DEFAULT '{}',
+    progress_details TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS job_skips (
     job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
     path TEXT NOT NULL,
     reason TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'other',
+    root TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (job_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS file_scan_results (
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (job_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS skip_reviews (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    outcome_job_id INTEGER NOT NULL DEFAULT 0,
+    accepted_at TEXT NOT NULL,
+    FOREIGN KEY (job_id, ordinal) REFERENCES job_skips(job_id, ordinal) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS skip_reviews_job ON skip_reviews(job_id, ordinal);
+CREATE TABLE IF NOT EXISTS file_completion (
+    engine TEXT NOT NULL,
+    artifact TEXT NOT NULL,
+    run INTEGER NOT NULL,
+    keep_run INTEGER NOT NULL,
+    PRIMARY KEY (engine, artifact)
 );
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY,
@@ -448,7 +475,11 @@ _ADDED_COLUMNS = {
         ("engine", "TEXT NOT NULL DEFAULT ''"),
         ("seen_run", "INTEGER NOT NULL DEFAULT 0"),
     ],
-    "jobs": [("run_id", "TEXT NOT NULL DEFAULT ''")],
+    "jobs": [("run_id", "TEXT NOT NULL DEFAULT ''"),
+             ("scan_context", "TEXT NOT NULL DEFAULT '{}'"),
+             ("progress_details", "TEXT NOT NULL DEFAULT '{}'")],
+    "job_skips": [("category", "TEXT NOT NULL DEFAULT 'other'"),
+                  ("root", "TEXT NOT NULL DEFAULT ''")],
     "cms_installs": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "cms_items": [("version_source", "TEXT NOT NULL DEFAULT ''")],
     "db_accounts": [
@@ -496,7 +527,8 @@ _ADDED_COLUMNS = {
 # 13: typed/scoped IOC identities, file content objects and evidence-backed assertions.
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
-CASE_SCHEMA_VERSION = 15
+# 16: integrate main scan retries, skip reviews and saved hunt batches.
+CASE_SCHEMA_VERSION = 16
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -510,6 +542,7 @@ _CURRENT_SCHEMA_TABLES = {
     "opencti_mappings", "opencti_enrichments",
     "ioc_files", "ioc_observations", "ioc_assessments", "ioc_file_members",
     "ioc_relationship_evidence", "ioc_relationship_events",
+    "file_scan_results", "file_completion", "skip_reviews",
 }
 
 
@@ -558,6 +591,8 @@ def _upgrade(conn):
     # would run before ALTER TABLE on a schema-5 case and abort the whole
     # upgrade with "no such column: run_id".
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_run ON jobs(run_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_retry_parent "
+                 "ON jobs(json_extract(scan_context, '$.parent_job_id'))")
     # Scanner sightings were filed as LOW before INFO existed. Re-grading them
     # here (rather than only on the next re-index) means a case that is
     # already open stops drowning in them without having to be re-analysed.
@@ -614,6 +649,9 @@ def _upgrade(conn):
                 (digest, encoded, row[1], row[3], row[4], row[5], row[6],
                  row[7], row[8], row[9], row[10], row[11], row[12], "{}",
                  row[3], digest))
+    if previous_version < 16:
+        from server.analysis import refresh_receipts
+        refresh_receipts(conn)
     _relativize_ioc_paths(conn)
     from server import ioc_model
     ioc_model.migrate(conn)
@@ -753,9 +791,13 @@ def fingerprint(source, rule, artifact, line):
 # and needs RETIRE_JOIN beside it; both live here so every reader of the
 # findings table applies the same definition of "current", or the dashboard
 # and the work list quietly count different things.
-RETIRE_JOIN = ("LEFT JOIN meta done ON done.key = 'engine_done:' || f.engine")
-LIVE_PREDICATE = ("(done.value IS NULL "
-                  "OR f.seen_run >= CAST(done.value AS INTEGER))")
+RETIRE_JOIN = ("LEFT JOIN meta done ON done.key = 'engine_done:' || f.engine "
+               "LEFT JOIN (SELECT engine covered_engine, artifact covered_artifact, "
+               "run covered_run FROM file_completion) file_done "
+               "ON file_done.covered_engine = f.engine "
+               "AND file_done.covered_artifact = f.artifact")
+LIVE_PREDICATE = ("(f.seen_run >= COALESCE(file_done.covered_run, "
+                  "CAST(done.value AS INTEGER), 0))")
 
 
 def begin_run(conn, engine):
@@ -788,6 +830,32 @@ def complete_run(conn, engine, run):
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (f"engine_done:{engine}", str(int(run))))
     conn.commit()
+
+
+def protect_file(conn, engine, artifact, run):
+    """A skipped file retains its previous coverage, never a clean result."""
+    conn.execute(
+        "INSERT INTO file_completion(engine, artifact, run, keep_run) "
+        "VALUES (?, ?, COALESCE((SELECT CAST(value AS INTEGER) FROM meta "
+        "WHERE key = ?), 0), ?) ON CONFLICT(engine, artifact) DO UPDATE "
+        "SET keep_run = excluded.keep_run",
+        (engine, artifact, f"engine_done:{engine}", int(run)))
+
+
+def complete_file(conn, engine, artifact, run):
+    """Retire only this successfully examined file, in its result transaction."""
+    conn.execute(
+        "INSERT INTO file_completion(engine, artifact, run, keep_run) "
+        "VALUES (?,?,?,?) ON CONFLICT(engine, artifact) DO UPDATE SET "
+        "run=excluded.run, keep_run=excluded.keep_run",
+        (engine, artifact, int(run), int(run)))
+
+
+def complete_file_scan(conn, engine, run):
+    """Finish a full traversal, retaining overrides for its unreadable files."""
+    conn.execute("DELETE FROM file_completion WHERE engine = ? AND keep_run != ?",
+                 (engine, int(run)))
+    complete_run(conn, engine, run)
 
 
 def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,

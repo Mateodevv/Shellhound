@@ -345,6 +345,8 @@ GET_ROUTES = {
     "/api/cases/{slug}/file": "path={file}",
     "/api/cases/{slug}/hunt/runs": "",
     "/api/cases/{slug}/hunt/tests": "",
+    "/api/cases/{slug}/hunt/batch-tests": "",
+    "/api/cases/{slug}/hunt/batch-tests/{batch_id}": "",
     "/api/cases/{slug}/browse": "",
     "/api/cases/{slug}/diff": "",
     "/api/cases/{slug}/actors": "",
@@ -371,6 +373,7 @@ def _url(route, slug, artifact=None, file_path=None):
     path = (route.replace("{slug}", slug).replace("{name}", YARA_RULE)
             .replace("{request_id}", "1")
             .replace("{job_id}", "1")
+            .replace("{batch_id}", "unknown-batch")
             .replace("{pattern_id}", "joomla-jce-rce"))
     query = (GET_ROUTES[route] or "")
     query = query.replace("{artifact}", q(artifact or "x"))
@@ -406,7 +409,10 @@ class EndpointSurfaceTests(unittest.TestCase):
             with self.subTest(route=route):
                 status, _headers, body = get(
                     _url(route, CASE, artifact=shell, file_path=shell))
-                self.assertEqual(200, status, f"{route}: {body[:400]!r}")
+                # This general fixture has no saved batch; real run details
+                # are exercised in test_hunt_batches.
+                expected = 404 if "{batch_id}" in route else 200
+                self.assertEqual(expected, status, f"{route}: {body[:400]!r}")
 
     def test_every_case_endpoint_refuses_an_unknown_case(self):
         """404, not an empty answer: a case that does not exist and a case

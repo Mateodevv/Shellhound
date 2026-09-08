@@ -127,6 +127,18 @@ export interface Job {
   started?: string
   finished?: string
   stats: Record<string, unknown>
+  analysis_status?: 'complete' | 'complete_with_warnings' | 'partial' | 'running' | 'failed' | 'cancelled'
+  warning_count?: number
+  current_warning_count?: number
+  accepted_count?: number
+  current_accepted_count?: number
+  warnings_current?: boolean
+  scan_context?: { mode: 'full' | 'new' | 'retry' | 'hunt_batch'; parent_job_id?: number }
+  progress_details?: {
+    phase: 'discovering' | 'scanning' | 'finalizing' | 'patterns'
+    completed: number
+    total: number | null
+  }
 }
 
 export interface TriageEvent {
@@ -180,6 +192,8 @@ export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
 export interface ArtifactRow {
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  /** Category of the leading observation, assigned before server pagination. */
+  category?: string
   worst: 0 | 1 | 2 | 3
   source: FindingSource
   /** Findings the last completed scans still reproduce. Retired rows are
@@ -853,6 +867,52 @@ export interface DashboardConfirmedArtifact {
   worst: number
 }
 
+export interface DashboardNotableArtifact extends DashboardConfirmedArtifact {
+  triage: 'new' | 'reviewed' | 'confirmed'
+}
+
+export interface DashboardFindingGroup {
+  category: string
+  worst: number
+  confirmed: number
+  awaiting_review: number
+  kinds: Record<string, number>
+  /** Previously decided artifacts no longer reported by current scans. */
+  historical: number
+  example: {
+    artifact: string
+    artifact_kind: 'file' | 'table' | 'client' | 'dump'
+    rule: string
+    source: FindingSource
+  }
+}
+
+export interface DashboardHuntSummary {
+  batch_id: string
+  created: string
+  state: HuntBatch['state']
+  fresh: boolean
+  matched: number
+  checked: number
+  total: number | null
+  complete: boolean
+  pattern_names: string[]
+}
+
+export interface DashboardSystemSummary {
+  installations: {
+    id: number
+    root: string
+    cms: string
+    version: string
+    version_parsed: string
+    version_set: string
+    version_source: string
+    extensions: Record<string, number>
+  }[]
+  databases: { id: number; path: string; server_version: string }[]
+}
+
 export interface DashboardChronology {
   total_events: number
   event_span: { first: number | null; last: number | null }
@@ -876,6 +936,19 @@ export interface Dashboard {
   confirmed_severity: Record<string, number>
   /** A type-balanced preview; the full confirmed queue remains in Findings. */
   confirmed_artifacts: DashboardConfirmedArtifact[]
+  /** Up to six artifacts: confirmed first, then unresolved by severity. */
+  notable_artifacts?: DashboardNotableArtifact[]
+  /** Up to three groups calculated over the complete case, not a page of findings. */
+  top_findings?: {
+    groups: DashboardFindingGroup[]
+    total_groups: number
+    informational: number
+    hidden: number
+  }
+  /** Matching patterns in the latest saved check; these are not triaged Findings. */
+  hunt_summary?: DashboardHuntSummary | null
+  /** Software observed in evidence, with analyst version corrections preserved. */
+  system_summary?: DashboardSystemSummary
   findings_total: number
   iocs: number
   accounts: number
@@ -884,6 +957,8 @@ export interface Dashboard {
   evidence: EvidenceItem[]
   jobs_running: Job[]
   analysis_complete?: boolean
+  analysis_warnings?: number
+  analysis_accepted?: number
   logs: {
     lines: number
     clients: number
@@ -1143,6 +1218,51 @@ export interface HuntCluster {
 
 export interface HuntClusterPage {
   clusters: HuntCluster[]
+  total: number
+  next_cursor: string | null
+}
+
+/** One immutable roster and its results; counts never sum overlapping matches. */
+export interface HuntBatchPattern {
+  id: string
+  name: string
+  cve: string
+  description: string
+  technology: HuntTechnology
+  version: number
+  rule_hash: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'not_run'
+  error: string
+  test: HuntTest | null
+}
+
+export interface HuntBatch {
+  batch_id: string
+  job_id: number
+  state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  created: string
+  started: string | null
+  finished: string | null
+  progress: number
+  index_fingerprint: string
+  index_summary?: { requests: number; first_epoch: number | null; last_epoch: number | null; tz: number }
+  fresh: boolean
+  roster_known: boolean
+  counts: { total: number | null; checked: number; matched: number; failed: number; remaining: number | null }
+  patterns: HuntBatchPattern[]
+  error: string
+}
+
+export interface HuntIpPage {
+  clients: Array<{
+    client: string
+    requests: number
+    ok_hits: number
+    first_epoch: number | null
+    last_epoch: number | null
+    tz: number
+    request_id: number
+  }>
   total: number
   next_cursor: string | null
 }
