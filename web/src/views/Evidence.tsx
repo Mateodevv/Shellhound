@@ -128,10 +128,10 @@ export function Evidence({ slug }: {
   const hasAnalysisHistory = Boolean(jobs?.length)
   const analysisActive = Boolean(jobs?.some((job) =>
     job.state === 'queued' || job.state === 'running'))
-  const warningJobs = (jobs ?? []).filter((job) => job.warnings_current !== false
-    && job.scan_context?.mode !== 'retry' && ((job.current_warning_count ?? jobWarnings(job)) > 0
-      || (job.current_accepted_count ?? 0) > 0))
-  const hasWarnings = warningJobs.some((job) => (job.current_warning_count ?? jobWarnings(job)) > 0)
+  const [acceptedOpen, setAcceptedOpen] = useState(false)
+  const currentScanJobs = (jobs ?? []).filter((job) => job.warnings_current !== false && job.scan_context?.mode !== 'retry')
+  const warningJobs = currentScanJobs.filter((job) => (job.current_warning_count ?? jobWarnings(job)) > 0)
+  const acceptedJobs = currentScanJobs.filter((job) => (job.current_accepted_count ?? 0) > 0)
   const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
   const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
     || (hasAnalysisHistory && pendingEvidence.length === 0 && !retryFull)
@@ -230,13 +230,13 @@ export function Evidence({ slug }: {
         </Card>
       </Section>
 
-      {warningJobs.length > 0 && <Card className={clsx('p-4', hasWarnings && 'border-[var(--sev-low)]/30')}>
-        <div className={clsx('flex items-center gap-2 text-[13px] font-semibold', hasWarnings && 'text-[var(--sev-low)]')}>
-          {hasWarnings ? <TriangleAlert size={16} /> : <FileText size={16} />}
-          {tr(hasWarnings ? 'evidence.warnings.title' : 'evidence.accepted.title')}
+      {warningJobs.length > 0 && <Card className="border-[var(--sev-low)]/30 p-4">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--sev-low)]">
+          <TriangleAlert size={16} />
+          {tr('evidence.warnings.title')}
         </div>
         <p className="mt-1 text-[12px] text-[var(--muted)]">
-          {tr(hasWarnings ? 'evidence.warnings.help' : 'evidence.accepted.help')}
+          {tr('evidence.warnings.help')}
         </p>
         <div className="mt-3 space-y-3">
           {warningJobs.map((job) => <div key={job.id}>
@@ -244,13 +244,26 @@ export function Evidence({ slug }: {
               <span className="font-medium">{tr(`job.${job.kind}`)}</span>
               <span className="text-[var(--muted)]">#{job.id}
                 {(job.current_warning_count ?? jobWarnings(job)) > 0 && <> · {tr('evidence.warnings.count', { n: job.current_warning_count ?? jobWarnings(job) })}</>}
-                {(job.current_accepted_count ?? 0) > 0 && <> · {tr('evidence.accepted.count', { n: job.current_accepted_count! })}</>}
               </span>
             </div>
             <SkippedFiles slug={slug} jobId={job.id} />
           </div>)}
         </div>
       </Card>}
+
+      {acceptedJobs.length > 0 && <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]"
+        open={acceptedOpen} onToggle={(event) => setAcceptedOpen(event.currentTarget.open)}>
+        <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-[var(--muted)]">
+          <FileText size={15} />{tr('evidence.accepted.title')}
+        </summary>
+        {acceptedOpen && <div className="space-y-3 border-t border-[var(--line-soft)] p-4">
+          <p className="text-sm text-[var(--muted)]">{tr('evidence.accepted.help')}</p>
+          {acceptedJobs.map((job) => <div key={job.id}>
+            <p className="mb-2 text-xs text-[var(--muted)]">{tr(`job.${job.kind}`)} · #{job.id} · {tr('evidence.accepted.count', { n: job.current_accepted_count! })}</p>
+            <SkippedFiles slug={slug} jobId={job.id} initialStatus="accepted" initiallyOpen />
+          </div>)}
+        </div>}
+      </details>}
 
       <details className="group rounded-xl border border-[var(--line)] bg-[var(--panel)]"
         open={!evidenceReady || pendingEvidence.length > 0 || attentionEvidence.length > 0 || undefined}>

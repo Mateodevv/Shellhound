@@ -57,7 +57,18 @@ export interface TraceMarks {
   reason?: string
 }
 
-export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
+export interface TraceAnchor {
+  requestId: number
+  epoch: number | null
+  tz: number
+  method: string
+  uri: string
+  source?: string
+  lineNo?: number
+  indexFingerprint: string
+}
+
+export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor }: {
   slug: string
   ips: string[] | null
   onClose: () => void
@@ -65,6 +76,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   /** Without this marking one hunts for the triggering line among thousands
    *  by hand. */
   marks?: TraceMarks
+  /** Keep follow-up activity tied to the exact request and saved log index. */
+  anchor?: TraceAnchor
 }) {
   const tr = useT()
   const [page, setPage] = useState(0)
@@ -73,30 +86,43 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   const [method, setMethod] = useState('')
   const [sort, setSort] = useState('time')
   const hasMarks = Boolean(marks?.exact?.some(Boolean) || marks?.contains?.some(Boolean))
-  const [evidenceOnly, setEvidenceOnly] = useState(hasMarks)
+  const anchored = Boolean(anchor)
+  const [evidenceOnly, setEvidenceOnly] = useState(hasMarks && !anchor)
+  const canFollowAnchor = Boolean(anchor?.epoch && anchor.epoch > 0)
+  const [afterAnchor, setAfterAnchor] = useState(canFollowAnchor)
   const pageSize = 500
+  const traceIdentity = JSON.stringify([slug, ips, marks?.exact, marks?.contains,
+    anchor?.requestId, anchor?.indexFingerprint, anchor?.epoch])
 
   // A new trace starts on page 1 and without the filters of the previous.
   useEffect(() => {
     setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
-    setEvidenceOnly(hasMarks)
-  }, [ips, marks, hasMarks])
+    setEvidenceOnly(hasMarks && !anchored)
+    setAfterAnchor(canFollowAnchor)
+  }, [traceIdentity, hasMarks, anchored, canFollowAnchor])
   // A filter shrinks the set -- on page 7 one would otherwise stand in the
   // void.
-  useEffect(() => { setPage(0) }, [search, status, method, sort, evidenceOnly])
+  useEffect(() => { setPage(0) }, [search, status, method, sort, evidenceOnly, afterAnchor])
 
-  const { data, isFetching } = useQuery({
+  const { data: response, isFetching, error, refetch } = useQuery({
     queryKey: ['trace', slug, ips, page, search, status, method, sort,
-      evidenceOnly, marks?.exact, marks?.contains],
+      evidenceOnly, marks?.exact, marks?.contains, anchor?.requestId,
+      anchor?.indexFingerprint, afterAnchor],
     queryFn: () => post<{ total: number; rows: TraceRow[]; methods: string[] }>(
       `/api/cases/${slug}/trace`,
       {
         ips, limit: pageSize, offset: page * pageSize, search, status, method, sort,
         mark_exact: marks?.exact ?? [], mark_contains: marks?.contains ?? [],
-        evidence_only: evidenceOnly,
+        evidence_only: anchor ? false : evidenceOnly,
+        ...(anchor ? {
+          index_fingerprint: anchor.indexFingerprint,
+          after_request_id: afterAnchor ? anchor.requestId : null,
+        } : {}),
       }),
     enabled: !!ips?.length,
   })
+  // A failed freshness check must never leave old rows visible as current evidence.
+  const data = error ? undefined : response
 
   // The timeline depends ONLY on the selection: it must not change when
   // paging or filtering, otherwise it would no longer describe the period.
@@ -104,7 +130,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
     queryKey: ['trace-timeline', slug, ips],
     queryFn: () => post<{ timeline: TimelinePoint[] }>(
       `/api/cases/${slug}/trace/timeline`, { ips }),
-    enabled: !!ips?.length,
+    enabled: !!ips?.length && !anchor,
   })
 
   const colorByClient = useMemo(() => {
@@ -127,7 +153,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
 
   if (!ips) return null
   const filtering = Boolean(search || status || method)
-  const points = timeline?.timeline ?? []
+  const points = anchor ? [] : timeline?.timeline ?? []
   const markedRows = istMarkiert
     ? (data?.rows.filter((r) => istMarkiert(r.uri)).length ?? 0)
     : 0
@@ -135,14 +161,35 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
   return (
     <Modal open onClose={onClose} layer={layer}
       title={<span className="flex items-center gap-2">
-        <Crosshair size={16} className="text-[var(--accent)]" />
-        Trace: {ips.length === 1
+        <Crosshair size={16} className="text-[var(--accent)]" />{tr('hunt.flow.trace')} {ips.length === 1
           ? <span className="inline-flex items-center gap-1.5"><IpFlag ip={ips[0]} />{ips[0]}</span>
           : tr('trace.nClients', { n: ips.length })}
         {data && <span className="text-[12px] font-normal text-[var(--muted)]">
           {formatCount(data.total)} {tr('trace.requests')} {isFetching && `· ${tr('common.loading')}`}
         </span>}
       </span>}>
+
+      {anchor && <section className="mb-4 rounded-xl border border-[var(--accent)]/40 bg-[var(--accent-soft)] p-4" aria-label={tr('hunt.flow.selectedRequest')}>
+        <h3 className="text-sm font-semibold">{tr('hunt.flow.selectedRequest')}</h3>
+        <div className="mono mt-2 break-all text-sm"><span className="font-semibold">{anchor.method}</span> {anchor.uri}</div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+          <span>{anchor.epoch ? formatLogTime(anchor.epoch, anchor.tz, { withZone: true }) : tr('hunt.flow.timestampUnavailable')}</span>
+          <span className="break-all">{anchor.source || tr('hunt.flow.sourceUnavailable')}{anchor.lineNo ? tr('hunt.flow.sourceLine', { n: anchor.lineNo }) : ''}</span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label={tr('hunt.flow.activityPeriod')}>
+          <Button onClick={() => {
+            setAfterAnchor(true); setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
+          }} disabled={!canFollowAnchor} aria-pressed={afterAnchor} variant={afterAnchor ? 'primary' : 'default'}>{tr('hunt.flow.activityAfterThisRequest')}</Button>
+          <Button onClick={() => {
+            setAfterAnchor(false); setPage(0); setSearch(''); setStatus(''); setMethod(''); setSort('time')
+          }} aria-pressed={!afterAnchor} variant={!afterAnchor ? 'primary' : 'default'}>{tr('hunt.flow.fullActivity')}</Button>
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">
+          {!canFollowAnchor ? tr('hunt.flow.anchorMissingTimestamp')
+            : afterAnchor ? tr('hunt.flow.afterScopeHint')
+              : tr('hunt.flow.fullScopeHint')}
+        </p>
+      </section>}
 
       {points.length > 1 && (
         <div className="mb-3 rounded-xl border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2">
@@ -171,7 +218,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
       )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        {hasMarks && (
+        {hasMarks && !anchor && (
           <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]"
             aria-label={tr('trace.scope')}>
             <button type="button" onClick={() => setEvidenceOnly(true)}
@@ -209,13 +256,13 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           ))}
         </div>
         {(data?.methods.length ?? 0) > 1 && (
-          <select value={method} onChange={(e) => setMethod(e.target.value)}
+          <select value={method} onChange={(e) => setMethod(e.target.value)} aria-label={tr('hunt.flow.requestMethod')}
             className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
             <option value="">{tr('trace.method.all')}</option>
             {data?.methods.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
-        <select value={sort} onChange={(e) => setSort(e.target.value)}
+        <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label={tr('hunt.flow.requestOrder')}
           className="cursor-pointer rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-xs outline-none">
           {SORTS.map((s) => (
             <option key={s.id} value={s.id}>
@@ -234,7 +281,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         {/* The export carries the ACTIVE filters — what you have filtered in
             front of you is what you want to prove. Next to the CSV the ZIP
             carries a manifest: query, row count, SHA-256. */}
-        <Tooltip title={tr('trace.export.title')}
+        {!anchor && <Tooltip title={tr('trace.export.title')}
           body={tr('trace.export.body')}
           hint={evidenceOnly
             ? tr('trace.export.allScope')
@@ -247,8 +294,16 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
           >
             <Download size={14} /> {tr('trace.export.cta')}
           </a>
-        </Tooltip>
+        </Tooltip>}
       </div>
+
+      {error && <div role="alert" className="mb-3 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger-text)]">
+        <p className="font-semibold">{tr('hunt.flow.unableToLoadActivity')}</p>
+        <p className="mt-1">{error.message}</p>
+        {anchor && <p className="mt-2">{tr('hunt.flow.staleTraceHint')}</p>}
+        <Button onClick={() => void refetch()} className="mt-3">{tr('hunt.flow.tryLoadingAgain')}</Button>
+      </div>}
+      {isFetching && !data && !error && <p role="status" className="mb-3 text-sm text-[var(--muted)]">{tr('hunt.flow.loadingActivity')}</p>}
 
       {data && data.total > pageSize && (
         <div className="mb-2 flex items-center gap-2 text-[12px] text-[var(--muted)]">
@@ -264,12 +319,13 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
         <table className="w-full border-collapse text-[12px]">
           <thead>
             <tr className="border-b border-[var(--line)] text-left text-[10px] uppercase tracking-wider text-[var(--muted)]">
-              {ips.length > 1 && <th className="px-2 py-1.5">Client</th>}
+              {ips.length > 1 && <th className="px-2 py-1.5">{tr('hunt.workbench.client')}</th>}
               <th className="px-2 py-1.5">{tr('table.time')}</th>
               <th className="px-2 py-1.5">{tr('table.method')}</th>
               <th className="px-2 py-1.5">URI</th>
-              <th className="px-2 py-1.5 text-right">Status</th>
-              <th className="px-2 py-1.5">User-Agent</th>
+              <th className="px-2 py-1.5 text-right">{tr('hunt.field.status')}</th>
+              <th className="px-2 py-1.5">{tr('hunt.field.user_agent')}</th>
+              {anchor && <th className="px-2 py-1.5">{tr('logs.table.source')}</th>}
             </tr>
           </thead>
           <tbody className="mono">
@@ -303,6 +359,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks }: {
                 <td className="max-w-[220px] truncate px-2 py-1 text-[var(--muted)]" title={r.agent}>
                   {r.agent}
                 </td>
+                {anchor && <td className="max-w-[220px] truncate px-2 py-1 text-[var(--muted)]" title={r.source}>{r.source}</td>}
               </tr>
               )
             })}

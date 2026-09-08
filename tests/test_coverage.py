@@ -193,24 +193,17 @@ class ChainIntegrationTests(unittest.TestCase):
 
 
 class TimelineOrderTests(unittest.TestCase):
-    """Where the two coverage blocks sit in the investigation flow.
+    """Keep detailed coverage below the chronology in the Timeline workspace.
 
     This is a layout decision with a forensic reason, so it is guarded like
     one. The analyst opens these pages for their primary forensic content;
     coverage gaps and other qualifications therefore follow the chronology
-    and scope instead of blocking the path to them. The dashboard gives a
-    quick evidence summary and links into the dedicated timeline; detailed
-    coverage remains available at the bottom of both workspaces.
-
-    A source-text check, because the ordering lives in JSX and there is no
-    frontend test runner here. Crude, but it fails when someone moves a
-    block, which is the entire point."""
+    and scope instead of blocking the path to them. The dashboard's summary
+    and links are covered by its rendered frontend workflow tests."""
 
     VIEWS = Path(__file__).resolve().parents[1] / "web" / "src" / "views"
 
     def setUp(self):
-        self.dashboard = (self.VIEWS / "Dashboard.tsx").read_text(
-            encoding="utf-8")
         self.timeline = (self.VIEWS / "Timeline.tsx").read_text(
             encoding="utf-8")
 
@@ -227,22 +220,10 @@ class TimelineOrderTests(unittest.TestCase):
             self._at(self.timeline, "<CaseChain", "the timeline"),
             self._at(self.timeline, "<LogCoverage", "the timeline"))
 
-    def test_the_dashboard_links_to_the_full_timeline(self):
-        self._at(self.dashboard, "gotoView('timeline')", "the dashboard")
-
     def test_primary_content_comes_before_coverage_gaps(self):
         self.assertLess(
             self._at(self.timeline, "<TimelineChart", "the timeline"),
             self._at(self.timeline, "<LogCoverage", "the timeline"))
-        self.assertLess(
-            self._at(self.dashboard, "dashboard.brief.limits", "the dashboard"),
-            self._at(self.dashboard, "<LogCoverage", "the dashboard"))
-
-    def test_the_evidence_summary_stands_after_the_forensic_scope(self):
-        """Confirmed scope stays above evidence basis and limitations."""
-        self.assertLess(
-            self._at(self.dashboard, "dashboard.brief.scope", "the dashboard"),
-            self._at(self.dashboard, "dashboard.brief.evidence", "the dashboard"))
 
 
 class MeasuredNumbersTests(unittest.TestCase):

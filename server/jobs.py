@@ -120,11 +120,17 @@ class JobManager:
         self._schedule_lock = threading.RLock()
 
     @contextmanager
-    def case_operation(self, case_dir):
-        """Serialize submission and reject an overlapping case analysis batch."""
+    def case_operation(self, case_dir, allow_hunt=False):
+        """Serialize case operations against analysis/reindex submission.
+
+        Applying already checked hunt evidence may coexist with the remaining
+        read-only pattern checks; neither operation replaces the log index.
+        """
         with self._schedule_lock:
             with self._lock:
-                busy = any(key[0] == str(case_dir) for key in self.live)
+                busy = any(key[0] == str(case_dir) and not (
+                    allow_hunt and ctx.scan_context.get("mode") == "hunt_batch")
+                    for key, ctx in self.live.items())
             if busy:
                 raise CaseBusy("Analysis is already running in this case. Stop it or wait before retrying.")
             self.recover_interrupted(case_dir)
