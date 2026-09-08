@@ -228,3 +228,10 @@ Relevant upstream references:
 - [TAXII push](https://docs.opencti.io/latest/usage/import/taxii-push/)
 - [Enrichment](https://docs.opencti.io/latest/usage/enrichment/)
 - [FIRST TLP](https://www.first.org/tlp/)
+
+The dashboard and Pattern Hunt use the current main workflow, including saved
+pattern checks. Explicit CVE metadata still links every matching IP during a
+query preview or saved check, including results beyond the UI page limit.
+CVE collection validates the same log index generation as the saved check.
+IOC evidence links open the exact historical query without replacing an editor
+draft. The integration schema also retains main's scan retries and skip reviews.

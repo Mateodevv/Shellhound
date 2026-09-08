@@ -200,16 +200,73 @@ in Workflow, and the less frequent screens under the always-visible
 visible while views load; the action only navigates and never starts analysis
 or changes a decision by itself.
 
+### Case dashboard
+
+The dashboard separates **Case status**, **Recommended next step**, **Top
+findings**, and **Case data overview**. Analysis coverage describes what was examined; the case
+assessment describes the analyst's decisions. No findings does not mean a site
+is clean. Red marks confirmed incident findings or failed checks, yellow marks
+work needing attention, and green marks completed checks or review. Use the
+linked counts at the top or the recommended action to continue. Accepting a
+skipped file clears its warning; the decision remains available under
+**Evidence → Resolved scan skips** without keeping a dashboard warning open.
+Top findings shows up to three groups from the whole case, with distinct
+affected-item counts and a representative file, IP, or database item. Red groups
+contain analyst-confirmed findings; yellow groups await review. Mixed groups
+label both counts separately. Click a group to open its removable category
+filter in Findings, or use **View all findings** for the full list. Dismissed
+and hidden items do not enter the highlights; historical confirmed findings
+keep their decisions and are marked when no longer reported by current scans.
+Informational observations remain available in Findings. Empty results only
+turn green once analysis is complete, and distinguish no detections from items
+the analyst dismissed. The case data overview shows software observed in the
+evidence, including analyst-corrected versions and source coverage.
+When the latest saved Pattern Hunt check has matches, Top findings also shows
+its matching-pattern count and names, with a direct link to that check. These
+unconfirmed matches stay separate from Findings and do not inflate artifact
+counts or confirm compromise. Partial and historical results are labelled;
+changed log evidence requires a new check before drilling into saved matches.
+
+### Pattern Hunt
+
+Pattern Hunt checks indexed access logs against the enabled patterns in the
+local reusable library. Open **Pattern Hunt** and use the large **Check all
+patterns** button in the first panel. Progress and a compact result summary
+stay here; choose **View full results** to investigate. The **Pattern library**
+panel below previews enabled patterns and opens the full library. Each run
+keeps the pattern versions it checked, including zero matches, failures, and
+unfinished checks. You can stop a run and still inspect completed results.
+Matches are highlighted in red; query failures in yellow. The match summary
+also opens full results. Remaining work is shown during a run; stopped runs
+identify any patterns that were not checked.
+
+Open a matched pattern to see request counts, distinct IPs, and first/last
+matches. Select an IP, inspect a matching request, then choose **Activity after
+this request** to see what it did next, including requests outside the pattern.
+**Full activity** includes earlier requests too. A match or a 2xx response is
+an observation, not proof of successful exploitation.
+
+Select matching request groups and choose **Add selected to Findings** to send
+only those groups for review. Selection is limited to the current page and
+clears when you change pages or IPs; existing review decisions are preserved.
+Searching alone never adds findings. **Open pattern library** lets you check one
+pattern, enable or disable patterns, or preview and save a new one. Previewing
+a draft and saving it are separate actions.
+
+Changed evidence or a rebuilt index makes old results historical. Run a new
+check before opening or applying their underlying evidence. The library stays
+local; Pattern Hunt does not download patterns or contact a shared catalogue.
+
 ### 1 · Evidence & analysis
 
-Work on copies. Four kinds of evidence go in, three of them are needed to
-start.
+Work on copies. Register any available webroot, access logs, or SQL dump to
+start; each can be analyzed independently.
 
 | Kind | What it is | Needed to start |
 |---|---|---|
-| Webroot | Copy of the web directory | yes |
-| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | yes |
-| SQL dump | Database export of the CMS | yes |
+| Webroot | Copy of the web directory | one of these three |
+| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | one of these three |
+| SQL dump | Database export of the CMS | one of these three |
 | Reference copy | Clean CMS release of the same version | no, enables the webroot diff |
 
 #### Evidence registration
@@ -236,6 +293,39 @@ an already registered directory. Existing analyst decisions and notes survive
 either mode. Jobs run in the background, report progress and can be cancelled;
 all engines started by one click share one expandable analysis run and durable
 run id.
+
+Webshell and custom YARA scans first show **Finding files…** with a live file
+count, then switch to a scanning percentage. You can cancel during either step.
+
+If individual files cannot be read, exceed the 5 MiB content limit, or time out,
+a finished scan shows **Complete with warnings**. Open **Skipped files and
+rules** to review the paths and reasons. These files have not been cleared;
+the warning remains visible in Evidence, the dashboard, and report coverage notes.
+An unreadable evidence root, broken rules, a crashed engine, or cancellation
+still leaves analysis incomplete.
+
+The skipped-file list separates **Size limit** from **Other skips**. Tick individual
+files or use **Select all** (across all pages, with individual unticking supported).
+For size skips, choose **Accept size skip** to dismiss the warning for this
+investigation, or **Scan despite size limit** to scan the selected files once with
+a higher limit. Acceptance is recorded as a coverage gap; it does not mark the file
+as scanned or clean. Use **Show → Accepted** to review or scan those files later.
+
+The explicit larger-file scan allows up to **256 MiB per selected file** and keeps
+the existing **20-second YARA timeout**. It does not change the default 5 MiB limit
+for future analyses. Files above 256 MiB can still be accepted as coverage gaps.
+If a larger-file scan instead fails to read a file or times out, its warning moves
+to **Other skips** for review.
+
+After correcting an access or other problem, open **Other skips**, select the
+affected files, and choose **Retry selected**. Only those files from that scanner
+are retried; other engines and files keep their results. Successful retries resolve
+their warnings while the original scan history, analyst decisions, and notes remain
+available. Normal retries retain the scanner's default size and time limits.
+
+Changed rules/settings or older scans without a trustworthy source snapshot
+need **Reanalyze all evidence** before targeted retries are available. Stop or
+finish an active analysis before starting another analysis or retry in that case.
 
 ### 2 · Findings
 

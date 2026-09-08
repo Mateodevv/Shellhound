@@ -3,15 +3,17 @@ import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { TOKEN, type Job } from './api'
 
-interface JobEvent { type: 'job'; job: Partial<Job> & { id: number } }
+interface JobEvent { type: 'job'; case_slug?: string; job: Partial<Job> & { id: number } }
 interface InvalidateEvent { type: 'invalidate'; scope: string }
 type Event = JobEvent | InvalidateEvent
 
 // Which query keys a finished engine invalidates. "Everything relevant"
 // beats a stale view; the queries are cheap reads of local SQLite.
 const SCOPE_KEYS: Record<string, string[]> = {
-  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace'],
-  webshell: ['dashboard', 'findings', 'jobs', 'case'],
+  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request'],
+  hunt: ['dashboard', 'hunt-batches', 'hunt-batch', 'hunt-tests', 'jobs'],
+  webshell: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
+  yara: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
   cms: ['dashboard', 'cms', 'jobs', 'case'],
   sqldb: ['dashboard', 'database', 'findings', 'jobs', 'case'],
   findings: ['dashboard', 'findings', 'iocs', 'case'],
@@ -38,13 +40,29 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
         let event: Event
         try { event = JSON.parse(msg.data) } catch { return }
         if (event.type === 'job') {
+          // Row IDs repeat in every case database. Only a case-scoped event
+          // can safely update cached progress; legacy events still refetch.
+          if (typeof event.case_slug === 'string' && event.case_slug) {
+            qc.setQueryData<Job[]>(['jobs', event.case_slug], (current) => current?.map((job) => {
+              if (job.id !== event.job.id) return job
+              const finished = ['done', 'failed', 'cancelled'].includes(job.state)
+              if (finished && ['running', 'queued'].includes(event.job.state ?? '')) return job
+              return { ...job, ...event.job }
+            }))
+          }
           onJobRef.current?.(event.job)
+          if (event.job.kind === 'hunt') {
+            for (const key of ['hunt-batches', 'hunt-batch', 'hunt-tests']) {
+              qc.invalidateQueries({ queryKey: event.case_slug ? [key, event.case_slug] : [key] })
+            }
+          }
           if (event.job.state && event.job.state !== 'running') {
             qc.invalidateQueries({ queryKey: ['jobs'] })
             qc.invalidateQueries({ queryKey: ['dashboard'] })
             // Any engine may be the last prerequisite for an evidence
             // receipt, including YARA, SIGMA and error-log correlations.
             qc.invalidateQueries({ queryKey: ['case'] })
+            qc.invalidateQueries({ queryKey: ['job-skips'] })
           }
         } else if (event.type === 'invalidate') {
           for (const key of SCOPE_KEYS[event.scope] ?? ['dashboard']) {

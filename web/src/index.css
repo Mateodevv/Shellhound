@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@keyframes progress-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+.animate-progress-indeterminate { animation: progress-indeterminate 1.8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-progress-indeterminate { animation: none; }
+}
+
 /* SHELLHOUND — dark-first forensic workbench theme.
    Chart colors follow the validated dark-mode palette (dataviz reference):
    series-1 blue #3987e5, series-2 orange #d95926; severity uses the fixed

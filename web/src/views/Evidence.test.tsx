@@ -166,6 +166,69 @@ describe('evidence registration', () => {
 
 
 describe('incomplete evidence analysis', () => {
+  it('keeps accepted-only coverage history accessible after its attention warning is dismissed', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.includes('/skipped?')) return { items: [], total: 0, recorded: true, unresolved: 0,
+        counts: { size_limit: 2, other: 0, accepted: 2 } }
+      if (path.endsWith('/jobs')) return [{
+        id: 1, run_id: 'accepted-run', kind: 'webshell', state: 'done', progress: 1,
+        created: '2026-09-02T10:00:00', stats: { scanned: 4, skipped: 2, file_skips: 2 },
+        analysis_status: 'complete', warning_count: 0, current_warning_count: 0,
+        current_accepted_count: 2, warnings_current: true,
+      }]
+      return { ...CASE, evidence_items: [{
+        id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '2026-09-01T10:00:00',
+        scanned_at: '2026-09-02T10:00:00', exists: true,
+        stats: { last_attempt: { status: 'complete', warnings: 0 } },
+      }] }
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    const resolved = await screen.findByText('Resolved scan skips')
+    expect(resolved.closest('details')).not.toHaveAttribute('open')
+    expect(screen.queryByText('Accepted coverage gaps')).not.toBeInTheDocument()
+    expect(screen.queryByText(/2 accepted without scanning/)).not.toBeInTheDocument()
+    fireEvent.click(resolved)
+    expect(await screen.findByText(/2 accepted without scanning/)).toBeVisible()
+    expect(screen.getByText(/They no longer need attention/)).toBeVisible()
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([path]) => path.includes('/skipped?') && path.includes('status=accepted'))).toBe(true))
+    expect(screen.queryByText('Skipped files to review')).not.toBeInTheDocument()
+    expect(screen.queryByText('Analysis needs attention')).not.toBeInTheDocument()
+  })
+
+  it('completes warning-only analysis and surfaces current skipped files outside history', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/jobs')) return [{
+        id: 1, run_id: 'warning-run', kind: 'webshell', state: 'done', progress: 1,
+        created: '2026-09-02T10:00:00', stats: { scanned: 4, skipped: 2, file_skips: 2 },
+        analysis_status: 'complete_with_warnings', warning_count: 2, warnings_current: true,
+      }]
+      return { ...CASE, evidence_items: [{
+        id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '2026-09-01T10:00:00',
+        scanned_at: '2026-09-02T10:00:00', exists: true,
+        stats: { last_attempt: { status: 'complete_with_warnings', warnings: 2 } },
+      }] }
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Skipped files to review')).toBeVisible()
+    expect(screen.getAllByText('Complete · 2 file(s) skipped').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Incomplete')).not.toBeInTheDocument()
+    expect(screen.queryByText('Analysis needs attention')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Retry pending analysis/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /No new evidence/ })).toBeDisabled()
+  })
+
+  it('keeps the run aggregate indeterminate during discovery', async () => {
+    vi.mocked(api).mockImplementation(async (path) => path.endsWith('/jobs') ? [{
+      id: 1, run_id: 'discovering', kind: 'webshell', state: 'running', progress: 0,
+      created: '2026-09-02T10:00:00', stats: {},
+      progress_details: { phase: 'discovering', completed: 123, total: null },
+    }] : CASE)
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Finding files… 123 found')).toBeInTheDocument()
+    expect(screen.getAllByRole('progressbar')).toHaveLength(2)
+    for (const bar of screen.getAllByRole('progressbar')) expect(bar).not.toHaveAttribute('aria-valuenow')
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
   it.each([false, true])('shows partial scans accurately and retries them (previous receipt: %s)', async (previousReceipt) => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith('/jobs')) return [{

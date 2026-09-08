@@ -17,6 +17,9 @@ export interface HuntDraft {
 }
 
 export interface HuntSessionState {
+  batchId: string
+  runPatternId: string
+  page: 'overview' | 'runs' | 'library' | 'editor' | 'preview' | 'evidence'
   selectedId: string
   draft: HuntDraft | null
   testedHash: string
@@ -41,6 +44,7 @@ const DEFAULT_RULE: HuntRuleV2 = {
 }
 
 export const DEFAULT_SESSION: HuntSessionState = {
+  batchId: '', runPatternId: '', page: 'overview',
   selectedId: '', draft: null, testedHash: '', testId: null,
   selectedClusters: [], libraryWidth: 340, editorWidth: 560, editorOpen: false,
   libraryCollapsed: false, resultCollapsed: false,
@@ -124,12 +128,22 @@ export function sessionKey(slug: string) {
 }
 
 export function loadSession(slug: string): HuntSessionState {
+  let raw: Partial<HuntSessionState> = {}
   try {
-    const raw = JSON.parse(sessionStorage.getItem(sessionKey(slug)) || '{}')
-    return { ...DEFAULT_SESSION, ...raw }
-  } catch {
-    return { ...DEFAULT_SESSION }
-  }
+    const saved = JSON.parse(sessionStorage.getItem(sessionKey(slug)) || '{}')
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) raw = saved
+  } catch { /* A saved-results link still works when storage is unavailable. */ }
+  const url = new URL(location.href)
+  const inCase = url.searchParams.get('case') === slug && url.searchParams.get('view') === 'hunt'
+  const section = inCase ? url.searchParams.get('section') : null
+  const page = ['overview', 'runs', 'library', 'editor', 'preview'].includes(section ?? '')
+    ? section as HuntSessionState['page'] : Number(section) > 0 ? 'evidence' : 'overview'
+  const batchId = inCase ? url.searchParams.get('batch') : null
+  // An explicit link selects its saved check without replacing an editor draft.
+  const runPatternId = inCase ? url.searchParams.get('pattern') ?? '' : ''
+  const linkedRun = batchId ? { batchId, runPatternId,
+    ...(batchId !== raw.batchId || runPatternId !== raw.runPatternId ? { selectedClusters: [] } : {}) } : {}
+  return { ...DEFAULT_SESSION, ...raw, ...linkedRun, page }
 }
 
 export function saveSession(slug: string, state: HuntSessionState) {
