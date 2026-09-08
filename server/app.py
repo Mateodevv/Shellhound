@@ -33,7 +33,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 
-from server import case_report, correlation, coverage, db, enrich, geoip, huntrules
+from server import case_report, correlation, coverage, db, enrich, geoip, huntrules, hunt_batches
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
@@ -46,6 +46,7 @@ from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, uri_path,
                               uri_targets, web_path)
 from server.chain import case_chain
+from server.finding_categories import categorized_art_sql, top_findings
 from server.i18n import lang_of
 from server.i18n import t as _t
 from server.config import Config
@@ -54,6 +55,18 @@ from server.engines import (cmsinventory, detect, errorlog, logindex,
                             webrootdiff, webshell)
 from server.events import hub
 from server.jobs import CaseBusy, manager
+
+def _overlay_cms_version(row, scope, key, overrides):
+    """Keep the measured value alongside the analyst's durable correction."""
+    row["version_parsed"] = row["version"]
+    override = overrides.get((scope, key))
+    row["version_set"] = override["version"] if override else ""
+    row["version_note"] = override["note"] if override else ""
+    row["version_set_at"] = override["set_at"] if override else ""
+    if override:
+        row["version"] = override["version"]
+    return row
+
 
 def _csv_safe(value):
     """One CSV cell that a spreadsheet will not execute.
@@ -272,7 +285,7 @@ def create_app(config: Config) -> FastAPI:
         log_targets = [e["path"] for e in evidence if e["kind"] == "access_logs"]
         info["evidence_items"] = evidence
         info["log_index"] = logindex.status(
-            case_dir, log_targets if log_targets else None, lang)
+            case_dir, log_targets, lang)
         return info
 
     class PatchCase(BaseModel):
@@ -1053,6 +1066,31 @@ def create_app(config: Config) -> FastAPI:
                          worst, lower(artifact)
                 LIMIT 6
             """)
+            # The overview previews actual artifacts, not individual rule
+            # hits. Confirmed decisions lead; unresolved evidence follows by
+            # severity, balanced by type within each severity level.
+            notable_artifacts = db.rows(conn, f"""
+                WITH art AS ({ART_SQL}), ranked AS (
+                    SELECT artifact, artifact_kind, worst, triage,
+                           CASE triage WHEN 'confirmed' THEN 0 ELSE 1 END AS priority,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY CASE triage WHEN 'confirmed' THEN 0 ELSE 1 END,
+                                            worst, artifact_kind
+                               ORDER BY lower(artifact), artifact
+                           ) AS kind_rank
+                    FROM art WHERE triage != 'dismissed'
+                )
+                SELECT artifact, artifact_kind, worst, triage FROM ranked
+                ORDER BY priority, worst, kind_rank,
+                         CASE artifact_kind
+                           WHEN 'file' THEN 0 WHEN 'table' THEN 1
+                           WHEN 'dump' THEN 2 ELSE 3 END,
+                         lower(artifact), artifact
+                LIMIT 6
+            """)
+            top_groups = top_findings(conn, ruleswitch.disabled_ids(config.workspace))
+            has_hunt_runs = conn.execute(
+                "SELECT 1 FROM jobs WHERE kind='hunt' AND run_id!='' LIMIT 1").fetchone()
             findings_total = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             ioc_count = conn.execute("SELECT count(*) FROM iocs").fetchone()[0]
@@ -1060,6 +1098,27 @@ def create_app(config: Config) -> FastAPI:
                 "SELECT count(*) FROM db_accounts WHERE admin = 1").fetchone()[0]
             accounts = conn.execute("SELECT count(*) FROM db_accounts").fetchone()[0]
             installs = db.rows(conn, "SELECT * FROM cms_installs ORDER BY root")
+            overrides = {(r["scope"], r["key"]): r for r in db.rows(
+                conn, "SELECT * FROM cms_version_overrides")}
+            extension_counts = {}
+            for row in db.rows(conn, "SELECT install_id, type, count(*) n FROM cms_items "
+                                    "GROUP BY install_id, type"):
+                extension_counts.setdefault(row["install_id"], {})[row["type"]] = row["n"]
+            system_installs = []
+            for install in installs:
+                measured = _overlay_cms_version(dict(install), "install", install["root"], overrides)
+                system_installs.append({
+                    key: measured[key] for key in (
+                        "id", "root", "cms", "version", "version_parsed", "version_set", "version_source")
+                } | {"extensions": extension_counts.get(install["id"], {})})
+            databases = []
+            for dump in db.rows(conn, "SELECT id, path, meta FROM db_dumps "
+                                     "WHERE kind = 'export' ORDER BY path"):
+                metadata = json.loads(dump["meta"] or "{}")
+                version = metadata.get("server", "") if isinstance(metadata, dict) else ""
+                databases.append({"id": dump["id"], "path": dump["path"],
+                                  "server_version": version if isinstance(version, str) else ""})
+            system_summary = {"installations": system_installs, "databases": databases}
             evidence = db.rows(conn, "SELECT * FROM evidence ORDER BY kind")
             # DECODED, like everywhere else this row is sent. It left here as
             # the raw JSON text from the column, so the same declared type
@@ -1102,7 +1161,8 @@ def create_app(config: Config) -> FastAPI:
                 and all(e.get("scanned_at") for e in supported_evidence)
                 and all(e["stats"].get("last_attempt", {}).get("status") not in
                         ("running", "partial", "failed", "cancelled") for e in supported_evidence)
-                and not any(j["scan_context"].get("mode") != "retry" for j in running)
+                and not any(j["kind"] in required_engines and
+                            j["scan_context"].get("mode") != "retry" for j in running)
                 and all(j["analysis_status"] in ("complete", "complete_with_warnings")
                         for j in latest_engines if j["kind"] in required_engines))
             analysis_warnings = current_warning_count(conn)
@@ -1114,6 +1174,10 @@ def create_app(config: Config) -> FastAPI:
         # inferred attack story.  Build them from the same chronology as the
         # dedicated view so timestamps, clock alignment and source labels
         # cannot drift between the two surfaces.
+        hunt_summary = None
+        if has_hunt_runs:
+            manager.recover_interrupted(case_dir)
+            hunt_summary = hunt_batches.dashboard_summary(case_dir, current_hunt_fingerprint(case_dir))
         chain = case_chain(case_dir, lang, tz, event_cap=None)
         events = chain["events"]
         observations = []
@@ -1149,6 +1213,10 @@ def create_app(config: Config) -> FastAPI:
             "confirmed_kinds": confirmed_kinds,
             "confirmed_severity": confirmed_severity,
             "confirmed_artifacts": confirmed_artifacts,
+            "notable_artifacts": notable_artifacts,
+            "top_findings": top_groups,
+            "hunt_summary": hunt_summary,
+            "system_summary": system_summary,
             "findings_total": findings_total,
             "accounts": accounts, "admins": admins,
             "cms_installs": installs, "evidence": evidence,
@@ -1340,7 +1408,7 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
                       hide_source: str = "", source: str = "", kind: str = "",
-                      search: str = "",
+                      search: str = "", category: str = "",
                       show_retired: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
@@ -1366,7 +1434,7 @@ def create_app(config: Config) -> FastAPI:
         is a list nobody can trust."""
         case_dir = case_dir_or_404(slug)
         muted = ruleswitch.disabled_ids(config.workspace)
-        art = art_sql(muted)
+        art = categorized_art_sql(muted)
 
         def csv_values(raw, allowed):
             return [v for v in (p.strip() for p in raw.split(",")) if v in allowed]
@@ -1403,6 +1471,11 @@ def create_app(config: Config) -> FastAPI:
         if kind:
             where.append("artifact_kind = ?")
             params.append(kind)
+        if category:
+            # Exact category selection happens before pagination; unknown
+            # categories deliberately match nothing rather than broaden a link.
+            where.append("category = ?")
+            params.append(category)
         if search:
             # An artifact matches when ANY of its findings matches -- and then
             # shows all of them. A hit on one rule is a reason to look at the
@@ -1463,6 +1536,11 @@ def create_app(config: Config) -> FastAPI:
                 f"WITH art AS ({art}) SELECT * FROM art {clause} "
                 f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
                 params + [min(limit, 2000), offset])
+            for artifact in artifacts:
+                # These two columns support the shared category query only.
+                # Actual observations travel in the separate findings list.
+                artifact.pop("lead_rule", None)
+                artifact.pop("lead_source", None)
             rows = []
             if artifacts:
                 names = [a["artifact"] for a in artifacts]
@@ -1477,7 +1555,7 @@ def create_app(config: Config) -> FastAPI:
                                f"FROM findings f {db.RETIRE_JOIN} "
                                f"WHERE f.artifact IN ({marks}) "
                                f"ORDER BY retired, f.severity, f.artifact, "
-                               f"f.line", names)
+                               f"f.line, f.id", names)
             counts = artifact_counts(conn)
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
@@ -2487,10 +2565,27 @@ def create_app(config: Config) -> FastAPI:
             return entry["rule"], entry
         return parsed_hunt_rule(body.rule, body.dsl), entry
 
-    def store_hunt_test(case_dir, rule, entry=None, batch_id=""):
-        match = logindex.match_rule(case_dir, rule)
+    def hunt_log_targets(case_dir):
+        return [row["path"] for row in _evidence_by_kind(case_dir).get("access_logs", [])]
+
+    def current_hunt_fingerprint(case_dir):
+        targets = hunt_log_targets(case_dir)
+        if not targets or not logindex.status(case_dir, targets)["fresh"]:
+            return ""
+        return logindex.index_fingerprint(case_dir)
+
+    def require_current_hunt_index(case_dir, fingerprint=""):
+        current = current_hunt_fingerprint(case_dir)
+        if not current or (fingerprint and current != fingerprint):
+            raise HTTPException(409, "the access logs changed; reindex them and check patterns again")
+
+    def store_hunt_test(case_dir, rule, entry=None, batch_id="", fingerprint="", cancelled=None):
+        require_current_hunt_index(case_dir, fingerprint)
+        match = logindex.match_rule(case_dir, rule, expected_fingerprint=fingerprint,
+                                    cancelled=cancelled)
+        require_current_hunt_index(case_dir, match.get("index_fingerprint", ""))
         stamp = db.now()
-        fingerprint = logindex.index_fingerprint(case_dir)
+        fingerprint = match.get("index_fingerprint", "")
         encoded = json.dumps(match["rule"], ensure_ascii=False,
                              sort_keys=True, separators=(",", ":"))
         conn = db.connect(case_dir)
@@ -2535,23 +2630,17 @@ def create_app(config: Config) -> FastAPI:
     def hunt_test_create(slug: str, body: HuntTestBody):
         case_dir = case_dir_or_404(slug)
         rule, entry = test_rule_from_body(body)
-        return store_hunt_test(case_dir, rule, entry, body.batch_id)
+        try:
+            with manager.case_operation(case_dir):
+                snapshot = logindex.index_snapshot(case_dir, hunt_log_targets(case_dir))
+                # Draft previews cannot impersonate a persisted batch roster.
+                return store_hunt_test(case_dir, rule, entry,
+                                       fingerprint=snapshot["index_fingerprint"])
+        except (CaseBusy, logindex.StaleHuntIndex) as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     def public_hunt_test(row):
-        item = dict(row)
-        try:
-            item["rule"] = json.loads(item.pop("rule_json"))
-        except (ValueError, TypeError):
-            item["rule"] = {}
-            item.pop("rule_json", None)
-        try:
-            item["coverage"] = json.loads(item.pop("coverage_json"))
-        except (ValueError, TypeError):
-            item["coverage"] = {}
-            item.pop("coverage_json", None)
-        for key in ("truncated", "legacy"):
-            item[key] = bool(item.get(key))
-        return item
+        return hunt_batches.public_test(row)
 
     @app.get("/api/cases/{slug}/hunt/tests", dependencies=[auth])
     def hunt_test_list(slug: str, pattern_id: str = "", limit: int = 100):
@@ -2572,6 +2661,7 @@ def create_app(config: Config) -> FastAPI:
         limit: int = 200
         sort: str = "requests"
         direction: str = "desc"
+        client: str = ""
 
     def hunt_test_or_404(case_dir, test_id):
         conn = db.connect(case_dir)
@@ -2584,9 +2674,7 @@ def create_app(config: Config) -> FastAPI:
         return public_hunt_test(row)
 
     def require_fresh_hunt_test(case_dir, test):
-        current = logindex.index_fingerprint(case_dir)
-        if not current or current != test.get("index_fingerprint"):
-            raise HTTPException(409, "the access-log index changed; test again")
+        require_current_hunt_index(case_dir, test.get("index_fingerprint") or "invalid")
 
     @app.post("/api/cases/{slug}/hunt/tests/{test_id}/clusters",
               dependencies=[auth])
@@ -2596,7 +2684,24 @@ def create_app(config: Config) -> FastAPI:
         require_fresh_hunt_test(case_dir, test)
         try:
             return logindex.rule_clusters(case_dir, test["rule"], body.cursor,
-                                          body.limit, body.sort, body.direction)
+                                          body.limit, body.sort, body.direction,
+                                          body.client, test["index_fingerprint"])
+        except logindex.StaleHuntIndex as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/cases/{slug}/hunt/tests/{test_id}/clients", dependencies=[auth])
+    def hunt_test_clients(slug: str, test_id: int, body: HuntClusterBody):
+        case_dir = case_dir_or_404(slug)
+        test = hunt_test_or_404(case_dir, test_id)
+        require_fresh_hunt_test(case_dir, test)
+        try:
+            return logindex.rule_clients(case_dir, test["rule"], body.cursor,
+                                        body.limit, body.sort, body.direction,
+                                        test["index_fingerprint"])
+        except logindex.StaleHuntIndex as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -2608,17 +2713,12 @@ def create_app(config: Config) -> FastAPI:
         disable_original: bool = True
         idempotency_key: str = ""
 
-    def selected_hunt_clusters(case_dir, rule, wanted):
+    def selected_hunt_clusters(case_dir, rule, wanted, fingerprint):
         wanted = set(wanted)
-        found, cursor = {}, ""
-        for _page in range(50):
-            page = logindex.rule_clusters(case_dir, rule, cursor, 200)
-            for cluster in page["clusters"]:
-                if cluster["cluster_key"] in wanted:
-                    found[cluster["cluster_key"]] = cluster
-            if len(found) == len(wanted) or not page["next_cursor"]:
-                break
-            cursor = page["next_cursor"]
+        page = logindex.rule_clusters(case_dir, rule, limit=200,
+                                      expected_fingerprint=fingerprint,
+                                      cluster_keys=sorted(wanted))
+        found = {cluster["cluster_key"]: cluster for cluster in page["clusters"]}
         if set(found) != wanted:
             raise HTTPException(409, "the selected request clusters changed; test again")
         return [found[key] for key in wanted]
@@ -2627,6 +2727,13 @@ def create_app(config: Config) -> FastAPI:
               dependencies=[auth])
     def hunt_test_apply(slug: str, test_id: int, body: HuntApplyBody,
                         lang: str = lang_dep):
+        try:
+            with manager.case_operation(case_dir_or_404(slug), allow_hunt=True):
+                return apply_hunt_test(slug, test_id, body, lang)
+        except (CaseBusy, logindex.StaleHuntIndex) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def apply_hunt_test(slug, test_id, body, lang):
         if not body.cluster_keys or len(body.cluster_keys) > 200:
             raise HTTPException(400, "select between one and 200 request clusters")
         if len(set(body.cluster_keys)) != len(body.cluster_keys):
@@ -2714,9 +2821,15 @@ def create_app(config: Config) -> FastAPI:
         except patternlib.PatternError as exc:
             status = 409 if exc.key == "err.patternVersionConflict" else 400
             raise HTTPException(status, _pattern_error(exc, lang)) from exc
-        clusters = selected_hunt_clusters(case_dir, rule, body.cluster_keys)
+        clusters = selected_hunt_clusters(case_dir, rule, body.cluster_keys,
+                                          test["index_fingerprint"])
         conn = db.connect(case_dir)
         try:
+            # Cluster evaluation can take time. Recheck registrations only
+            # after reserving this case's write transaction, so evidence
+            # add/remove cannot interleave with validation and application.
+            conn.execute("BEGIN IMMEDIATE")
+            require_fresh_hunt_test(case_dir, test)
             cur = conn.execute(
                 "INSERT INTO hunt_applications(test_id,pattern_id,pattern_version,"
                 "rule_hash,applied_at,idempotency_key) VALUES (?,?,?,?,?,?)",
@@ -2765,6 +2878,8 @@ def create_app(config: Config) -> FastAPI:
     def hunt_batch_tests(slug: str, body: HuntBatchBody):
         case_dir = case_dir_or_404(slug)
         available = patternlib.library(config.workspace)
+        if body.ids and set(body.ids) - {entry["id"] for entry in available}:
+            raise HTTPException(400, "selected patterns must exist and be enabled")
         wanted = ([entry for entry in available if entry["id"] in set(body.ids)]
                   if body.ids else available)
         if not wanted:
@@ -2772,20 +2887,35 @@ def create_app(config: Config) -> FastAPI:
         batch_id = uuid.uuid4().hex[:12]
 
         def work(ctx):
-            hits = tests = 0
-            for index, entry in enumerate(wanted):
-                if ctx.cancelled():
-                    break
-                ctx.progress(index / len(wanted),
-                             f"Testing {entry['name'] or entry['id']}")
-                result = store_hunt_test(case_dir, entry["rule"], entry, batch_id)
-                tests += 1
-                hits += result["result"]["hits"]
-            return {"tests": tests, "hits": hits, "batch_id": batch_id}
+            def check(entry, context):
+                return store_hunt_test(case_dir, entry["rule"], entry, batch_id,
+                                       context.scan_context["index_fingerprint"], context.cancelled)
+            return hunt_batches.execute(ctx, wanted, check)
 
-        job_id = manager.submit(case_dir, "hunt", work, run_id=batch_id)
+        try:
+            with manager.case_operation(case_dir):
+                snapshot = logindex.index_snapshot(case_dir, hunt_log_targets(case_dir))
+                job_id = manager.submit(case_dir, "hunt", work, run_id=batch_id,
+                                        scan_context=hunt_batches.context(wanted, snapshot))
+        except (CaseBusy, logindex.StaleHuntIndex) as exc:
+            raise HTTPException(409, str(exc)) from exc
         return {"job_id": job_id, "batch_id": batch_id,
                 "patterns": len(wanted)}
+
+    @app.get("/api/cases/{slug}/hunt/batch-tests", dependencies=[auth])
+    def hunt_batch_list(slug: str, limit: int = 50):
+        case_dir = case_dir_or_404(slug)
+        manager.recover_interrupted(case_dir)
+        return {"runs": hunt_batches.runs(case_dir, current_hunt_fingerprint(case_dir), limit=limit)}
+
+    @app.get("/api/cases/{slug}/hunt/batch-tests/{batch_id}", dependencies=[auth])
+    def hunt_batch_detail(slug: str, batch_id: str):
+        case_dir = case_dir_or_404(slug)
+        manager.recover_interrupted(case_dir)
+        runs = hunt_batches.runs(case_dir, current_hunt_fingerprint(case_dir), batch_id)
+        if not runs:
+            raise HTTPException(404, "pattern check not found")
+        return runs[0]
 
     @app.post("/api/cases/{slug}/hunt/preview", dependencies=[auth])
     def hunt_preview(slug: str, body: PreviewHunt, lang: str = lang_dep):
@@ -3322,17 +3452,27 @@ def create_app(config: Config) -> FastAPI:
         mark_exact: list[str] = Field(default_factory=list)
         mark_contains: list[str] = Field(default_factory=list)
         evidence_only: bool = False
+        index_fingerprint: str = ""
+        after_request_id: int | None = None
 
     @app.post("/api/cases/{slug}/trace", dependencies=[auth])
     def trace(slug: str, body: TraceBody):
         case_dir = case_dir_or_404(slug)
         if not body.ips:
             raise HTTPException(400, "no client addresses given")
-        return logindex.trace(case_dir, body.ips, body.from_epoch,
-                              body.to_epoch, min(body.limit, 10000),
-                              body.offset, body.search, body.status,
-                              body.method, body.sort, body.mark_exact,
-                              body.mark_contains, body.evidence_only)
+        if body.index_fingerprint or body.after_request_id is not None:
+            require_current_hunt_index(case_dir, body.index_fingerprint)
+        try:
+            return logindex.trace(case_dir, body.ips, body.from_epoch,
+                                  body.to_epoch, min(body.limit, 10000),
+                                  body.offset, body.search, body.status,
+                                  body.method, body.sort, body.mark_exact,
+                                  body.mark_contains, body.evidence_only,
+                                  body.index_fingerprint, body.after_request_id)
+        except logindex.StaleHuntIndex as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     class TraceTimelineBody(BaseModel):
         ips: list[str]
@@ -3501,11 +3641,16 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/access/request/{request_id}", dependencies=[auth])
     def access_request(slug: str, request_id: int, before: int = 12,
-                       after: int = 12):
+                       after: int = 12, index_fingerprint: str = ""):
         case_dir = case_dir_or_404(slug)
+        if index_fingerprint:
+            require_current_hunt_index(case_dir, index_fingerprint)
         try:
             return logindex.access_request_context(
-                case_dir, request_id, before=before, after=after)
+                case_dir, request_id, before=before, after=after,
+                expected_fingerprint=index_fingerprint)
+        except logindex.StaleHuntIndex as exc:
+            raise HTTPException(409, str(exc)) from exc
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from exc
 
@@ -4010,19 +4155,6 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
         root_by_id = {i["id"]: i["root"] for i in installs}
 
-        def overlay(row, scope, key):
-            """Lay the analyst's correction over the measured value --
-            without losing it: `version_parsed` stays next to it, otherwise
-            a report could no longer tell what was measured and what was
-            decided."""
-            row["version_parsed"] = row["version"]
-            o = overrides.get((scope, key))
-            row["version_set"] = o["version"] if o else ""
-            row["version_note"] = o["note"] if o else ""
-            row["version_set_at"] = o["set_at"] if o else ""
-            if o:
-                row["version"] = o["version"]
-            return row
         arts = [(str(a["artifact"]).replace("\\", "/").lower(), a)
                 for a in flagged]
         by_install = {}
@@ -4038,11 +4170,11 @@ def create_app(config: Config) -> FastAPI:
             hits.sort(key=lambda h: h["worst"])
             item["artifacts"] = hits[:8]
             item["flagged"] = len(hits)
-            overlay(item, "item", _item_key(root_by_id.get(item["install_id"], ""),
-                                            item))
+            _overlay_cms_version(item, "item", _item_key(root_by_id.get(item["install_id"], ""),
+                                                       item), overrides)
             by_install.setdefault(item["install_id"], []).append(item)
         for inst in installs:
-            overlay(inst, "install", inst["root"])
+            _overlay_cms_version(inst, "install", inst["root"], overrides)
             inst["items"] = by_install.get(inst["id"], [])
         return {"installs": installs}
 

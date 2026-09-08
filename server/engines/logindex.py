@@ -27,6 +27,7 @@ import json as _json
 import hashlib
 import ipaddress
 import itertools
+import uuid
 import os
 import re
 import sqlite3
@@ -825,6 +826,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
         conn.execute("CREATE INDEX idx_req_source_line ON requests(source, line_no)")
         conn.executemany("INSERT INTO meta VALUES (?,?)", [
             ("schema", SCHEMA_VERSION),
+            # Row ids belong to this build, even when the source files did
+            # not change. Historical request anchors must not cross builds.
+            ("generation", uuid.uuid4().hex),
             ("targets", _json.dumps([str(t) for t in targets])),
             ("lines", str(stats["lines"])),
             ("clients", str(stats["clients"])),
@@ -1493,7 +1497,8 @@ _STATUS_RANGES = {
 
 def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
           offset=0, search="", status="", method="", sort="time",
-          mark_exact=(), mark_contains=(), evidence_only=False):
+          mark_exact=(), mark_contains=(), evidence_only=False,
+          expected_fingerprint="", after_request_id=None):
     """Every request of these clients -- THE instant trace. Twenty clients
     cost one indexed query, not twenty log passes.
 
@@ -1502,14 +1507,28 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
     paging click still has the same response time as the first."""
     conn = _open_ro(case_dir)
     if conn is None:
+        if expected_fingerprint:
+            raise StaleHuntIndex("the access-log index changed; check patterns again")
         return {"total": 0, "rows": [], "methods": []}
     try:
+        if expected_fingerprint or after_request_id is not None:
+            _hunt_snapshot(conn, expected_fingerprint)
         wanted = [str(ip).strip() for ip in ips if str(ip).strip()]
         if not wanted:
             return {"total": 0, "rows": [], "methods": []}
         marks = ",".join("?" * len(wanted))
         where = [f"r.ip IN (SELECT id FROM ips WHERE ip IN ({marks}))"]
         params = list(wanted)
+        if after_request_id is not None:
+            anchor = conn.execute(
+                "SELECT r.epoch,i.ip FROM requests r JOIN ips i ON i.id=r.ip WHERE r.rowid=?",
+                (int(after_request_id),)).fetchone()
+            if not anchor or anchor["ip"] not in wanted:
+                raise ValueError("the selected request is not in this client scope")
+            if not anchor["epoch"] or anchor["epoch"] <= 0:
+                raise ValueError("this request has no timestamp; open full activity instead")
+            where.append("(r.epoch>? OR (r.epoch=? AND r.rowid>?))")
+            params.extend([anchor["epoch"], anchor["epoch"], int(after_request_id)])
         if from_epoch:
             where.append("r.epoch >= ?")
             params.append(int(from_epoch))
@@ -1555,7 +1574,7 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
             f"SELECT count(*) FROM requests r {joins} WHERE {clause}", params
         ).fetchone()[0]
         rows = conn.execute(
-            f"""SELECT i.ip AS client, r.epoch, r.tz, r.method,
+            f"""SELECT r.rowid AS request_id, i.ip AS client, r.epoch, r.tz, r.method,
                        u.text AS uri, r.status, r.size,
                        f.text AS referrer, a.text AS agent, s.path AS source
                 FROM requests r
@@ -2165,12 +2184,17 @@ def _source_line(path, line_no):
         return ""
 
 
-def access_request_context(case_dir, request_id, before=12, after=12):
+def access_request_context(case_dir, request_id, before=12, after=12,
+                           expected_fingerprint=""):
     """One request, its exact source line and neighbouring client activity."""
     conn = _open_ro(case_dir)
     if conn is None:
+        if expected_fingerprint:
+            raise StaleHuntIndex("the access-log index changed; check patterns again")
         raise LookupError("access-log index not found")
     try:
+        if expected_fingerprint:
+            _hunt_snapshot(conn, expected_fingerprint)
         _prepare_access_conn(conn)
         selected = conn.execute(
             f"{_access_select()} WHERE r.rowid = ?", (int(request_id),)).fetchone()
@@ -2265,21 +2289,75 @@ def _like_from_pattern(pattern):
     return "%" + esc.replace("*", "%") + "%"
 
 
+def _index_fingerprint(conn):
+    meta = dict(conn.execute("SELECT key, value FROM meta"))
+    sources = [tuple(row) for row in conn.execute(
+        "SELECT path, size, mtime, lines, unparsed, skipped_reason "
+        "FROM sources ORDER BY path")]
+    identity = {"schema": meta.get("schema"), "partial": meta.get("partial"),
+                "sources": sources}
+    if meta.get("generation"):
+        identity["generation"] = meta["generation"]
+    payload = _json.dumps(identity,
+                          ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+class StaleHuntIndex(ValueError):
+    pass
+
+
+def _hunt_snapshot(conn, expected_fingerprint="", cancelled=None):
+    """Read the identity and all results from one SQLite read transaction."""
+    conn.execute("BEGIN")
+    try:
+        fingerprint = _index_fingerprint(conn)
+    except sqlite3.Error as exc:
+        raise StaleHuntIndex("finish indexing the access logs before checking patterns") from exc
+    if expected_fingerprint and fingerprint != expected_fingerprint:
+        raise StaleHuntIndex("the access-log index changed; check patterns again")
+    if cancelled is not None:
+        conn.set_progress_handler(lambda: int(cancelled()), 1000)
+    return fingerprint
+
+
+def index_snapshot(case_dir, targets=None):
+    if targets is not None and (not targets or not status(case_dir, targets)["fresh"]):
+        raise StaleHuntIndex("the registered access logs changed; reindex them before checking patterns")
+    conn = _open_ro(case_dir)
+    if conn is None:
+        raise StaleHuntIndex("index the access logs before checking patterns")
+    try:
+        fingerprint = _hunt_snapshot(conn)
+        meta = dict(conn.execute("SELECT key,value FROM meta"))
+        if meta.get("schema") != SCHEMA_VERSION or meta.get("partial") == "1":
+            raise StaleHuntIndex("finish indexing the access logs before checking patterns")
+        # Indexed endpoints avoid scanning every row before the background
+        # job has even started on large collections.
+        first = conn.execute("SELECT epoch FROM requests WHERE epoch>0 ORDER BY epoch LIMIT 1").fetchone()
+        last = conn.execute("SELECT epoch FROM requests WHERE epoch>0 ORDER BY epoch DESC LIMIT 1").fetchone()
+        offsets = _json.loads(meta.get("tz_offsets") or "[]")
+        summary = {"requests": conn.execute("SELECT count(*) FROM requests").fetchone()[0],
+                   "first_epoch": first[0] if first else None,
+                   "last_epoch": last[0] if last else None,
+                   "tz": max(offsets) if offsets else 0}
+        return {"index_fingerprint": fingerprint, "index_summary": summary}
+    finally:
+        conn.close()
+
+
 def index_fingerprint(case_dir):
     """Stable identity of the current derived index and its source set."""
     conn = _open_ro(case_dir)
     if conn is None:
         return ""
     try:
-        meta = dict(conn.execute("SELECT key, value FROM meta"))
-        sources = [tuple(row) for row in conn.execute(
-            "SELECT path, size, mtime, lines, unparsed, skipped_reason "
-            "FROM sources ORDER BY path")]
-        payload = _json.dumps({"schema": meta.get("schema"),
-                               "partial": meta.get("partial"),
-                               "sources": sources},
-                              ensure_ascii=False, separators=(",", ":"))
-        return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+        conn.execute("BEGIN")
+        return _index_fingerprint(conn)
+    except sqlite3.Error:
+        # A reindex may temporarily have no completed schema/metadata. Its
+        # history remains readable, but its saved request ids are not fresh.
+        return ""
     finally:
         conn.close()
 
@@ -2400,7 +2478,7 @@ def _rule_coverage(conn, rule):
     return coverage
 
 
-def match_rule(case_dir, rule, limit=200):
+def match_rule(case_dir, rule, limit=200, expected_fingerprint="", cancelled=None):
     """Evaluate a canonical v2 rule and return a bounded forensic summary."""
     canonical = huntrules.normalise_rule(rule)
     empty = {"rule": canonical, "rule_hash": huntrules.rule_hash(canonical),
@@ -2412,8 +2490,11 @@ def match_rule(case_dir, rule, limit=200):
              "coverage": {"requests": 0, "fields": {}}}
     conn = _open_ro(case_dir)
     if conn is None:
+        if expected_fingerprint:
+            raise StaleHuntIndex("the access-log index changed; check patterns again")
         return empty
     try:
+        fingerprint = _hunt_snapshot(conn, expected_fingerprint, cancelled)
         canonical = _prepare_rule_match(conn, canonical)
         totals = conn.execute(
             "SELECT count(*) AS hits, "
@@ -2450,7 +2531,7 @@ def match_rule(case_dir, rule, limit=200):
             row["day"] = _day_iso(row.pop("day_key"))
         total_clients = int(totals["clients"] or 0)
         uri_total = int(totals["uris"] or 0)
-        return {**empty, "hits": int(totals["hits"] or 0),
+        return {**empty, "index_fingerprint": fingerprint, "hits": int(totals["hits"] or 0),
                 "ok_hits": int(totals["ok_hits"] or 0),
                 "clients_total": total_clients,
                 "ok_clients": int(totals["ok_clients"] or 0),
@@ -2465,8 +2546,14 @@ def match_rule(case_dir, rule, limit=200):
         conn.close()
 
 
+def _hunt_cluster_key(client, method, uri_pattern, status_class):
+    raw = "\x1f".join(str(value or "") for value in (client, method, uri_pattern, status_class))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def rule_clusters(case_dir, rule, cursor="", limit=200,
-                  sort="requests", direction="desc"):
+                  sort="requests", direction="desc", client="",
+                  expected_fingerprint="", cluster_keys=()):
     """Cursor page of stable, explainable request clusters for a v2 rule."""
     try:
         offset = int(str(cursor or "0").removeprefix("o:"))
@@ -2493,17 +2580,31 @@ def rule_clusters(case_dir, rule, cursor="", limit=200,
              "uri_pattern COLLATE NOCASE,status_class")
     conn = _open_ro(case_dir)
     if conn is None:
+        if expected_fingerprint:
+            raise StaleHuntIndex("the access-log index changed; check patterns again")
         return {"clusters": [], "total": 0, "next_cursor": None}
     try:
+        _hunt_snapshot(conn, expected_fingerprint)
         _prepare_rule_match(conn, rule)
         conn.create_function("hunt_uri_pattern", 1, _uri_pattern,
                              deterministic=True)
+        conn.create_function("hunt_cluster_key", 4, _hunt_cluster_key, deterministic=True)
         base = (
             "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
             "JOIN ips i ON i.id=r.ip JOIN strings u ON u.id=r.uri ")
+        params = []
+        if client:
+            base += "WHERE i.ip = ? "
+            params.append(client)
+        grouping = "GROUP BY i.ip,r.method,hunt_uri_pattern(u.text),r.status/100 "
+        if cluster_keys:
+            # Apply a visible selection in one pass, even if its rows were
+            # far beyond the first results page. Do not rescan every page.
+            grouping += ("HAVING hunt_cluster_key(i.ip,r.method,hunt_uri_pattern(u.text),"
+                         "printf('%dxx',r.status/100)) IN (" + ",".join("?" * len(cluster_keys)) + ") ")
+            params.extend(cluster_keys)
         total = conn.execute(
-            "SELECT count(*) FROM (SELECT 1 " + base +
-            "GROUP BY i.ip,r.method,hunt_uri_pattern(u.text),r.status/100)"
+            "SELECT count(*) FROM (SELECT 1 " + base + grouping + ")", params
         ).fetchone()[0]
         rows = [dict(row) for row in conn.execute(
             "SELECT i.ip client,r.method,hunt_uri_pattern(u.text) uri_pattern,"
@@ -2512,16 +2613,67 @@ def rule_clusters(case_dir, rule, cursor="", limit=200,
             "min(CASE WHEN r.epoch>0 THEN r.epoch END) first_epoch,"
             "max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch,max(r.tz) tz,"
             "min(r.rowid) request_id,min(u.text) example_uri " + base +
-            "GROUP BY i.ip,r.method,uri_pattern,r.status/100 "
-            "ORDER BY " + order + " "
+            grouping + "ORDER BY " + order + " "
+            "LIMIT ? OFFSET ?", params + [bounded + 1, offset])]
+        has_more = len(rows) > bounded
+        rows = rows[:bounded]
+        for row in rows:
+            # Ingestion order may differ from chronology, including across files.
+            anchor = conn.execute(
+                "SELECT r.rowid request_id,u.text example_uri FROM requests r "
+                "JOIN hunt_request hr ON hr.request_id=r.rowid "
+                "JOIN ips i ON i.id=r.ip JOIN strings u ON u.id=r.uri "
+                "WHERE i.ip=? AND r.method=? AND hunt_uri_pattern(u.text)=? "
+                "AND printf('%dxx',r.status/100)=? "
+                "ORDER BY CASE WHEN r.epoch>0 THEN 0 ELSE 1 END,r.epoch,r.rowid LIMIT 1",
+                (row["client"], row["method"], row["uri_pattern"], row["status_class"])
+            ).fetchone()
+            row.update(dict(anchor))
+            row["cluster_key"] = _hunt_cluster_key(row["client"], row["method"],
+                                                   row["uri_pattern"], row["status_class"])
+        return {"clusters": rows, "total": int(total or 0),
+                "next_cursor": f"o:{offset + bounded}" if has_more else None}
+    finally:
+        conn.close()
+
+
+def rule_clients(case_dir, rule, cursor="", limit=100, sort="requests",
+                 direction="desc", expected_fingerprint=""):
+    """Exact IP aggregates over the complete match, independent of preview caps."""
+    try:
+        offset = max(0, int(str(cursor or "0").removeprefix("o:")))
+    except ValueError as exc:
+        raise ValueError("invalid hunt client cursor") from exc
+    fields = {"client": "client COLLATE NOCASE", "requests": "requests",
+              "first_hit": "first_epoch", "last_hit": "last_epoch"}
+    if sort not in fields or direction not in {"asc", "desc"}:
+        raise ValueError("invalid hunt client sort")
+    bounded = max(1, min(int(limit), 200))
+    conn = _open_ro(case_dir)
+    if conn is None:
+        raise StaleHuntIndex("the access-log index changed; check patterns again")
+    try:
+        _hunt_snapshot(conn, expected_fingerprint)
+        _prepare_rule_match(conn, rule)
+        total = conn.execute("SELECT count(*) FROM hunt_keep").fetchone()[0]
+        rows = [dict(row) for row in conn.execute(
+            "SELECT i.ip client,count(*) requests,"
+            "sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) ok_hits,"
+            "min(CASE WHEN r.epoch>0 THEN r.epoch END) first_epoch,"
+            "max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch,max(r.tz) tz "
+            "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
+            "JOIN ips i ON i.id=r.ip GROUP BY r.ip "
+            f"ORDER BY {fields[sort]} {direction.upper()},client COLLATE NOCASE "
             "LIMIT ? OFFSET ?", (bounded + 1, offset))]
         has_more = len(rows) > bounded
         rows = rows[:bounded]
         for row in rows:
-            raw = "\x1f".join(str(row.get(key) or "") for key in (
-                "client", "method", "uri_pattern", "status_class"))
-            row["cluster_key"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-        return {"clusters": rows, "total": int(total or 0),
+            row["request_id"] = conn.execute(
+                "SELECT r.rowid FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
+                "WHERE r.ip=(SELECT id FROM ips WHERE ip=?) "
+                "ORDER BY CASE WHEN r.epoch>0 THEN 0 ELSE 1 END,r.epoch,r.rowid LIMIT 1",
+                (row["client"],)).fetchone()[0]
+        return {"clients": rows, "total": total,
                 "next_cursor": f"o:{offset + bounded}" if has_more else None}
     finally:
         conn.close()

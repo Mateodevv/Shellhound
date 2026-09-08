@@ -45,7 +45,7 @@ import { ArtifactWindow } from '../components/ArtifactWindow'
 import { KIND_ICON } from '../artifactKinds'
 import { TriageFollowUp } from '../components/triage'
 import { useTriage } from '../components/useTriage'
-import { artifactNoun, categorize, explainRule, type Category } from '../explain'
+import { artifactNoun, categories as findingCategories, categorize, explainRule, type Category } from '../explain'
 import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import type { Navigate } from '../App'
 
@@ -91,6 +91,7 @@ interface SavedView {
   hiddenSource: string[]
   search: string
   showRetired: boolean
+  category?: string
 }
 
 interface DirectoryNode {
@@ -241,6 +242,8 @@ export function Findings({ slug, gotoView }: {
     () => new URLSearchParams(location.search).get('retired') === '1')
   const [search, setSearch] = useState(
     () => new URLSearchParams(location.search).get('search') ?? '')
+  const [category, setCategory] = useState(
+    () => new URLSearchParams(location.search).get('category') ?? '')
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -280,9 +283,10 @@ export function Findings({ slug, gotoView }: {
     }
     if (showRetired) p.set('show_retired', '1')
     if (search) p.set('search', search)
+    if (category) p.set('category', category)
     p.set('limit', String(LIST_CAP))
     return p.toString()
-  }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search, category])
 
   const { data } = useQuery({
     queryKey: ['findings', slug, query],
@@ -305,8 +309,10 @@ export function Findings({ slug, gotoView }: {
     else url.searchParams.delete('search')
     if (showRetired) url.searchParams.set('retired', '1')
     else url.searchParams.delete('retired')
+    if (category) url.searchParams.set('category', category)
+    else url.searchParams.delete('category')
     history.replaceState(null, '', url)
-  }, [hiddenSeverity, hiddenTriage, hiddenSource, search, showRetired])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, search, showRetired, category])
 
   useEffect(() => {
     const restore = () => {
@@ -316,6 +322,7 @@ export function Findings({ slug, gotoView }: {
       const params = new URLSearchParams(location.search)
       setSearch(params.get('search') ?? '')
       setShowRetired(params.get('retired') === '1')
+      setCategory(params.get('category') ?? '')
     }
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)
@@ -330,10 +337,17 @@ export function Findings({ slug, gotoView }: {
       else byArtifact.set(f.artifact, [f])
     }
     const byCat = new Map<string, CatGroup>()
+    const categoryLabels = findingCategories(tr)
     for (const row of data?.artifacts ?? []) {
       const items = byArtifact.get(row.artifact) ?? []
       const lead = items[0]
-      const cat = categorize(tr, lead?.source ?? row.source, lead?.rule ?? '')
+      // The server assigns one primary category from the complete artifact,
+      // before filtering or limiting its findings. Keep the fallback for
+      // responses produced by older versions of the server.
+      const cat = row.category
+        ? categoryLabels[row.category] ?? categoryLabels.other
+        : categorize(tr, lead?.source ?? row.source, lead?.rule ?? '')
+      if (category && cat.id !== category) continue
       const artifact: Artifact = { ...row, items, cat }
       let c = byCat.get(cat.id)
       if (!c) {
@@ -348,7 +362,7 @@ export function Findings({ slug, gotoView }: {
       if (row.triage === 'dismissed') c.dismissed += 1
     }
     return [...byCat.values()].sort((a, b) => a.cat.order - b.cat.order)
-  }, [data, tr])
+  }, [data, tr, category])
   const reviewQueue = useMemo(() => orderedQueue(categories, roots), [categories, roots])
   const firstReview = useMemo(() => firstReviewArtifact(reviewQueue), [reviewQueue])
   const reviewableCount = useMemo(() => reviewQueue.filter((artifact) =>
@@ -407,6 +421,7 @@ export function Findings({ slug, gotoView }: {
       hiddenSource: [...hiddenSource],
       search,
       showRetired,
+      ...(category ? { category } : {}),
     })
     next.sort((a, b) => a.name.localeCompare(b.name))
     setSavedViews(next)
@@ -421,15 +436,15 @@ export function Findings({ slug, gotoView }: {
     setHiddenSource(new Set(view.hiddenSource))
     setSearch(view.search)
     setShowRetired(view.showRetired)
+    setCategory(view.category ?? '')
   }
 
   // An active filter means: the analyst is looking for something specific.
   // Then the categories stand open, otherwise the hit list would be hidden
   // behind clicks. Without a filter the overview is the purpose -- categories
-  // closed. Only the SEARCH opens the categories automatically -- whoever
-  // searches wants to see the hits. Hiding is not searching: the overview
-  // stays closed.
-  const filtering = Boolean(search)
+  // closed. Search and category links open the matching group automatically;
+  // hiding severity or triage alone leaves the overview closed.
+  const filtering = Boolean(search || category)
 
   const items = useMemo(() => {
     const out: Item[] = []
@@ -576,7 +591,9 @@ export function Findings({ slug, gotoView }: {
   }
 
   const counts = data?.counts
-  const filterCount = hiddenSeverity.size + hiddenTriage.size + hiddenSource.size + (showRetired ? 1 : 0)
+  const filterCount = hiddenSeverity.size + hiddenTriage.size + hiddenSource.size +
+    (showRetired ? 1 : 0) + (category ? 1 : 0)
+  const categoryLabel = findingCategories(tr)[category]?.label ?? tr('findings.categoryFilter.unknown')
 
   return (
     <div className="flex h-[calc(100vh-150px)] flex-col gap-3 md:h-[calc(100vh-110px)]">
@@ -628,6 +645,18 @@ export function Findings({ slug, gotoView }: {
         </Button>
       </div>
 
+      {category && (
+        <div className="flex flex-wrap items-center gap-2 text-[12px]">
+          <button type="button" onClick={() => setCategory('')}
+            aria-label={tr('findings.categoryFilter.remove')}
+            className="flex max-w-full cursor-pointer items-center gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-soft)] px-3 py-2 font-semibold text-[var(--accent-text)] hover:border-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
+            <ListFilter size={14} className="shrink-0" />
+            <span className="min-w-0 break-words">{tr('findings.categoryFilter', { category: categoryLabel })}</span>
+            <X size={14} className="shrink-0" />
+          </button>
+        </div>
+      )}
+
       {filtersOpen && (
         <Card id="findings-filter-panel" surface="raised" className="grid gap-4 p-4 sm:grid-cols-3 animate-fade-up">
           <FilterGroup title={tr('findings.filter.severity')}>
@@ -662,6 +691,7 @@ export function Findings({ slug, gotoView }: {
                 setHiddenSeverity(new Set())
                 setHiddenTriage(new Set())
                 setHiddenSource(new Set())
+                setCategory('')
               }}>
               {tr('findings.showAll')}
             </button>
@@ -672,6 +702,7 @@ export function Findings({ slug, gotoView }: {
                 setHiddenSource(new Set())
                 setSearch('')
                 setShowRetired(false)
+                setCategory('')
               }}>
               {tr('findings.resetFilters')}
             </button>

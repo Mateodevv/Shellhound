@@ -39,17 +39,21 @@ type Status = 'pending' | 'accepted' | 'all'
 type Action = { kind: 'retry' | 'force' | 'accept'; mode: 'all' | 'selected'; ids?: number[] }
 
 /** A new identity gets fresh UI state; polling the same job keeps selections. */
-export function SkippedFiles({ slug, jobId }: { slug: string; jobId: number }) {
-  return <SkippedFilesList key={`${slug}:${jobId}`} slug={slug} jobId={jobId} />
+export function SkippedFiles({ slug, jobId, initialStatus = 'pending', initiallyOpen = false }: {
+  slug: string; jobId: number; initialStatus?: Status; initiallyOpen?: boolean
+}) {
+  return <SkippedFilesList key={`${slug}:${jobId}:${initialStatus}`} slug={slug} jobId={jobId} initialStatus={initialStatus} initiallyOpen={initiallyOpen} />
 }
 
-function SkippedFilesList({ slug, jobId }: { slug: string; jobId: number }) {
+function SkippedFilesList({ slug, jobId, initialStatus, initiallyOpen }: {
+  slug: string; jobId: number; initialStatus: Status; initiallyOpen: boolean
+}) {
   const tr = useT()
   const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(initiallyOpen)
   const [offset, setOffset] = useState(0)
   const [group, setGroup] = useState<Group>('all')
-  const [status, setStatus] = useState<Status>('pending')
+  const [status, setStatus] = useState<Status>(initialStatus)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['job-skips', slug, jobId, group, status, offset],
