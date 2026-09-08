@@ -170,6 +170,114 @@ describe('findings filter workbench', () => {
       hiddenSource: [], search: '', showRetired: false,
     }])
   })
+
+  it('opens the server-assigned category from a dashboard link and retains it through refresh', async () => {
+    const artifact = '/evidence/site/representative.php'
+    vi.mocked(api).mockResolvedValue({
+      ...RESPONSE,
+      total: 1,
+      artifacts: [{
+        artifact, artifact_kind: 'file', worst: 1, source: 'webshell', findings: 1,
+        retired: 0, triage: 'confirmed', triage_note: '', triaged_at: null,
+        last_seen: '', category: 'probes',
+      }],
+      findings: [{
+        id: 1, fingerprint: 'category-example', artifact, artifact_kind: 'file',
+        source: 'webshell', rule: 'Harmless test observation', severity: 1,
+        evidence: 'Synthetic finding', line: null, created: '', last_seen: '',
+        retired: 0, triage: 'confirmed', triage_note: '',
+      }],
+    } satisfies FindingsResponse)
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=probes&severity=0,1,2,3&triage=new,reviewed,confirmed')
+
+    const first = renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Category: Attack patterns in URLs')).toBeVisible()
+    // Its visible finding would classify as webshell locally. The server's
+    // category is authoritative and opens directly without an extra click.
+    expect(await screen.findByRole('checkbox', { name: `Select file ${artifact}` })).toBeVisible()
+    expect(screen.queryByText('Webshells & backdoors')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    const requested = new URL(vi.mocked(api).mock.calls[0][0], location.origin)
+    expect(requested.searchParams.get('category')).toBe('probes')
+    expect(requested.searchParams.get('hide_severity')).toBeNull()
+    expect(requested.searchParams.get('hide_triage')).toBe('dismissed')
+    expect(requested.searchParams.get('limit')).toBe('2000')
+
+    first.unmount()
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Category: Attack patterns in URLs')).toBeVisible()
+    expect(new URL(location.href).searchParams.get('category')).toBe('probes')
+    expect(await screen.findByRole('checkbox', { name: `Select file ${artifact}` })).toBeVisible()
+  })
+
+  it('removes the visible category filter without changing the remaining filters', async () => {
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=probes&search=example&severity=0,1&triage=confirmed')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove category filter' }))
+    await waitFor(() => expect(new URL(location.href).searchParams.has('category')).toBe(false))
+    expect(new URL(location.href).searchParams.get('search')).toBe('example')
+    expect(new URL(location.href).searchParams.get('severity')).toBe('0,1')
+    expect(new URL(location.href).searchParams.get('triage')).toBe('confirmed')
+    await waitFor(() => {
+      const request = vi.mocked(api).mock.calls.at(-1)![0]
+      expect(new URL(request, location.origin).searchParams.has('category')).toBe(false)
+    })
+    expect(screen.queryByRole('button', { name: 'Remove category filter' })).not.toBeInTheDocument()
+  })
+
+  it.each(['show everything', 'Reset filters'])('clears category when choosing %s', async (action) => {
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=probes')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Filters (3)' }))
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await waitFor(() => expect(new URL(location.href).searchParams.has('category')).toBe(false))
+  })
+
+  it('restores category filters on browser history navigation', async () => {
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Filters (2)' })
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=probes')
+    fireEvent(window, new PopStateEvent('popstate'))
+    expect(await screen.findByText('Category: Attack patterns in URLs')).toBeVisible()
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([url]) =>
+      new URL(url, location.origin).searchParams.get('category') === 'probes')).toBe(true))
+  })
+
+  it('saves category views and clears category when applying an older unfiltered view', async () => {
+    localStorage.setItem('shellhound.saved-findings.case-1', JSON.stringify([{
+      name: 'Legacy view', hiddenSeverity: ['3'], hiddenTriage: ['dismissed'],
+      hiddenSource: [], search: '', showRetired: false,
+    }]))
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=probes')
+    vi.spyOn(window, 'prompt').mockReturnValue('Pattern observations')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save view' }))
+    const stored = JSON.parse(localStorage.getItem('shellhound.saved-findings.case-1') || '[]')
+    expect(stored.find((view: { name: string }) => view.name === 'Pattern observations').category).toBe('probes')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Saved views' }), { target: { value: 'Legacy view' } })
+    await waitFor(() => expect(new URL(location.href).searchParams.has('category')).toBe(false))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Saved views' }), { target: { value: 'Pattern observations' } })
+    expect(await screen.findByText('Category: Attack patterns in URLs')).toBeVisible()
+    expect(new URL(location.href).searchParams.get('category')).toBe('probes')
+  })
+
+  it('retains unknown category requests without showing unrelated results', async () => {
+    history.replaceState(null, '', '/?case=case-1&view=findings&category=not-a-category')
+    vi.mocked(api).mockResolvedValue({
+      ...RESPONSE,
+      artifacts: [{
+        artifact: 'unrelated-file', artifact_kind: 'file', worst: 1,
+        source: 'webshell', findings: 1, retired: 0, triage: 'new',
+        triage_note: '', triaged_at: null, last_seen: '', category: 'webshell',
+      }],
+    } satisfies FindingsResponse)
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Category: Unknown category')).toBeVisible()
+    expect(new URL(vi.mocked(api).mock.calls[0][0], location.origin).searchParams.get('category'))
+      .toBe('not-a-category')
+    expect(screen.queryByText('Webshells & backdoors')).not.toBeInTheDocument()
+    expect(screen.queryByText('unrelated-file')).not.toBeInTheDocument()
+  })
 })
 
 describe('save-and-next queue ordering', () => {

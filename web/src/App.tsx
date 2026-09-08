@@ -46,8 +46,8 @@ export type ViewId =
   | 'database' | 'evidence' | 'timeline' | 'report' | 'settings'
 
 export type ViewParams = Partial<Record<
-  | 'severity' | 'triage' | 'source' | 'search' | 'artifact' | 'retired' | 'request'
-  | 'actor' | 'section' | 'next', string
+  | 'severity' | 'triage' | 'source' | 'search' | 'category' | 'artifact' | 'retired' | 'request'
+  | 'actor' | 'section' | 'batch' | 'pattern' | 'next', string
 >>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
@@ -160,6 +160,7 @@ function viewFromUrl(): ViewId {
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const tr = useT()
   const [view, setView] = useState<ViewId>(viewFromUrl)
+  const [huntVisit, setHuntVisit] = useState(0)
 
   // The global search belongs to the shell: it has to be reachable from
   // EVERY view, and its hit opens the artifact window directly -- no matter
@@ -205,19 +206,28 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     url.searchParams.set('case', slug)
     url.searchParams.set('view', next)
     for (const key of [
-      'severity', 'triage', 'source', 'search', 'artifact', 'retired', 'request',
-      'actor', 'section', 'next',
+      'severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'request',
+      'actor', 'section', 'batch', 'pattern', 'next',
     ] as const) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)
       else url.searchParams.delete(key)
     }
     history.pushState(null, '', url)
+    // Re-enter the Hunt overview even when its library/details are already
+    // open. The case-scoped session preserves drafts and the selected run.
+    if (next === 'hunt') setHuntVisit((visit) => visit + 1)
     setView(next)
   }, [slug])
 
   useEffect(() => {
-    const onPopState = () => setView(viewFromUrl())
+    const onPopState = () => {
+      const restored = viewFromUrl()
+      // Hunt has its own saved pages. Back can change its URL while the
+      // outer view stays 'hunt', so reload that page from the restored URL.
+      if (restored === 'hunt') setHuntVisit((visit) => visit + 1)
+      setView(restored)
+    }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
@@ -324,7 +334,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'findings' && <Findings {...props} />}
             {view === 'actors' && <Actors {...props} />}
             {view === 'logs' && <AccessLogs {...props} />}
-            {view === 'hunt' && <Hunt {...props} />}
+            {view === 'hunt' && <Hunt key={huntVisit} {...props} />}
             {view === 'iocbox' && <IocBox {...props} />}
             {view === 'files' && <Files {...props} />}
             {view === 'cms' && <Cms {...props} />}
@@ -392,7 +402,7 @@ function Root() {
     const url = new URL(location.href)
     url.searchParams.delete('case')
     url.searchParams.delete('view')
-    for (const key of ['severity', 'triage', 'source', 'search', 'artifact', 'retired', 'next']) {
+    for (const key of ['severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'batch', 'pattern', 'section', 'next']) {
       url.searchParams.delete(key)
     }
     history.pushState(null, '', url)

@@ -1,5 +1,8 @@
 # Shellhound project guidance
 
+- The interface is English-only. Keep user-facing copy in the shared English
+  catalogue; do not restore the removed German interface.
+
 - **Codi reminder:** before starting fixes or code changes, check `git status`
   and run `git fetch origin`. Update a tracking branch with `git pull --ff-only`;
   start new feature work from the latest `origin/main`, or safely integrate it
@@ -24,3 +27,6 @@
   raw webshell fixtures or payload-bearing diffs; use harmless marker rules for
   scanner infrastructure tests. An ignored temporary folder does not prevent
   alerts when a sample is copied into tool output.
+- **Codi reminder:** saved Pattern Hunt evidence needs both the current registered
+  log-source check and the index generation fingerprint. Changed registrations
+  can stale a run before reindexing; rebuilding unchanged files can change request IDs.

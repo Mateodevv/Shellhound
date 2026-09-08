@@ -200,16 +200,73 @@ in Workflow, and the less frequent screens under the always-visible
 visible while views load; the action only navigates and never starts analysis
 or changes a decision by itself.
 
+### Case dashboard
+
+The dashboard separates **Case status**, **Recommended next step**, **Top
+findings**, and **Case data overview**. Analysis coverage describes what was examined; the case
+assessment describes the analyst's decisions. No findings does not mean a site
+is clean. Red marks confirmed incident findings or failed checks, yellow marks
+work needing attention, and green marks completed checks or review. Use the
+linked counts at the top or the recommended action to continue. Accepting a
+skipped file clears its warning; the decision remains available under
+**Evidence → Resolved scan skips** without keeping a dashboard warning open.
+Top findings shows up to three groups from the whole case, with distinct
+affected-item counts and a representative file, IP, or database item. Red groups
+contain analyst-confirmed findings; yellow groups await review. Mixed groups
+label both counts separately. Click a group to open its removable category
+filter in Findings, or use **View all findings** for the full list. Dismissed
+and hidden items do not enter the highlights; historical confirmed findings
+keep their decisions and are marked when no longer reported by current scans.
+Informational observations remain available in Findings. Empty results only
+turn green once analysis is complete, and distinguish no detections from items
+the analyst dismissed. The case data overview shows software observed in the
+evidence, including analyst-corrected versions and source coverage.
+When the latest saved Pattern Hunt check has matches, Top findings also shows
+its matching-pattern count and names, with a direct link to that check. These
+unconfirmed matches stay separate from Findings and do not inflate artifact
+counts or confirm compromise. Partial and historical results are labelled;
+changed log evidence requires a new check before drilling into saved matches.
+
+### Pattern Hunt
+
+Pattern Hunt checks indexed access logs against the enabled patterns in the
+local reusable library. Open **Pattern Hunt** and use the large **Check all
+patterns** button in the first panel. Progress and a compact result summary
+stay here; choose **View full results** to investigate. The **Pattern library**
+panel below previews enabled patterns and opens the full library. Each run
+keeps the pattern versions it checked, including zero matches, failures, and
+unfinished checks. You can stop a run and still inspect completed results.
+Matches are highlighted in red; query failures in yellow. The match summary
+also opens full results. Remaining work is shown during a run; stopped runs
+identify any patterns that were not checked.
+
+Open a matched pattern to see request counts, distinct IPs, and first/last
+matches. Select an IP, inspect a matching request, then choose **Activity after
+this request** to see what it did next, including requests outside the pattern.
+**Full activity** includes earlier requests too. A match or a 2xx response is
+an observation, not proof of successful exploitation.
+
+Select matching request groups and choose **Add selected to Findings** to send
+only those groups for review. Selection is limited to the current page and
+clears when you change pages or IPs; existing review decisions are preserved.
+Searching alone never adds findings. **Open pattern library** lets you check one
+pattern, enable or disable patterns, or preview and save a new one. Previewing
+a draft and saving it are separate actions.
+
+Changed evidence or a rebuilt index makes old results historical. Run a new
+check before opening or applying their underlying evidence. The library stays
+local; Pattern Hunt does not download patterns or contact a shared catalogue.
+
 ### 1 · Evidence & analysis
 
-Work on copies. Four kinds of evidence go in, three of them are needed to
-start.
+Work on copies. Register any available webroot, access logs, or SQL dump to
+start; each can be analyzed independently.
 
 | Kind | What it is | Needed to start |
 |---|---|---|
-| Webroot | Copy of the web directory | yes |
-| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | yes |
-| SQL dump | Database export of the CMS | yes |
+| Webroot | Copy of the web directory | one of these three |
+| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | one of these three |
+| SQL dump | Database export of the CMS | one of these three |
 | Reference copy | Clean CMS release of the same version | no, enables the webroot diff |
 
 #### Evidence registration
