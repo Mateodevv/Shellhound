@@ -22,6 +22,7 @@ const NO_ARCHIVES: ArchivesResponse = { archive_dir: 'C:/ws/archive', archives: 
 
 beforeEach(() => {
   vi.mocked(api).mockImplementation(async (path) => {
+    if (path === '/api/opencti/settings') return { configured: false }
     if (path === '/api/state') return STATE
     if (path === '/api/archives') return NO_ARCHIVES
     throw new Error(`unexpected API call: ${path}`)

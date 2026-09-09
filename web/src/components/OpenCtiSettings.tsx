@@ -11,6 +11,7 @@ export function OpenCtiSettings() {
   const tr = useT()
   return <Section title={tr('cti.title')} sub={tr('cti.settingsBody')}>
     <CtiError error={query.error} />
+    {query.isPending && <p role="status">{tr('common.loading')}</p>}
     {query.data && <SettingsForm key={`${query.data.url}:${query.data.ingester_id}:${query.data.configured}:${query.data.token_hint}`} initial={query.data} />}
   </Section>
 }
@@ -35,9 +36,9 @@ function SettingsForm({ initial }: { initial: Settings }) {
     <CtiField label={tr('cti.url')}><input type="url" placeholder="https://opencti.example" className={ctiInput} value={url} onChange={(e) => { setUrl(e.target.value); setSaved(false) }} /></CtiField>
     <CtiField label={tr('cti.ingester')}><input className={ctiInput} value={ingester} onChange={(e) => { setIngester(e.target.value); setSaved(false) }} /></CtiField>
     <CtiField label={tr('cti.token')}><input type="password" autoComplete="off" className={ctiInput} value={token} onChange={(e) => { setToken(e.target.value); setClearToken(false); setSaved(false) }} />
-      <span>{tr('cti.tokenBody')}</span>{initial.configured && <span>{tr('cti.tokenHint', { hint: initial.token_hint })}</span>}
+      <span>{tr('cti.tokenBody')}</span>{initial.token_hint && <span>{tr('cti.tokenHint', { hint: initial.token_hint })}</span>}
     </CtiField>
-    {initial.configured && <label className="flex gap-2 text-[12px]"><input type="checkbox" checked={clearToken} onChange={(e) => { setClearToken(e.target.checked); setToken('') }} />{tr('cti.tokenRemove')}</label>}
+    {initial.token_hint && <label className="flex gap-2 text-[12px]"><input type="checkbox" checked={clearToken} onChange={(e) => { setClearToken(e.target.checked); setToken('') }} />{tr('cti.tokenRemove')}</label>}
     <label className="flex gap-2 text-[12px]"><input type="checkbox" checked={samples} onChange={(e) => setSamples(e.target.checked)} />{tr('cti.samplesEnable')}</label>
     <p className="text-[12px] text-[var(--muted)]">{tr('cti.samplesExternal')}</p>
     <div className="flex flex-wrap items-center gap-2"><Button variant="primary" disabled={save.isPending || !dirty} onClick={() => save.mutate()}>{tr('common.save')}</Button>

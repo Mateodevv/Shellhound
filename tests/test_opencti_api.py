@@ -37,6 +37,29 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(200, self.request("POST", base + f"/ioc-relationships/{link['id']}/withdraw", {"reason": "Wrong attribution"})[0])
         self.assertEqual(404, self.request("GET", base + "/iocs/999999/detail")[0])
 
+    def test_ioc_tags_are_authenticated_local_deltas(self):
+        base = f"/api/cases/{self.slug}/iocs"
+        _, created = self.request("POST", base, {"value": "198.51.100.9", "type": "ip"})
+        url = base + f"/{created['id']}/tags"
+        self.assertEqual(401, self.request("POST", url, {"add": ["test"]}, token="bad")[0])
+        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+            status, payload = self.request("POST", url, {"add": [" IOC ", "ioc", "true positive"]})
+            self.assertEqual(200, status)
+            self.assertEqual(1, sum(t.casefold() == "ioc" for t in payload["tags"]))
+            self.assertIn("analyst", payload["tags"])
+            self.request("POST", url, {"add": ["scanner"]})
+            _, payload = self.request("POST", url, {"remove": ["IOC"], "add": ["OpenCTI label"]})
+            self.assertIn("scanner", payload["tags"])
+            self.assertIn("OpenCTI label", payload["tags"])
+            self.assertNotIn("IOC", payload["tags"])
+            _, detail = self.request("GET", base + f"/{created['id']}/detail")
+            self.assertEqual("malicious", detail["object"]["assessment"])
+            self.assertEqual([], detail["assessments"])
+        for invalid in (" ", "x" * 129, "two\nlines"):
+            self.assertEqual(400, self.request("POST", url, {"add": [invalid]})[0])
+        self.assertEqual(422, self.request("POST", url, {"add": ["tag"] * 101})[0])
+        self.assertEqual(404, self.request("POST", base + "/999999/tags", {"add": ["tag"]})[0])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -83,6 +106,36 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertIn("report", {o["type"] for o in preview["objects"]})
         self.assertEqual(400, self.request("POST", f"/api/cases/{self.slug}/opencti/export",
                                          {"preview_id": preview["preview_id"]})[0])
+
+    def test_wizard_creates_complete_profile_before_any_transfer(self):
+        _, organization = self.request("POST", "/api/organizations", {})
+        profile = {
+            "organization_id": organization["id"], "pseudonym": organization["name"],
+            "summary": "Synthetic incident for wizard acceptance",
+            "sectors": ["Technology", "Manufacturing"], "countries": ["de", "AT"],
+            "first_seen": "2026-09-01", "last_seen": "2026-09-08",
+            "software": [{"name": "Example CMS", "version": "5.2"}],
+            "vulnerabilities": [
+                {"name": "CVE-2026-12345", "status": "confirmed", "description": "Verified locally"},
+                {"name": "Custom plugin flaw", "status": "suspected", "description": "Upload validation under investigation"},
+            ], "marking": "TLP:AMBER+STRICT",
+        }
+        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+            status, created = self.request("POST", "/api/cases", {
+                "name": "Wizard acceptance", "reference": "PIM-WIZARD-1", "profile": profile,
+            })
+            self.assertEqual(200, status, created)
+            _, saved = self.request("GET", f"/api/cases/{created['slug']}")
+        expected = {**profile, "countries": ["DE", "AT"]}
+        self.assertEqual(expected, saved["profile"])
+        self.assertEqual("PIM-WIZARD-1", saved["reference"])
+        _, state = self.request("GET", f"/api/cases/{created['slug']}/opencti")
+        self.assertEqual([], state["exports"])
+        self.assertEqual([], state["jobs"])
+        status, preview = self.request("POST", f"/api/cases/{created['slug']}/opencti/preview", {})
+        self.assertEqual(200, status, preview)
+        types = {obj["type"] for obj in preview["objects"]}
+        self.assertTrue({"incident", "report", "identity", "location", "vulnerability"} <= types)
 
     def test_keys_are_masked_and_case_id_collision_is_validation_error(self):
         code, response = self.request("PATCH", "/api/opencti/settings", {

@@ -74,6 +74,42 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertEqual(hashlib.md5(self.content).hexdigest(), hashes["MD5"])
         self.assertNotIn("communicates-with", json.dumps(preview))
 
+    def test_tags_export_with_stable_identity_and_private_text_sanitized(self):
+        from server import ioc_model
+        before = self.preview()
+        original = next(o for o in before["objects"] if o["type"] == "ipv4-addr")
+        ioc_model.edit_tags(self.conn, self.ip_id, ["IOC", "scanner", "password=synthetic-secret", "C:/Users/Private/tag"])
+        self.conn.commit()
+        tagged = self.preview()
+        ip = next(o for o in tagged["objects"] if o["type"] == "ipv4-addr")
+        self.assertEqual(original["id"], ip["id"])
+        self.assertIn("IOC", ip["labels"])
+        self.assertIn("scanner", ip["labels"])
+        self.assertNotIn("synthetic-secret", json.dumps(tagged))
+        self.assertNotIn("C:/Users/Private", json.dumps(tagged))
+        old_row = next(r for r in before["iocs"] if r["id"] == self.ip_id)
+        row = next(r for r in tagged["iocs"] if r["id"] == self.ip_id)
+        self.assertNotEqual(old_row["fingerprint"], row["fingerprint"])
+        self.assertEqual(ip["labels"], row["tags"])
+        self.assertEqual(tagged["fingerprint"], self.preview()["fingerprint"])
+        ioc_model.edit_tags(self.conn, self.ip_id, remove=["scanner"])
+        self.conn.commit()
+        changed = self.preview()
+        self.assertNotIn("scanner", next(o for o in changed["objects"] if o["id"] == ip["id"])["labels"])
+        self.assertNotEqual(tagged["fingerprint"], changed["fingerprint"])
+        self.assertFalse(any(o["type"] == "indicator" for o in changed["objects"]))
+        self.assertFalse(any(s["selected"] for s in changed["samples"]))
+
+    def test_labels_from_selected_rows_sharing_a_file_are_combined(self):
+        self.conn.execute("UPDATE iocs SET tags=? WHERE id=?", ('["path-label"]', self.path_id))
+        self.conn.execute("UPDATE iocs SET tags=? WHERE id=?", ('["hash-label"]', self.hash_id))
+        self.conn.commit()
+        preview = self.preview()
+        file = next(o for o in preview["objects"] if o["type"] == "file")
+        self.assertEqual(["hash-label", "path-label"], file["labels"])
+        chosen = self.preview(ioc_ids=[self.hash_id])
+        self.assertEqual(["hash-label"], next(o for o in chosen["objects"] if o["type"] == "file")["labels"])
+
     def test_all_references_are_in_bundle_or_existing_markings(self):
         preview = self.preview(indicator_ids=[self.hash_id])
         ids = {o["id"] for o in preview["objects"]} | set(graph.MARKINGS.values())

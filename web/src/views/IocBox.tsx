@@ -1,14 +1,16 @@
 import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Box, ChevronLeft, ChevronRight, FileDigit, Globe, Plus, ShieldOff } from 'lucide-react'
+import { Activity, Box, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { api, post, downloadUrl, downloadSelection, type Ioc, type CrossCaseIocResponse } from '../api'
 import type { Navigate } from '../App'
 import { Button, Modal, SearchInput } from '../components/ui'
-import { CaseProfileButton } from '../components/CaseProfile'
 import { OpenCtiToolbar } from '../components/OpenCti'
 import { IocDetails } from '../components/IocDetails'
-import { assessmentTone, ctiLabel, iocName } from '../components/iocPresentation'
+import { IpFlag } from '../components/IpFlag'
+import { IocAssessmentBadge } from '../components/IocAssessmentBadge'
+import { IocTypeBadge } from '../components/IocTypeBadge'
+import { ctiLabel, iocName } from '../components/iocPresentation'
 import { useOpenCti } from '../opencti'
 
 const groups = [{ name: 'All', types: [] }, { name: 'IPs', types: ['ip'] }, { name: 'Files', types: ['file'] }, { name: 'Domains / URLs', types: ['domain', 'url'] }, { name: 'CVEs', types: ['vulnerability'] }, { name: 'Other', types: ['hash', 'path', 'user', 'email', 'other'] }]
@@ -81,10 +83,10 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
     const term = state.search.trim().toLowerCase()
     return roots.filter(i => (!types.length || types.includes(i.type)) && (!state.type || i.type === state.type)
       && (!state.assessment || i.assessment === state.assessment) && (!state.origin || i.tags.includes(state.origin))
-      && (!state.status || (state.status.startsWith('sync:') ? sync.get(i.id) === state.status.slice(5) : state.status === 'unchecked' ? !lookups.has(i.id) : state.status === 'stale' ? lookups.get(i.id)?.stale : lookups.get(i.id)?.status === state.status))
+      && (!cti.configured || !state.status || (state.status.startsWith('sync:') ? sync.get(i.id) === state.status.slice(5) : state.status === 'unchecked' ? !lookups.has(i.id) : state.status === 'stale' ? lookups.get(i.id)?.stale : lookups.get(i.id)?.status === state.status))
       && (!term || [i.value, i.note, i.origin, i.summary, ...(i.file?.names ?? []), ...Object.values(i.file?.hashes ?? {})].some(v => v?.toLowerCase().includes(term))))
       .sort((a, b) => (state.sort === 'name' ? iocName(a).localeCompare(iocName(b)) : state.sort === 'assessment' ? (a.assessment || '').localeCompare(b.assessment || '') : state.sort === 'observed' ? (b.last_seen || '').localeCompare(a.last_seen || '') : b.added.localeCompare(a.added)) || b.id - a.id)
-  }, [roots, state, sync, lookups])
+  }, [roots, state, sync, lookups, cti.configured])
   const pages = Math.max(1, Math.ceil(filtered.length / state.size)), page = Math.min(state.page, pages)
   const visible = filtered.slice((page - 1) * state.size, page * state.size)
   useEffect(() => { if (listRef.current && !isPending) listRef.current.scrollTop = state.scroll }, [state.scroll, isPending, state.page])
@@ -94,7 +96,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
   const select = (rows: Ioc[]) => setSelection(previous => new Set([...previous, ...rows.map(i => i.id)]))
   const active = state.active == null ? null : byId.get(state.active)
   const jobs = cti.data?.jobs ?? [], running = jobs.filter(j => ['queued', 'running'].includes(j.state)).length, failures = jobs.filter(j => j.state === 'failed').length
-  const filterCount = [state.assessment, state.origin, state.status, state.type].filter(Boolean).length
+  const filterCount = [state.assessment, state.origin, cti.configured && state.status, state.type].filter(Boolean).length
   const crossMatches = cross?.entries.find(i => i.id === state.active)?.matches ?? []
   const filterSelect = (label: string, key: 'assessment' | 'origin' | 'status' | 'type', choices: [string, string][]) => <select
     aria-label={label}
@@ -111,6 +113,15 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
         <h1 className="text-xl font-semibold">{tr('iocWorkspace.ioc_box')}</h1>
         <p className="text-[12px] text-[var(--muted)]">{tr('iocWorkspace.objects_evidence_and_relationships')}</p>
       </div>
+      <OpenCtiToolbar
+        mode="inline"
+        actionScope="case"
+        slug={slug}
+        iocs={iocs}
+        selectedIds={[]}
+        onSelectAll={() => {}}
+        onClear={() => {}}
+        onSettings={() => navigate('settings')} />
       <Button onClick={() => setActivity(true)}>
         <Activity size={14} />
         {tr('iocWorkspace.activity')}
@@ -181,7 +192,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           {filters && <div className="grid grid-cols-2 gap-2">
             {filterSelect('Assessment filter', 'assessment', ['malicious', 'suspicious', 'benign', 'unassessed'].map(s => [s, s]))}
             {filterSelect('Origin / tag filter', 'origin', [...new Set(iocs.flatMap(i => i.tags))].sort().map(s => [s, s]))}
-            {filterSelect('OpenCTI filter', 'status', [['known', 'Known'], ['own', 'Own exports only'], ['unknown', 'No visible match'], ['unchecked', 'Not checked'], ['stale', 'Outdated'], ['error', 'Check failed'], ['sync:new', 'New for transfer'], ['sync:changed', 'Changed'], ['sync:error', 'Transfer error'], ['sync:exported', 'Transferred']])}
+            {cti.configured && filterSelect('OpenCTI filter', 'status', [['known', 'Known'], ['own', 'Own exports only'], ['unknown', 'No visible match'], ['unchecked', 'Not checked'], ['stale', 'Outdated'], ['error', 'Check failed'], ['sync:new', 'New for transfer'], ['sync:changed', 'Changed'], ['sync:error', 'Transfer error'], ['sync:exported', 'Transferred']])}
             {filterSelect('Object type filter', 'type', [...new Set(roots.map(i => i.type))].sort().map(s => [s, s]))}
             <Button onClick={() => filter({ assessment: '', origin: '', status: '', type: '' })}>{tr('iocWorkspace.reset_filters')}</Button>
           </div>}
@@ -206,7 +217,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           onScroll={e => update({ scroll: e.currentTarget.scrollTop })}
           role="list"
           aria-label="Object list">{isPending && <p className="p-4" role="status">{tr('iocWorkspace.loading_objects')}</p>}{!isPending && !filtered.length && <p className="p-4 text-[13px] text-[var(--muted)]">{tr('iocWorkspace.no_matching_objects')}</p>}{visible.map(ioc => {
-            const Icon = ioc.type === 'ip' ? Globe : ioc.type === 'file' ? FileDigit : ioc.type === 'vulnerability' ? ShieldOff : Box; return <div
+            return <div
               key={ioc.id}
               role="listitem"
               className={`flex items-center gap-2 border-b border-l-2 border-b-[var(--line)] px-3 ${state.active === ioc.id ? 'border-l-[var(--accent)] bg-[var(--accent-soft)]' : 'border-l-transparent'}`}>
@@ -220,13 +231,16 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
                 aria-label={`Open ${iocName(ioc)}`}
                 aria-current={state.active === ioc.id ? 'true' : undefined}
                 className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left">
-                <Icon size={17} className="shrink-0 text-[var(--muted)]" />
+                <IocTypeBadge type={ioc.type} value={ioc.value} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium" title={iocName(ioc)}>{iocName(ioc)}</span>
-                  <span className="block truncate text-[11px] text-[var(--muted)]">
-                    <span className={assessmentTone(ioc.assessment)}>{ioc.assessment || 'malicious'}</span>
-                    {ioc.assessment_manual && ' ✎'} ·
-                    {sync.get(ioc.id) === 'error' ? 'Transfer error' : sync.get(ioc.id) === 'changed' ? 'Changed' : ctiLabel(lookups.get(ioc.id))}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-[13px] font-medium" title={iocName(ioc)}>{iocName(ioc)}</span>
+                    {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
+                  </span>
+                  <span className="mt-1 flex items-center gap-1 text-[11px] text-[var(--muted)]">
+                    <IocAssessmentBadge assessment={ioc.assessment || 'malicious'} />
+                    {ioc.assessment_manual && ' ✎'}
+                    {cti.configured && (sync.get(ioc.id) === 'error' ? 'Transfer error' : sync.get(ioc.id) !== 'changed' && ctiLabel(lookups.get(ioc.id)))}
                   </span>
                 </span>
               </button>
@@ -270,13 +284,12 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
 
       <div
         className={`ioc-detail min-h-0 min-w-0 overflow-y-auto ${state.active == null ? 'ioc-detail-hidden-mobile' : ''}`}>
-        {state.active != null ? <><div className="flex flex-wrap items-center gap-2 border-b border-[var(--line)] px-4 py-2 text-[11px]">
+        {state.active != null ? <><div className="ioc-mobile-navigation flex flex-wrap items-center gap-2 border-b border-[var(--line)] px-4 py-2 text-[11px]">
           <Button
             onClick={() => { if (trail.length) { if (open(trail[trail.length - 1], true)) setTrail(t => t.slice(0, -1)) } else open(null) }}>
             <ChevronLeft size={13} />
             {tr('iocWorkspace.back')}
           </Button>
-          <button className="text-[var(--accent-text)]" onClick={() => open(null)}>{tr('iocWorkspace.object_list')}</button>
           {active && !filtered.some(i => i.id === active.id) && <span className="text-[var(--muted)]">{tr('iocWorkspace.outside_current_filters')}</span>}
         </div>{active ? <IocDetails
           key={`${slug}:${state.active}`}
@@ -324,7 +337,6 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
 
     <Modal open={activity} onClose={() => setActivity(false)} title="IOC activity">
       <div className="space-y-4">
-        <CaseProfileButton slug={slug} />
         <OpenCtiToolbar
           mode="activity"
           slug={slug}

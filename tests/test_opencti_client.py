@@ -464,6 +464,17 @@ class OpenCTIClientTests(unittest.TestCase):
         self.assertNotIn("API_KEY", json.dumps(result))
         self.assertNotIn("private", json.dumps(result))
 
+    def test_work_tlp_error_uses_a_fixed_explanation_without_log_contents(self):
+        self._responses({"data": {"work": {"id": "work-1", "status": "complete",
+            "connector": {"id": "connector-1", "name": "AbuseIPDB"},
+            "errors": [{"message": "Do not send any data, TLP of the observable is greater than MAX TLP; API_KEY=private", "sequence": 1}]}}})
+        result = self.client.work("work-1")
+        self.assertEqual("tlp_limit", result["errors"][0]["code"])
+        self.assertIn("TLP marking exceeds", result["errors"][0]["message"])
+        self.assertEqual("AbuseIPDB", result["connector"]["name"])
+        self.assertNotIn("API_KEY", json.dumps(result))
+        self.assertNotIn("private", json.dumps(result))
+
 
 if __name__ == "__main__":
     unittest.main()
