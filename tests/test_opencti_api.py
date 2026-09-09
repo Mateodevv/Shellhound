@@ -17,6 +17,32 @@ from tests.test_http import _LiveServer
 
 
 class OpenCTIHTTPTests(unittest.TestCase):
+    def test_database_user_keeps_registration_in_ioc_details_and_export_context(self):
+        conn = db.connect(self.case)
+        try:
+            account_id = conn.execute("INSERT INTO db_accounts(dump_id,cms,tbl,user_id,login,email,registered) "
+                "VALUES(1,'joomla','cms_users','42','account-test','account@example.invalid','2024-02-03 04:05:06')").lastrowid
+            conn.commit()
+        finally:
+            conn.close()
+        base = f"/api/cases/{self.slug}"
+        for _ in range(2):
+            status, result = self.request("POST", base + "/database/accounts/flag", {"account_id": account_id})
+            self.assertEqual(200, status, result)
+        _, rows = self.request("GET", base + "/iocs")
+        user = next(row for row in rows if row["type"] == "user")
+        self.assertEqual(2, len(rows))
+        self.assertEqual(1, len(user["account_sources"]))
+        self.assertEqual("2024-02-03 04:05:06", user["account_sources"][0]["registered"])
+        self.assertIsNone(user["first_seen"])
+        self.assertIsNone(user["last_seen"])
+        _, detail = self.request("GET", base + f"/iocs/{user['id']}/detail")
+        self.assertEqual(user["account_sources"], detail["object"]["account_sources"])
+        self.assertEqual("account-of", detail["relationships"][0]["kind"])
+        _, preview = self.request("POST", base + "/opencti/preview", {})
+        notes = [obj["content"] for obj in preview["objects"] if obj["type"] == "note"]
+        self.assertTrue(any("Account registration: 2024-02-03 04:05:06 (joomla / cms_users)" in note for note in notes))
+
     def test_structured_ioc_api_validation_and_offline_details(self):
         base = f"/api/cases/{self.slug}"
         for value, kind in (("198.51.100.9", "ip"), ("CVE-2026-12345", "vulnerability")):

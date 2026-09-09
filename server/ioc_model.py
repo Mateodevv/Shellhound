@@ -87,6 +87,31 @@ def identity(value, kind, context="", path_context="unknown"):
                       ensure_ascii=False, separators=(",", ":"))
 
 
+def account_source_key(account):
+    """Stable across reindexing account rows within a dump; no credentials or paths."""
+    return hashlib.sha256(json.dumps([account["dump_id"], account["tbl"],
+                                     account["user_id"], account["login"].strip()]).encode()).hexdigest()
+
+
+def account_origin(account):
+    where = f"{account['cms'] or 'CMS'} account from {account['tbl'] or 'the export'}"
+    if account["admin"]:
+        where += " (administrator)"
+    return f"marked by the analyst — {where}"
+
+
+def record_account(conn, ioc_id, account):
+    """Keep database dates as account facts, separate from observation times."""
+    row = conn.execute("SELECT account_sources FROM iocs WHERE id=?", (ioc_id,)).fetchone()
+    sources = json.loads(row[0])
+    entry = {"source_key": account_source_key(account), "registered": account["registered"] or "",
+             "cms": account["cms"], "table": account["tbl"]}
+    sources = [source for source in sources if source["source_key"] != entry["source_key"]]
+    sources.append(entry)
+    conn.execute("UPDATE iocs SET account_sources=? WHERE id=?",
+                 (json.dumps(sorted(sources, key=lambda item: item["source_key"])), ioc_id))
+
+
 def migrate(conn):
     """Preserve row IDs and source UIDs; never guess missing file metadata."""
     columns = {r[1] for r in conn.execute("PRAGMA table_info(iocs)")}
@@ -113,6 +138,18 @@ def migrate(conn):
                          "VALUES(?,?,?,?,?,?,?,?,?,?)", (*row, key, warning))
         conn.execute("DROP TABLE iocs")
         conn.execute("ALTER TABLE iocs_v13 RENAME TO iocs")
+    if "account_sources" not in {r[1] for r in conn.execute("PRAGMA table_info(iocs)")}:
+        conn.execute("ALTER TABLE iocs ADD COLUMN account_sources TEXT NOT NULL DEFAULT '[]'")
+        # Historical flagging retained a source description but no database row
+        # identifier. Only a unique exact source match can safely fill the gap.
+        from server import db
+        accounts = {}
+        for account in db.rows(conn, "SELECT * FROM db_accounts"):
+            accounts.setdefault((account["login"].strip(), account_origin(account)), []).append(account)
+        for user in db.rows(conn, "SELECT id,value,origin FROM iocs WHERE type='user'"):
+            candidates = accounts.get((user["value"], user["origin"]), [])
+            if len(candidates) == 1:
+                record_account(conn, user["id"], candidates[0])
     for name, decl in (("origin", "TEXT NOT NULL DEFAULT 'automatic'"),
                        ("active", "INTEGER NOT NULL DEFAULT 1"),
                        ("withdrawal_reason", "TEXT NOT NULL DEFAULT ''")):
@@ -277,6 +314,7 @@ def enrich_rows(conn, rows):
     for m in db.rows(conn, "SELECT * FROM ioc_file_members"):
         members.setdefault(m["ioc_id"], []).append(m["file_id"])
     for row in rows:
+        row["account_sources"] = json.loads(row.get("account_sources", "[]"))
         row["assessment_manual"] = row["id"] in assessed
         row["first_seen"] = spans.get(row["id"], {}).get("first_seen")
         row["last_seen"] = spans.get(row["id"], {}).get("last_seen")

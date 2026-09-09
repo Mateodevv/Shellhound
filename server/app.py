@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from server import case_profile, case_report, correlation, coverage, db, geoip, huntrules, hunt_batches
 from server import opencti_service
+from server import ioc_model
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
@@ -4835,8 +4836,9 @@ def create_app(config: Config) -> FastAPI:
             accounts = db.rows(conn, "SELECT * FROM db_accounts")
             # Which accounts are already in the box -- so the button does
             # not offer what has long been done.
-            in_box = {r["value"] for r in db.rows(
-                conn, "SELECT value FROM iocs WHERE type IN ('user','email')")}
+            in_box = {source["source_key"] for row in db.rows(
+                conn, "SELECT account_sources FROM iocs WHERE type='user'")
+                for source in json.loads(row["account_sources"])}
             findings = db.rows(conn,
                                "SELECT * FROM findings WHERE source = 'sqldb' "
                                "ORDER BY severity, artifact LIMIT 500")
@@ -4872,7 +4874,7 @@ def create_app(config: Config) -> FastAPI:
         for a in accounts:
             a["signals"] = _account_signals(a, reference, lang)
             a["rank"] = sum(_SIGNAL_WEIGHT.get(s["id"], 0) for s in a["signals"])
-            a["in_box"] = (a["login"] or "").strip() in in_box
+            a["in_box"] = ioc_model.account_source_key(a) in in_box
         accounts.sort(key=lambda a: (-a["rank"], a["cms"], a["login"].lower()))
 
         by_table = {}
@@ -4974,12 +4976,9 @@ def create_app(config: Config) -> FastAPI:
             tags = [ioclib.TAG_ANALYST, ioclib.TAG_ACCOUNT]
             # The origin travels into the archive and therefore stays in
             # the project language.
-            where = (f"{acc['cms'] or 'CMS'} account from "
-                     f"{acc['tbl'] or 'the export'}")
-            if acc["admin"]:
-                where += " (administrator)"
             login_id = db.add_ioc(conn, login, "user", tags, note=body.note,
-                                  origin=f"marked by the analyst — {where}")
+                                  origin=ioc_model.account_origin(acc))
+            ioc_model.record_account(conn, login_id, acc)
             added = [{"value": login, "type": "user"}]
             email = (acc["email"] or "").strip()
             if email:

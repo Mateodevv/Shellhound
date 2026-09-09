@@ -167,9 +167,17 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       <h3 className="ioc-section-title">{tr('iocWorkspace.observation')}</h3>
       <div className="grid grid-cols-1 gap-x-6 border-b border-[var(--line)] sm:grid-cols-2">
 
-        <IocField name="First observed">{observationTime(times[0] || current?.first_seen)}</IocField>
-
-        <IocField name="Last observed">{observationTime(times[times.length - 1] || current?.last_seen)}</IocField>
+        {object.type === 'user' && !!object.account_sources?.length ? <div className="sm:col-span-2">
+          <IocField name={tr('iocAccount.registered')} help={tr('iocAccount.registeredHelp')}>
+            <div className="space-y-2">{object.account_sources.map(source => <div key={source.source_key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span>{source.registered || tr('iocAccount.notRecorded')}</span>
+              <span className="text-[12px] text-[var(--muted)]">{[source.cms, source.table].filter(Boolean).join(' · ')}</span>
+            </div>)}</div>
+          </IocField>
+        </div> : <>
+          <IocField name="First observed">{observationTime(times[0] || current?.first_seen)}</IocField>
+          <IocField name="Last observed">{observationTime(times[times.length - 1] || current?.last_seen)}</IocField>
+        </>}
 
         <div className="min-w-0"><IocField name="Origin">
           <div className="space-y-1 break-words">{iocOrigins(object, observed, data?.findings ?? []).map(origin => <p key={origin}>{origin}</p>)}</div>

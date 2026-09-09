@@ -4,6 +4,9 @@
 // state what the rule itself establishes. "Is a backdoor" would be wrong;
 // "can execute commands if it is reachable" is the finding.
 export const en: Record<string, string> = {
+  'iocAccount.registered': 'Registered',
+  'iocAccount.registeredHelp': 'The account registration date recorded in the source database, shown in its original time format.',
+  'iocAccount.notRecorded': 'Not recorded in the database',
   'wizard.title': 'Create case',
   'wizard.steps': 'Case setup steps',
   'wizard.step.case': 'Case details',

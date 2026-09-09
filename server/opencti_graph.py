@@ -498,6 +498,9 @@ def build_preview(case_dir, options=None):
         primary = ids[0] if ids else incident_id
         context = f"Shellhound IOC {ioc_id}: {row['type']} — {value}"
         context += "\nCase assessment: " + row.get("assessment", "unassessed")
+        for account in row.get("account_sources", []):
+            context += "\nAccount registration: " + clean.text(account["registered"] or "Not recorded")
+            context += " (" + clean.text(" / ".join(filter(None, [account["cms"], account["table"]]))) + ")"
         if row.get("file") and row["file"]["names"]:
             context += "\nFile names: " + clean.text(", ".join(row["file"]["names"]))
         if row.get("path_context") not in (None, "unknown"):
