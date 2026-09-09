@@ -13,6 +13,9 @@ export interface CaseProfile {
   vulnerabilities: { name: string; status: 'confirmed' | 'suspected'; description: string }[]
   marking: string
 }
+export function newCaseProfile(): CaseProfile {
+  return { organization_id: '', pseudonym: '', summary: '', sectors: [], countries: [], first_seen: '', last_seen: '', software: [], vulnerabilities: [], marking: 'TLP:AMBER+STRICT' }
+}
 export interface Organization { id: string; name: string }
 export interface OpenCtiSettings {
   url: string; ingester_id: string; configured: boolean; token_hint: string
@@ -50,7 +53,7 @@ export interface OpenCtiOptions {
 export interface OpenCtiPreview {
   preview_id: string; case_reference: string; fingerprint: string
   objects: ({ id: string; type: string } & Record<string, unknown>)[]
-  iocs: { id: number; value: string; type: string; selected: boolean; object_ids: string[]; indicator_supported: boolean; indicator_suggested: boolean; warnings: string[] }[]
+  iocs: { id: number; value: string; type: string; selected: boolean; tags?: string[]; object_ids: string[]; indicator_supported: boolean; indicator_suggested: boolean; warnings: string[] }[]
   relationships: { id: number; src_id: number; dst_id: number; kind: string; note: string; selected: boolean }[]
   samples: { id: string; display_path: string; sha256: string; size: number; selected: boolean; available: boolean; reason: string; file_id: string }[]
   warnings: string[]; errors: string[]
@@ -67,15 +70,20 @@ export const initialExportOptions = (ids: number[]): OpenCtiOptions => ({
 
 export const openCtiKey = (slug: string) => ['opencti', slug]
 export function useOpenCti(slug: string) {
-  return useQuery({
+  const settings = useOpenCtiSettings()
+  const configured = settings.data?.configured === true
+  const query = useQuery({
+    enabled: configured,
     queryKey: openCtiKey(slug),
     queryFn: () => api<OpenCtiState>(`/api/cases/${slug}/opencti`),
     refetchInterval: (q) => q.state.data?.jobs?.some((j) => j.state === 'queued' || j.state === 'running') ? 2000 : false,
     staleTime: 15_000,
   })
+  // Disabled queries retain cached data; keep it out of the optional integration UI.
+  return { ...query, configured, data: configured ? query.data : undefined, error: configured ? query.error : null }
 }
 export function useOpenCtiSettings() {
-  return useQuery({ queryKey: ['opencti-settings'], queryFn: () => api<OpenCtiSettings>('/api/opencti/settings') })
+  return useQuery({ queryKey: ['opencti-settings'], queryFn: () => api<OpenCtiSettings>('/api/opencti/settings'), staleTime: 30_000 })
 }
 /** Never turn provider supplied URLs into script links. */
 export function safeCtiUrl(value: string | undefined): string | undefined {

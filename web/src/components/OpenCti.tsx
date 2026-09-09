@@ -1,12 +1,33 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Radar, Search, Upload } from 'lucide-react'
+import { ExternalLink, LoaderCircle, Radar, Search, Upload } from 'lucide-react'
 import { post, type Ioc } from '../api'
 import { useT } from '../i18n'
 import { useOpenCti, useOpenCtiSettings, openCtiKey, safeCtiUrl, initialExportOptions, type OpenCtiLookup, type OpenCtiReference, type OpenCtiPreview, type OpenCtiOptions, type OpenCtiEnrichmentPreview } from '../opencti'
-import { Button, Card, Modal, Tag } from './ui'
-import { CaseProfileButton, CtiError } from './CaseProfile'
+import { Button, Card, Modal, Tag, Tabs } from './ui'
+import { CtiError } from './CaseProfile'
 import { OpenCtiExportDialog } from './OpenCtiExport'
+import { IocTag } from './IocTags'
+import { InfoDot } from './Tooltip'
+import { SelectColumn } from './OpenCtiSelection'
+import { iocCategories, inIocCategory, selectBatch, selectionTable, selectionHead } from './ctiSelectionModel'
+
+export function OpenCtiScore({ lookup, loading, error }: { lookup?: OpenCtiLookup; loading?: boolean; error?: boolean }) {
+  const tr = useT()
+  const scored = lookup?.entities?.filter(entity => typeof entity.score === 'number' && Number.isFinite(entity.score) && entity.score >= 0 && entity.score <= 100) ?? []
+  return <div className="min-w-0 space-y-2 py-3">
+    <div className="flex items-center gap-2 font-semibold">{tr('cti.scoreTitle')}<InfoDot body={<>{tr('cti.scoreDescription')}{lookup?.checked_at && <span className="mt-2 block">{tr('cti.cached', { at: lookup.checked_at })}</span>}</>} /></div>
+    <div className="flex flex-wrap items-center gap-2">
+      {scored.map(entity => <span key={entity.id} className="inline-flex items-center gap-2">
+        {scored.length > 1 && <span className="break-all text-[12px]">{entity.name || entity.type}</span>}
+        <span className="rounded px-2 py-1 text-[11px] font-medium tabular-nums" style={{ background: 'var(--review-soft)', color: 'var(--review-text)' }}>{entity.score} / 100</span>
+      </span>)}
+      {!scored.length && <span className="text-[var(--muted)]">{tr(loading ? 'common.loading' : error || lookup?.status === 'error' ? 'cti.scoreUnavailable' : !lookup ? 'cti.unchecked' : 'cti.noScore')}</span>}
+      {lookup?.stale && <Tag tone="warn">{tr('cti.stale')}</Tag>}
+      {(error || lookup?.status === 'error') && scored.length > 0 && <span className="text-[var(--danger-text)]">{tr('cti.scoreUnavailable')}</span>}
+    </div>
+  </div>
+}
 
 export function OpenCtiStatus({ lookup, sync, onClick, value }: { lookup?: OpenCtiLookup; sync?: string; onClick: () => void; value: string }) {
   const tr = useT()
@@ -43,7 +64,7 @@ export function OpenCtiDetails({ lookup }: { lookup?: OpenCtiLookup }) {
       {entity.last_seen && <p className="text-[var(--muted)]">{tr('cti.entityTime', { label: tr('cti.lastSeen'), at: entity.last_seen })}</p>}
       {entity.created_at && <p className="text-[var(--muted)]">{tr('cti.entityTime', { label: tr('cti.createdAt'), at: entity.created_at })}</p>}
       {entity.updated_at && <p className="text-[var(--muted)]">{tr('cti.entityTime', { label: tr('cti.updatedAt'), at: entity.updated_at })}</p>}
-      {!!entity.labels?.length && <div className="flex flex-wrap gap-1">{entity.labels.map((item, index) => <Tag key={index}>{typeof item === 'string' ? item : item.value}</Tag>)}</div>}
+      {!!entity.labels?.length && <div className="flex flex-wrap gap-1">{entity.labels.map((item, index) => <IocTag key={index} value={typeof item === 'string' ? item : item.value} />)}</div>}
       <ReferenceList title={tr('cti.sources')} items={entity.sources} /><ReferenceList title={tr('cti.reports')} items={entity.reports} />
       <ReferenceList title={tr('cti.malware')} items={entity.malware} /><ReferenceList title={tr('cti.relationships')} items={entity.relationships} />
       {safeCtiUrl(entity.url) && <a href={safeCtiUrl(entity.url)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-text)] hover:underline"><ExternalLink size={12} />{tr('cti.open')}</a>}
@@ -52,42 +73,51 @@ export function OpenCtiDetails({ lookup }: { lookup?: OpenCtiLookup }) {
   </div>
 }
 
-export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, onSettings, mode = 'full' }: {
+export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, mode = 'full', actionScope = 'selection', leadingAction }: {
   slug: string; iocs: Ioc[]; selectedIds: number[]; onSelectAll: () => void; onClear: () => void; onSettings: () => void
-  mode?: 'full' | 'actions' | 'activity'
+  mode?: 'full' | 'actions' | 'activity' | 'inline'
+  actionScope?: 'selection' | 'case'
+  leadingAction?: ReactNode
 }) {
   const tr = useT()
   const qc = useQueryClient()
   const conf = useOpenCtiSettings()
   const status = useOpenCti(slug)
+  const actionIds = actionScope === 'case' ? iocs.map(ioc => ioc.id) : selectedIds
+  const inline = mode === 'inline'
   const [preview, setPreview] = useState<{ data: OpenCtiPreview; options: OpenCtiOptions } | null>(null)
   const [enrichment, setEnrichment] = useState<{ data: OpenCtiEnrichmentPreview; ids: number[] } | null>(null)
   const [queued, setQueued] = useState(false)
   const refreshed = () => { setQueued(true); qc.invalidateQueries({ queryKey: openCtiKey(slug) }); qc.invalidateQueries({ queryKey: ['jobs', slug] }) }
-  const lookup = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/lookup`, { ioc_ids: selectedIds }), onSuccess: refreshed })
+  const lookup = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/lookup`, { ioc_ids: actionIds }), onSuccess: refreshed })
   const prepare = useMutation({ mutationFn: async () => {
-    const options = initialExportOptions(selectedIds)
+    const options = initialExportOptions(actionIds)
     return { options, data: await post<OpenCtiPreview>(`/api/cases/${slug}/opencti/preview`, options) }
   }, onSuccess: setPreview })
-  const prepareEnrichment = useMutation({ mutationFn: async () => ({ ids: [...selectedIds], data: await post<OpenCtiEnrichmentPreview>(`/api/cases/${slug}/opencti/enrichment/preview`, { ioc_ids: selectedIds }) }), onSuccess: setEnrichment })
+  const prepareEnrichment = useMutation({ mutationFn: async () => ({ ids: [...actionIds], data: await post<OpenCtiEnrichmentPreview>(`/api/cases/${slug}/opencti/enrichment/preview`, { ioc_ids: actionIds }) }), onSuccess: setEnrichment })
   const retry = useMutation({ mutationFn: (export_id: string) => post(`/api/cases/${slug}/opencti/retry`, { export_id }), onSuccess: refreshed })
   const refreshEnrichment = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/enrichment/status`, {}), onSuccess: refreshed })
   const busy = lookup.isPending || prepare.isPending || prepareEnrichment.isPending
-  const ready = !!conf.data?.configured && selectedIds.length > 0 && !busy
+  const ready = !!conf.data?.configured && actionIds.length > 0 && !busy
   const recentJobs = status.data?.jobs?.slice(0, 8) ?? []
-  return <Card className="flex flex-col gap-3 border-[var(--accent)]/30 p-3">
-    {mode !== 'activity' && <><div className="flex flex-wrap items-center gap-2"><strong className="mr-auto text-[13px]">{tr('cti.title')}</strong>{mode === 'full' && <CaseProfileButton slug={slug} />}
-      <Button disabled={!ready} onClick={() => { setQueued(false); lookup.mutate() }}><Search size={13} />{tr('cti.check')}</Button>
-      <Button disabled={!ready} onClick={() => prepare.mutate()}><Upload size={13} />{tr('cti.export')}</Button>
-      <Button disabled={!ready} onClick={() => prepareEnrichment.mutate()}><Radar size={13} />{tr('cti.enrich')}</Button>
+  const scopeHint = actionScope === 'case' ? tr('cti.caseScope', { n: actionIds.length }) : undefined
+  const checkLabel = tr(actionScope === 'case' ? 'cti.checkAll' : 'cti.check')
+  const exportLabel = tr(actionScope === 'case' ? 'cti.exportAll' : 'cti.export')
+  const enrichLabel = tr(actionScope === 'case' ? 'cti.enrichAll' : 'cti.enrich')
+  if (!conf.data?.configured) return <>{leadingAction}</>
+  const Container = inline ? 'div' : Card
+  return <Container className={inline ? 'flex min-w-0 max-w-full flex-col gap-2' : 'flex flex-col gap-3 border-[var(--accent)]/30 p-3'}>
+    {mode !== 'activity' && <><div className="flex flex-wrap items-center gap-2">{leadingAction}{!inline && <strong className="mr-auto text-[13px]">{tr('cti.title')}</strong>}
+      <Button type="button" disabled={!ready} aria-label={checkLabel} title={scopeHint} onClick={() => { setQueued(false); lookup.mutate() }}>{lookup.isPending ? <LoaderCircle size={13} className="animate-spin" /> : <Search size={13} />}{checkLabel}</Button>
+      <Button type="button" disabled={!ready} aria-label={exportLabel} title={scopeHint} onClick={() => prepare.mutate()}>{prepare.isPending ? <LoaderCircle size={13} className="animate-spin" /> : <Upload size={13} />}{exportLabel}</Button>
+      <Button type="button" disabled={!ready} aria-label={enrichLabel} title={scopeHint} onClick={() => prepareEnrichment.mutate()}>{prepareEnrichment.isPending ? <LoaderCircle size={13} className="animate-spin" /> : <Radar size={13} />}{enrichLabel}</Button>
     </div>
-    <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]"><span>{selectedIds.length} {tr('iocWorkspace.ioc_entries_in_this_action')}</span>
+    {!inline && <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted)]"><span>{actionIds.length} {tr('iocWorkspace.ioc_entries_in_this_action')}</span>
       {mode === 'full' && <><Button variant="ghost" onClick={onSelectAll} disabled={selectedIds.length === iocs.length}>{tr('cti.all')}</Button><Button variant="ghost" onClick={onClear} disabled={!selectedIds.length}>{tr('cti.clear')}</Button></>}
-    </div></>}
-    {conf.data && !conf.data.configured && <div className="flex items-center gap-2 text-[12px]"><span>{tr('cti.noConfig')}</span><Button variant="ghost" onClick={onSettings}>{tr('cti.setup')}</Button></div>}
+    </div>}</>}
     <CtiError error={conf.error || lookup.error || prepare.error || prepareEnrichment.error || retry.error || refreshEnrichment.error || status.error} />
-    {queued && <p role="status" className="text-[12px] text-[var(--muted)]">{tr('cti.queued')}</p>}
-    {mode !== 'actions' && <>
+    {queued && <p role="status" className="text-[12px] text-[var(--muted)]">{tr(inline ? 'cti.queuedActivity' : 'cti.queued')}</p>}
+    {(mode === 'full' || mode === 'activity') && <>
     {!!recentJobs.length && <details open={recentJobs.some((job) => ['queued', 'running'].includes(job.state))} className="text-[12px]"><summary className="cursor-pointer font-semibold">{tr('cti.jobs')}</summary>
       <div className="mt-2 flex flex-col gap-1">{recentJobs.map((job) => <div key={job.id} className="flex flex-wrap gap-2"><Tag tone={job.state === 'failed' ? 'danger' : undefined}>{job.state}</Tag><span>{job.kind}</span><span>{job.message}</span>{job.error && <CtiError error={job.error} />}</div>)}</div>
     </details>}
@@ -107,7 +137,7 @@ export function OpenCtiToolbar({ slug, iocs, selectedIds, onSelectAll, onClear, 
     </>}
     {preview && <OpenCtiExportDialog slug={slug} initial={preview.data} initialOptions={preview.options} onClose={() => setPreview(null)} onQueued={() => { setPreview(null); refreshed() }} />}
     {enrichment && <EnrichmentDialog slug={slug} data={enrichment.data} ids={enrichment.ids} onClose={() => setEnrichment(null)} onQueued={() => { setEnrichment(null); refreshed() }} />}
-  </Card>
+  </Container>
 }
 
 function TransferReceiptDetails({ stats }: { stats: Record<string, unknown> }) {
@@ -130,23 +160,41 @@ function TransferReceiptDetails({ stats }: { stats: Record<string, unknown> }) {
 
 function EnrichmentDialog({ slug, data, ids, onClose, onQueued }: { slug: string; data: OpenCtiEnrichmentPreview; ids: number[]; onClose: () => void; onQueued: () => void }) {
   const tr = useT()
+  const [tab, setTab] = useState('all')
+  const [selectedIds, setSelectedIds] = useState(() => data.entities.filter(entity => ids.includes(entity.ioc_id)).map(entity => entity.ioc_id))
   const [connectors, setConnectors] = useState<string[]>([])
   const [createMissing, setCreateMissing] = useState(false)
-  const missing = data.entities.filter((entity) => entity.requires_creation)
-  const needsTransfer = data.entities.some((entity) => entity.requires_transfer)
+  const included = data.entities.filter(entity => selectedIds.includes(entity.ioc_id))
+  const visible = data.entities.filter(entity => inIocCategory(entity.type, tab))
+  const missing = included.filter(entity => entity.requires_creation)
+  const needsTransfer = included.some((entity) => entity.requires_transfer)
   const available = data.connectors.filter((connector) => connector.active)
-  const run = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/enrich`, { ioc_ids: ids, connector_ids: connectors, create_missing: createMissing }), onSuccess: onQueued })
-  return <Modal open title={tr('cti.enrichPreview')} onClose={onClose}><div className="flex flex-col gap-4 text-[12px]">
-    <p>{tr('cti.enrichBody')}</p>{data.warnings.map((warning) => <p key={warning} className="text-[var(--warn)]">{warning}</p>)}
-    {!!missing.length && <div className="rounded-lg border border-[var(--line)] p-3">{missing.map((entity) => <p key={entity.ioc_id} className="break-all">{tr('cti.creationRequired', { value: entity.value })}</p>)}
+  const run = useMutation({ mutationFn: () => post(`/api/cases/${slug}/opencti/enrich`, { ioc_ids: selectedIds, connector_ids: connectors, create_missing: createMissing }), onSuccess: onQueued })
+  return <Modal open title={tr('cti.enrichPreview')} onClose={onClose} contained bodyClassName="overflow-hidden px-5 py-4"><div className="flex h-full min-h-0 flex-col gap-3 text-[12px]">
+    <p className="shrink-0">{tr('cti.enrichBody')}</p>
+    <div className="shrink-0 space-y-1 [&_[role=tab]]:shrink-0 [&_[role=tab]]:whitespace-nowrap">
+    <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={iocCategories.map(id => ({ id, label: tr(`cti.category.${id}`), badge: <span className="ml-1 text-[10px]">{data.entities.filter(entity => inIocCategory(entity.type, id)).length}</span> }))} /></div>
+    <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={[{ id: 'connectors', label: tr('cti.connectors') }, ...(data.warnings.length ? [{ id: 'notices', label: tr('cti.notices'), badge: <span className="ml-2">{data.warnings.length}</span> }] : [])]} /></div></div>
+    <div className="min-h-0 flex-1 overflow-hidden">
+    <div hidden={tab !== 'notices'} role="tabpanel" aria-label={tr('cti.notices')} className="h-full overflow-y-auto [scrollbar-gutter:stable] space-y-2">{data.warnings.map(warning => <p key={warning} className="rounded border border-[var(--line)] p-3 text-[var(--review-text)]">{warning}</p>)}</div>
+    <div hidden={!iocCategories.includes(tab)} role="tabpanel" aria-label={tr('cti.iocs')} className="h-full overflow-auto [scrollbar-gutter:stable]">
+      <table className={selectionTable}><colgroup><col style={{ width: 44 }} /><col /><col style={{ width: 110 }} /><col style={{ width: '35%' }} /></colgroup>
+        <thead className={selectionHead}><tr><th><SelectColumn label={tr('cti.iocs')} states={visible.map(entity => selectedIds.includes(entity.ioc_id))} onChange={checked => setSelectedIds(selectBatch(selectedIds, visible.map(entity => entity.ioc_id), checked))} /></th><th>{tr('iocTable.object')}</th><th>{tr('iocTable.type')}</th><th>{tr('cti.enrichmentStatus')}</th></tr></thead>
+        <tbody>{visible.map(entity => <tr key={entity.ioc_id}><td><input type="checkbox" aria-label={tr('cti.selectIoc', { value: entity.value })} checked={selectedIds.includes(entity.ioc_id)} onChange={e => setSelectedIds(selectBatch(selectedIds, [entity.ioc_id], e.target.checked))} /></td><td className="mono break-all">{entity.value}</td><td><Tag>{entity.type}</Tag></td><td>{tr(entity.requires_transfer ? 'cti.transferRequired' : entity.requires_creation ? 'cti.missingObservable' : 'cti.existingObservable')}</td></tr>)}{!visible.length && <tr><td colSpan={4}>{tr('iocWorkspace.no_matching_objects')}</td></tr>}</tbody>
+      </table>
+    </div>
+    <div hidden={tab !== 'connectors'} role="tabpanel" aria-label={tr('cti.connectors')} className="h-full overflow-y-auto [scrollbar-gutter:stable] ">
+    <table className={selectionTable}><colgroup><col style={{ width: 44 }} /><col /><col /></colgroup><thead className={selectionHead}><tr><th><SelectColumn label={tr('cti.connectors')} states={available.map(connector => connectors.includes(connector.id))} onChange={checked => setConnectors(selectBatch(connectors, available.map(connector => connector.id), checked))} /></th><th>{tr('cti.connectors')}</th><th>{tr('cti.connectorScope')}</th></tr></thead><tbody>
+      {available.map(connector => <tr key={connector.id}><td><input type="checkbox" aria-label={connector.name} checked={connectors.includes(connector.id)} onChange={e => setConnectors(selectBatch(connectors, [connector.id], e.target.checked))} /></td><td>{connector.name}{connector.auto && <span className="block text-[var(--review-text)]">{tr('cti.automatic')}</span>}</td><td>{connector.scope.join(', ')}</td></tr>)}
+      {!available.length && <tr><td colSpan={3}>{tr('cti.noConnectors')}</td></tr>}
+    </tbody></table></div>
+    </div>
+    <div className="shrink-0 space-y-2 border-t border-[var(--line)] pt-3">
+    {!!missing.length && <div className="rounded-lg border border-[var(--line)] p-3"><p>{tr('cti.missingCount', { n: missing.length })}</p>
       <label className="mt-3 flex items-center gap-2"><input type="checkbox" checked={createMissing} onChange={(e) => setCreateMissing(e.target.checked)} />{tr('cti.createMissing')}</label>
     </div>}
-    <fieldset className="flex flex-col gap-2"><legend className="mb-2 font-semibold">{tr('cti.connectors')}</legend>
-      {!available.length && <p>{tr('cti.noConnectors')}</p>}{available.map((connector) => <label key={connector.id} className="flex items-start gap-2">
-        <input type="checkbox" checked={connectors.includes(connector.id)} onChange={(e) => setConnectors(e.target.checked ? [...connectors, connector.id] : connectors.filter((id) => id !== connector.id))} />
-        <span>{connector.name} · {connector.scope.join(', ')}{connector.auto && <span className="block text-[var(--warn)]">{tr('cti.automatic')}</span>}</span>
-      </label>)}
-    </fieldset><CtiError error={run.error} />
-    <div className="flex justify-end gap-2"><Button onClick={onClose}>{tr('common.cancel')}</Button><Button variant="primary" disabled={needsTransfer || !connectors.length || (!!missing.length && !createMissing) || run.isPending} onClick={() => run.mutate()}>{tr('cti.startEnrich')}</Button></div>
+    <CtiError error={run.error} />
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{tr('common.cancel')}</Button><Button variant="primary" disabled={!selectedIds.length || needsTransfer || !connectors.length || (!!missing.length && !createMissing) || run.isPending} onClick={() => run.mutate()}>{tr('cti.startEnrich')}</Button></div>
+    </div>
   </div></Modal>
 }

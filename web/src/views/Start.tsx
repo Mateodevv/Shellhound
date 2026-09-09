@@ -5,15 +5,17 @@ import { Mark } from '../components/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, ArchiveRestore, FolderSearch, Package, Plus, Trash2, TriangleAlert,
+  Archive, ArchiveRestore, FolderSearch, Package, Plus, Settings2, Trash2, TriangleAlert,
 } from 'lucide-react'
 import {
   api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
 } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui'
+import { Button, Card, ConfirmDialog, EmptyState, Modal, Tag } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { ThemeSwitcher } from '../components/ThemeSwitcher'
+import { OpenCtiSettings } from '../components/OpenCtiSettings'
+import { CaseWizard } from '../components/CaseWizard'
 
 interface State { workspace: string; cases: CaseInfo[] }
 
@@ -28,19 +30,10 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
     queryKey: ['archives'],
     queryFn: () => api<ArchivesResponse>('/api/archives'),
   })
+  const [ctiSettingsOpen, setCtiSettingsOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [name, setName] = useState('')
-  const [reference, setReference] = useState('')
   const [importPath, setImportPath] = useState('')
   const [showImport, setShowImport] = useState(false)
-
-  const create = useMutation({
-    mutationFn: () => post<CaseInfo>('/api/cases', { name, reference }),
-    onSuccess: (info) => {
-      qc.invalidateQueries({ queryKey: ['state'] })
-      onOpen(info.slug)
-    },
-  })
 
   const importCase = useMutation({
     mutationFn: (body: { file?: string; path?: string }) =>
@@ -89,7 +82,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
             {tr('start.tagline')}
           </p>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <Button onClick={() => setCtiSettingsOpen(true)}><Settings2 size={14} />{tr('cti.settingsTitle')}</Button>
           <ThemeSwitcher />
         </div>
       </div>
@@ -167,46 +161,14 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {creating ? (
-          <Card className="w-full animate-fade-up p-4">
-            <div className="flex flex-col gap-3">
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) create.mutate() }}
-                placeholder={tr('start.name.placeholder')}
-                className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 outline-none focus:border-[var(--accent)]/70"
-              />
-              <input
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder={tr('start.reference.placeholder')}
-                className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
-              />
-              <div className="flex gap-2">
-                <Button variant="primary" disabled={!name.trim() || create.isPending}
-                  onClick={() => create.mutate()}>
-                  {tr('start.create')}
-                </Button>
-                <Button variant="ghost" onClick={() => setCreating(false)}>{tr('common.cancel')}</Button>
-              </div>
-              {create.isError && (
-                <div className="text-xs text-[var(--danger-text)]">{String(create.error)}</div>
-              )}
-            </div>
-          </Card>
-        ) : (
-          <>
-            <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus size={15} /> {tr('start.newCase')}
-            </Button>
-            <Button onClick={() => setShowImport(!showImport)}>
-              <ArchiveRestore size={15} /> {tr('start.importCase')}
-            </Button>
-          </>
-        )}
+        <Button variant="primary" onClick={() => setCreating(true)}>
+          <Plus size={15} /> {tr('start.newCase')}
+        </Button>
+        <Button onClick={() => setShowImport(!showImport)}>
+          <ArchiveRestore size={15} /> {tr('start.importCase')}
+        </Button>
       </div>
+      {creating && <CaseWizard onClose={() => setCreating(false)} onCreated={info => { setCreating(false); onOpen(info.slug) }} />}
 
       {showImport && !creating && (
         <Card className="mt-3 flex flex-wrap items-center gap-2 p-4 animate-fade-up">
@@ -290,6 +252,9 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           </p>
         </div>
       )}
+      <Modal open={ctiSettingsOpen} onClose={() => setCtiSettingsOpen(false)} title={tr('cti.settingsTitle')}>
+        <OpenCtiSettings />
+      </Modal>
       <ConfirmDialog
         open={confirmation?.kind === 'archive'}
         onClose={() => { if (!archiveCase.isPending) setConfirmation(null) }}

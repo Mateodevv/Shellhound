@@ -1,7 +1,12 @@
 SHELLHOUND
 Copyright 2026 SHELLHOUND contributors
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
+New material expressly offered under the Shellhound Source Available License
+1.0 is subject to LICENSE. Previously Apache-licensed material remains under
+the Apache License, Version 2.0 (see LICENSES/Apache-2.0.txt). Existing rights and
+attribution are preserved. See docs/LICENSING.md for the transition record.
+
+The following third-party components retain their respective licenses.
 
 ================================================================================
 Third-party components

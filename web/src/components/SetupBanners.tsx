@@ -1,7 +1,6 @@
 // Optional workstation setup reminders are dismissible and never start external requests.
 import { useState, type ReactNode } from 'react'
-import { KeyRound, Settings2, X } from 'lucide-react'
-import { useOpenCtiSettings } from '../opencti'
+import { Settings2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { Card } from './ui'
 
@@ -56,17 +55,4 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
       </div>
     </Card>
   )
-}
-
-/** Missing optional API keys, with an explicit route to their setup. */
-export function EnrichmentBanners({ onOpenSettings }: {
-  onOpenSettings?: () => void
-}) {
-  const tr = useT()
-  const { data } = useOpenCtiSettings()
-  if (!data || data.configured) return null
-  return <SetupBanner id="opencti"
-    icon={<KeyRound size={15} className="shrink-0 text-[var(--accent)]" />}
-    title={tr('cti.noConfig')} body={tr('cti.setupBody')}
-    onOpenSettings={onOpenSettings} />
 }

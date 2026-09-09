@@ -5,8 +5,10 @@ import { renderWithProviders } from '../test/setup'
 import { IocBox } from './IocBox'
 
 vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn() }))
-vi.mock('../components/OpenCti', () => ({ OpenCtiToolbar: ({ selectedIds }: { selectedIds: number[] }) => <div data-testid="action-ids">{selectedIds.join(',')}</div> }))
+vi.mock('../components/OpenCti', () => ({ OpenCtiToolbar: ({ selectedIds, actionScope, iocs }: { selectedIds: number[]; actionScope?: string; iocs: Ioc[] }) => <div data-testid={actionScope === 'case' ? 'case-action-ids' : 'action-ids'}>{(actionScope === 'case' ? iocs.map(ioc => ioc.id) : selectedIds).join(',')}</div> }))
 vi.mock('../components/IocDetails', () => ({ IocDetails: ({ id, onNavigate, onDirtyChange }: { id: number; onNavigate: (id: number) => void; onDirtyChange: (v: boolean) => void }) => <div><h2>Object detail {id}</h2><button onClick={() => onNavigate(2)}>Related object</button><button onClick={() => onDirtyChange(true)}>Edit draft</button></div> }))
+vi.mock('../geo', () => ({ useGeo: () => ({ iso: 'de', name: 'Germany', special: false }) }))
+vi.mock('../flags', () => ({ useFlagUrl: () => '/flags/de.svg' }))
 const object = (id: number, overrides: Partial<Ioc> = {}): Ioc => ({ id, type: 'ip', value: `198.51.100.${id}`, note: '', tags: ['hunt'], origin: 'Pattern Hunt', added: String(id).padStart(4, '0'), first_seen: null, last_seen: null, links: [], assessment: 'malicious', ...overrides })
 let rows: Ioc[]
 beforeEach(() => {
@@ -19,6 +21,7 @@ describe('IOC investigation workspace', () => {
   it('paginates the entire result set and separates inspection from selection', async () => {
     show(); await screen.findByRole('button', { name: 'Open 198.51.100.126' })
     expect(within(screen.getByRole('list', { name: 'Object list' })).getAllByRole('listitem')).toHaveLength(50)
+    expect(within(screen.getByRole('button', { name: 'Open 198.51.100.126' })).getByLabelText('Germany')).toHaveAttribute('src', '/flags/de.svg')
     expect(screen.queryByLabelText('Selection actions')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Open 198.51.100.126' }))
     expect(await screen.findByText('Object detail 126')).toBeInTheDocument()

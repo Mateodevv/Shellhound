@@ -27,6 +27,12 @@ MAX_TAXII_BYTES = 90 * 1024 * 1024
 _TAXII_TYPE = "application/taxii+json;version=2.1"
 _HASH_ALGORITHMS = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
 _CONNECTOR_FIELDS = "id name active auto connector_type connector_scope"
+
+WORK_ERROR_MESSAGES = {
+    "tlp_limit": "The observable's TLP marking exceeds the connector's allowed limit. "
+                 "Review the sharing policy and connector TLP configuration in OpenCTI.",
+    "connector_error": "Connector reported an error; see its OpenCTI work log.",
+}
 _DESCRIPTION_LOCK = threading.RLock()
 
 
@@ -549,19 +555,23 @@ class OpenCTIClient:
 
     def work(self, work_id):
         data = self._graphql("""query ShellhoundWork($id:ID!) { work(id:$id) {
-          id status timestamp received_time processed_time completed_time
+          id status timestamp received_time processed_time completed_time connector { id name }
           tracking { import_expected_number import_processed_number }
           messages { timestamp message sequence } errors { timestamp message sequence }
         } }""", {"id": _work_identifier(work_id)})
         result = data.get("work")
         if result is None:
             raise OpenCTIError("The OpenCTI work is unavailable or not visible.", code="not_found", status=404)
-        # Connector messages are not trusted to redact their configuration.
+        # Classify known failures into fixed messages. Never return raw connector
+        # logs: they may contain credentials, request headers or evidence paths.
         for field in ("messages", "errors"):
-            result[field] = [{"timestamp": item.get("timestamp"), "sequence": item.get("sequence"),
-                              "message": "Connector reported an error; see its OpenCTI work log."
-                              if field == "errors" else "Connector progress reported."}
-                             for item in result.get(field) or []]
+            safe = []
+            for item in result.get(field) or []:
+                code = "tlp_limit" if "tlp of the observable is greater than max tlp" in str(item.get("message", "")).lower() else "connector_error"
+                safe.append({"timestamp": item.get("timestamp"), "sequence": item.get("sequence"),
+                             "code": code if field == "errors" else "progress",
+                             "message": WORK_ERROR_MESSAGES[code] if field == "errors" else "Connector progress reported."})
+            result[field] = safe
         return result
 
     def update_case_description(self, source_id, reference, description, marking_id):

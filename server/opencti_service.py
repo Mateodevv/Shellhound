@@ -16,7 +16,7 @@ from pathlib import Path
 
 from server import db, opencti_graph as graph, settings, workspace
 from server.jobs import manager
-from server.opencti_client import OpenCTIClient, OpenCTIError
+from server.opencti_client import OpenCTIClient, OpenCTIError, WORK_ERROR_MESSAGES
 from server.paths import io_path
 
 _LOCK = threading.RLock()
@@ -181,6 +181,10 @@ def state(root, case_dir):
         exports = db.rows(conn, "SELECT * FROM opencti_exports ORDER BY created DESC")
         jobs = db.rows(conn, "SELECT * FROM jobs WHERE kind LIKE 'opencti-%' ORDER BY id DESC LIMIT 50")
         enrichment = db.rows(conn, "SELECT * FROM opencti_enrichments ORDER BY updated DESC")
+        enrichment_meta = {r["key"]: json.loads(r["value"]) for r in db.rows(conn,
+            "SELECT key,value FROM meta WHERE key LIKE 'opencti_enrichment:%'")}
+        for entry in enrichment:
+            entry["connector_name"] = enrichment_meta.get("opencti_enrichment:" + entry["id"], {}).get("connector_name", "")
     finally:
         conn.close()
     lookups = []
@@ -225,8 +229,27 @@ def state(root, case_dir):
 def _store_lookup(case_dir, ioc, payload, destination):
     conn = db.connect(case_dir)
     try:
+        conn.execute("BEGIN IMMEDIATE")
         current = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc["id"],))
         if current and _identity(current) == _identity(ioc):
+            if payload.get("status") in ("known", "own"):
+                # Union with the latest local tags inside the same transaction.
+                # Provider labels classify knowledge, not the case assessment.
+                tags = json.loads(current["tags"] or "[]")
+                existing = {tag.casefold() for tag in tags}
+                for entity in payload.get("entities", []):
+                    for label in entity.get("labels") or []:
+                        value = label.get("value") if isinstance(label, dict) else label
+                        if not isinstance(value, str):
+                            continue
+                        value = value.strip()
+                        if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
+                            continue
+                        if value.casefold() not in existing:
+                            tags.append(value)
+                            existing.add(value.casefold())
+                if tags != json.loads(current["tags"] or "[]"):
+                    conn.execute("UPDATE iocs SET tags=? WHERE id=?", (_json(sorted(tags, key=str.casefold)), ioc["id"]))
             conn.execute("INSERT OR REPLACE INTO opencti_lookups VALUES (?,?,?,?,?)",
                          (ioc["id"], _identity(ioc), payload["checked_at"], _json(payload), destination))
             conn.commit()
@@ -765,12 +788,17 @@ def _poll_enrichment(client, case_dir, entry, ctx):
         if ctx.cancelled():
             break
         work = client.work(entry["work_id"])
-        error = "Connector reported an error." if work.get("errors") else ""
+        error = " ".join(dict.fromkeys(WORK_ERROR_MESSAGES.get(item.get("code"), WORK_ERROR_MESSAGES["connector_error"])
+                                      for item in work.get("errors") or []))
         status = "failed" if error else work.get("status", "pending")
         conn = db.connect(case_dir)
         try:
             conn.execute("UPDATE opencti_enrichments SET state=?,updated=?,error=? WHERE id=?",
                          (status, db.now(), error, entry["id"]))
+            connector = work.get("connector") or {}
+            if connector.get("name"):
+                conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                    ("opencti_enrichment:" + entry["id"], _json({"connector_name": str(connector["name"])[:200]})))
             conn.commit()
         finally:
             conn.close()
@@ -794,7 +822,7 @@ def refresh_enrichment(root, case_dir):
     conn = db.connect(case_dir)
     try:
         entries = db.rows(conn, "SELECT * FROM opencti_enrichments WHERE destination=? "
-                         "AND state NOT IN ('complete','completed','error','failed') ORDER BY updated",
+                         "AND state NOT IN ('complete','completed') ORDER BY updated",
                          (_destination(config),))
     finally:
         conn.close()

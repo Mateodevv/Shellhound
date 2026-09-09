@@ -8,8 +8,8 @@ name = "shellhound"
 version = "0.2.0"
 description = "Web-native DFIR workbench for webserver compromises (WordPress/Joomla)"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license = "Apache-2.0 AND LicenseRef-Shellhound-Source-Available-1.0"
+license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "NOTICE", "docs/LICENSING.md"]
 # 3.10 is the floor, not a matter of taste: the code uses `X | None` as a
 # type annotation throughout (PEP 604), and that is valid at runtime from
 # 3.10 on.

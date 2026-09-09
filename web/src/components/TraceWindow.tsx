@@ -15,7 +15,7 @@
 // search would only search the 500 rows of the current page and miss
 // everything before and after.
 import { useT } from '../i18n'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Crosshair, Download } from 'lucide-react'
@@ -68,11 +68,19 @@ export interface TraceAnchor {
   indexFingerprint: string
 }
 
-export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor }: {
+function TraceFrame({ embedded, title, children, onClose, layer }: {
+  embedded: boolean; title: ReactNode; children: ReactNode; onClose: () => void; layer: number
+}) {
+  return embedded ? <section className="min-w-0"><h3 className="mb-4 font-semibold">{title}</h3>{children}</section>
+    : <Modal open onClose={onClose} layer={layer} title={title}>{children}</Modal>
+}
+
+export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embedded = false }: {
   slug: string
   ips: string[] | null
   onClose: () => void
   layer?: number
+  embedded?: boolean
   /** Without this marking one hunts for the triggering line among thousands
    *  by hand. */
   marks?: TraceMarks
@@ -159,7 +167,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor }: {
     : 0
 
   return (
-    <Modal open onClose={onClose} layer={layer}
+    <TraceFrame embedded={embedded} onClose={onClose} layer={layer}
       title={<span className="flex items-center gap-2">
         <Crosshair size={16} className="text-[var(--accent)]" />{tr('hunt.flow.trace')} {ips.length === 1
           ? <span className="inline-flex items-center gap-1.5"><IpFlag ip={ips[0]} />{ips[0]}</span>
@@ -375,6 +383,6 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor }: {
           </div>
         )}
       </div>
-    </Modal>
+    </TraceFrame>
   )
 }

@@ -24,6 +24,11 @@ class WithdrawalBody(BaseModel):
     reason: str = Field(min_length=1, max_length=10000)
 
 
+class TagsBody(BaseModel):
+    add: list[str] = Field(default_factory=list, max_length=100)
+    remove: list[str] = Field(default_factory=list, max_length=100)
+
+
 def register(app, resolve_case, auth, hub):
     def run(slug, action, *, write=False):
         conn = db.connect(resolve_case(slug))
@@ -45,6 +50,10 @@ def register(app, resolve_case, auth, hub):
     @app.get("/api/cases/{slug}/iocs/{ioc_id}/detail", dependencies=[auth])
     def detail(slug: str, ioc_id: int):
         return run(slug, lambda conn: ioc_model.detail(conn, ioc_id))
+
+    @app.post("/api/cases/{slug}/iocs/{ioc_id}/tags", dependencies=[auth])
+    def tags(slug: str, ioc_id: int, body: TagsBody):
+        return run(slug, lambda conn: ioc_model.edit_tags(conn, ioc_id, body.add, body.remove), write=True)
 
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/assessments", dependencies=[auth])
     def assess(slug: str, ioc_id: int, body: AssessmentBody):

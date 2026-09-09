@@ -2,7 +2,7 @@
 import { useT } from '../i18n'
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { Check, ChevronDown, ChevronRight, Copy, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, X } from 'lucide-react'
 import { SEVERITY_LABEL, SEVERITY_VAR } from '../format'
 import { copyText } from '../copy'
 import { explain } from '../explain'
@@ -65,7 +65,7 @@ export function StatTile({ label, value, tone, sub, onClick, info }: {
       className={clsx(
         'rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left',
         'transition-colors duration-150',
-        onClick && 'cursor-pointer hover:border-[var(--accent)]/60 hover:bg-[var(--panel-2)]')}
+        onClick && 'ui-press cursor-pointer hover:border-[var(--accent)]/60 hover:bg-[var(--panel-2)]')}
     >
       <div className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
         {label}
@@ -165,7 +165,7 @@ export function Chip({ active, onClick, children, count, dimmed }: {
       aria-pressed={active && !dimmed}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
-        'transition-colors duration-150 cursor-pointer',
+        'ui-press cursor-pointer',
         dimmed
           ? 'border-[var(--line)] bg-transparent text-[var(--muted)] opacity-50 line-through hover:opacity-80'
           : active
@@ -217,13 +217,13 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       style={style}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',
-        'transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40',
+        'ui-press cursor-pointer disabled:cursor-not-allowed disabled:opacity-40',
         variant === 'primary' &&
-          'bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)] active:scale-[0.98]',
+          'bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)]',
         variant === 'danger' &&
           'border border-[var(--sev-high)]/55 bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
         variant === 'incident' &&
-          'border border-[var(--incident)] bg-[var(--incident)] text-white hover:border-[var(--incident-hover)] hover:bg-[var(--incident-hover)] active:scale-[0.98]',
+          'border border-[var(--incident)] bg-[var(--incident)] text-white hover:border-[var(--incident-hover)] hover:bg-[var(--incident-hover)]',
         variant === 'review' &&
           'border border-[var(--sev-low)]/55 bg-[var(--review-soft)] text-[var(--review-text)] hover:border-[var(--sev-low)] hover:bg-[var(--review-soft)]',
         variant === 'outline' &&
@@ -266,7 +266,7 @@ export function CopyButton({ value, label = 'Kopieren', className, icon }: {
       : tr('copy.hint', { what: label })}>
       <button onClick={copy} aria-label={label}
         className={clsx(
-          'cursor-pointer rounded-md border border-transparent p-1 transition-colors',
+          'ui-press cursor-pointer rounded-md border border-transparent p-1',
           state === 'ok' ? 'text-[var(--ok)]'
             : state === 'fail' ? 'text-[var(--danger-text)]'
               : 'text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]',
@@ -289,13 +289,14 @@ export function Collapsible({ open, onToggle, title, sub, right, count, children
   count?: ReactNode
   children: ReactNode
 }) {
+  const contentId = useId()
   return (
     <section className="animate-fade-up">
       <div className="mb-3 flex items-end justify-between gap-3">
-        <button onClick={onToggle}
-          className="group flex min-w-0 cursor-pointer items-start gap-2 text-left">
+        <button onClick={onToggle} aria-expanded={open} aria-controls={open ? contentId : undefined}
+          className="ui-press group flex min-w-0 cursor-pointer items-start gap-2 text-left">
           <span className="mt-0.5 shrink-0 text-[var(--muted)] transition-colors group-hover:text-[var(--fg)]">
-            {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <ChevronRight size={15} aria-hidden="true" className="ui-disclosure-icon" data-open={open} />
           </span>
           <span className="min-w-0">
             <span className="flex items-center gap-2 text-[15px] font-semibold">
@@ -311,7 +312,7 @@ export function Collapsible({ open, onToggle, title, sub, right, count, children
         </button>
         {right}
       </div>
-      {open && children}
+      {open && <div id={contentId} className="animate-fade-in">{children}</div>}
     </section>
   )
 }
@@ -459,7 +460,7 @@ export function Modal({ open, onClose, title, children, layer = 0,
             onClick={onClose}
             title={tr('common.closeEsc')}
             aria-label={tr('common.closeEsc')}
-            className="shrink-0 rounded-lg p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
+            className="ui-press shrink-0 rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer"
           >
             <X size={16} />
           </button>
@@ -549,7 +550,7 @@ export function Toast({ open, onClose, tone = 'info', title, children, actions,
             )}
           </div>
           <button onClick={onClose} title={tr('common.close')}
-            className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer">
+            className="ui-press shrink-0 rounded p-1 text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)] cursor-pointer">
             <X size={14} />
           </button>
         </div>
@@ -608,7 +609,7 @@ export function Tabs<T extends string>({ tabs, active, onChange }: {
         <button key={id} role="tab" aria-selected={active === id}
           onClick={() => onChange(id)}
           className={clsx(
-            'relative -mb-px cursor-pointer border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+            'ui-press relative -mb-px cursor-pointer border-b-2 px-3 py-2 text-[13px] font-medium',
             active === id
               ? 'border-[var(--accent)] text-[var(--fg)]'
               : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]')}>

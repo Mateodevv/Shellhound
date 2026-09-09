@@ -423,6 +423,40 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertFalse(service._only_own([{**entity, "externalReferences": [], "context_truncated": True}], {source, "remote-" + source}))
         self.assertFalse(service._only_own([{**entity, "externalReferences": [], "createdBy": {"name": "Independent analyst"}}], {source, "remote-" + source}))
 
+    def test_lookup_automatically_merges_labels_without_changing_assessment(self):
+        self.conn.execute("UPDATE iocs SET tags=? WHERE id=?", ('["Local", "IOC"]', self.ip_id))
+        self.conn.commit()
+        self.client.lookup.return_value = [
+            {"id": "remote", "labels": [" ioc ", "scanner", {"value": "true positive"}, None, " ", "bad\nlabel"]},
+            {"id": "remote-2", "labels": ["SCANNER", "benign"]},
+        ]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        row = db.one(self.conn, "SELECT * FROM iocs WHERE id=?", (self.ip_id,))
+        self.assertEqual(["benign", "IOC", "Local", "scanner", "true positive"], json.loads(row["tags"]))
+        self.assertEqual("malicious", row["assessment"])
+        self.assertEqual(0, self.conn.execute("SELECT count(*) FROM ioc_assessments").fetchone()[0])
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual(row["tags"], db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
+        self.client.enrich.assert_not_called()
+        self.client.push.assert_not_called()
+        self.client.upload_sample.assert_not_called()
+        exported = next(o for o in self.preview()["objects"] if o["type"] == "ipv4-addr")
+        self.assertCountEqual(json.loads(row["tags"]), exported["labels"])
+
+    def test_failed_lookup_does_not_reimport_historical_removed_tags(self):
+        self.client.lookup.return_value = [{"id": "remote", "labels": ["scanner"]}]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.conn.execute("UPDATE iocs SET tags='[]' WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        self.client.lookup.side_effect = OpenCTIError("OpenCTI could not be reached.")
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        service.state(self.root, self.case)
+        self.assertEqual('[]', db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
+
     def test_lookup_failure_keeps_prior_knowledge_stale_and_state_never_refreshes(self):
         entity = {"id": "known", "entity_type": "IPv4-Addr", "observable_value": "198.51.100.4",
                   "createdBy": {"name": "Independent source"}}
@@ -440,13 +474,14 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertEqual(calls, self.client.lookup.call_count)
 
     def test_background_lookup_does_not_attach_to_reused_numeric_ioc_id(self):
-        self.client.lookup.return_value = [{"id": "old-knowledge", "entity_type": "IPv4-Addr"}]
+        self.client.lookup.return_value = [{"id": "old-knowledge", "entity_type": "IPv4-Addr", "labels": ["wrong-object"]}]
         service.lookup(self.root, self.case, [self.ip_id])
         self.conn.execute("DELETE FROM iocs WHERE id=?", (self.ip_id,))
         self.conn.execute("INSERT INTO iocs(id,value,type,added) VALUES(?,?,?,?)", (self.ip_id, "198.51.100.4", "ip", db.now()))
         self.conn.commit()
         self.jobs.run()
         self.assertEqual([], service.state(self.root, self.case)["lookups"])
+        self.assertNotIn("wrong-object", db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
 
     def connectors(self):
         self.client.connectors.return_value = [
@@ -491,6 +526,29 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.enrich.assert_called_once()
         self.client.create_observable.assert_not_called()
         self.assertEqual("complete", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+
+    def test_failed_work_can_refresh_its_reason_and_connector_without_retrigger(self):
+        self.connectors()
+        self.client.lookup.return_value = [{"id": "ip-entity", "entity_type": "IPv4-Addr"}]
+        self.client.work.return_value = {"status": "complete", "errors": [{"message": "private API_KEY"}]}
+        service.enrich(self.root, self.case, [self.ip_id], ["ip-manual"])
+        self.jobs.run()
+        self.assertEqual("failed", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+        self.client.work.return_value = {"status": "complete", "connector": {"id": "ip-manual", "name": "AbuseIPDB"},
+                                         "errors": [{"code": "tlp_limit", "message": "private API_KEY"}]}
+        service.refresh_enrichment(self.root, self.case)
+        self.jobs.run()
+        self.client.enrich.assert_called_once()
+        self.client.create_observable.assert_not_called()
+        self.client.reset_mock()
+        entry = service.state(self.root, self.case)["enrichments"][0]
+        self.assertEqual("failed", entry["state"])
+        self.assertEqual("AbuseIPDB", entry["connector_name"])
+        self.assertIn("TLP marking exceeds", entry["error"])
+        self.assertNotIn("API_KEY", json.dumps(entry))
+        self.assertNotIn("private", json.dumps(entry))
+        self.client.work.assert_not_called()
+        self.client.connectors.assert_not_called()
 
 
 if __name__ == "__main__":

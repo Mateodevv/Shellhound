@@ -54,4 +54,4 @@ No case migration is required, and cases created with 0.1.0 open unchanged.
 
 ## Licence
 
-[Apache-2.0](../LICENSE). Third-party components: [NOTICE](../NOTICE).
+[Apache-2.0](../LICENSES/Apache-2.0.txt). Third-party components: [NOTICE](../NOTICE).

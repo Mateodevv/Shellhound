@@ -2,7 +2,7 @@
 
 Only ``resolve_sample`` returns bytes; previews never carry original files or
 workstation paths. A hash is an observation, not a malware attribution. Case
-assertions live in owned Notes/relationships instead of shared SCO labels.
+assertions live in owned Notes/relationships. IOC tags are exported as labels.
 """
 import hashlib
 import ipaddress
@@ -347,6 +347,11 @@ def build_preview(case_dir, options=None):
     def add(obj):
         obj = dict(obj)
         obj["object_marking_refs"] = [marking]
+        # Several selected IOC rows can resolve to the same verified content.
+        # Keep their combined labels while retaining the stable observable ID.
+        prior_labels = objects.get(obj["id"], {}).get("labels", [])
+        if prior_labels or obj.get("labels"):
+            obj["labels"] = sorted(set(prior_labels + obj.get("labels", [])))
         objects[obj["id"]] = obj
         return obj["id"]
 
@@ -482,8 +487,11 @@ def build_preview(case_dir, options=None):
             observable = sdo("vulnerability", ["cve", value.upper()], name=value.upper(),
                              external_references=[{"source_name": "cve", "external_id": value.upper()}])
         ids = []
+        tags = sorted({clean.text(tag).strip() for tag in json.loads(row.get("tags") or "[]") if tag.strip()})
         if observable:
             observable["object_marking_refs"] = [marking]
+            if tags:
+                observable["labels"] = tags
             ids.append(observable["id"])
             if chosen:
                 add(observable)
@@ -522,6 +530,8 @@ def build_preview(case_dir, options=None):
         context_obj = sdo("note", [reference, f"ioc:{source_key}"], content=context,
                           object_refs=list(dict.fromkeys(context_refs)),
                           external_references=[{"source_name": "Shellhound", "external_id": f"{reference}:ioc:{source_key}"}])
+        if tags:
+            context_obj["labels"] = tags
         ids.append(context_obj["id"])
         if chosen:
             add(context_obj)
@@ -582,7 +592,7 @@ def build_preview(case_dir, options=None):
         associations[ioc_id] = primary if observable and row["type"] != "path" else context_obj["id"]
         row_objects[ioc_id] = [observable, context_obj, {"confirmed_classification": classification}]
         rows.append({"id": ioc_id, "source_uid": source_key, "type": row["type"], "value": value, "selected": chosen,
-                     "object_ids": ids, "indicator_supported": bool(pattern),
+                     "object_ids": ids, "tags": tags, "indicator_supported": bool(pattern),
                      "indicator_suggested": bool(row["type"] in ("hash", "file") and (
                          row.get("assessment") == "malicious" and row.get("assessment_manual") or verified and ioc_id in active_confirmed
                          and verified[0]["sha256"] in confirmed_hashes)),

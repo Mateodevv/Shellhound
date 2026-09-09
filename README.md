@@ -666,6 +666,11 @@ docs/rules.md      Every rule with trigger, statement and limits
 
 Bug reports and pull requests are welcome.
 
+- New original contributions must explicitly confirm the
+  [Shellhound Source Available License 1.0](LICENSE) in their pull request.
+  Preserve existing licenses and attribution for reused material; see the
+  [licensing and transition guide](docs/LICENSING.md).
+
 - Vulnerabilities do not belong in a public issue, see
   [SECURITY.md](SECURITY.md).
 - Contributions **must not contain data from real incidents**. For a
@@ -676,4 +681,12 @@ Bug reports and pull requests are welcome.
 
 ## License
 
-[Apache-2.0](LICENSE). Third-party components: [NOTICE](NOTICE).
+[Shellhound Source Available License 1.0](LICENSE) applies to new material
+expressly offered under those terms. It allows internal business use and paid
+forensic investigations for clients. Selling or renting covered software, or
+offering paid hosted access to it, requires separate written permission.
+
+Previously Apache-licensed material retains its [Apache-2.0 rights](LICENSES/Apache-2.0.txt),
+including commercial redistribution. This change does not retroactively
+restrict earlier code. See [licensing and transition details](docs/LICENSING.md).
+Third-party components: [NOTICE](NOTICE).

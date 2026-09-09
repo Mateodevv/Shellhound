@@ -25,10 +25,10 @@ export function EnrichPanel({ slug, kind, value }: {
   href.searchParams.set('case', slug)
   href.searchParams.set('view', 'iocbox')
   return <div className="flex flex-col gap-3">
-    <p className="text-[12px] text-[var(--muted)]">{tr('cti.historyHint')}</p>
+    <p className="text-[12px] text-[var(--muted)]">{tr(cti.configured ? 'cti.historyHint' : 'cti.localHistoryHint')}</p>
     <a href={href.toString()} className="text-[12px] text-[var(--accent-text)] hover:underline">{tr('cti.toBox')}</a>
     <CtiError error={history.error || cti.error} />
-    {ioc && <OpenCtiDetails lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ioc.id)} />}
+    {cti.configured && ioc && <OpenCtiDetails lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ioc.id)} />}
     {!!results.length && <div className="flex flex-col gap-2"><h4 className="text-[12px] font-semibold">{tr('cti.history')}</h4>{results.map((entry) => <EnrichCard key={`${entry.service}:${entry.fetched}`} entry={entry} />)}</div>}
   </div>
 }

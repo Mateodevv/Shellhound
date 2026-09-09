@@ -418,6 +418,37 @@ def supported_links(conn, links):
     return out
 
 
+def edit_tags(conn, ioc_id, add=(), remove=()):
+    """Apply tag deltas inside the caller's transaction, preserving concurrent additions."""
+    from server import db
+    row = db.one(conn, "SELECT tags FROM iocs WHERE id=?", (ioc_id,))
+    if not row:
+        raise LookupError("IOC does not exist.")
+
+    def normalized(values):
+        result = {}
+        for value in values:
+            if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+                raise ValueError("Tags must contain between 1 and 128 characters.")
+            value = value.strip()
+            if any(ord(c) < 32 or ord(c) == 127 for c in value):
+                raise ValueError("Tags must be a single line of text.")
+            result.setdefault(value.casefold(), value)
+        return result
+
+    additions, removals = normalized(add), normalized(remove)
+    current = {tag.casefold(): tag for tag in json.loads(row["tags"] or "[]")}
+    previous_count = len(current)
+    current = {key: tag for key, tag in current.items() if key not in removals}
+    for key, tag in additions.items():
+        current.setdefault(key, tag)
+    if len(current) > max(100, previous_count):
+        raise ValueError("An IOC can have up to 100 tags.")
+    tags = sorted(current.values(), key=str.casefold)
+    conn.execute("UPDATE iocs SET tags=? WHERE id=?", (json.dumps(tags, ensure_ascii=False), ioc_id))
+    return {"tags": tags}
+
+
 def detail(conn, ioc_id):
     from server import db
     row = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc_id,))

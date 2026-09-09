@@ -1,18 +1,20 @@
 import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, del, patch, post, type Ioc, type CrossCaseIocMatch } from '../api'
-import { useOpenCti } from '../opencti'
-import { OpenCtiDetails, OpenCtiToolbar } from './OpenCti'
-import { Button, Card, Modal, CopyButton } from './ui'
-import { FileViewer } from './FileViewer'
+import { api, post, type Ioc, type CrossCaseIocMatch } from '../api'
+import { safeCtiUrl, useOpenCti } from '../opencti'
+import { OpenCtiToolbar, OpenCtiScore } from './OpenCti'
+import { Button, Card, Modal, CopyButton, Tabs } from './ui'
 import { TraceWindow } from './TraceWindow'
-import { EnrichPanel } from './Enrich'
-import { Crosshair, ChevronRight } from 'lucide-react'
-import { InfoDot } from './Tooltip'
-import { assessmentTone, ctiLabel, descriptions, iocName, observationTime } from './iocPresentation'
+import { FileViewer } from './FileViewer'
+import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react'
+import { InfoDot, Tooltip } from './Tooltip'
+import { descriptions, iocName, iocOrigins, observationTime } from './iocPresentation'
 import { IocField } from './IocField'
-import { defang } from '../defang'
+import { IpFlag } from './IpFlag'
+import { IocTypeBadge } from './IocTypeBadge'
+import { IocAssessmentBadge } from './IocAssessmentBadge'
+import { IocTags } from './IocTags'
 import type { Navigate } from '../App'
 
 interface Observation {
@@ -55,28 +57,14 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
   })
   const cti = useOpenCti(slug)
   const [localTab, setLocalTab] = useState('Overview')
-  const tab = controlledTab || localTab
+  const requestedTab = controlledTab || localTab
+  const tab = requestedTab === 'Trace' && data?.object.type === 'ip' ? 'Trace' : 'Overview'
   const setTab = (value: string) => { setLocalTab(value); onTab?.(value) }
   const [assessOpen, setAssessOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
-  const [relationshipOpen, setRelationshipOpen] = useState(false)
-  const [trace, setTrace] = useState(false)
-  const [intelligence, setIntelligence] = useState(false)
-  const [contextDirty, setContextDirty] = useState(false)
   const [viewPath, setViewPath] = useState<string | null>(null)
   const [assessment, setAssessment] = useState<Ioc['assessment']>('malicious')
   const [reason, setReason] = useState('')
-  const [src, setSrc] = useState(id)
-  const [dst, setDst] = useState<number | ''>('')
-  const [kind, setKind] = useState('')
-  const [reference, setReference] = useState('')
-  const [evidence, setEvidence] = useState('')
-  const [observation, setObservation] = useState('')
-  const [first, setFirst] = useState('')
-  const [last, setLast] = useState('')
-  const [withdrawId, setWithdrawId] = useState<number | null>(null)
-  const [withdrawReason, setWithdrawReason] = useState('')
-  useEffect(() => { onDirtyChange?.(Boolean(reason || reference || evidence || first || last || withdrawReason || contextDirty || (assessOpen && assessment !== data?.object.assessment) || (relationshipOpen && (kind || dst || observation)))) }, [reason, reference, evidence, first, last, withdrawReason, contextDirty, assessOpen, assessment, data?.object.assessment, relationshipOpen, kind, dst, observation, onDirtyChange])
+  useEffect(() => { onDirtyChange?.(Boolean(reason || (assessOpen && assessment !== data?.object.assessment))) }, [reason, assessOpen, assessment, data?.object.assessment, onDirtyChange])
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['iocs'] })
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
@@ -85,88 +73,62 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     mutationFn: () => post(`/api/cases/${slug}/iocs/${id}/assessments`, { state: assessment, reason }),
     onSuccess: () => { setReason(''); setAssessOpen(false); invalidate() }
   })
-  const saveContext = useMutation({ mutationFn: (body: { context?: string; path_context?: string; type?: string; note?: string }) => patch(`/api/cases/${slug}/iocs/${id}`, body), onSuccess: () => { setContextDirty(false); setEditOpen(false); invalidate() } })
-  const remove = useMutation({ mutationFn: () => del(`/api/cases/${slug}/iocs/${id}`), onSuccess: () => { invalidate(); onClose() } })
   const verifyFile = useMutation({ mutationFn: () => post<{ verified_locations: number; unavailable_or_changed_locations: number }>(`/api/cases/${slug}/iocs/${id}/verify-file`, {}), onSuccess: invalidate })
-  const saveRelationship = useMutation({
-    mutationFn: () => post(`/api/cases/${slug}/ioc-relationships`, {
-      src, dst, kind, reference, detail: evidence, observation_id: observation || null, first_seen: first, last_seen: last,
-    }), onSuccess: () => { setReference(''); setEvidence(''); setFirst(''); setLast(''); setRelationshipOpen(false); invalidate() }
-  })
-  const withdraw = useMutation({
-    mutationFn: () => post(`/api/cases/${slug}/ioc-relationships/${withdrawId}/withdraw`, { reason: withdrawReason }),
-    onSuccess: () => { setWithdrawId(null); setWithdrawReason(''); invalidate() }
-  })
   const object = data?.object
-  const source = iocs.find(i => i.id === src)
-  const relationKinds = Object.entries(data?.relationship_types ?? {}).filter(([, types]) => types.sources.includes(source?.type ?? ''))
-  const targets = iocs.filter(i => i.id !== src && data?.relationship_types[kind]?.targets.includes(i.type))
-  const failure = error || saveAssessment.error || saveRelationship.error || withdraw.error || saveContext.error || verifyFile.error || remove.error
-  const lookup = cti.data?.lookups?.find(entry => entry.ioc_id === id)
-  const sync = cti.data?.sync?.find(entry => entry.ioc_id === id)
+  const failure = error || saveAssessment.error || verifyFile.error
   const current = iocs.find(i => i.id === id)
   const observed = data?.observations.filter(o => o.active) ?? []
-  const requests = observed.filter(o => ['pattern-hunt', 'http-request'].includes(o.kind) && o.count != null)
   const times = observed.flatMap(o => [o.first_seen, o.last_seen]).filter(Boolean).sort()
   const links = data?.relationships.filter(r => r.active) ?? []
   const targetOf = (r: Relationship) => r.src === id ? r.dst : r.src
-  const relatedRow = (r: Relationship) => {
-    const target = targetOf(r); const item = iocs.find(i => i.id === target); return <button
-      key={r.id}
-      onClick={() => onNavigate?.(target)}
-      className="flex w-full items-center gap-3 border-b border-[var(--line)] px-3 py-3 text-left hover:bg-[var(--panel-2)]">
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{item ? iocName(item) : r.src === id ? r.dst_value : r.src_value}</span>
-        <span className="text-[11px] text-[var(--muted)]">{r.src === id ? '→ ' : '← '}{labels[r.kind] || r.kind} · {r.evidence.length} {tr('iocWorkspace.references')}</span>
-      </span>
-      <ChevronRight size={14} />
-    </button>
-  }
+  const lookup = cti.data?.lookups?.find(entry => entry.ioc_id === id)
+  const ctiLinks = (lookup?.entities ?? []).filter(entity => safeCtiUrl(entity.url))
+  const relationshipTable = (relations: Relationship[]) => <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
+    <table className="ioc-relationships w-full text-left text-[12px]">
+      <thead><tr>{['relationship', 'type', 'object'].map(key => <th key={key} scope="col">{tr(`iocTable.${key}`)}</th>)}</tr></thead>
+      <tbody>{relations.map(r => {
+        const target = targetOf(r)
+        const item = iocs.find(i => i.id === target)
+        const name = item ? iocName(item) : r.src === id ? r.dst_value : r.src_value
+        const Direction = r.src === id ? ArrowRight : ArrowLeft
+        return <tr key={r.id}>
+          <td><span className="flex items-center gap-2"><Direction size={14} className="shrink-0 text-[var(--muted)]" aria-label={tr(r.src === id ? 'iocTable.outgoing' : 'iocTable.incoming')} /><span className="rounded bg-[var(--panel-2)] px-2 py-1">{labels[r.kind] || r.kind}</span><InfoDot body={tr(`iocRelationship.help.${r.kind}`)} /></span></td>
+          <td><IocTypeBadge type={item?.type || 'other'} value={item?.value} /></td>
+          <td><button type="button" disabled={!onNavigate} onClick={() => onNavigate?.(target)} className="flex max-w-[320px] items-center gap-2 text-left font-medium text-[var(--accent-text)]"><span className="truncate" title={name}>{name}</span>{item?.type === 'ip' && <IpFlag ip={item.value} />}</button></td>
+        </tr>
+      })}{!relations.length && <tr><td colSpan={3} className="text-[var(--muted)]">{tr('iocWorkspace.no_recorded_relationships')}</td></tr>}</tbody>
+    </table>
+  </div>
   const content = <div className={`flex flex-col gap-4 text-[13px] ${embedded ? 'p-4 sm:p-5' : ''}`}>
 
     {object && <header className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0 flex-1">
-        <span className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{object.type}</span>
+      <div className="min-w-0 flex-1 basis-60">
+        <div className="mb-2"><IocTypeBadge type={object.type} value={object.value} /></div>
         <div className="flex items-center gap-2">
+          {object.type === 'ip' && <IpFlag ip={object.value} />}
           <h2 className="min-w-0 break-all text-xl font-semibold">{iocName(object)}</h2>
           <CopyButton value={object.value} label="Copy object value" />
+          {ctiLinks.map(entity => <Tooltip key={entity.id} body={tr('cti.openObject', { name: entity.name || object.value })}>
+            <a href={safeCtiUrl(entity.url)} target="_blank" rel="noopener noreferrer" aria-label={ctiLinks.length === 1 ? tr('cti.open') : tr('cti.openObject', { name: entity.name || entity.id })} className="ui-press inline-flex shrink-0 items-center rounded p-1.5 text-[var(--accent-text)] hover:bg-[var(--panel-2)]"><ExternalLink size={16} /></a>
+          </Tooltip>)}
         </div>
         <div className="mt-2 flex items-center gap-2 text-[12px]">
-          <span className={`rounded border border-current px-2 py-0.5 capitalize ${assessmentTone(object.assessment)}`}>{object.assessment}</span>
-          <span className="text-[var(--muted)]">{object.assessment_manual ? 'Manually assessed' : 'Default assessment'}</span>
-          <InfoDot body={descriptions['Case assessment']} />
+          <IocAssessmentBadge assessment={object.assessment} />
         </div>
       </div>
-      <Button type="button" onClick={() => { setAssessment(object.assessment); setAssessOpen(v => !v) }}>{tr('iocWorkspace.change_assessment')}</Button>
-      <details className="relative">
-        <summary className="cursor-pointer rounded-md border border-[var(--line)] px-3 py-2">{tr('iocWorkspace.opencti')}</summary>
-        <div className="absolute right-0 z-20 w-[320px] max-w-[85vw] bg-[var(--panel)] shadow-xl">
-          <OpenCtiToolbar
-            mode="actions"
-            slug={slug}
-            iocs={iocs}
-            selectedIds={[id, ...iocs.filter(i => i.file_ids?.includes(id)).map(i => i.id)]}
-            onSelectAll={() => { }}
-            onClear={() => { }}
-            onSettings={() => gotoView?.('settings')} />
-        </div>
-      </details>
-      <details>
-        <summary
-          className="cursor-pointer rounded-md border border-[var(--line)] px-3 py-2"
-          aria-label="Object actions">…</summary>
-        <div className="flex flex-wrap gap-2 py-2">
-          <Button type="button" onClick={() => setEditOpen(v => !v)}>{tr('iocWorkspace.edit_object')}</Button>
-          {['ip', 'domain', 'url', 'email'].includes(object.type) && <CopyButton value={defang(object.value, object.type)} label="Copy defanged" />}
-          <Button
-            variant="danger"
-            onClick={() => { if (window.confirm('Remove this IOC and its local relationships?')) remove.mutate() }}>{tr('iocWorkspace.remove_ioc')}</Button>
-        </div>
-      </details>
+      <OpenCtiToolbar
+        mode="inline"
+        leadingAction={<Button type="button" onClick={() => { setAssessment(object.assessment); setAssessOpen(v => !v) }}>{tr('iocWorkspace.change_assessment')}</Button>}
+        slug={slug}
+        iocs={iocs}
+        selectedIds={[id, ...iocs.filter(i => i.file_ids?.includes(id)).map(i => i.id)]}
+        onSelectAll={() => { }}
+        onClear={() => { }}
+        onSettings={() => gotoView?.('settings')} />
     </header>}
 
     {object && assessOpen && <form
-      className="space-y-3 rounded-lg border border-[var(--line)] p-3"
+      className="animate-fade-in space-y-3 rounded-lg border border-[var(--line)] p-3"
       onSubmit={e => { e.preventDefault(); saveAssessment.mutate() }}>
       <label className="block">
         {tr('iocWorkspace.new_assessment')}
@@ -182,44 +144,18 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       </label>
       <Button disabled={!reason.trim() || saveAssessment.isPending}>{tr('iocWorkspace.save_assessment')}</Button>
       <Button type="button" onClick={() => { setAssessOpen(false); setReason('') }}>{tr('iocWorkspace.cancel')}</Button>
+            <details>
+        <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.assessment_history')}</summary>
+        <div className="mt-3 space-y-2">{!data?.assessments.length && <p>{tr('iocWorkspace.default_assessment_malicious')}</p>}{data?.assessments.map(a => <Card key={a.id} className="p-3">
+          <strong>{a.state}</strong> ·
+          {a.created}
+          <p className="whitespace-pre-wrap">{a.reason}</p>
+        </Card>)}</div>
+      </details>
     </form>}
 
-    {object && editOpen && <form
-      key={`${id}:${object.note}`}
-      className="space-y-3 rounded-lg border border-[var(--line)] p-3"
-      onChange={() => setContextDirty(true)}
-      onSubmit={e => { e.preventDefault(); const values = new FormData(e.currentTarget); saveContext.mutate({ type: String(values.get('type')), note: String(values.get('note')), ...(['path', 'user', 'other'].includes(String(values.get('type'))) ? { context: String(values.get('context') || ''), path_context: String(values.get('path_context') || 'unknown') } : {}) }) }}>
-      <label className="block">
-        {tr('iocWorkspace.type')}
-        <select className={field} name="type" defaultValue={object.type}>{(object.type === 'file' ? ['file'] : ['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other', 'vulnerability']).map(t => <option key={t}>{t}</option>)}</select>
-      </label>
-      <label className="block">
-        {tr('iocWorkspace.note')}
-        <textarea className={field} name="note" defaultValue={object.note} />
-      </label>
-      <label className="block">
-        {tr('iocWorkspace.system_account_context')}
-        <input className={field} name="context" defaultValue={object.context} />
-      </label>
-      <label className="block">
-        {tr('iocWorkspace.path_context')}
-        <select className={field} name="path_context" defaultValue={object.path_context || 'unknown'}>{['unknown', 'http-request', 'system', 'local-evidence'].map(s => <option key={s}>{s}</option>)}</select>
-      </label>
-      <Button disabled={saveContext.isPending}>{tr('iocWorkspace.save_object')}</Button>
-      <Button type="button" onClick={() => { setEditOpen(false); setContextDirty(false) }}>{tr('iocWorkspace.cancel')}</Button>
-    </form>}
-
-    <div
-      role="tablist"
-      aria-label="IOC details"
-      className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-3">
-      {['Overview', 'Evidence', 'Relationships', 'OpenCTI'].map(name => <button
-        key={name}
-        role="tab"
-        aria-selected={tab === name}
-
-        onClick={() => setTab(name)}
-        className={`rounded-md px-3 py-2 ${tab === name ? 'bg-[var(--panel-2)] text-[var(--accent-text)]' : 'text-[var(--muted)]'}`}>{name}</button>)}
+    <div className="overflow-x-auto" aria-label={tr('iocWorkspace.detail_tabs')}>
+      <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(object?.type === 'ip' ? ['Trace'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
     </div>
 
     {failure && <p role="alert" className="text-[var(--danger-text)]">{String(failure instanceof Error ? failure.message : failure)}</p>}
@@ -227,39 +163,20 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     {isPending && <p>{tr('iocWorkspace.loading_case_details')}</p>}
 
     {object && tab === 'Overview' && <>
-      <div className="flex flex-wrap gap-2">
-        {object.type === 'ip' && <><Button type="button" onClick={() => setTrace(true)}>
-          <Crosshair size={14} />
-          {tr('iocWorkspace.open_trace')}
-        </Button><Button type="button" onClick={() => gotoView?.('logs', { search: object.value })}>{tr('iocWorkspace.access_logs')}</Button></>}
-        {observed.some(o => o.kind === 'pattern-hunt') && <Button
-          type="button"
-          onClick={() => { const o = observed.find(o => o.kind === 'pattern-hunt'); gotoView?.('hunt', { section: o?.source_ref.match(/hunt-test:(\d+)/)?.[1] }) }}>{tr('iocWorkspace.pattern_hunt')}</Button>}
-        {current?.resolved && <Button type="button" onClick={() => setViewPath(current.resolved!)}>{tr('iocWorkspace.view_file')}</Button>}
-        {['ip', 'hash'].includes(object.type) && <Button type="button" onClick={() => setIntelligence(v => !v)}>{tr('iocWorkspace.stored_intelligence')}</Button>}
-      </div>
-      {intelligence && <EnrichPanel slug={slug} kind={object.type} value={object.value} />}
-      <div className="grid grid-cols-1 gap-x-6 border-y border-[var(--line)] sm:grid-cols-2">
+      {current?.resolved && <div><Button type="button" onClick={() => setViewPath(current.resolved!)}>{tr('iocWorkspace.view_file')}</Button></div>}
+      <h3 className="ioc-section-title">{tr('iocWorkspace.observation')}</h3>
+      <div className="grid grid-cols-1 gap-x-6 border-b border-[var(--line)] sm:grid-cols-2">
 
         <IocField name="First observed">{observationTime(times[0] || current?.first_seen)}</IocField>
 
         <IocField name="Last observed">{observationTime(times[times.length - 1] || current?.last_seen)}</IocField>
 
-        <IocField name="Origin">
-          <button className="text-[var(--accent-text)]" onClick={() => setTab('Evidence')}>{observed.some(o => o.kind === 'pattern-hunt') ? 'Pattern Hunt' : object.tags.includes('finding') ? 'Findings' : object.origin || 'Analyst'} →</button>
+        <div className="min-w-0"><IocField name="Origin">
+          <div className="space-y-1 break-words">{iocOrigins(object, observed, data?.findings ?? []).map(origin => <p key={origin}>{origin}</p>)}</div>
         </IocField>
-
-        <IocField name="Matching requests">{requests.length ? <button className="text-[var(--accent-text)]" onClick={() => setTab('Evidence')}>{requests.length === 1 ? `${requests[0].count} requests` : `${requests.length} recorded groups`} →</button> : 'Not recorded'}</IocField>
-
-        <IocField name="Evidence sources">
-          <button className="text-[var(--accent-text)]" onClick={() => setTab('Evidence')}>{new Set(observed.map(o => o.evidence_id != null ? `evidence:${o.evidence_id}` : o.local_path).filter(Boolean)).size} {tr('iocWorkspace.sources')}</button>
-        </IocField>
-
-        <IocField name="Case assessment">
-          <span className={`capitalize ${assessmentTone(object.assessment)}`}>{object.assessment}</span>
-          <span className="ml-2 text-[var(--muted)]">{object.assessment_manual ? 'Manual' : 'Default'}</span>
-        </IocField>
-
+        {cti.configured && <OpenCtiScore lookup={cti.data?.lookups?.find(entry => entry.ioc_id === id)} loading={cti.isPending} error={Boolean(cti.error)} />}
+        </div>
+        <IocField name={tr('iocTags.title')} help={tr(cti.configured ? 'iocTags.help' : 'iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
       </div>
       {object.file && <><div className="grid grid-cols-2 gap-x-6">
         <IocField name="Classification">{object.file.classification || 'Not classified'}</IocField>
@@ -287,37 +204,17 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       </details>}
       {!!object.context && <IocField name="Context">{object.path_context && object.type === 'path' ? `${object.path_context} · ` : ''}{object.context}</IocField>}
       <div>
-        <div className="mb-2 flex items-center gap-2 font-medium">
-          {tr('iocWorkspace.relationships')}
+        <div className="mb-3 flex items-center gap-2">
+          <h3 className="ioc-section-title">
+          {tr('iocWorkspace.relationships')}</h3><span className="rounded bg-[var(--panel-2)] px-2 text-[12px] text-[var(--muted)]">{links.length}</span>
           <InfoDot body={descriptions.Relationships} />
-          <button className="ml-auto text-[12px] text-[var(--accent-text)]" onClick={() => setTab('Relationships')}>{tr('iocWorkspace.view_all')} {links.length} →</button>
         </div>
-        <div className="overflow-hidden rounded-lg border border-[var(--line)]">{links.slice(0, 3).map(relatedRow)}{!links.length && <p className="p-3 text-[var(--muted)]">{tr('iocWorkspace.no_recorded_relationships')}</p>}</div>
-      </div>
-      <div className="rounded-lg border border-[var(--line)] p-3">
-        <strong>{tr('iocWorkspace.opencti')}</strong>
-        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3">
-          <IocField name="OpenCTI match">
-            <button className="text-[var(--accent-text)]" onClick={() => setTab('OpenCTI')}>{ctiLabel(lookup)} →</button>
-          </IocField>
-          <IocField name="Last checked">{lookup?.checked_at ? observationTime(lookup.checked_at) : 'Not checked'}</IocField>
-          <IocField name="Transfer status">
-            <span className={sync?.status === 'error' ? 'text-[var(--danger-text)]' : ''}>{sync?.status || 'New'}</span>
-          </IocField>
-        </div>
+        {relationshipTable(links)}
       </div>
       {object.note && <details>
         <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.analyst_note')}</summary>
         <p className="mt-2 whitespace-pre-wrap">{object.note}</p>
       </details>}
-      <details>
-        <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.assessment_history')}</summary>
-        <div className="mt-3 space-y-2">{!data?.assessments.length && <p>{tr('iocWorkspace.default_assessment_malicious')}</p>}{data?.assessments.map(a => <Card key={a.id} className="p-3">
-          <strong>{a.state}</strong> ·
-          {a.created}
-          <p className="whitespace-pre-wrap">{a.reason}</p>
-        </Card>)}</div>
-      </details>
       {crossMatches.length > 0 && <details>
         <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.also_seen_in')} {crossMatches.length} {tr('iocWorkspace.other_cases')}</summary>
         {crossMatches.map(m => <a
@@ -327,168 +224,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       </details>}
     </>}
 
-    {data && tab === 'Evidence' && <>
-      <div className="flex items-center gap-2">
-        {tr('iocWorkspace.evidence')}
-        <InfoDot body={descriptions.Evidence} />
-      </div>
-      {data.observations.map(o => <details key={o.id} className="space-y-2 rounded-lg border border-[var(--line)] p-3">
-        <summary className="cursor-pointer">{o.kind} · {o.count != null ? `${o.count} observations` : o.path || 'Recorded source'}</summary>
-
-        <strong>{o.kind}</strong> ·
-        {o.active ? 'recorded' : 'withdrawn'}
-
-        <p className="break-all">{o.path || o.source_ref}</p>
-
-        {o.local_path && <p className="break-all text-[var(--muted)]">{tr('iocWorkspace.local_evidence')} {o.local_path}</p>}
-
-        {o.local_path && (o.kind === 'file-location' || /[\\/]/.test(o.local_path)) && <Button type="button" onClick={() => setViewPath(o.local_path)}>{tr('iocWorkspace.view_evidence_file')}</Button>}
-
-        <p>{o.evidence_id != null && `Evidence #${o.evidence_id} · `}{o.finding_id != null && `Finding #${o.finding_id} · `}{o.count != null && `${o.count} observations`}</p>
-
-        {(o.first_seen || o.last_seen) && <p>{o.first_seen || 'Unknown start'} — {o.last_seen || 'Unknown end'} {tr('iocWorkspace.source_time')}</p>}
-
-        <p className="whitespace-pre-wrap">{o.detail}</p>
-        {o.kind === 'pattern-hunt' && <Button
-          type="button"
-          onClick={() => gotoView?.('hunt', { section: o.source_ref.match(/hunt-test:(\d+)/)?.[1] })}>{tr('iocWorkspace.open_pattern_hunt_test')}</Button>}
-
-      </details>)}
-      {data.sources.map(s => <p key={s.id} className="break-all">{s.active ? 'Active source' : 'Withdrawn source'} · {s.role}: {s.artifact}</p>)}
-      {data.findings.map(f => <details key={f.id} className="rounded-md border border-[var(--line)] p-3">
-
-        <summary>{tr('iocWorkspace.finding')}{f.id}: {f.rule} · {f.triage}{f.retired ? ' · retired' : ''}</summary>
-
-        <p className="break-all">{f.artifact}</p>
-        <pre className="whitespace-pre-wrap break-all">{f.evidence}</pre>
-
-      </details>)}
-      {!data.observations.length && !data.sources.length && !data.findings.length && <p>{tr('iocWorkspace.no_structured_evidence_recorded_existing_context_remains_in_the_overview')}</p>}
-    </>}
-
-    {data && tab === 'Relationships' && <>
-      {Object.entries(data.relationships.reduce<Record<string, Relationship[]>>((groups, r) => { const key = r.active ? (iocs.find(i => i.id === targetOf(r))?.type || 'other') : 'withdrawn'; (groups[key] ??= []).push(r); return groups }, {})).map(([group, relations]) => <details key={group} open={group !== 'withdrawn'} className="space-y-3">
-        <summary className="cursor-pointer capitalize font-medium">{group} ({relations?.length})</summary>
-        {relations?.map(r => <Card key={r.id} className="space-y-2 p-3">
-
-          <div>{relatedRow(r)}</div>
-
-          <p>{r.origin} · {r.active ? 'active' : `withdrawn: ${r.withdrawal_reason}`}</p>
-
-          <details>
-            <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.evidence')} ({r.evidence.length})</summary>
-            {r.evidence.map(e => <p key={e.id} className="whitespace-pre-wrap">{e.reference}{e.detail && `: ${e.detail}`}{(e.first_seen || e.last_seen) && ` (${e.first_seen} — ${e.last_seen})`}</p>)}
-          </details>
-
-          <details>
-            <summary>{tr('iocWorkspace.history')}</summary>
-            {r.events.map(e => <p key={e.id}>{e.created} · {e.action}: {e.reason}</p>)}
-          </details>
-
-          {r.active && <Button type="button" onClick={() => setWithdrawId(r.id)}>{tr('iocWorkspace.withdraw_relationship')}</Button>}
-
-          {withdrawId === r.id && <form className="space-y-2" onSubmit={e => { e.preventDefault(); withdraw.mutate() }}>
-
-            <label>
-              {tr('iocWorkspace.withdrawal_reason')}
-              <textarea
-                required
-                value={withdrawReason}
-                onChange={e => setWithdrawReason(e.target.value)}
-                className={field} />
-            </label>
-
-            <Button disabled={!withdrawReason.trim() || withdraw.isPending}>{tr('iocWorkspace.confirm_withdrawal')}</Button>
-
-          </form>}
-
-        </Card>)}
-      </details>)}
-      <Button type="button" onClick={() => setRelationshipOpen(v => !v)}>{tr('iocWorkspace.add_evidence_backed_relationship')}</Button>{relationshipOpen && <form
-        className="space-y-2 border-t border-[var(--line)] pt-3"
-        onSubmit={e => { e.preventDefault(); saveRelationship.mutate() }}>
-
-        <strong>{tr('iocWorkspace.add_evidence_backed_relationship')}</strong>
-
-        <label className="block">
-          {tr('iocWorkspace.source')}
-          <select
-            value={src}
-            onChange={e => { setSrc(Number(e.target.value)); setKind(''); setDst('') }}
-            className={field}>
-            {iocs.map(i => <option key={i.id} value={i.id}>{i.type}: {i.summary || i.value}</option>)}
-          </select>
-        </label>
-
-        <label className="block">
-          {tr('iocWorkspace.relationship')}
-          <select required value={kind} onChange={e => { setKind(e.target.value); setDst('') }} className={field}>
-
-            <option value="">{tr('iocWorkspace.choose_relationship')}</option>
-            {relationKinds.map(([k]) => <option key={k} value={k}>{labels[k] || k}</option>)}
-
-          </select>
-        </label>
-
-        <label className="block">
-          {tr('iocWorkspace.target')}
-          <select required value={dst} onChange={e => setDst(Number(e.target.value))} className={field}>
-
-            <option value="">{tr('iocWorkspace.choose_target')}</option>
-            {targets.map(i => <option key={i.id} value={i.id}>{i.type}: {i.summary || i.value}</option>)}
-
-          </select>
-        </label>
-
-
-        <label className="block">
-          {tr('iocWorkspace.evidence_reference')}
-          <input
-            required
-            value={reference}
-            onChange={e => setReference(e.target.value)}
-            placeholder="Log source and line, finding ID, or analyst evidence reference"
-            className={field} />
-        </label>
-
-        <label className="block">
-          {tr('iocWorkspace.supporting_observation')}
-          <select value={observation} onChange={e => setObservation(e.target.value)} className={field}>
-
-            <option value="">{tr('iocWorkspace.use_the_reference_above')}</option>
-            {data.observations.map(o => <option key={o.id} value={o.id}>{o.kind}: {o.path || o.source_ref}</option>)}
-
-          </select>
-        </label>
-
-        <label className="block">
-          {tr('iocWorkspace.evidence_explanation')}
-          <textarea value={evidence} onChange={e => setEvidence(e.target.value)} className={field} />
-        </label>
-
-        <div className="grid grid-cols-2 gap-2">
-          <label>
-            {tr('iocWorkspace.first_observed')}
-            <input type="datetime-local" value={first} onChange={e => setFirst(e.target.value)} className={field} />
-          </label>
-
-          <label>
-            {tr('iocWorkspace.last_observed')}
-            <input type="datetime-local" value={last} onChange={e => setLast(e.target.value)} className={field} />
-          </label>
-        </div>
-
-        <Button disabled={!dst || !kind || !reference.trim() || saveRelationship.isPending}>{tr('iocWorkspace.add_relationship')}</Button>
-        <Button
-          type="button"
-          onClick={() => { setRelationshipOpen(false); setReference(''); setEvidence(''); setFirst(''); setLast('') }}>{tr('iocWorkspace.cancel')}</Button>
-
-      </form>}
-    </>}
-
-    {tab === 'OpenCTI' && <OpenCtiDetails lookup={cti.data?.lookups?.find(entry => entry.ioc_id === id)} />}
-
-    {trace && object && <TraceWindow slug={slug} ips={[object.value]} onClose={() => setTrace(false)} />}
+    {object?.type === 'ip' && tab === 'Trace' && <TraceWindow key={`${slug}:${id}`} slug={slug} ips={[object.value]} embedded onClose={() => setTab('Overview')} />}
 
     <FileViewer slug={slug} path={viewPath} layer={1} onClose={() => setViewPath(null)} />
 
