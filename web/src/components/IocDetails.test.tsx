@@ -26,6 +26,20 @@ beforeEach(() => {
 const show = () => renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} />)
 
 describe('Structured IOC details', () => {
+  it('shows database registration attributes with their sources instead of observation dates', async () => {
+    const user = { ...ip, type: 'user', value: 'account-test', account_sources: [
+      { source_key: 'one', cms: 'joomla', table: 'cms_users', registered: '2024-01-02 03:04:05' },
+      { source_key: 'two', cms: 'wordpress', table: 'wp_users', registered: '' },
+    ] }
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: user } : { configured: false })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[user]} onClose={() => {}} />)
+    expect(await screen.findByText('Registered')).toBeVisible()
+    expect(screen.getByText('2024-01-02 03:04:05')).toBeVisible()
+    expect(screen.getByText('joomla · cms_users')).toBeVisible()
+    expect(screen.getByText('Not recorded in the database')).toBeVisible()
+    expect(screen.queryByText('First observed')).not.toBeInTheDocument()
+    expect(screen.queryByText('Last observed')).not.toBeInTheDocument()
+  })
   it('loads inline Trace only on selection and scopes requests to the selected IP', async () => {
     vi.mocked(post).mockImplementation(async url => url.endsWith('/timeline') ? { timeline: [] } : { total: 1, methods: ['GET'], rows: [
       { client: ip.value, epoch: 1, tz: 0, method: 'GET', uri: '/documentation', status: 200, agent: 'Synthetic browser' },

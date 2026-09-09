@@ -625,6 +625,7 @@ export interface IocLink {
 }
 
 export interface Ioc {
+  account_sources?: { source_key: string; registered: string; cms: string; table: string }[]
   assessment_manual?: boolean
   assessment?: 'unassessed' | 'suspicious' | 'malicious' | 'benign'
   context?: string
