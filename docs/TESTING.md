@@ -23,6 +23,12 @@ choose a different event and note, refresh, then restore automatic selection.
 Check the marker and editor in both themes at laptop and narrow widths. Stop
 the test server and remove the disposable case afterward.
 
+The managed-shutdown regression in `tests.test_startup` deliberately delays
+Windows signal handling. This covers Python 3.10's expired subprocess wait:
+the coordinator must still forward cancellation, let workers finish, and keep
+the checkout lock until cleanup is complete. Do not lengthen its timeout to
+hide a stalled supervisor.
+
 ## The diagnosis
 
 Three hundred and three tests were green. A deliberate bug hunt over the same

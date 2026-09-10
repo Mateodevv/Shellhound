@@ -322,9 +322,20 @@ class StartupBoundaryTests(unittest.TestCase):
                 port = reservation.getsockname()[1]
             args = ["--workspace", str(root), "--port", str(port), "--no-browser"]
             child = [sys.executable, "-m", "tests.startup_job_fixture", *args]
-            script = ("from pathlib import Path; from server.startup import "
+            # Make delayed signal dispatch deterministic. Python 3.10 on
+            # Windows could turn the old supervisor's expired timed wait into
+            # an effectively unbounded wait before forwarding cancellation.
+            delayed_break = (
+                " original_break = signal.getsignal(signal.SIGBREAK)\n"
+                " def delayed_break(signum, frame):\n"
+                "  time.sleep(0.025)\n"
+                "  original_break(signum, frame)\n"
+                " signal.signal(signal.SIGBREAK, delayed_break)\n"
+            ) if os.name == "nt" else ""
+            script = ("import signal, time; from pathlib import Path; from server.startup import "
                       "CheckoutLock,command,termination_signals\n"
                       f"with CheckoutLock(Path({folder!r})), termination_signals():\n"
+                      + delayed_break +
                       f" command({child!r},cwd=Path.cwd(),label='server',capture=False)\n")
             options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {
                 "start_new_session": True}
@@ -351,7 +362,8 @@ class StartupBoundaryTests(unittest.TestCase):
                     while not (root / "job-cancelling").exists() and time.monotonic() < deadline:
                         self.assertIsNone(process.poll(), "launcher exited without draining jobs")
                         time.sleep(0.05)
-                    self.assertTrue((root / "job-cancelling").exists())
+                    self.assertTrue((root / "job-cancelling").exists(),
+                                    (root / "server.log").read_text(errors="replace"))
                     # The old supervisor killed the worker after five seconds.
                     with self.assertRaises(subprocess.TimeoutExpired):
                         process.wait(timeout=5.5)
