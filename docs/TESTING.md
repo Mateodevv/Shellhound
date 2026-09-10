@@ -1,5 +1,34 @@
 # Testing SHELLHOUND
 
+## First known sign of compromise
+
+Focused backend coverage (use the project `.venv`, with Windows `TEMP` and
+`TMP` set to `workspace/defender-safe-temp`):
+
+    python -m unittest tests.test_first_sign tests.test_first_sign_log_anchors tests.test_first_sign_api
+
+Frontend coverage, from `web/`:
+
+    npm test -- src/components/FirstSign.test.tsx src/components/CaseChain.test.tsx
+
+Harmless synthetic evidence covers confirmed-only eligibility, UTC ordering,
+copied metadata fallback, unrelated earlier IP activity, stale/removed sources,
+partial anchor reads, saved analyst choices, and case isolation. The HTTP tests
+exercise an exact timeline link beyond 200 events, including missing links.
+Component tests cover note preservation, failures, keyboard focus, pagination
+without unwanted jumps, and deliberate repeat jumps.
+
+For visual verification, use a disposable case: follow the dashboard marker,
+choose a different event and note, refresh, then restore automatic selection.
+Check the marker and editor in both themes at laptop and narrow widths. Stop
+the test server and remove the disposable case afterward.
+
+The managed-shutdown regression in `tests.test_startup` deliberately delays
+Windows signal handling. This covers Python 3.10's expired subprocess wait:
+the coordinator must still forward cancellation, let workers finish, and keep
+the checkout lock until cleanup is complete. Do not lengthen its timeout to
+hide a stalled supervisor.
+
 ## The diagnosis
 
 Three hundred and three tests were green. A deliberate bug hunt over the same

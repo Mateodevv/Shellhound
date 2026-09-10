@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarClock } from 'lucide-react'
-import { api, type CaseDetail, type Dashboard as DashboardData } from '../api'
+import { api, type CaseDetail, type Dashboard as DashboardData, type FirstSign as FirstSignData, type ChainEvent } from '../api'
 import { useT } from '../i18n'
 import { formatCount, formatDay, type EvidenceRoot } from '../format'
-import { Card, EmptyState, Section } from '../components/ui'
+import { Button, Card, EmptyState, Section } from '../components/ui'
+import { FirstSign, FirstSignEditor } from '../components/FirstSign'
 import { TimelineChart } from '../components/TimelineChart'
 import { LogCoverage } from '../components/LogCoverage'
 import { CaseChain } from '../components/CaseChain'
@@ -21,6 +22,28 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
+  const [focusId, setFocusId] = useState(() => new URLSearchParams(location.search).get('event') ?? '')
+  const [focusRequest, setFocusRequest] = useState(0)
+  const [choosing, setChoosing] = useState(false)
+  const [draftEvent, setDraftEvent] = useState<ChainEvent | null>(null)
+  const chainRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const restore = () => setFocusId(new URLSearchParams(location.search).get('event') ?? '')
+    restore()
+    setChoosing(false)
+    setDraftEvent(null)
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [slug])
+  const jumpTo = (id?: string) => {
+    setFocusId(id ?? '')
+    setFocusRequest((value) => value + 1)
+    const url = new URL(location.href)
+    if (id) url.searchParams.set('event', id)
+    else url.searchParams.delete('event')
+    history.replaceState(null, '', url)
+    chainRef.current?.scrollIntoView({ block: 'start' })
+  }
   const triage = useTriage(slug)
   const { data } = useQuery({
     queryKey: ['dashboard', slug],
@@ -31,6 +54,11 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
+  const marker = useQuery({
+    queryKey: ['first-sign', slug],
+    queryFn: () => api<FirstSignData>(`/api/cases/${slug}/first-sign`),
+    refetchInterval: 10000,
+  })
   const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((item) => ({
     kind: item.kind, path: item.path, label: item.label,
   }))
@@ -40,6 +68,8 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
 
   return (
     <div className="flex flex-col gap-6">
+      <FirstSign slug={slug} data={marker.isError ? undefined : marker.data} editing
+        onTimeline={jumpTo} onChoose={() => { setChoosing(true); chainRef.current?.scrollIntoView({ block: 'start' }) }} />
       {data.logs ? <>
         <Section title={tr('timeline.title')}
           sub={tr('timeline.sub', {
@@ -55,7 +85,13 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
         <EmptyState icon={<CalendarClock size={36} />} title={tr('timeline.empty.title')}
           sub={tr('timeline.empty.sub')} />
       )}
-      <CaseChain slug={slug}
+      <div ref={chainRef} className="scroll-mt-4">
+      {choosing && <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-4 py-3 text-sm">
+        <span>{tr('firstSign.chooseHelp')}</span>
+        <Button variant="ghost" onClick={() => setChoosing(false)}>{tr('common.cancel')}</Button>
+      </div>}
+      <CaseChain slug={slug} focusId={focusId} focusRequest={focusRequest}
+        onSelectFirstSign={choosing ? setDraftEvent : undefined}
         onOpen={(artifact, kind) => setSelected({
           artifact,
           artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
@@ -64,6 +100,10 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
           triage_note: '',
         })}
         onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
+      </div>
+      {draftEvent && <FirstSignEditor key={`${slug}:${draftEvent.id}`} slug={slug} event={draftEvent}
+        initialNote={marker.data?.event?.id === draftEvent.id ? marker.data?.note ?? '' : ''}
+        onClose={() => setDraftEvent(null)} onSaved={() => { setDraftEvent(null); setChoosing(false); jumpTo(draftEvent.id) }} />}
       {data.logs && <LogCoverage slug={slug} />}
       <ArtifactWindow slug={slug} artifact={selected} roots={roots}
         collected={triage.collected}
