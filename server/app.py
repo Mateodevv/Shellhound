@@ -46,6 +46,7 @@ from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, review_progress, uri_path,
                               uri_targets, web_path)
 from server.chain import case_chain
+from server import first_sign
 from server.finding_categories import categorized_art_sql, top_findings
 from server.i18n import lang_of
 from server.i18n import t as _t
@@ -1194,7 +1195,8 @@ def create_app(config: Config) -> FastAPI:
             observations.append({
                 key: event[key] for key in (
                     "at", "kind", "title", "detail", "source", "artifact",
-                    "artifact_kind", "ip", "severity")
+                    "artifact_kind", "ip", "severity", "id", "epoch",
+                    "first_sign_eligible", "first_sign_selectable", "first_sign_basis")
             } | {"role": role})
 
         observe("first", events[0] if events else None)
@@ -1238,6 +1240,7 @@ def create_app(config: Config) -> FastAPI:
                 "tz_offsets": chain["tz_offsets"],
                 "tz_mixed": chain["tz_mixed"],
             },
+            "first_sign": first_sign.summarize(case_dir, chain),
         }
 
     # --- the chronology of the case -----------------------------------------
@@ -1246,7 +1249,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
     def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep,
-              limit: int = 80, offset: int = 0, order: str = "asc"):
+              limit: int = 80, offset: int = 0, order: str = "asc", focus: str = ""):
         """One page of the evidential chronology.
 
         Pagination is a presentation concern, not an evidence gap: the
@@ -1264,11 +1267,51 @@ def create_app(config: Config) -> FastAPI:
         complete = result["events"]
         if order == "desc":
             complete = list(reversed(complete))
+        # Open the page containing the requested stable event, even when it
+        # is beyond the first page. Never substitute a different event.
+        result["focus_found"] = None
+        if focus:
+            position = next((i for i, event in enumerate(complete)
+                             if event.get("id") == focus), None)
+            result["focus_found"] = position is not None
+            if position is not None:
+                offset = (position // limit) * limit
         result["events"] = complete[offset:offset + limit]
         result["offset"] = offset
         result["limit"] = limit
         result["order"] = order
         result["truncated"] = offset + len(result["events"]) < len(complete)
+        return result
+
+    @app.get("/api/cases/{slug}/first-sign", dependencies=[auth])
+    def get_first_sign(slug: str, lang: str = lang_dep, tz: str = tz_dep):
+        case_dir = case_dir_or_404(slug)
+        complete = case_chain(case_dir, lang, tz, event_cap=None)
+        return first_sign.summarize(case_dir, complete)
+
+    class FirstSignBody(BaseModel):
+        event_id: str | None = Field(..., max_length=128)
+        note: str = Field(default="", max_length=2000)
+
+    @app.post("/api/cases/{slug}/first-sign", dependencies=[auth])
+    def save_first_sign(slug: str, body: FirstSignBody,
+                        lang: str = lang_dep, tz: str = tz_dep):
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            # Prevent another analyst decision or evidence registration from
+            # changing the case between validating and saving this choice.
+            conn.execute("BEGIN IMMEDIATE")
+            complete = case_chain(case_dir, lang, tz, event_cap=None)
+            try:
+                first_sign.set_override(conn, complete, body.event_id, body.note)
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from error
+            result = first_sign.summarize(case_dir, complete, conn=conn)
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "first_sign", "case_slug": slug})
         return result
 
     @app.get("/api/cases/{slug}/activity", dependencies=[auth])
