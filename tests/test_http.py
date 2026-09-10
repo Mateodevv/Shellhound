@@ -346,6 +346,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/activity": "",
     "/api/cases/{slug}/dashboard": "",
     "/api/cases/{slug}/chain": "",
+    "/api/cases/{slug}/first-sign": "",
     "/api/cases/{slug}/report.html": "",
     "/api/cases/{slug}/search": "q=203.0.113",
     "/api/cases/{slug}/findings": "",

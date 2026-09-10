@@ -17,17 +17,16 @@ worse than none.
 Three rules follow from that:
   1. CONFIRMED ARTIFACTS ONLY. The triage decides what belongs to the story,
      not the detection.
-  2. MEASURED TIME ONLY. The first 2xx for a file proves it was there. File
+  2. MEASURED TIME ONLY. A 2xx records a response for the file's path. File
      system timestamps are shown only for confirmed webshells and explicitly
      as metadata of the evidence copy: they do not prove deployment, upload
      or access. Access time is deliberately omitted because reading or mount
      policy can change it.
   3. GAPS ARE NAMED, NOT BRIDGED.
 
-Both clocks stand there without a zone: the log line in its server time, the
-account timestamp in that of the database server. They are compared AS THEY
-STAND -- anything else would mean inventing a time zone. The response says
-so, lest it get lost in the report.
+The chronology retains its explicit log/UTC display modes. Each event also
+has a separate absolute epoch when its source supplies one; automatic incident
+anchors use that value, never naive database times or display-time ordering.
 
 Its own module rather than a closure inside `create_app`: this is the one
 piece of narrative the server writes, it is shared by the `/chain` route and
@@ -35,15 +34,42 @@ the JSON export, and it is worth testing on its own.
 """
 import json
 import os
+import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
 
 from server import db
 from server import coverage
 from server.artifacts import ART_SQL, uri_targets, web_path
 from server.engines import logindex
 from server.i18n import t
+from server.engines.fsutil import io_path
 
 EVENT_CAP = 80
+
+
+def _registered_file(path, roots):
+    """A metadata candidate must still belong to this case's evidence."""
+    try:
+        target = Path(io_path(path)).resolve(strict=True)
+        if not target.is_file():
+            return False
+        for root in roots:
+            try:
+                resolved = Path(io_path(root)).resolve(strict=True)
+                if target == resolved or target.is_relative_to(resolved):
+                    return True
+            except (OSError, ValueError, RuntimeError):
+                continue
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return False
+
+
+def _event_id(source, kind, artifact, raw_time, identity=""):
+    payload = json.dumps([source, kind, artifact, raw_time, identity],
+                         ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def local(epoch, tz=0):
@@ -183,12 +209,41 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         accounts = db.rows(
             conn, "SELECT login, registered, admin, last_login, tbl "
                   "FROM db_accounts WHERE registered != ''")
+        evidence = db.rows(conn, "SELECT kind, path FROM evidence")
+        indexing = bool(db.one(conn, "SELECT id FROM jobs WHERE kind = 'index_logs' "
+                                    "AND state IN ('queued', 'running') LIMIT 1"))
+        confirmed_alerts = {(r["artifact"], r["rule_id"]) for r in db.rows(
+            conn, f"SELECT DISTINCT f.artifact, f.rule_id FROM findings f {db.RETIRE_JOIN} "
+                  "WHERE f.artifact_kind='client' AND f.source='logs' "
+                  f"AND f.triage='confirmed' AND ({db.LIVE_PREDICATE})")}
+        # Applied clusters retain the exact matching request window. A generic
+        # confirmed IP is insufficient: this specific Hunt finding must still
+        # be confirmed, including Findings' existing retirement semantics.
+        hunt_matches = db.rows(conn, f"""
+            SELECT c.*, a.pattern_id, a.pattern_version, a.rule_hash,
+                   h.index_fingerprint, h.tz
+              FROM hunt_application_clusters c
+              JOIN hunt_applications a ON a.id = c.application_id
+              JOIN hunt_tests h ON h.id = a.test_id
+             WHERE EXISTS (
+                 SELECT 1 FROM findings f {db.RETIRE_JOIN}
+                  WHERE f.artifact = c.client AND f.artifact_kind = 'client'
+                    AND f.triage = 'confirmed'
+                    AND f.rule_id = 'hunt.' || a.pattern_id || '.v' || a.pattern_version
+                    AND ({db.LIVE_PREDICATE}))
+             ORDER BY c.first_epoch, c.id
+        """)
         offsets = clock_offsets(conn)
     finally:
         conn.close()
 
     off_logs, off_dump = offsets["logs"], offsets["dump"]
     overview = logindex.overview(case_dir) or {}
+    log_targets = [r["path"] for r in evidence if r["kind"] == "access_logs"]
+    log_fresh = bool(log_targets and not indexing and not overview.get("partial")
+                     and logindex.status(case_dir, log_targets)["fresh"])
+    index_fingerprint = logindex.index_fingerprint(case_dir) if log_fresh else ""
+    evidence_roots = [r["path"] for r in evidence]
     # EVERY offset the logs carry, not one. A single server that ran through
     # a DST change writes two -- an Austrian log crosses +0100/+0200 twice a
     # year -- and several servers in one case can write anything. Labelling
@@ -259,11 +314,13 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
     dated = set()
 
     def add(at, kind, title, detail, source, artifact="", artifact_kind="",
-            ip="", severity=None):
+            ip="", severity=None, *, raw_time=None, epoch=None,
+            identity="", basis=None, eligible=False, selectable=False):
         if at is None:
             return
         dated.add(artifact)
-        events.append({"at": at, "kind": kind, "title": title,
+        events.append({"id": _event_id(source, kind, artifact, raw_time, identity),
+                       "at": at, "epoch": epoch, "kind": kind, "title": title,
                        "detail": detail, "source": source,
                        "artifact": artifact, "artifact_kind": artifact_kind,
                        # The SAME artifact, webroot-relative. `artifact` is
@@ -273,27 +330,36 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                        # the report carries the analyst's directory layout.
                        # For clients and tables the two are identical.
                        "artifact_rel": files.get(artifact, artifact),
-                       "ip": ip, "severity": severity})
+                       "ip": ip, "severity": severity,
+                       "first_sign_basis": basis,
+                       "first_sign_eligible": bool(eligible and epoch is not None),
+                       "first_sign_selectable": bool(selectable and epoch is not None)})
 
     # --- confirmed files: when was it there, when was it used ----------
     for artifact, rel in files.items():
         row = by_artifact[artifact]
         name = os.path.basename(rel)
+        file_registered = _registered_file(artifact, evidence_roots)
         if artifact in webshell_files:
             metadata_detail = t(lang, "chain.file.fs.detail")
             file_times = filesystem_times(artifact)
             add(filesystem_at(file_times.get("created")), "datei-erstellt",
                 t(lang, "chain.file.fs.created", name=name),
                 metadata_detail, "filesystem", artifact, "file",
-                severity=row["worst"])
+                severity=row["worst"], raw_time=file_times.get("created"),
+                epoch=file_times.get("created"), basis="filesystem",
+                eligible=file_registered, selectable=file_registered)
             add(filesystem_at(file_times.get("modified")), "datei-geaendert",
                 t(lang, "chain.file.fs.modified", name=name),
                 metadata_detail, "filesystem", artifact, "file",
-                severity=row["worst"])
+                severity=row["worst"], raw_time=file_times.get("modified"),
+                epoch=file_times.get("modified"), basis="filesystem",
+                eligible=file_registered, selectable=file_registered)
             add(filesystem_at(file_times.get("changed")), "metadaten-geaendert",
                 t(lang, "chain.file.fs.changed", name=name),
                 metadata_detail, "filesystem", artifact, "file",
-                severity=row["worst"])
+                severity=row["worst"], raw_time=file_times.get("changed"),
+                epoch=file_times.get("changed"))
         hits = [h for h in facts["files"].get(name, [])
                 if uri_targets(h["uri"], rel)]
         if not hits:
@@ -328,10 +394,8 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         ok_total = sum(h["ok_hits"] for h in hits)
         if oks:
             first_ok = min(oks)
-            # An unsuccessful request BEFORE the first success bounds when
-            # the file must have appeared -- the most defensible statement a
-            # log yields about it, and it manages without the mtime of the
-            # copy.
+            # Earlier responses remain context. Neither an error nor a 2xx
+            # proves that a file was absent/present or executed successfully.
             detail = t(lang, "chain.file.wasThere")
             if first_any < first_ok:
                 who = next((h["ip"] for h in hits
@@ -341,17 +405,24 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                             at=iso(log_at(first_any, tz), tz, tz_mode))
             add(log_at(first_ok, tz), "erfolg",
                 t(lang, "chain.file.firstOk", name=name), detail, "log",
-                artifact, "file", severity=row["worst"])
+                artifact, "file", severity=row["worst"], raw_time=first_ok,
+                epoch=first_ok + off_logs, basis="request",
+                eligible=log_fresh and file_registered and artifact in webshell_files,
+                selectable=log_fresh and file_registered)
         else:
             add(log_at(first_any, tz), "versuch",
                 t(lang, "chain.file.firstTry", name=name),
                 t(lang, "chain.file.firstTry.detail", n=total), "log",
-                artifact, "file", severity=row["worst"])
+                artifact, "file", severity=row["worst"], raw_time=first_any,
+                epoch=first_any + off_logs, basis="request",
+                selectable=log_fresh and file_registered)
         if last_any and last_any != (min(oks) if oks else first_any):
             add(log_at(last_any, tz), "letzter-zugriff",
                 t(lang, "chain.file.last", name=name),
                 t(lang, "chain.file.last.detail", n=total, ok=ok_total),
-                "log", artifact, "file", severity=row["worst"])
+                "log", artifact, "file", severity=row["worst"], raw_time=last_any,
+                epoch=last_any + off_logs, basis="request",
+                selectable=log_fresh and file_registered)
 
     # --- confirmed clients: first contact and the triggering calls -----
     for ip in clients:
@@ -363,18 +434,57 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         add(log_at(actor["first_epoch"], tz), "erstkontakt",
             t(lang, "chain.client.first", ip=ip),
             t(lang, "chain.client.first.detail", n=actor["requests"]),
-            "log", ip, "client", ip, row["worst"])
+            "log", ip, "client", ip, row["worst"], raw_time=actor["first_epoch"],
+            epoch=(actor["first_epoch"] + off_logs) if actor["first_epoch"] else None,
+            basis="request", selectable=log_fresh)
         for a in actor["alerts"]:
-            if a["severity"] >= db.SEV_INFO or not a["epoch"]:
+            verified_epoch = a.get("first_sign_epoch")
+            event_epoch = verified_epoch or a["epoch"]
+            event_tz = a.get("first_sign_tz") if verified_epoch else tz
+            example = a.get("first_sign_example") if verified_epoch else a["example"]
+            example = example or a["example"]
+            if a["severity"] >= db.SEV_INFO or not event_epoch:
                 continue
             # The alert text itself comes from the index and is English: it
             # is stored and travels into findings and the archive.
-            add(log_at(a["epoch"], tz), "alarm", a["detail"],
-                t(lang, "chain.alert.detail", example=a["example"]), "log",
-                ip, "client", ip, a["severity"])
+            add(log_at(event_epoch, event_tz), "alarm", a["detail"],
+                t(lang, "chain.alert.detail", example=example), "log",
+                ip, "client", ip, a["severity"], raw_time=event_epoch,
+                epoch=event_epoch + off_logs, identity=[a.get("kind", ""), example],
+                basis="request", eligible=(log_fresh and bool(verified_epoch)
+                    and (ip, "logs." + a.get("kind", "")) in confirmed_alerts),
+                selectable=log_fresh and bool(verified_epoch))
         add(log_at(actor["last_epoch"], tz), "letzter-zugriff",
             t(lang, "chain.client.last", ip=ip), "", "log", ip, "client",
-            ip, row["worst"])
+            ip, row["worst"], raw_time=actor["last_epoch"],
+            epoch=(actor["last_epoch"] + off_logs) if actor["last_epoch"] else None,
+            basis="request", selectable=log_fresh)
+
+    # A saved Hunt cluster is already a measured match, not a reputation
+    # lookup or a client's unrelated earlier browsing. Keep only the confirmed
+    # applied finding and the same current index that produced this cluster.
+    hunt_seen = set()
+    # A recheck may apply the same cluster again. Prefer its current snapshot
+    # before deduplicating, or an older stale application would hide the fresh
+    # evidence solely because it was stored first.
+    for match in sorted(hunt_matches, key=lambda item: (
+            item["index_fingerprint"] != index_fingerprint, item["id"])):
+        epoch = match["first_epoch"]
+        ip = match["client"]
+        identity = f"{match['rule_hash']}:{match['cluster_key']}"
+        key = (ip, epoch, identity)
+        if not epoch or ip not in by_artifact or key in hunt_seen:
+            continue
+        hunt_seen.add(key)
+        fresh = bool(log_fresh and index_fingerprint
+                     and match["index_fingerprint"] == index_fingerprint)
+        add(log_at(epoch, match["tz"]), "hunt-match",
+            t(lang, "chain.hunt.first", ip=ip),
+            t(lang, "chain.hunt.detail", method=match["method"],
+              uri=match["uri_pattern"], status=match["status_class"]),
+            "log", ip, "client", ip, by_artifact[ip]["worst"],
+            raw_time=epoch, epoch=epoch + off_logs, identity=identity,
+            basis="hunt_match", eligible=fresh, selectable=fresh)
 
     # --- accounts created WITHIN THE PERIOD OF THE CASE -----------------
     # An account from 2019 does not belong in the chronology of an incident
@@ -394,7 +504,16 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         if acc["admin"]:
             title += t(lang, "chain.account.admin")
         add(at, "konto", title, detail, "dump",
-            severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM)
+            severity=db.SEV_HIGH if acc["admin"] else db.SEV_MEDIUM,
+            raw_time=acc["registered"], identity=f"{acc['tbl']}:{acc['login']}")
+
+    # Index replacement may race a read-only dashboard refresh. Historical
+    # timeline context remains visible, but no mixed generation is selectable.
+    if log_fresh and logindex.index_fingerprint(case_dir) != index_fingerprint:
+        for event in events:
+            if event["source"] == "log":
+                event["first_sign_eligible"] = False
+                event["first_sign_selectable"] = False
 
     events.sort(key=lambda e: e["at"])
     total_events = len(events)
