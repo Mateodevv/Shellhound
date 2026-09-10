@@ -42,7 +42,7 @@ class ServerCatalogueTests(unittest.TestCase):
                     self.assertEqual(i18n.t("en", key), i18n.t(preference, key))
 
     def test_placeholders_and_unknown_keys(self):
-        self.assertEqual("First successful request for file.txt",
+        self.assertEqual("First request for file.txt answered 2xx",
                          i18n.t("de", "chain.file.firstOk", name="file.txt"))
         self.assertEqual("no.such.key", i18n.t("en", "no.such.key"))
 

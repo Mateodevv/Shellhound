@@ -11,13 +11,13 @@
 // time comes from, and why the gaps stand as visibly as the events:
 // "nothing is proven in between" is a statement of the case.
 import { useT } from '../i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleHelp, Clock, Crosshair,
   Database, DoorOpen, FileClock, FileCog, FilePenLine, FileWarning,
-  LoaderCircle, LogIn, UserPlus,
+  LoaderCircle, LogIn, UserPlus, Flag,
 } from 'lucide-react'
 import { api, post, type CaseChain as ChainData, type ChainEvent } from '../api'
 import { formatLogTime, formatSpan } from '../format'
@@ -35,6 +35,7 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   'datei-erstellt': FileClock,
   'datei-geaendert': FilePenLine,
   'metadaten-geaendert': FileCog,
+  'hunt-match': Crosshair,
 }
 
 // Keys only: the event kinds come from the server under English names and
@@ -49,6 +50,7 @@ const KIND_KEY: Record<ChainEvent['kind'], string> = {
   'datei-erstellt': 'chain.kind.fileCreated',
   'datei-geaendert': 'chain.kind.fileModified',
   'metadaten-geaendert': 'chain.kind.metadataChanged',
+  'hunt-match': 'firstSign.huntSource',
 }
 
 const SOURCE_KEY: Record<ChainEvent['source'], string> = {
@@ -102,6 +104,8 @@ function ClockEditor({ slug, offsets, onClose }: {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['chain'] })
+      qc.invalidateQueries({ queryKey: ['first-sign'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
       onClose()
     },
   })
@@ -133,11 +137,15 @@ function ClockEditor({ slug, offsets, onClose }: {
   )
 }
 
-export function CaseChain({ slug, onOpen, onTrace }: {
+export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 0, onSelectFirstSign }: {
   slug: string
   /** Open an artifact -- the same view as from Findings. */
   onOpen: (artifact: string, kind: string) => void
   onTrace: (ip: string) => void
+  focusId?: string
+  /** A deliberate repeat click should jump again; background refreshes should not. */
+  focusRequest?: number
+  onSelectFirstSign?: (event: ChainEvent) => void
 }) {
   // It stands open because it is the first paragraph of the report.
   // Collapsing is for the cases where one wants to compare the key figures
@@ -146,24 +154,38 @@ export function CaseChain({ slug, onOpen, onTrace }: {
   const [open, setOpen] = useState(true)
   const [clockOpen, setClockOpen] = useState(false)
   const [order, setOrder] = useState<'asc' | 'desc'>('asc')
+  const focusedRow = useRef<HTMLDivElement>(null)
+  const jumpedTo = useRef('')
   const chain = useInfiniteQuery({
-    queryKey: ['chain', slug, order],
-    initialPageParam: 0,
+    queryKey: ['chain', slug, order, focusId],
+    initialPageParam: null as number | null,
     queryFn: ({ pageParam }) => api<ChainData>(
-      `/api/cases/${slug}/chain?limit=${PAGE_SIZE}&offset=${pageParam}&order=${order}`),
+      `/api/cases/${slug}/chain?limit=${PAGE_SIZE}&offset=${pageParam ?? 0}&order=${order}` +
+      (pageParam == null && focusId ? `&focus=${encodeURIComponent(focusId)}` : '')),
     getNextPageParam: (last) => last.truncated
       ? last.offset + last.events.length
       : undefined,
+    getPreviousPageParam: (first) => first.offset > 0 ? Math.max(0, first.offset - PAGE_SIZE) : undefined,
   })
+  useEffect(() => { setOpen(true); jumpedTo.current = '' }, [slug, focusId, focusRequest, order])
+  useEffect(() => {
+    if (!focusId || !focusedRow.current || jumpedTo.current === focusId) return
+    focusedRow.current.scrollIntoView({ block: 'center', behavior: 'auto' })
+    focusedRow.current.focus({ preventScroll: true })
+    jumpedTo.current = focusId
+  }, [chain.data, focusId, focusRequest, open])
   const data = chain.data?.pages[0]
-  if (!data) return null
+  if (chain.isError) return <div role="alert" className="rounded-lg bg-[var(--panel-2)] p-4 text-sm">
+    {tr('firstSign.timelineError')} <Button onClick={() => chain.refetch()}>{tr('common.retry')}</Button>
+  </div>
+  if (!data) return <p role="status" className="text-sm text-[var(--muted)]">{tr('common.loading')}</p>
   const events = chain.data?.pages.flatMap((page) => page.events) ?? []
-  if (!events.length && !data.gaps.length && !data.undated.length) return null
+  if (!events.length && !data.gaps.length && !data.undated.length && !focusId) return null
 
   const first = data.event_span.first
   const last = data.event_span.last
   const total = data.total_events
-  const remaining = Math.max(0, total - events.length)
+  const remaining = Math.max(0, total - (chain.data?.pages.at(-1)?.offset ?? 0) - (chain.data?.pages.at(-1)?.events.length ?? 0))
   const adjusted = data.offsets && (data.offsets.logs !== 0 || data.offsets.dump !== 0)
 
   return (
@@ -247,15 +269,27 @@ export function CaseChain({ slug, onOpen, onTrace }: {
             </button>
           </div>
         </div>
+        {focusId && chain.data?.pages.some((page) => page.focus_found === false) && <p role="status"
+          className="border-b border-[var(--line)] bg-[var(--review-soft)] px-4 py-3 text-sm text-[var(--review-text)]">
+          {tr('firstSign.eventMissing')}
+        </p>}
+        {chain.hasPreviousPage && <div className="border-b border-[var(--line)] px-4 py-2">
+          <Button disabled={chain.isFetchingPreviousPage} onClick={() => chain.fetchPreviousPage()}>
+            <ArrowUp size={13} />{tr('firstSign.previousEvents')}
+          </Button>
+        </div>}
         {events.map((e, i) => {
           const Icon = KIND_ICON[e.kind] ?? CircleHelp
           const prev = events[i - 1]
           // Same second = one moment, not two. The time then appears only
           // once, otherwise one observation reads like two.
-          const sameMoment = prev?.at === e.at
+          const highlighted = !!focusId && e.id === focusId
+          const sameMoment = prev?.at === e.at && !highlighted
           const gapBefore = prev && Math.abs(e.at - prev.at) > 3600
           return (
-            <div key={i}>
+            <div key={e.id ?? i} ref={highlighted ? focusedRow : undefined} tabIndex={highlighted ? -1 : undefined}
+              aria-label={highlighted ? tr('firstSign.highlighted') : undefined}
+              className={clsx(highlighted && 'scroll-mt-4 outline-2 -outline-offset-2 outline-[var(--accent)] bg-[var(--accent-soft)]')}>
               {gapBefore && (
                 <div className="flex items-center gap-2 border-b border-[var(--line-soft)] bg-[var(--panel-2)] px-4 py-1 text-[11px] text-[var(--muted)]">
                   <span className="ml-[104px]">
@@ -293,7 +327,12 @@ export function CaseChain({ slug, onOpen, onTrace }: {
                     </div>
                   )}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+                  {onSelectFirstSign && e.id && e.first_sign_selectable && (
+                    <Button variant="ghost" onClick={() => onSelectFirstSign(e)} title={tr('firstSign.selectEvent', { title: e.title })}>
+                      <Flag size={12} />{tr('firstSign.useEvent')}
+                    </Button>
+                  )}
                   {e.ip && (
                     <button onClick={() => onTrace(e.ip)}
                       className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.5 py-0.5 text-[11px] text-[var(--muted)] hover:border-[var(--accent)]/60 hover:text-[var(--fg)]">
