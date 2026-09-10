@@ -30,3 +30,6 @@
 - **Codi reminder:** saved Pattern Hunt evidence needs both the current registered
   log-source check and the index generation fingerprint. Changed registrations
   can stale a run before reindexing; rebuilding unchanged files can change request IDs.
+- **Codi reminder:** a database finding's `line` is a table row ordinal, not an
+  SQL source line. Use the case-scoped row reader and let analysts choose among
+  exports with the same table; never treat the table name as a filesystem path.

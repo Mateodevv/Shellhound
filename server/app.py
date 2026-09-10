@@ -2144,7 +2144,15 @@ def create_app(config: Config) -> FastAPI:
             if kind == "file":
                 path = artifact
                 info = {"exists": os.path.isfile(io_path(path))}
-                if info["exists"]:
+                try:
+                    target = _within_evidence(case_dir, path, lang)
+                    info["available"] = target.is_file()
+                    if not info["available"]:
+                        info["unavailable_reason"] = "The evidence path is not a file."
+                except HTTPException as error:
+                    info["available"] = False
+                    info["unavailable_reason"] = str(error.detail)
+                if info["available"]:
                     try:
                         st = os.stat(io_path(path))
                         info["size"] = st.st_size
@@ -2183,6 +2191,10 @@ def create_app(config: Config) -> FastAPI:
             elif kind == "client":
                 out["actor"] = logindex.actor_profile(case_dir, artifact)
             elif kind == "table":
+                out["table_sources"] = db.rows(conn,
+                    "SELECT DISTINCT d.id AS dump_id, d.path AS dump_path "
+                    "FROM db_tables t JOIN db_dumps d ON d.id = t.dump_id "
+                    "WHERE t.name = ? ORDER BY d.path", (artifact,))
                 out["table"] = db.one(conn,
                                       "SELECT t.*, d.path AS dump_path, d.cms "
                                       "FROM db_tables t JOIN db_dumps d ON d.id = t.dump_id "
@@ -2197,6 +2209,34 @@ def create_app(config: Config) -> FastAPI:
             return out
         finally:
             conn.close()
+
+    @app.get("/api/cases/{slug}/database/row", dependencies=[auth])
+    def database_row(slug: str, finding_id: int, dump_id: int,
+                     lang: str = lang_dep):
+        from server.evidence_rows import read_database_row, RowReadError
+
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            finding = db.one(conn, "SELECT * FROM findings WHERE id = ?", (finding_id,))
+            if not finding:
+                raise HTTPException(404, "The finding is no longer available in this case.")
+            if (finding["artifact_kind"] != "table" or finding["source"] != "sqldb"
+                    or not finding["line"] or finding["line"] < 1):
+                raise HTTPException(400, "This finding does not reference a database row.")
+            source = db.one(conn,
+                "SELECT d.path FROM db_dumps d JOIN db_tables t ON t.dump_id = d.id "
+                "WHERE d.id = ? AND t.name = ?", (dump_id, finding["artifact"]))
+            if not source:
+                raise HTTPException(404, "This export does not contain the table in this case.")
+        finally:
+            conn.close()
+        target = _within_evidence(case_dir, source["path"], lang)
+        try:
+            result = read_database_row(target, finding["artifact"], finding["line"])
+        except RowReadError as error:
+            raise HTTPException(400, str(error)) from error
+        return dict(result, dump_id=dump_id, dump_path=source["path"])
 
     def _related_ips(conn, kind, artifact, findings, hunt, lang="en"):
         """Every client address this artifact points at, with WHY it is here.
@@ -2273,8 +2313,12 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/file", dependencies=[auth])
     def file_content(slug: str, path: str, mode: str = "raw", offset: int = 0,
-                     lang: str = lang_dep):
+                     lang: str = lang_dep, line: int | None = None):
         """One page of an evidence file, as raw text or as a hex dump."""
+        from server.evidence_files import read_raw_page
+
+        if mode != "hex" and line is not None and line < 1:
+            raise HTTPException(400, "Line must be a positive integer")
         case_dir = case_dir_or_404(slug)
         target = _within_evidence(case_dir, path, lang)
         if not target.is_file():
@@ -2285,8 +2329,13 @@ def create_app(config: Config) -> FastAPI:
             window = _HEX_WINDOW if mode == "hex" else _RAW_WINDOW
             offset = max(0, min(int(offset), size))
             with open(target, "rb") as fh:
-                fh.seek(offset)
-                chunk = fh.read(window)
+                if mode == "hex":
+                    fh.seek(offset)
+                    chunk = fh.read(window)
+                else:
+                    page = read_raw_page(fh, size=size, window=window,
+                                         offset=offset, line=line)
+                    offset, chunk = page.offset, page.chunk
         except OSError as e:
             raise HTTPException(400, f"file not readable: {e}")
 
@@ -2312,9 +2361,11 @@ def create_app(config: Config) -> FastAPI:
             return out
 
         text = chunk.decode("utf-8", errors="replace")
-        # Line numbers are only honest from the start of the file; a page that
-        # begins mid-file says so instead of inventing a first line number.
-        out["from_line"] = 1 if offset == 0 else None
+        out["from_line"] = page.from_line
+        out["starts_mid_line"] = page.starts_mid_line
+        if line is not None:
+            out["requested_line"] = line
+            out["focus_found"] = page.focus_found
         out["lines"] = text.split("\n")
         return out
 
@@ -2334,7 +2385,7 @@ def create_app(config: Config) -> FastAPI:
         if not target.is_file():
             raise HTTPException(400, _t(lang, "err.notRegularFile"))
         if os.name == "nt":
-            command = ["explorer.exe", f"/select,{display_path(target)}"]
+            command = ["explorer.exe", "/select,", display_path(target)]
         elif sys.platform == "darwin":
             command = ["open", "-R", str(target)]
         else:

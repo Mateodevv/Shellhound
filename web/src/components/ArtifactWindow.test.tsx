@@ -394,7 +394,7 @@ describe('what the window states about the artifact', () => {
       (path.includes('/file?') ? fileContent : artifactContext) as never)
 
     const { qc } = mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Expand file' }))
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Expand file' }))[0])
 
     expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
     expect(await screen.findByText('safe text')).toBeVisible()

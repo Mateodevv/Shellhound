@@ -434,7 +434,8 @@ CONTRACT = [
                                "whole, so no artifact of kind `dump` exists "
                                "to ask about."}),
     Entry("ArtifactContext.file -- GET /artifact",
-          "ArtifactContext.file", lambda a: _sub(a["contexts"], "file")),
+          "ArtifactContext.file", lambda a: _sub(a["contexts"], "file"),
+          absent_here={"unavailable_reason": "only sent for missing or unregistered evidence; covered by test_evidence_navigation."}),
     Entry("ArtifactContext.file.preview -- GET /artifact",
           "FilePreview",
           lambda a: _sub(_sub(a["contexts"], "file"), "preview"),
