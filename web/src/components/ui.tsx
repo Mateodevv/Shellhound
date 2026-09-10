@@ -383,7 +383,7 @@ const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), texta
  *  lies below, something one comes back to -- otherwise a trace feels like a
  *  change of subject rather than a glance to the side. */
 export function Modal({ open, onClose, title, children, layer = 0,
-                        contained = false, bodyClassName }: {
+                        contained = false, bodyClassName, headerMeta, headerDivider }: {
   open: boolean
   onClose: () => void
   title: ReactNode
@@ -395,6 +395,10 @@ export function Modal({ open, onClose, title, children, layer = 0,
   contained?: boolean
   /** Replaces the ordinary scrolling/padding body classes. */
   bodyClassName?: string
+  /** Compact supporting information beside the title, wrapping on narrow screens. */
+  headerMeta?: ReactNode
+  /** Replaces the title's ordinary divider, e.g. with review progress. */
+  headerDivider?: ReactNode
 }) {
   const tr = useT()
   const titleId = useId()
@@ -451,8 +455,12 @@ export function Modal({ open, onClose, title, children, layer = 0,
           height: contained ? `${92 - inset * 3}vh` : undefined,
           maxHeight: `${92 - inset * 3}vh`,
         }}>
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-3">
-          <div id={titleId} className="min-w-0 text-[15px] font-semibold">{title}</div>
+        <div className={clsx('flex shrink-0 items-center justify-between gap-3 px-5 py-3',
+          !headerDivider && 'border-b border-[var(--line)]')}>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <div id={titleId} className="min-w-0 flex-1 text-[15px] font-semibold">{title}</div>
+            {headerMeta && <div className="basis-full sm:basis-auto">{headerMeta}</div>}
+          </div>
           <button
             onClick={onClose}
             title={tr('common.closeEsc')}
@@ -462,6 +470,7 @@ export function Modal({ open, onClose, title, children, layer = 0,
             <X size={16} />
           </button>
         </div>
+        {headerDivider}
         <div className={clsx('min-h-0 flex-1', bodyClassName
           ?? 'overflow-y-auto px-5 py-4')}>{children}</div>
       </div>

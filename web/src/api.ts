@@ -1444,6 +1444,13 @@ export interface ArtifactContext {
   triaged_at: string
   worst: number
   sources: string[]
+  /** Whole-case actionable artifacts; temporary skips remain unfinished. */
+  review_progress?: {
+    total: number
+    reviewed: number
+    remaining: number
+    skipped: number
+  }
   related_ips: RelatedIp[]
   file?: {
     exists: boolean
