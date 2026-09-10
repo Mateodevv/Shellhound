@@ -4,6 +4,21 @@
 // state what the rule itself establishes. "Is a backdoor" would be wrong;
 // "can execute commands if it is reachable" is the finding.
 export const en: Record<string, string> = {
+  'database.row.label': 'Row',
+  'database.row.title': '{table} · Row {row}',
+  'database.row.explain': 'Read the recorded row number in an export. This shows the export as it is now; compare it with the finding if the evidence has changed since analysis.',
+  'database.row.source': 'Database export',
+  'database.row.choose': 'Choose an export to inspect',
+  'database.row.multiple': 'This table appears in several exports. The finding may combine observations from them; select the export you want to inspect.',
+  'database.row.noSource': 'No indexed export is available for this table. Check the case evidence and analyze its database export again.',
+  'database.row.truncated': 'This row is too large to show in full. Some values or columns are shortened; inspect the original export for the complete row.',
+  'database.row.valueTruncated': '(shortened)',
+  'artifact.sourceUnavailable': 'The original evidence file is unavailable. Check its location and the case evidence registration.',
+  'viewer.previous': 'Previous part of file',
+  'viewer.next': 'Next part of file',
+  'viewer.reference': 'Back to line {n}',
+  'viewer.lineMissing': 'Line {n} is no longer present in this file. Showing the beginning; the evidence may have changed since analysis.',
+  'viewer.partialLine': 'This part starts within a line. The first displayed line is a continuation.',
   // --- generic -------------------------------------------------------------
   'common.close': 'Close',
   'common.cancel': 'Cancel',

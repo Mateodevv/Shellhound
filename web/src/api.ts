@@ -1017,6 +1017,9 @@ export interface FileContent {
   hashes: FileHashes
   hashes_limited: boolean
   from_line?: number | null
+  starts_mid_line?: boolean
+  requested_line?: number
+  focus_found?: boolean
   lines?: string[]
   rows?: { offset: number; hex: string; ascii: string }[]
 }
@@ -1435,6 +1438,18 @@ export interface RelatedIp {
 }
 
 /** Everything about ONE artifact: the response a decision is made from. */
+export interface DatabaseRowSource {
+  dump_id: number
+  dump_path: string
+}
+
+export interface DatabaseRow extends DatabaseRowSource {
+  table: string
+  row: number
+  columns: { name: string; value: string | null; truncated: boolean }[]
+  truncated: boolean
+}
+
 export interface ArtifactContext {
   artifact: string
   kind: 'file' | 'table' | 'client' | 'dump'
@@ -1454,6 +1469,8 @@ export interface ArtifactContext {
   related_ips: RelatedIp[]
   file?: {
     exists: boolean
+    available?: boolean
+    unavailable_reason?: string
     size?: number
     mtime?: string
     sha256?: string
@@ -1483,6 +1500,7 @@ export interface ArtifactContext {
     dump_path: string
     cms: string
   } | null
+  table_sources?: DatabaseRowSource[]
   dump?: {
     id: number
     path: string

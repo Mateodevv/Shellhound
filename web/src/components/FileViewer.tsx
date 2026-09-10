@@ -27,19 +27,20 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
 }) {
   const tr = useT()
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
-  const [offset, setOffset] = useState(0)
+  const [offset, setOffset] = useState<number | null>(null)
+  const requestedLine = mode === 'raw' && offset == null && focusLine != null && focusLine > 0
+    ? focusLine : null
 
-  useEffect(() => { setOffset(0); setMode('raw') }, [path])
+  useEffect(() => { setOffset(null); setMode('raw') }, [slug, path, focusLine])
 
   const { data, isFetching, isError, error } = useQuery({
-    queryKey: ['file', slug, path, mode, offset],
+    queryKey: ['file', slug, path, mode, offset, requestedLine],
     queryFn: () => api<FileContent>(
-      `/api/cases/${slug}/file?path=${encodeURIComponent(path!)}&mode=${mode}&offset=${offset}`),
+      `/api/cases/${slug}/file?path=${encodeURIComponent(path!)}&mode=${mode}&offset=${offset ?? 0}` +
+      (requestedLine == null ? '' : `&line=${requestedLine}`)),
     enabled: Boolean(path),
   })
 
-  const pages = data ? Math.max(1, Math.ceil(data.size / data.window)) : 1
-  const page = data ? Math.floor(data.offset / data.window) + 1 : 1
   const copyableContent = data?.mode === 'raw'
     ? data.lines?.join('\n')
     : data?.rows?.map((row) =>
@@ -56,7 +57,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
           <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
             {(['raw', 'hex'] as const).map((m) => (
               <button key={m}
-                onClick={() => { setMode(m); setOffset(0) }}
+                onClick={() => { setMode(m); setOffset(null) }}
                 className={clsx(
                   'cursor-pointer px-3 py-1.5 text-[12px] font-medium uppercase transition-colors',
                   mode === m
@@ -67,20 +68,22 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
             ))}
           </div>
 
-          {data && data.size > data.window && (
+          {data && (data.offset > 0 || !data.eof) && (
             <div className="flex items-center gap-1.5 text-[12px] text-[var(--muted)]">
-              <Button variant="ghost" disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - data.window))}>
+              <Button variant="ghost" disabled={data.offset === 0 || isFetching}
+                title={tr('viewer.previous')}
+                onClick={() => setOffset(Math.max(0, data.offset - data.window))}>
                 <ChevronLeft size={14} />
               </Button>
-              <span className="tabular whitespace-nowrap">
-                {tr('viewer.page')} {page} / {pages}
-              </span>
-              <Button variant="ghost" disabled={data.eof}
-                onClick={() => setOffset(offset + data.window)}>
+              <Button variant="ghost" disabled={data.eof || isFetching}
+                title={tr('viewer.next')}
+                onClick={() => setOffset(data.offset + data.length)}>
                 <ChevronRight size={14} />
               </Button>
             </div>
+          )}
+          {mode === 'raw' && focusLine != null && focusLine > 0 && offset != null && (
+            <Button variant="ghost" onClick={() => setOffset(null)}>{tr('viewer.reference', { n: focusLine })}</Button>
           )}
 
           {data && (
@@ -109,6 +112,10 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
           </div>
         )}
 
+        {isFetching && !data && <p role="status" className="text-[13px] text-[var(--muted)]">{tr('common.loading')}</p>}
+        {data?.focus_found === false && <p role="status" className="rounded-lg bg-[var(--panel-2)] p-3 text-[13px] text-[var(--warn)]">
+          {tr('viewer.lineMissing', { n: focusLine ?? 0 })}
+        </p>}
         {isError && (
           <div className="rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-2 text-[13px] text-[var(--danger-text)]">
             {String((error as Error)?.message ?? error)}
@@ -149,9 +156,9 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
           </pre>
         )}
 
-        {data && data.from_line == null && data.mode === 'raw' && (
+        {data && data.starts_mid_line && data.mode === 'raw' && (
           <p className="text-[11px] text-[var(--muted)]">
-            {tr('viewer.midFile')}
+            {tr('viewer.partialLine')}
           </p>
         )}
       </div>

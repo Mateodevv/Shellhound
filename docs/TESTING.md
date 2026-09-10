@@ -240,6 +240,29 @@ combined shape, not the sixty-odd combinations. The combinations mostly retest
 the same decision, and a suite that takes a quarter of an hour is a suite
 people stop running before they push.
 
+## Evidence navigation regressions
+
+Run `python -m unittest tests.test_evidence_files tests.test_evidence_rows
+tests.test_evidence_navigation tests.test_reveal_file tests.test_windows_paths`
+(on one command line) with the project environment. These cover source line
+lookup beyond the first raw page, UTF-8 byte boundaries, Explorer paths with
+spaces, SQL table row ordinals across INSERTs, compressed exports, bounded
+previews, multiple exports, case isolation, and unavailable evidence.
+
+The corresponding interface tests are `FileViewer.test.tsx` and
+`DatabaseRowWindow.test.tsx`. For browser verification, use harmless text and
+SQL exports in a disposable workspace: open a distant line, page backward and
+forward, and open the same table in two exports. Verify row selection and that
+closing its window preserves an unsaved analyst note. Stop the test server
+afterward; do not reuse real case evidence for these checks.
+
+Database finding links identify a **table row ordinal**, not a line of SQL.
+The row viewer shows the selected export's current contents. Existing findings
+can combine observations from several exports; the user must choose a source
+when several indexed exports contain the table. No existing finding identity
+or triage decision is rewritten. Missing or unregistered evidence remains
+unavailable until its location or case registration is corrected.
+
 ## Where a new test goes
 
 If you fixed a shipped bug, `test_regressions.py`, with the input that exposed
