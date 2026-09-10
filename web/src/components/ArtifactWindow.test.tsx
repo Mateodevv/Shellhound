@@ -104,6 +104,61 @@ beforeEach(() => {
   vi.mocked(post).mockResolvedValue({})
 })
 
+describe('case review progress', () => {
+  it('shows full-case totals and refreshes after saved decisions without losing a draft', async () => {
+    const initial = context({ review_progress: { total: 2500, reviewed: 1700, remaining: 800, skipped: 2 } })
+    vi.mocked(api).mockResolvedValue(initial)
+    const qc = testQueryClient()
+    renderWithProviders(window_(stub()), qc)
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    expect(bar).toHaveAttribute('aria-valuemax', '2500')
+    expect(bar).toHaveAttribute('aria-valuenow', '1700')
+    expect(bar).toHaveAttribute('aria-valuetext', expect.stringMatching(/1,700.*2,500 reviewed.*800 remaining/))
+    await userEvent.setup().type(noteBox(), 'Keep my reasoning')
+
+    vi.mocked(api).mockResolvedValue(context({
+      review_progress: { total: 2500, reviewed: 1701, remaining: 799, skipped: 2 },
+    }))
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['artifact', 'case'] }) })
+    await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '1701'))
+    expect(noteBox().value).toBe('Keep my reasoning')
+  })
+
+  it('does not advance when a decision is only selected or fails to save', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      review_progress: { total: 10, reviewed: 4, remaining: 6, skipped: 1 },
+    }))
+    const { onSave } = mount()
+    onSave.mockRejectedValue(new Error('Could not save'))
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'False positive: Discard' }))
+    expect(bar).toHaveAttribute('aria-valuenow', '4')
+    await user.click(screen.getByRole('button', { name: 'Save decision' }))
+    expect(await screen.findByText(/Could not save/)).toBeVisible()
+    expect(bar).toHaveAttribute('aria-valuenow', '4')
+  })
+
+  it('shows completed review without suggesting every finding was harmless', async () => {
+    vi.mocked(api).mockResolvedValue(context({ triage: 'confirmed',
+      review_progress: { total: 10, reviewed: 10, remaining: 0, skipped: 0 },
+    }))
+    mount()
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    expect(bar).toHaveAttribute('aria-valuenow', '10')
+    expect(bar).toHaveAttribute('aria-valuetext', '10 / 10 reviewed · 0 remaining')
+    expect(screen.getByText('true positive')).toBeVisible()
+  })
+
+  it('does not present missing or failed counts as completed review', async () => {
+    vi.mocked(api).mockRejectedValue(new Error('Context unavailable'))
+    mount()
+    await waitFor(() => expect(api).toHaveBeenCalled())
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.queryByText(/0 remaining/)).not.toBeInTheDocument()
+  })
+})
+
 describe('the note box', () => {
   it('enables decisions after an intentionally empty server note has loaded', async () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: '' }))
