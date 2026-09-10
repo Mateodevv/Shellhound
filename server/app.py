@@ -43,7 +43,7 @@ from server.analysis import (AnalysisReceipts, current_warning_count, decode_job
 from server import scan_retries
 from server.paths import display_path, io_path
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
-                              counts as artifact_counts, uri_path,
+                              counts as artifact_counts, review_progress, uri_path,
                               uri_targets, web_path)
 from server.chain import case_chain
 from server.finding_categories import categorized_art_sql, top_findings
@@ -2134,6 +2134,8 @@ def create_app(config: Config) -> FastAPI:
                                   default=""),
                 "worst": min(f["severity"] for f in findings),
                 "sources": sorted({f["source"] for f in findings}),
+                "review_progress": review_progress(
+                    conn, ruleswitch.disabled_ids(config.workspace)),
             }
             # The preview focuses the line of the STRONGEST finding that named
             # one -- that is the line the analyst came here to read.
