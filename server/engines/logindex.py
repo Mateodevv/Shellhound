@@ -31,7 +31,9 @@ import uuid
 import os
 import re
 import sqlite3
-from collections import Counter
+import time
+from collections import Counter, deque
+from functools import lru_cache
 from pathlib import Path
 
 from server import db, huntrules, ruleswitch
@@ -3118,15 +3120,91 @@ def requests_for_names(case_dir, names, limit=20000):
         conn.close()
 
 
+_FIRST_SIGN_QUERY_SECONDS = 2.0
+
+
+def _first_sign_alert_anchors(conn, ip_id, kinds, deadline=None):
+    """Date only requests that actually contribute to a known alert.
+
+    The stored example is an insertion-order sample and may be a failed
+    request to the same URI. It cannot date a response-gated alert. Walk
+    this client's dated requests in event order instead, reusing the same
+    classifier and login rules as the indexer. A login anchor is an attempt,
+    never a claim that the credentials worked.
+
+    Unknown rules and queries that cannot finish within the small dashboard
+    budget remain undated. Already found anchors are safe: every earlier
+    eligible request has been considered before they are recorded.
+    """
+    result = {kind: None for kind in kinds}
+    pending = set(kinds) & {
+        "sqli", "traversal", "upload_php", "cms_dir_php",
+        "login_flood", "login_success",
+    }
+    if not pending:
+        return result
+    if deadline is None:
+        deadline = time.monotonic() + _FIRST_SIGN_QUERY_SECONDS
+    if time.monotonic() >= deadline:
+        return result
+
+    @lru_cache(maxsize=4096)
+    def uri_signals(uri):
+        return frozenset(_access_uri_signals(uri))
+
+    login_window = deque()
+    cursor = None
+    conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 10000)
+    try:
+        cursor = conn.execute(
+            "SELECT r.epoch, r.tz, r.method, r.status, u.text AS uri "
+            "FROM requests r JOIN strings u ON u.id = r.uri "
+            "WHERE r.ip = ? AND r.epoch > 0 AND r.tz IS NOT NULL "
+            "AND (r.status BETWEEN 200 AND 299 OR r.method = 'POST') "
+            "ORDER BY r.epoch, r.rowid", (ip_id,))
+        for row in cursor:
+            if time.monotonic() >= deadline:
+                break
+            anchor = (row["epoch"], row["tz"], row["uri"])
+            if 200 <= row["status"] < 300:
+                matched = pending.intersection(uri_signals(row["uri"]))
+                for kind in matched:
+                    result[kind] = anchor
+                pending.difference_update(matched)
+            if (pending.intersection({"login_flood", "login_success"})
+                    and row["method"] == "POST"
+                    and LOGIN_POST_ENDPOINTS.search(row["uri"])):
+                if "login_flood" in pending:
+                    result["login_flood"] = anchor
+                    pending.remove("login_flood")
+                if "login_success" in pending:
+                    login_window.append(anchor)
+                    # Match _busiest_window's exclusive upper boundary.
+                    while anchor[0] - login_window[0][0] >= BF_WINDOW:
+                        login_window.popleft()
+                    if len(login_window) >= BF_THRESHOLD:
+                        result["login_success"] = login_window[0]
+                        pending.remove("login_success")
+            if not pending:
+                break
+    except sqlite3.OperationalError as exc:
+        if "interrupted" not in str(exc).lower():
+            raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        conn.set_progress_handler(None, 0)
+    return result
+
+
 def chain_facts(case_dir, leaves=(), ips=()):
     """The time anchors for the case chronology -- all MEASURED, nothing
     inferred.
 
     For every file name: when was it first requested, when was it first
-    answered with 2xx, when last. The first 2xx is the most defensible anchor
-    a case has for "this file was there" -- the mtime of the copy on the
-    forensic machine is not, because nobody can tell from it whether it comes
-    from the original or from the copying.
+    answered with 2xx, when last. A log dates the observed request and
+    response; the response alone does not prove a file existed or executed.
+    The mtime of an evidence copy may instead reflect copying or extraction.
 
     For every client: first and last request as well as the time of the URI
     that triggered its alert -- the alert table itself carries no time, but
@@ -3179,8 +3257,11 @@ def chain_facts(case_dir, leaves=(), ips=()):
             for ip_id, ip in conn.execute(
                     f"SELECT id, ip FROM ips WHERE ip IN ({marks})", chunk):
                 ids[ip_id] = ip
+        anchor_deadline = time.monotonic() + _FIRST_SIGN_QUERY_SECONDS
         for ip_id, alerts in _alerts_by_ip(conn, ids).items():
             ip = ids[ip_id]
+            verified = _first_sign_alert_anchors(
+                conn, ip_id, {a["kind"] for a in alerts}, anchor_deadline)
             for a in alerts:
                 # When this URI first came from this client. Without an
                 # example URI the alert stays without a time -- then it is
@@ -3192,7 +3273,13 @@ def chain_facts(case_dir, leaves=(), ips=()):
                         "SELECT min(r.epoch) FROM requests r "
                         "WHERE r.ip = ? AND r.uri = (SELECT id FROM strings "
                         "WHERE text = ?)", (ip_id, a["example"])).fetchone()[0]
-                out["clients"][ip]["alerts"].append({**a, "epoch": stamp})
+                anchor = verified.get(a["kind"])
+                out["clients"][ip]["alerts"].append({
+                    **a, "epoch": stamp,
+                    "first_sign_epoch": anchor[0] if anchor else None,
+                    "first_sign_tz": anchor[1] if anchor else None,
+                    "first_sign_example": anchor[2] if anchor else None,
+                })
         return out
     finally:
         conn.close()

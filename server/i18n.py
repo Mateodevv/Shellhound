@@ -9,9 +9,11 @@ LANGUAGES = ("en",)
 DEFAULT = "en"
 
 CATALOGUE: dict[str, str] = {
-    "chain.file.firstOk": "First successful request for {name}",
-    "chain.file.wasThere": "the file was there at this point at the latest",
-    "chain.file.probeBefore": ". A request for it{by} came up empty at {at} — so the file appeared in between",
+    "chain.file.firstOk": "First request for {name} answered 2xx",
+    "chain.file.wasThere": "The access log records a 2xx response for this path; this alone does not establish successful exploitation.",
+    "chain.file.probeBefore": " An earlier request for it{by} was recorded at {at}.",
+    "chain.hunt.first": "First selected Pattern Hunt match from {ip}",
+    "chain.hunt.detail": "{method} {uri} · {status}; selected evidence from a confirmed finding. An HTTP response alone does not establish successful exploitation.",
     "chain.file.by": " from {ip}",
     "chain.file.firstTry": "First request for {name}",
     "chain.file.firstTry.detail": "requested {n}×, never answered with 2xx — the log does not prove a successful access",
