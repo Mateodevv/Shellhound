@@ -108,6 +108,21 @@ def redact(text):
                   r"\1[redacted]", text)
 
 
+def wait_for_child(process, timeout=None):
+    """Wait interruptibly without subprocess's extra KeyboardInterrupt wait.
+
+    On Windows with Python 3.10, a signal at a timed wait's deadline can make
+    that extra wait negative, which Windows treats as a very long timeout.
+    Polling keeps cancellation responsive before forwarding it to the child.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while process.poll() is None:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        time.sleep(0.1 if remaining is None else min(0.1, remaining))
+
+
 def stop_child(process, *, timeout=5):
     if process.poll() is not None:
         return
@@ -116,16 +131,9 @@ def stop_child(process, *, timeout=5):
             process.send_signal(signal.CTRL_BREAK_EVENT)
         else:
             os.killpg(process.pid, signal.SIGTERM)
-        if timeout is None:
-            # Server jobs must finish recording cancellation before an update
-            # can acquire the checkout lock. Keep signals responsive on Windows.
-            while process.poll() is None:
-                try:
-                    process.wait(timeout=0.5)
-                except subprocess.TimeoutExpired:
-                    pass
-        else:
-            process.wait(timeout=timeout)
+        # With no deadline, workers must finish recording cancellation before
+        # an update can acquire the checkout lock. A second signal still works.
+        wait_for_child(process, timeout)
     except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
@@ -154,14 +162,16 @@ def command(arguments, *, cwd, label, capture=True, env=None, timeout=300):
     last_progress = started
     try:
         while True:
+            if not capture:
+                wait_for_child(process)
+                output = None
+                break
             try:
                 # A finite wait also lets Windows dispatch SIGBREAK while a
                 # supervised child is running. An infinite wait delays cleanup.
                 output, _ = process.communicate(timeout=0.5)
                 break
             except subprocess.TimeoutExpired:
-                if not capture:
-                    continue  # The server has no runtime deadline.
                 if time.monotonic() - started >= timeout:
                     raise StartupError(f"{label} took too long. Check connectivity, proxy settings, "
                                        "and tool availability, then run the launcher again.") from None
