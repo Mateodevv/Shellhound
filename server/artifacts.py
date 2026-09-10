@@ -132,6 +132,22 @@ def counts(conn):
             "total": sum(sev.values())}
 
 
+def review_progress(conn, muted=()):
+    """Case-wide decisions, independent of list filters and pagination.
+
+    Match the normal review scope: actionable artifacts still in Findings,
+    including dismissed items. A temporary skip is not a final decision.
+    """
+    states = {row["triage"]: row["n"] for row in db.rows(
+        conn, f"WITH art AS ({art_sql(muted)}) "
+              f"SELECT triage, count(*) n FROM art "
+              f"WHERE worst < 3 AND {MUTED_CLAUSE} GROUP BY triage")}
+    reviewed = states.get("confirmed", 0) + states.get("dismissed", 0)
+    remaining = states.get("new", 0) + states.get("reviewed", 0)
+    return {"total": reviewed + remaining, "reviewed": reviewed,
+            "remaining": remaining, "skipped": states.get("reviewed", 0)}
+
+
 def uri_path(uri):
     """The path part of a URI, lower-cased, without the query."""
     return str(uri or "").split("?", 1)[0].split("#", 1)[0].strip().lower()

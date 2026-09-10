@@ -361,6 +361,14 @@ a partially checked box means only some files are selected. Selection follows
 the current category and filters and covers the loaded list (up to 2,000
 artifacts). Check the selected count before applying the decision.
 
+The review window's thin header line shows **Case review** progress, with
+reviewed and remaining counts beside the title. Totals cover the whole case,
+including items hidden by list filters or beyond the 2,000-item list limit.
+Confirmed and dismissed artifacts count as reviewed; **Skip for now** stays
+unfinished. Informational-only observations and hidden new detections are
+excluded. The bar updates after a successful save, and full progress means
+review is complete, not that the evidence was harmless.
+
 | Key | Action |
 |---|---|
 | <kbd>j</kbd> / <kbd>k</kbd> | Next / previous artifact |

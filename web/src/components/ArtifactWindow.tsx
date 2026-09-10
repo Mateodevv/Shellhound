@@ -283,6 +283,12 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     ? `${rootName} · ${rel}`
     : artifact.artifact
   const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifactKey
+  const progress = !contextError && ctx?.artifact === artifact.artifact
+    ? ctx.review_progress : undefined
+  const progressText = progress && tr('artifact.reviewProgress.counts', {
+    done: formatCount(progress.reviewed), total: formatCount(progress.total),
+    remaining: formatCount(progress.remaining),
+  })
   const controlsDisabled = !contextReady || saving
   const Icon = KIND_ICON[kind] ?? Bug
   const focusLine = findings.find((finding) => finding.line)?.line ?? null
@@ -476,6 +482,23 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
 
   return (
     <Modal open onClose={() => { if (!saving) onClose() }} contained bodyClassName="overflow-hidden"
+      headerMeta={progress && progress.total > 0 && (
+        <div className="text-[11px] font-normal text-[var(--muted)] tabular"
+          title={tr('artifact.reviewProgress.explain', { skipped: formatCount(progress.skipped) })}>
+          <span className="mr-2">{tr('artifact.reviewProgress.label')}</span>
+          <span className="text-[var(--fg)]">{progressText}</span>
+        </div>
+      )}
+      headerDivider={progress && progress.total > 0 && (
+        <div role="progressbar" aria-label={tr('artifact.reviewProgress.label')}
+          aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.reviewed}
+          aria-valuetext={progressText || undefined}
+          className="h-0.5 shrink-0 overflow-hidden bg-[var(--line)]">
+          <div className="h-full transition-[width] duration-300 motion-reduce:transition-none"
+            style={{ width: `${100 * progress.reviewed / progress.total}%`,
+              backgroundColor: progress.remaining === 0 ? 'var(--ok)' : 'var(--accent)' }} />
+        </div>
+      )}
       title={<span className="flex min-w-0 items-center gap-2">
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
