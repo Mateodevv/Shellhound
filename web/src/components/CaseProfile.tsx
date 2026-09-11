@@ -1,8 +1,9 @@
 import { useState, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
-import { api, patch, post, type CaseInfo } from '../api'
-import { newCaseProfile, type CaseProfile, type Organization } from '../opencti'
+import { api, patch, type CaseInfo } from '../api'
+import { newCaseProfile, type CaseProfile } from '../opencti'
+import { AffectedOrganizationFields } from './AffectedOrganizationFields'
 import { useT } from '../i18n'
 import { Button, Modal } from './ui'
 
@@ -42,7 +43,7 @@ export function CaseProfileForm({ slug, info, onClose }: { slug: string; info: C
     onClose()
   } })
   return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!invalidDates) save.mutate() }}>
-    <CtiField label={tr('cti.caseId')}><input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="PIM-5165" className={ctiInput} /><span>{tr('cti.caseIdHint')}</span></CtiField>
+    <CtiField label={tr('cti.caseId')}><input value={reference} onChange={(e) => setReference(e.target.value)} className={ctiInput} /><span>{tr('cti.caseIdHint')}</span></CtiField>
     <CaseProfileFields profile={profile} onChange={setProfile} />
     <CtiError error={invalidDates ? tr('cti.dateError') : save.error} />
     <div className="flex justify-end gap-2"><Button type="button" onClick={onClose}>{tr('common.cancel')}</Button><Button type="submit" variant="primary" disabled={save.isPending || invalidDates}>{tr('common.save')}</Button></div>
@@ -53,28 +54,14 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
   profile: CaseProfile; onChange: Dispatch<SetStateAction<CaseProfile>>; section?: 'all' | 'affected' | 'technical' | 'hidden'; requiredContext?: boolean
 }) {
   const tr = useT()
-  const qc = useQueryClient()
-  const [sectors, setSectors] = useState(profile.sectors.join(', '))
-  const [countries, setCountries] = useState(profile.countries.join(', '))
-  const organizations = useQuery({ queryKey: ['organizations'], queryFn: () => api<Organization[]>('/api/organizations') })
   const change = <K extends keyof CaseProfile>(key: K, value: CaseProfile[K]) => onChange(previous => ({ ...previous, [key]: value }))
-  const create = useMutation({ mutationFn: () => post<Organization>('/api/organizations', {}), onSuccess: (org) => {
-    onChange(previous => ({ ...previous, organization_id: org.id, pseudonym: org.name }))
-    qc.setQueryData<Organization[]>(['organizations'], previous => [...(previous ?? []), org])
-  } })
   return <>
     {section === 'all' && <>
     <CtiField label={tr('cti.summary')}><textarea className={ctiInput} rows={3} value={profile.summary} onChange={(e) => change('summary', e.target.value)} /></CtiField>
     </>}
     <div hidden={section !== 'all' && section !== 'affected'}><div className="flex flex-col gap-4">
-    <CtiField label={`${tr('cti.pseudonym')}${requiredContext ? ' *' : ''}`}><select required={requiredContext && section === 'affected'} value={profile.organization_id} onChange={(e) => onChange({ ...profile, organization_id: e.target.value, pseudonym: organizations.data?.find(org => org.id === e.target.value)?.name || '' })} className={ctiInput}>
-      <option value="">{tr('cti.none')}</option>{organizations.data?.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
-    </select><span>{tr('cti.pseudonymHint')}</span></CtiField>
-    <Button type="button" onClick={() => create.mutate()} disabled={create.isPending}><Plus size={13} />{tr('cti.newPseudonym')}</Button>
-    <CtiError error={organizations.error || create.error} />
+    <AffectedOrganizationFields profile={profile} onChange={onChange} active={section === 'all' || section === 'affected'} required={requiredContext} />
     <div className="grid gap-3 sm:grid-cols-2">
-      <CtiField label={`${tr('cti.sectors')}${requiredContext ? ' *' : ''}`}><input required={requiredContext && section === 'affected'} className={ctiInput} value={sectors} onChange={(e) => { setSectors(e.target.value); change('sectors', e.target.value.split(',').map(v => v.trim()).filter(Boolean)) }} /></CtiField>
-      <CtiField label={`${tr('cti.countries')}${requiredContext ? ' *' : ''}`}><input required={requiredContext && section === 'affected'} className={ctiInput} placeholder="DE, AT" value={countries} onChange={(e) => { setCountries(e.target.value); change('countries', e.target.value.split(',').map(v => v.trim()).filter(Boolean)) }} /></CtiField>
       <CtiField label={tr('cti.firstSeen')}><input type="date" className={ctiInput} value={profile.first_seen.slice(0, 10)} onChange={(e) => change('first_seen', e.target.value)} /></CtiField>
       <CtiField label={tr('cti.lastSeen')}><input type="date" className={ctiInput} value={profile.last_seen.slice(0, 10)} onChange={(e) => change('last_seen', e.target.value)} /></CtiField>
     </div>

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { post, type CaseInfo } from '../api'
+import { api, post, type CaseInfo } from '../api'
+import type { Geography } from './AffectedOrganizationFields'
 import { useOpenCtiSettings, newCaseProfile } from '../opencti'
 import { useT } from '../i18n'
 import { Button, Modal, Tag } from './ui'
@@ -26,7 +27,8 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
   const invalidCountries = profile.countries.some(value => !/^[A-Za-z]{2}$/.test(value))
   const invalidDates = !!profile.first_seen && !!profile.last_seen && profile.first_seen > profile.last_seen
   const caseValid = Boolean(name.trim() && (!configured || (reference.trim() && profile.summary.trim())))
-  const affectedValid = Boolean(profile.organization_id && profile.sectors.length && profile.countries.length && !invalidCountries && !invalidDates)
+  const affectedValid = Boolean((profile.organization_name?.trim() || (profile.organization_id && profile.pseudonym)) && profile.sectors.length && profile.countries.length && !invalidCountries && !invalidDates)
+  const geography = useQuery({ queryKey: ['profile-geography'], queryFn: () => api<Geography>('/api/profile/geography'), enabled: configured, staleTime: Infinity })
   const technicalValid = profile.software.every(item => item.name.trim()) && profile.vulnerabilities.every(item => item.name.trim() && (/^CVE-\d{4}-\d{4,}$/i.test(item.name.trim()) || item.description.trim()))
   const valid = caseValid && (!configured || (affectedValid && technicalValid))
   const stepValid = current === 'case' ? caseValid : current === 'affected' ? affectedValid : current === 'technical' ? technicalValid : valid
@@ -55,7 +57,7 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
           <p className="text-[13px] text-[var(--muted)]">{tr(`wizard.help.${current}${!configured && current === 'case' ? '.local' : ''}`)}</p>
           {current === 'case' && <>
             <CtiField label={`${tr('wizard.name')} *`}><input autoFocus required maxLength={200} className={ctiInput} value={name} onChange={e => setName(e.target.value)} /></CtiField>
-            <CtiField label={`${tr('cti.caseId')}${configured ? ' *' : ''}`}><input required={configured} maxLength={200} placeholder="PIM-5165" className={ctiInput} value={reference} onChange={e => setReference(e.target.value)} /></CtiField>
+            <CtiField label={`${tr('cti.caseId')}${configured ? ' *' : ''}`}><input required={configured} maxLength={200} className={ctiInput} value={reference} onChange={e => setReference(e.target.value)} /></CtiField>
             <CtiField label={`${tr('cti.summary')}${configured ? ' *' : ''}`}><textarea required={configured} maxLength={10000} rows={4} className={ctiInput} value={profile.summary} onChange={e => setProfile({ ...profile, summary: e.target.value })} /></CtiField>
           </>}
           {configured && <CaseProfileFields profile={profile} onChange={setProfile} section={current === 'affected' || current === 'technical' ? current : 'hidden'} requiredContext />}
@@ -66,8 +68,11 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
               {summaryItem(tr('wizard.name'), name)}{summaryItem(tr('cti.caseId'), reference)}
               <div className="sm:col-span-2">{summaryItem(tr('cti.summary'), profile.summary)}</div>
               {configured && <>
-                {summaryItem(tr('cti.pseudonym'), profile.pseudonym)}{summaryItem(tr('cti.marking'), profile.marking)}
-                {summaryItem(tr('cti.sectors'), profile.sectors.join(', '))}{summaryItem(tr('cti.countries'), profile.countries.map(c => c.toUpperCase()).join(', '))}
+                {summaryItem(tr('cti.organizationName'), profile.organization_name || profile.pseudonym)}{summaryItem(tr('cti.marking'), profile.marking)}
+                {summaryItem(tr('cti.sectors'), profile.sectors.join(', '))}{summaryItem(tr('cti.subsectors'), (profile.subsectors ?? []).map(item => item.name).join(', '))}
+                {summaryItem(tr('cti.country'), profile.countries.map(code => geography.data?.countries.find(item => item.code === code)?.name || code).join(', '))}
+                {summaryItem(tr('cti.state'), geography.data?.states[profile.countries[0]]?.find(item => item.code === profile.state)?.name || profile.state || '')}
+                {summaryItem(tr('cti.city'), profile.city || '')}
                 {summaryItem(tr('cti.firstSeen'), profile.first_seen)}{summaryItem(tr('cti.lastSeen'), profile.last_seen)}
                 {summaryItem(tr('cti.software'), profile.software.map(item => `${item.name}${item.version ? ` · ${item.version}` : ''}`).join('\n'))}
               </>}

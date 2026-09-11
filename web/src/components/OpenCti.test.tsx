@@ -4,6 +4,7 @@ import { api, post, patch, type CaseInfo, type Ioc } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { IocBox } from '../views/IocBox'
 import { OpenCtiDetails, OpenCtiToolbar } from './OpenCti'
+import { OpenCtiActivity } from './OpenCtiActivity'
 import { OpenCtiExportDialog } from './OpenCtiExport'
 import { CaseProfileForm } from './CaseProfile'
 import { initialExportOptions, type OpenCtiPreview } from '../opencti'
@@ -22,12 +23,55 @@ beforeEach(() => {
     if (path.endsWith('/iocs/cross-case')) return { entries: [], matched_iocs: 0, cases_skipped: 0 } as never
     if (path.endsWith('/iocs')) return [file, hash] as never
     if (path === '/api/organizations') return [{ id: 'org-1', name: 'Organization-abc123' }] as never
+    if (path === '/api/opencti/sectors') return { sectors: [], stale: false } as never
+    if (path === '/api/profile/geography') return { countries: [], states: {} } as never
     return { lookups: [], exports: [], sync: [], jobs: [] } as never
   })
   vi.mocked(post).mockResolvedValue({ job_id: 1 })
 })
 
 describe('OpenCTI user intent', () => {
+  it('preselects one indicator per confirmed webshell and preserves an opt-out through preview updates', async () => {
+    const initial = { ...preview, iocs: [
+      ...preview.iocs.map(row => ({ ...row, indicator_supported: true, indicator_default: true })),
+      { ...preview.iocs[1], id: 3, type: 'file', value: 'confirmed-file', indicator_default: true },
+      { ...preview.iocs[1], id: 4, value: 'other-hash', object_ids: ['file--b'], indicator_default: false },
+    ] }
+    vi.mocked(post).mockImplementation(async path => path.endsWith('/preview') ? { ...initial, preview_id: 'updated' } : { job_id: 1 })
+    renderWithProviders(<OpenCtiExportDialog slug="case" initial={initial} initialOptions={initialExportOptions([1, 2, 3, 4])} onClose={() => {}} onQueued={() => {}} />)
+    const checkbox = screen.getByRole('checkbox', { name: 'Create Indicator: confirmed-file' })
+    expect(checkbox).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: `Create Indicator: ${hash.value}` })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Create Indicator: other-hash' })).not.toBeChecked()
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [3], sample_ids: [] })))
+    fireEvent.click(checkbox)
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [] })))
+    expect(checkbox).not.toBeChecked()
+    expect(vi.mocked(post).mock.calls.every(([url]) => url.endsWith('/preview'))).toBe(true)
+  })
+  it('enriches an unknown CVE only after creation approval and connector selection', async () => {
+    const cve = { ...file, type: 'vulnerability', value: 'CVE-2026-12345' }
+    vi.mocked(post).mockImplementation(async path => path.endsWith('/enrichment/preview') ? {
+      entities: [{ ioc_id: 1, id: null, value: cve.value, type: 'vulnerability', requires_creation: true, requires_transfer: false }],
+      connectors: [{ id: 'epss', name: 'FIRST EPSS', scope: ['vulnerability'], active: true, auto: false }], warnings: [],
+    } : { job_id: 1 })
+    renderWithProviders(<OpenCtiToolbar slug="case" iocs={[cve]} selectedIds={[1]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    const enrich = await screen.findByRole('button', { name: 'Enrich via OpenCTI' })
+    await waitFor(() => expect(enrich).toBeEnabled())
+    fireEvent.click(enrich)
+    fireEvent.click(await screen.findByRole('tab', { name: /^CVEs/ }))
+    expect(screen.getByText(cve.value)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Run selected connectors' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Create the listed missing objects/ }))
+    expect(screen.getByRole('button', { name: 'Run selected connectors' })).toBeDisabled()
+    expect(screen.queryByRole('tab', { name: 'Compatible connectors' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Choose connectors' })).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: 'FIRST EPSS' })).toBeVisible()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'FIRST EPSS' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run selected connectors' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/enrich', { ioc_ids: [1], connector_ids: ['epss'], create_missing: true }))
+  })
+
   it('uses category selection and the connector select-all for enrichment', async () => {
     vi.mocked(post).mockImplementation(async path => path.endsWith('/enrichment/preview') ? {
       entities: [{ ioc_id: 1, id: 'ip', value: '198.51.100.1', type: 'ip', requires_creation: false },
@@ -42,7 +86,7 @@ describe('OpenCTI user intent', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /^Hashes/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: IoCs' }))
     expect(screen.queryByRole('checkbox', { name: /Create the listed/ })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: 'Compatible connectors' }))
+    expect(screen.getByRole('checkbox', { name: 'First connector' })).toBeVisible()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Compatible connectors' }))
     expect(screen.getByRole('checkbox', { name: 'First connector' })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'Second connector' })).toBeChecked()
@@ -58,23 +102,28 @@ describe('OpenCTI user intent', () => {
     const original = vi.mocked(api).getMockImplementation()!
     vi.mocked(api).mockImplementation(async path => path.endsWith('/iocs') ? caseIocs as never : original(path))
     renderWithProviders(<IocBox slug="case" gotoView={() => {}} />)
-    const check = await screen.findByRole('button', { name: 'Check all' })
-    await waitFor(() => expect(check).toBeEnabled())
+    const menu = await screen.findByRole('button', { name: 'OpenCTI actions' })
+    expect(screen.queryByRole('button', { name: 'Check all' })).not.toBeInTheDocument()
+    await screen.findByRole('checkbox', { name: 'Select 198.51.100.55' })
     expect(within(screen.getByRole('list', { name: 'Object list' })).getAllByRole('listitem')).toHaveLength(50)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select 198.51.100.55' }))
     fireEvent.click(screen.getByRole('button', { name: /^IPs/ }))
     fireEvent.change(screen.getByPlaceholderText('Search objects…'), { target: { value: '198.51.100.1' } })
     expect(screen.queryByRole('button', { name: 'Open sample.php' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
-    fireEvent.click(check)
+    fireEvent.click(menu)
+    expect(post).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Check all' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/lookup', { ioc_ids: caseIocs.map(ioc => ioc.id) }))
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
     expect(post).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('status')).toHaveTextContent('Follow progress in Activity')
   })
 
-  it.each(['Transfer all', 'Enrich all'])('%s opens a preview for all case entries without executing it', async label => {
+  it.each(['Enrich all'])('%s opens a preview for all case entries without executing it', async label => {
     vi.mocked(post).mockResolvedValue(label === 'Transfer all' ? preview : { entities: [], connectors: [], warnings: [] })
-    renderWithProviders(<OpenCtiToolbar mode="inline" actionScope="case" slug="case" iocs={[file, hash]} selectedIds={[1]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    renderWithProviders(<OpenCtiToolbar mode="inline" grouped actionScope="case" slug="case" iocs={[file, hash]} selectedIds={[1]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'OpenCTI actions' }))
     const action = await screen.findByRole('button', { name: label })
     await waitFor(() => expect(action).toBeEnabled())
     expect(post).not.toHaveBeenCalled()
@@ -94,7 +143,7 @@ describe('OpenCTI user intent', () => {
 
   it('disables all case actions when the case has no IOC entries', async () => {
     renderWithProviders(<OpenCtiToolbar mode="inline" actionScope="case" slug="case" iocs={[]} selectedIds={[1]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
-    for (const label of ['Check all', 'Transfer all', 'Enrich all']) expect(await screen.findByRole('button', { name: label })).toBeDisabled()
+    for (const label of ['Check all', 'Enrich all']) expect(await screen.findByRole('button', { name: label })).toBeDisabled()
     expect(post).not.toHaveBeenCalled()
   })
 
@@ -141,14 +190,14 @@ describe('OpenCTI user intent', () => {
     fireEvent.click(enrich)
     const run = await screen.findByRole('button', { name: 'Run selected connectors' })
     expect(run).toBeDisabled()
-    fireEvent.click(screen.getByRole('tab', { name: 'Compatible connectors' }))
+    expect(screen.getByText('Select at least one connector to start enrichment.')).toBeVisible()
     fireEvent.click(screen.getByRole('checkbox', { name: /VirusTotal/ }))
     fireEvent.click(screen.getByRole('tab', { name: /^All/ }))
     expect(screen.getByText('Will be created with your approval')).toBeVisible()
-    fireEvent.click(screen.getByRole('tab', { name: 'Compatible connectors' }))
+    expect(screen.getByRole('checkbox', { name: /VirusTotal/ })).toBeVisible()
     expect(screen.getByRole('checkbox', { name: /VirusTotal/ })).toBeChecked()
     expect(run).toBeDisabled()
-    fireEvent.click(screen.getByRole('checkbox', { name: /Create the listed missing observables/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Create the listed missing objects/ }))
     fireEvent.click(run)
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/enrich', { ioc_ids: [2], connector_ids: ['vt'], create_missing: true }))
   })
@@ -156,9 +205,10 @@ describe('OpenCTI user intent', () => {
     vi.mocked(api).mockImplementation(async (path) => path === '/api/opencti/settings' ? { configured: true } as never : {
       lookups: [], exports: [], sync: [], jobs: [], enrichments: [{ id: 'request-1', ioc_id: 2, connector_id: 'connector-1', work_id: 'work-1', state: 'pending', updated: '2026-09-07' }],
     } as never)
-    renderWithProviders(<OpenCtiToolbar slug="case" iocs={[hash]} selectedIds={[2]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    renderWithProviders(<OpenCtiActivity slug="case" iocs={[hash]} allowRetry />)
     const refresh = await screen.findByRole('button', { name: 'Refresh enrichment status' })
-    expect(screen.getByText('pending')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Enrichment requests/ }))
+    expect(await screen.findByText('Pending')).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(refresh)
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/enrichment/status', {}))
@@ -233,7 +283,6 @@ describe('reviewed transfer', () => {
     vi.mocked(post).mockResolvedValue(samples)
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={samples} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Include analyst notes' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Include evidence excerpts' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Note' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Evidence' }))
     fireEvent.click(screen.getByRole('tab', { name: /^Original samples \(optional\)/ }))
@@ -250,9 +299,9 @@ describe('reviewed transfer', () => {
         descriptions: [{ source_id: 'ip-1', state: 'complete' }, { source_id: 'old-artifact', state: 'unavailable', error: 'Previous artifact no longer visible; no reupload.' }],
       } }],
     } as never)
-    renderWithProviders(<OpenCtiToolbar slug="case" iocs={[hash]} selectedIds={[2]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    renderWithProviders(<OpenCtiActivity slug="case" iocs={[hash]} allowRetry />)
     fireEvent.click(await screen.findByText('Transfer history'))
-    fireEvent.click(screen.getByText('Transfer details'))
+    fireEvent.click(await screen.findByText('Transfer details'))
     expect(screen.getByText('1 imported · 1 failed · 0 pending')).toBeInTheDocument()
     expect(screen.getByText('existing-work-42')).toBeInTheDocument()
     expect(screen.getByText('Observable descriptions: 1 of 2 updated')).toBeInTheDocument()
@@ -263,10 +312,10 @@ describe('reviewed transfer', () => {
     vi.mocked(api).mockImplementation(async (path) => path === '/api/opencti/settings' ? { configured: true } as never : {
       lookups: [], sync: [], jobs: [], exports: [{ id: 'export-1', state, created: '2026-09-07', updated: '2026-09-07', stats: {} }],
     } as never)
-    renderWithProviders(<OpenCtiToolbar slug="case" iocs={[hash]} selectedIds={[2]} onSelectAll={() => {}} onClear={() => {}} onSettings={() => {}} />)
+    renderWithProviders(<OpenCtiActivity slug="case" iocs={[hash]} allowRetry />)
     await screen.findByText('Transfer history')
     fireEvent.click(screen.getByText('Transfer history'))
-    fireEvent.click(screen.getByRole('button', { name: 'Retry incomplete transfer' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry incomplete transfer' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/retry', { export_id: 'export-1' }))
     expect(post).toHaveBeenCalledTimes(1)
   })
@@ -283,6 +332,7 @@ describe('reviewed transfer', () => {
     vi.mocked(post).mockResolvedValue({ ...preview, preview_id: 'preview-2' })
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={preview} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
     const submit = screen.getByRole('button', { name: 'Transfer reviewed preview' })
+    expect(screen.getByRole('checkbox', { name: 'Include evidence excerpts' })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: /^Create Indicator:/ })).not.toBeChecked()
     fireEvent.click(screen.getByRole('tab', { name: /^Original samples \(optional\)/ }))
     expect(screen.getByRole('checkbox', { name: 'Upload original sample: web/shell.php' })).not.toBeChecked()
@@ -291,7 +341,7 @@ describe('reviewed transfer', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /^Create Indicator:/ }))
     expect(submit).toBeDisabled()
     await waitFor(() => expect(submit).toBeEnabled())
-    expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [2], sample_ids: [], include_notes: false, include_evidence: false }))
+    expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [2], sample_ids: [], include_notes: false, include_evidence: true }))
     fireEvent.click(submit)
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/export', { preview_id: 'preview-2' }))
   })
@@ -306,23 +356,26 @@ describe('reviewed transfer', () => {
     expect(screen.getByText('Own exports only')).toBeInTheDocument()
     expect(screen.getByText('Stale result')).toBeInTheDocument()
     expect(screen.getByText('Shellhound PIM-5165')).toBeInTheDocument()
-    expect(screen.getByText(/No match does not mean harmless/)).toBeInTheDocument()
+    expect(screen.queryByText('Benign')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Open in OpenCTI' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
 })
 
-it('uses generated or existing pseudonyms and validates incident dates', async () => {
+it.each([
+  { name: 'Organization-abc123', organizationId: 'org-1' },
+  { name: 'Synthetic Research GmbH', organizationId: '' },
+])('saves the chosen organisation name $name and validates incident dates', async ({ name, organizationId }) => {
   const info = { slug: 'case', reference: '', name: 'local', notes: '', dir: '', created: '' } as CaseInfo
   renderWithProviders(<CaseProfileForm slug="case" info={info} onClose={() => {}} />)
-  expect(await screen.findByRole('option', { name: 'Organization-abc123' })).toBeInTheDocument()
-  expect(screen.queryByRole('textbox', { name: /customer name/i })).not.toBeInTheDocument()
+  await waitFor(() => expect(document.querySelector('datalist option[value="Organization-abc123"]')).toBeInTheDocument())
+  expect(screen.queryByRole('button', { name: /Generate pseudonym/i })).not.toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Incident start'), { target: { value: '2026-09-07' } })
   fireEvent.change(screen.getByLabelText('Incident end'), { target: { value: '2026-09-01' } })
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
   expect(patch).not.toHaveBeenCalled()
   fireEvent.change(screen.getByLabelText('Incident end'), { target: { value: '2026-09-08' } })
-  fireEvent.change(screen.getByLabelText(/Affected organization pseudonym/), { target: { value: 'org-1' } })
+  fireEvent.change(screen.getByLabelText('Organisation name'), { target: { value: name } })
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/case', expect.objectContaining({ profile: expect.objectContaining({ organization_id: 'org-1', marking: 'TLP:AMBER+STRICT' }) })))
+  await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/case', expect.objectContaining({ profile: expect.objectContaining({ organization_id: organizationId, organization_name: name, pseudonym: '', marking: 'TLP:AMBER+STRICT' }) })))
 })

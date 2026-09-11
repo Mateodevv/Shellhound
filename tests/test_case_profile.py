@@ -79,15 +79,31 @@ class CaseProfileTests(unittest.TestCase):
                 case_profile.normalize(profile, self.ws)
             self.assertFalse(self.ws.exists())
 
-    def test_org_name_cannot_be_written_through_any_supported_interface(self):
-        with self.assertRaisesRegex(ValueError, "generated"):
-            case_profile.create_organization(self.ws, name="Actual Customer Name")
-        case = workspace.create_case(self.ws, "Synthetic")
-        expected = workspace.case_info(case)["profile"]["pseudonym"]
-        updated = workspace.update_case(case, profile={"pseudonym": "Actual Customer Name"})
-        self.assertEqual(expected, updated["profile"]["pseudonym"])
-        self.assertNotIn("Actual Customer Name", (case / workspace.CASE_FILE).read_text())
-        self.assertNotIn("Actual Customer Name", (self.ws / case_profile.REGISTRY_FILE).read_text())
+    def test_chosen_name_location_and_subsectors_roundtrip_and_reuse(self):
+        profile = {"organization_name": "Synthetic Research GmbH", "sectors": ["Technology"],
+                   "subsectors": [{"name": "Software", "sector": "Technology"}],
+                   "countries": ["DE"], "state": "DE-BE", "city": "Berlin"}
+        first = workspace.create_case(self.ws, "First", profile=profile)
+        saved = workspace.case_info(first)["profile"]
+        second = workspace.create_case(self.ws, "Second", profile=profile)
+        self.assertEqual(saved, workspace.case_info(second)["profile"])
+        self.assertEqual(profile, {key: saved[key] for key in profile})
+        updated = workspace.update_case(second, profile={"organization_name": "Another organization"})
+        self.assertNotEqual(saved["organization_id"], updated["profile"]["organization_id"])
+        self.assertEqual(saved, workspace.case_info(first)["profile"])
+        archive, _ = workspace.archive_case(self.ws, first)
+        restored = workspace.import_archive(self.root / "restored", archive)
+        self.assertEqual(saved, workspace.case_info(restored["dir"])["profile"])
+
+    def test_country_state_and_subsector_must_agree(self):
+        for profile in ({"countries": ["ZZ"]}, {"countries": ["AT"], "state": "DE-BE"},
+                        {"subsectors": [{"name": "Software", "sector": "Technology"}]},
+                        {"organization_name": "Two\nLines"}):
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                case_profile.normalize(profile, self.ws)
+        self.assertFalse(self.ws.exists())
+        with self.assertRaises(ValueError):
+            case_profile.validate({"organization_name": "Missing identity"})
 
     def test_changing_organization_uses_registry_display_name(self):
         case = workspace.create_case(self.ws, "Synthetic")

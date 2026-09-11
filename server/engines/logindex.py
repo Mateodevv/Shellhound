@@ -3132,6 +3132,7 @@ def requests_for_names(case_dir, names, limit=20000):
         rows = conn.execute(
             f"""SELECT i.ip AS ip, u.text AS uri, s.text AS name,
                        count(*) AS hits,
+                       min(r.epoch) AS first_epoch, max(r.epoch) AS last_epoch,
                        sum(CASE WHEN r.status BETWEEN 200 AND 299
                            THEN 1 ELSE 0 END) AS ok_hits
                 FROM requests r

@@ -5,16 +5,16 @@ import { Mark } from '../components/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, ArchiveRestore, FolderSearch, Package, Plus, Settings2, Trash2, TriangleAlert,
+  Archive, ArchiveRestore, ChevronRight, FolderSearch, Package, Plus, Settings2, Trash2, TriangleAlert,
 } from 'lucide-react'
 import {
   api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
 } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Card, ConfirmDialog, EmptyState, Modal, Tag } from '../components/ui'
+import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { ThemeSwitcher } from '../components/ThemeSwitcher'
-import { OpenCtiSettings } from '../components/OpenCtiSettings'
+import { WorkspaceSettingsDialog } from '../components/WorkspaceSettingsDialog'
+import { StartGeoBanner } from '../components/GeoBanner'
 import { CaseWizard } from '../components/CaseWizard'
 
 interface State { workspace: string; cases: CaseInfo[] }
@@ -30,8 +30,10 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
     queryKey: ['archives'],
     queryFn: () => api<ArchivesResponse>('/api/archives'),
   })
-  const [ctiSettingsOpen, setCtiSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<'themes' | 'geoip'>('themes')
   const [creating, setCreating] = useState(false)
+  const [archivesOpen, setArchivesOpen] = useState(false)
   const [importPath, setImportPath] = useState('')
   const [showImport, setShowImport] = useState(false)
 
@@ -71,8 +73,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
   const archiveList = archives?.archives ?? []
 
   return (
-    <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center px-6 py-12">
-      <div className="mb-8 flex items-center gap-3 animate-fade-up">
+    <div className="flex min-h-dvh flex-col">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-4 px-4 py-4 sm:px-6 lg:px-8 animate-fade-up">
         {/* The mark, not a generic shield: this is the one screen where the
             product introduces itself. */}
         <Mark size={44} className="shrink-0 rounded-xl" />
@@ -83,16 +85,26 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button onClick={() => setCtiSettingsOpen(true)}><Settings2 size={14} />{tr('cti.settingsTitle')}</Button>
-          <ThemeSwitcher />
+          <Button onClick={() => { setSettingsTab('themes'); setSettingsOpen(true) }}><Settings2 size={14} />{tr('settings.title')}</Button>
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-8 sm:px-6 lg:pt-12">
+      <StartGeoBanner onOpenSettings={() => { setSettingsTab('geoip'); setSettingsOpen(true) }} />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          {tr('start.openCases')}
+          {data && <Tag>{data.cases.length}</Tag>}
+        </h2>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            <Plus size={15} /> {tr('start.newCase')}
+          </Button>
+          <Button onClick={() => setShowImport(!showImport)}>
+            <ArchiveRestore size={15} /> {tr('start.importCase')}
+          </Button>
         </div>
       </div>
-
-      {data && (
-        <p className="mb-3 text-xs text-[var(--muted)]">
-          Workspace: <span className="mono">{data.workspace}</span>
-        </p>
-      )}
 
       <div className="flex flex-col gap-2">
         {isLoading && <div className="text-[var(--muted)]">{tr('common.loading')}</div>}
@@ -103,16 +115,16 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
             style={{ animationDelay: `${i * 40}ms` }}
           >
             <div className="flex w-full items-center gap-3">
-              <button className="flex min-w-0 flex-1 cursor-pointer items-center justify-between rounded-md text-left"
+              <button className="flex min-w-0 flex-1 cursor-pointer flex-col items-start gap-3 rounded-md text-left sm:flex-row sm:items-center sm:justify-between"
                 onClick={() => onOpen(c.slug)}>
                 <div className="min-w-0">
-                  <div className="font-semibold">{c.name}</div>
+                  <div className="break-words font-semibold">{c.name}</div>
                   <div className="mt-0.5 text-xs text-[var(--muted)]">
                     {c.reference && <span className="mr-3">{c.reference}</span>}
                     {tr('start.created')} {c.created?.slice(0, 10)}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-4 text-xs text-[var(--muted)] tabular">
+                <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)] tabular sm:grid sm:grid-cols-3 sm:text-right">
                   <span>{tr('start.artifacts', { n: c.artifacts ?? 0 })}</span>
                   <span className="text-[var(--danger-text)]">{tr('start.confirmed', { n: c.confirmed ?? 0 })}</span>
                   <span>{c.iocs ?? 0} IOCs</span>
@@ -123,7 +135,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                     below, restorable from right there. */}
                 <Tooltip hint={tr('start.archive.hint')}>
                   <Button variant="ghost" title={tr('start.archive')}
-                    className="opacity-0 transition-opacity group-hover:opacity-100"
+                    className="transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                     disabled={busy === c.slug}
                     onClick={() => setConfirmation({ kind: 'archive', item: c })}>
                     {busy === c.slug && archiveCase.isPending
@@ -134,7 +146,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 <Tooltip hint={tr('start.delete.hint')}>
                   <Button variant="ghost"
                     title={tr('common.remove')}
-                    className="opacity-0 transition-opacity group-hover:opacity-100"
+                    className="transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                     disabled={busy === c.slug}
                     onClick={() => setConfirmation({ kind: 'delete', item: c })}>
                     <Trash2 size={14} />
@@ -160,14 +172,6 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         )}
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus size={15} /> {tr('start.newCase')}
-        </Button>
-        <Button onClick={() => setShowImport(!showImport)}>
-          <ArchiveRestore size={15} /> {tr('start.importCase')}
-        </Button>
-      </div>
       {creating && <CaseWizard onClose={() => setCreating(false)} onCreated={info => { setCreating(false); onOpen(info.slug) }} />}
 
       {showImport && !creating && (
@@ -181,7 +185,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                 importCase.mutate({ path: importPath })
             }}
             placeholder={tr('start.import.placeholder')}
-            className="mono min-w-64 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
+            className="mono min-w-0 basis-64 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]/70"
           />
           <Button variant="primary" disabled={!importPath.trim() || importCase.isPending}
             onClick={() => importCase.mutate({ path: importPath })}>
@@ -201,15 +205,19 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
       {archiveList.length > 0 && (
         <div className="mt-8 animate-fade-up">
           <div className="mb-2 flex items-baseline justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-[15px] font-semibold">
-              <Archive size={15} className="text-[var(--muted)]" />
-              {tr('start.archived')}
+            <h2 className="shrink-0 text-[15px] font-semibold">
+              <button type="button" aria-expanded={archivesOpen} aria-controls="closed-cases" onClick={() => setArchivesOpen(value => !value)} className="ui-press flex cursor-pointer items-center gap-2 rounded py-1 hover:text-[var(--accent-text)]">
+                <ChevronRight size={15} className={`transition-transform ${archivesOpen ? 'rotate-90' : ''}`} />
+                <Archive size={15} className="text-[var(--muted)]" />
+                {tr('start.archived')} <Tag>{archiveList.length}</Tag>
+              </button>
             </h2>
-            <span className="mono truncate text-[11px] text-[var(--muted)]"
+            {archivesOpen && <span className="mono truncate text-[11px] text-[var(--muted)]"
               title={archives?.archive_dir}>
               {archives?.archive_dir}
-            </span>
+            </span>}
           </div>
+          <div id="closed-cases" hidden={!archivesOpen}>
           <div className="flex flex-col gap-2">
             {archiveList.map((a) => (
               <Card key={a.file} className="flex items-center gap-3 px-4 py-3">
@@ -250,11 +258,14 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           <p className="mt-2 text-[11px] text-[var(--muted)]">
             {tr('start.archived.note')}
           </p>
+          </div>
         </div>
       )}
-      <Modal open={ctiSettingsOpen} onClose={() => setCtiSettingsOpen(false)} title={tr('cti.settingsTitle')}>
-        <OpenCtiSettings />
-      </Modal>
+      </main>
+      {data && <footer className="mt-10 px-4 py-4 text-xs text-[var(--muted)] sm:px-6 sm:text-right lg:px-8">
+        {tr('start.workspace')} <span className="mono break-all">{data.workspace}</span>
+      </footer>}
+      {settingsOpen && <WorkspaceSettingsDialog initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />}
       <ConfirmDialog
         open={confirmation?.kind === 'archive'}
         onClose={() => { if (!archiveCase.isPending) setConfirmation(null) }}

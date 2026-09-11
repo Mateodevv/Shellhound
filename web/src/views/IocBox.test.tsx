@@ -1,10 +1,10 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, type Ioc } from '../api'
+import { api, post, type Ioc } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { IocBox } from './IocBox'
 
-vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn() }))
+vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn() }))
 vi.mock('../components/OpenCti', () => ({ OpenCtiToolbar: ({ selectedIds, actionScope, iocs }: { selectedIds: number[]; actionScope?: string; iocs: Ioc[] }) => <div data-testid={actionScope === 'case' ? 'case-action-ids' : 'action-ids'}>{(actionScope === 'case' ? iocs.map(ioc => ioc.id) : selectedIds).join(',')}</div> }))
 vi.mock('../components/IocDetails', () => ({ IocDetails: ({ id, onNavigate, onDirtyChange }: { id: number; onNavigate: (id: number) => void; onDirtyChange: (v: boolean) => void }) => <div><h2>Object detail {id}</h2><button onClick={() => onNavigate(2)}>Related object</button><button onClick={() => onDirtyChange(true)}>Edit draft</button></div> }))
 vi.mock('../geo', () => ({ useGeo: () => ({ iso: 'de', name: 'Germany', special: false }) }))
@@ -18,6 +18,31 @@ beforeEach(() => {
 })
 const show = () => renderWithProviders(<IocBox slug="qa" gotoView={() => {}} />)
 describe('IOC investigation workspace', () => {
+  it('deletes the explicit selection across filters and clears the active deleted object', async () => {
+    rows = [object(1), object(2), object(3)]
+    vi.mocked(post).mockImplementation(async (_url, body) => {
+      const ids = (body as { ids: number[] }).ids
+      rows = rows.filter(row => !ids.includes(row.id))
+      return { deleted_ids: ids }
+    })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Open 198.51.100.1' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select 198.51.100.1' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select 198.51.100.2' }))
+    fireEvent.change(screen.getByPlaceholderText('Search objects…'), { target: { value: '198.51.100.3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('198.51.100.1')).toBeVisible()
+    expect(within(dialog).getByText('198.51.100.2')).toBeVisible()
+    expect(post).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(screen.queryByText('Object detail 1')).not.toBeInTheDocument())
+    expect(post).toHaveBeenCalledWith('/api/cases/qa/iocs/delete', { ids: [1, 2] })
+    expect(location.search).not.toContain('ioc=')
+    expect(screen.queryByLabelText('Selection actions')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open 198.51.100.3' })).toBeVisible()
+  })
+
   it('paginates the entire result set and separates inspection from selection', async () => {
     show(); await screen.findByRole('button', { name: 'Open 198.51.100.126' })
     expect(within(screen.getByRole('list', { name: 'Object list' })).getAllByRole('listitem')).toHaveLength(50)

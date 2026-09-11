@@ -7,7 +7,7 @@ import { IocBox } from '../views/IocBox'
 import { IocDetails } from './IocDetails'
 
 vi.mock('../api', async original => ({ ...(await original<typeof import('../api')>()), api: vi.fn(), patch: vi.fn(), post: vi.fn() }))
-vi.mock('../geo', () => ({ useGeo: () => null }))
+vi.mock('../geo', () => ({ useGeo: () => null, useGeoStatus: () => ({ data: undefined }) }))
 const ip: Ioc = { id: 1, type: 'ip', value: '198.51.100.1', note: '', origin: 'Manual', tags: ['reviewed'], added: '', first_seen: null, last_seen: null, links: [], assessment: 'malicious' }
 const cached = { lookups: [{ ioc_id: 1, status: 'known', entities: [{ id: 'remote', name: ip.value, score: 58, url: 'https://cti.example/observable/remote' }] }], sync: [{ ioc_id: 1, status: 'error' }], jobs: [] }
 let settings: { configured: boolean; url: string; ingester_id: string; token_hint: string; sample_uploads: boolean }
@@ -33,7 +33,8 @@ beforeEach(() => {
 
 it('configures OpenCTI from the case picker and activates actions without a reload', async () => {
   const { qc, rerender } = renderWithProviders(<Start onOpen={() => {}} />)
-  fireEvent.click(screen.getByRole('button', { name: 'OpenCTI settings' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  fireEvent.click(screen.getByRole('tab', { name: 'OpenCTI' }))
   fireEvent.change(await screen.findByLabelText('OpenCTI URL'), { target: { value: 'https://cti.example' } })
   fireEvent.change(screen.getByLabelText('TAXII push ingester ID'), { target: { value: 'synthetic-ingester' } })
   fireEvent.change(screen.getByLabelText(/Integration token/), { target: { value: 'synthetic-token' } })
@@ -44,8 +45,9 @@ it('configures OpenCTI from the case picker and activates actions without a relo
   expect(post).not.toHaveBeenCalled()
   expect(screen.getByLabelText(/Integration token/)).toHaveValue('')
   rerender(<IocBox slug="synthetic" gotoView={() => {}} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'OpenCTI actions' }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Check all' })).toBeEnabled())
-  expect(screen.getByRole('button', { name: 'Transfer all' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: 'Transfer all' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Enrich all' })).toBeEnabled()
   expect(post).not.toHaveBeenCalled()
 })
@@ -60,6 +62,7 @@ it('ignores a remembered CTI filter and hides cached statuses while local IOC co
   expect(screen.queryByLabelText('OpenCTI filter')).not.toBeInTheDocument()
   expect(screen.queryByText('Transfer error')).not.toBeInTheDocument()
   expect(screen.queryByText('Not checked')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'OpenCTI actions' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Check all' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Add IOC' })).toBeVisible()
   expect(vi.mocked(api).mock.calls.some(([path]) => path.endsWith('/opencti'))).toBe(false)
@@ -74,9 +77,11 @@ it('hides cached score, links and actions immediately on removal, retaining asse
   await waitFor(() => expect(screen.queryByText('Score')).not.toBeInTheDocument())
   expect(screen.queryByRole('link', { name: 'Open in OpenCTI' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Check in OpenCTI' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Change assessment' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'IOC actions' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Add tag' })).toBeVisible()
-  expect(screen.getByRole('tab', { name: 'Trace' })).toBeVisible()
+  expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open trace' })).toBeVisible()
   expect(screen.getByText('reviewed')).toBeVisible()
 })
 
@@ -88,6 +93,7 @@ it('keeps configured actions available when OpenCTI data cannot be loaded', asyn
     return original(path)
   })
   renderWithProviders(<IocBox slug="synthetic" gotoView={() => {}} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'OpenCTI actions' }))
   await waitFor(() => expect(screen.getByRole('button', { name: 'Check all' })).toBeEnabled())
   expect(await screen.findByRole('alert')).toHaveTextContent('Synthetic outage')
   expect(post).not.toHaveBeenCalled()
@@ -97,7 +103,8 @@ it('leaves the settings entry accessible while configuration is still loading', 
   const original = vi.mocked(api).getMockImplementation()!
   vi.mocked(api).mockImplementation(path => path === '/api/opencti/settings' ? new Promise(() => {}) : original(path))
   renderWithProviders(<Start onOpen={() => {}} />)
-  fireEvent.click(screen.getByRole('button', { name: 'OpenCTI settings' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  fireEvent.click(screen.getByRole('tab', { name: 'OpenCTI' }))
   expect(await screen.findByRole('status')).toHaveTextContent('Loading')
   expect(post).not.toHaveBeenCalled()
 })

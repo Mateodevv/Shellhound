@@ -187,7 +187,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
                          onMouseLeave, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls, 'aria-pressed': ariaPressed }: {
   children: ReactNode
   onClick?: () => void
-  variant?: 'default' | 'primary' | 'danger' | 'ghost' | 'incident' | 'review' | 'outline'
+  variant?: 'default' | 'primary' | 'special' | 'danger' | 'ghost' | 'incident' | 'review' | 'outline'
   disabled?: boolean
   className?: string
   title?: string
@@ -220,6 +220,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
         'ui-press cursor-pointer disabled:cursor-not-allowed disabled:opacity-40',
         variant === 'primary' &&
           'bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)]',
+        variant === 'special' && 'bg-[#2563b0] text-white hover:bg-[#1e5297]',
         variant === 'danger' &&
           'border border-[var(--sev-high)]/55 bg-[var(--danger-soft)] text-[var(--danger-text)] hover:bg-[var(--danger-soft-hover)]',
         variant === 'incident' &&

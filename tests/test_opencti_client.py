@@ -34,6 +34,27 @@ class OpenCTIClientTests(unittest.TestCase):
     def _payload(self, index=-1):
         return json.loads(self._request(index).data)
 
+    def test_sector_catalogue_paginates_and_preserves_parents_without_mutations(self):
+        root = {"id": "root", "name": "Technology", "isSubSector": False, "parentSectors": {"edges": []}}
+        sub = {"id": "sub", "name": "Software", "isSubSector": True,
+               "parentSectors": {"edges": [{"node": {"id": "root", "name": "Technology"}}]}}
+        self._responses({"data": {"sectors": {"edges": [{"node": root}], "pageInfo": {"hasNextPage": True, "endCursor": "page2"}}}},
+                        {"data": {"sectors": {"edges": [{"node": sub}], "pageInfo": {"hasNextPage": False}}}})
+        rows = self.client.sectors()
+        self.assertEqual(["Software", "Technology"], [r["name"] for r in rows])
+        self.assertEqual(["Technology"], rows[0]["parents"])
+        self.assertTrue(rows[0]["subsector"])
+        self.assertEqual({"after": "page2"}, self._payload()["variables"])
+        self.assertTrue(all("mutation" not in json.loads(call.args[0].data)["query"] for call in self.client._opener.open.call_args_list))
+
+    def test_location_lookup_uses_specific_opencti_type(self):
+        for kind in ("Country", "Administrative-Area", "City"):
+            obj = {"type": "location", "id": "location--local", "name": "Example", "country": "de", "x_opencti_location_type": kind}
+            existing = {"id": "remote", "standard_id": "location--remote", "name": "Example"}
+            with patch.object(self.client, "_shared_matches", return_value=[existing]) as lookup:
+                self.assertEqual(existing, self.client.find_existing_shared(obj))
+                self.assertEqual([kind], lookup.call_args.kwargs["types"])
+
     def test_url_and_header_validation_prevents_credential_misdirection(self):
         for value in ("http://ti.example", "https://user:pw@ti.example", "https://ti.example/?token=secret",
                       "https://ti.example/#secret", "https://ti.example\n.attacker", "https://ti.example:99999"):
@@ -336,16 +357,24 @@ class OpenCTIClientTests(unittest.TestCase):
         foreign = "Existing analyst assessment.\nDo not replace."
         first = api._case_description(foreign, "PIM-1", "First case")
         second = api._case_description(first, "PIM-2", "Second case")
-        updated = api._case_description(second, "PIM-1", "Revised case")
+        updated = api._case_description(second + "\n\nLater analyst comment.", "PIM-1", "Revised case")
         self.assertTrue(updated.startswith(foreign))
         self.assertIn("Second case", updated)
         self.assertNotIn("First case", updated)
+        self.assertIn("Later analyst comment.", updated)
         self.assertEqual(updated, api._case_description(updated, "PIM-1", "Revised case"))
         removed = api._case_description(updated, "PIM-1", "")
         self.assertNotIn("Revised case", removed)
         self.assertIn("Second case", removed)
         with self.assertRaises(api.OpenCTIError):
             api._case_description(first + first, "PIM-1", "Cannot safely replace duplicates")
+
+    def test_case_description_migrates_legacy_comments_to_readable_case_section(self):
+        key = hashlib.sha256(b"PIM-1").hexdigest()
+        legacy = f"Other author\n<!-- shellhound-case:{key}:start -->\nOld\n<!-- shellhound-case:{key}:end -->"
+        updated = api._case_description(legacy, "PIM-1", "Clear case summary.")
+        self.assertEqual("Other author\nShellhound case PIM-1\n\nClear case summary.\n\n— Shellhound case PIM-1", updated)
+        self.assertNotIn("<!--", updated)
 
     def test_description_update_is_scoped_verified_and_idempotent(self):
         obj = {"id": "remote-ip", "x_opencti_description": "Other author", "objectMarking": [{"standard_id": "marking-1"}]}
@@ -392,6 +421,27 @@ class OpenCTIClientTests(unittest.TestCase):
         self.assertEqual({"hashes": [{"algorithm": "SHA-256", "hash": "b" * 64}]},
                          payload["variables"]["input"])
         self.assertNotIn("files", payload["variables"]["input"])
+
+    def test_create_vulnerability_uses_marked_domain_object_without_updates(self):
+        self._responses({"data": {"vulnerabilityAdd": {"id": "cve", "entity_type": "Vulnerability"}}})
+        self.assertEqual("cve", self.client.create_vulnerability("cve-2026-12345", "marking-1")["id"])
+        self.assertEqual({"input": {"name": "CVE-2026-12345", "objectMarking": ["marking-1"], "update": False}},
+                         self._payload()["variables"])
+        self.assertIn("vulnerabilityAdd", self._payload()["query"])
+        with self.assertRaises(ValueError):
+            self.client.create_vulnerability("not a CVE", "marking-1")
+        self.assertEqual(1, self.client._opener.open.call_count)
+
+    def test_cve_enrichment_rejects_observable_only_connector(self):
+        connector = {"id": "epss", "active": True, "auto": False, "scope": ["stix-cyber-observable"]}
+        with patch.object(self.client, "resolve", return_value={"id": "cve", "entity_type": "Vulnerability"}), \
+                patch.object(self.client, "connectors", return_value=[connector]):
+            with self.assertRaises(api.OpenCTIError):
+                self.client.enrich("cve", "epss")
+            self.client._opener.open.assert_not_called()
+            connector["scope"] = ["vulnerability"]
+            self._responses({"data": {"stixCoreObjectEdit": {"askEnrichment": {"id": "work-cve"}}}})
+            self.assertEqual({"id": "work-cve"}, self.client.enrich("cve", "epss"))
 
     def test_enrichment_is_manual_and_blocks_all_attached_content(self):
         for entity in ({"id": "sample", "entity_type": "Artifact"},
@@ -450,11 +500,35 @@ class OpenCTIClientTests(unittest.TestCase):
                 self.client.link_sample("file", "artifact", "report")
         self.client._opener.open.assert_not_called()
         existing["obsContent"] = {"id": "artifact"}
-        with patch.object(self.client, "resolve", return_value=existing):
-            self._responses({"data": {"reportEdit": {"relationAdd": {"id": "membership"}}}})
+        with patch.object(self.client, "resolve", return_value=existing), patch.object(self.client, "link_sample_relationship", return_value="visible-link") as visible:
+            self._responses(*[{"data": {"reportEdit": {"relationAdd": {"id": "membership"}}}}] * 2)
             self.client.link_sample("file", "artifact", "report")
-        self.assertEqual(1, self.client._opener.open.call_count)
+            visible.assert_called_once_with("file", "artifact")
+        self.assertEqual(2, self.client._opener.open.call_count)
         self.assertEqual("object", self._payload()["variables"]["input"]["relationship_type"])
+        self.assertEqual("visible-link", self._payload()["variables"]["input"]["toId"])
+
+    def test_visible_sample_relationship_preserves_markings_and_reuses_identity(self):
+        file = {"id": "file", "standard_id": "file--test", "entity_type": "StixFile",
+                "hashes": [{"algorithm": "SHA-256", "hash": "a" * 64}], "objectMarking": [{"id": "strict"}]}
+        artifact = {**file, "id": "artifact", "standard_id": "artifact--test", "entity_type": "Artifact",
+                    "objectMarking": [{"id": "other"}]}
+        relationship = {"id": "link", "relationship_type": "related-to", "from": {"id": "file"}, "to": {"id": "artifact"}}
+        with patch.object(self.client, "resolve", side_effect=[file, artifact, None]):
+            self._responses({"data": {"stixCoreRelationshipAdd": relationship}})
+            self.assertEqual("link", self.client.link_sample_relationship("file", "artifact"))
+        payload = self._payload()["variables"]["input"]
+        self.assertEqual(["other", "strict"], payload["objectMarking"])
+        self.assertFalse(payload["update"])
+        with patch.object(self.client, "resolve", side_effect=[file, artifact, relationship]) as resolve:
+            self.assertEqual("link", self.client.link_sample_relationship("file", "artifact"))
+            self.assertEqual(payload["stix_id"], resolve.call_args.args[0])
+        self.assertEqual(1, self.client._opener.open.call_count)
+        artifact["hashes"] = [{"algorithm": "SHA-256", "hash": "b" * 64}]
+        with patch.object(self.client, "resolve", side_effect=[file, artifact]):
+            with self.assertRaisesRegex(api.OpenCTIError, "hashes do not match"):
+                self.client.link_sample_relationship("file", "artifact")
+        self.assertEqual(1, self.client._opener.open.call_count)
 
     def test_work_error_text_is_not_a_secret_exfiltration_channel(self):
         self._responses({"data": {"work": {"id": "work-1", "status": "complete",

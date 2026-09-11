@@ -519,9 +519,15 @@ actions: **Check in OpenCTI**, **Transfer to OpenCTI**, and **Enrich via OpenCTI
 Opening a case only reads the local cache. Checking searches existing knowledge;
 it never starts an external enrichment connector or changes local triage.
 
-Transfers require a unique case ID and a reviewed preview. A reusable random
-organization pseudonym, optional incident profile, Incident and Report retain
-the case context. All IOC rows are considered, including collapsed children.
+Transfers require a unique case ID and a reviewed preview. The chosen organization
+name (or an existing pseudonym), incident profile, Incident and Report retain
+the case context. The case wizard loads sectors and their subsectors from OpenCTI.
+Missing sectors and subsectors can be added to the case, with a parent sector
+for each subsector. They are created in OpenCTI on transfer; matching existing
+entries are reused.
+Country and state choices are available offline, with Germany and Austria first;
+the city is entered as free text. These locations and sectors are linked to the
+affected organization on export. All IOC rows are considered, including collapsed children.
 Notes, evidence, profile details, optional Indicators and original samples are
 reviewed separately. Local workstation paths are removed. Samples are disabled
 by default and must also be selected individually in the preview.
@@ -557,6 +563,24 @@ retries unfinished parts. [Setup and behavior](docs/opencti.md).
 A case is a directory. `logindex.db` is derived from the logs and is not
 archived. The integration token lives in `<workspace>/settings.json`, in the workspace and
 never in a case archive.
+
+### Local application log
+
+Shellhound writes operational diagnostics to `logs/shellhound.log` inside the
+configured workspace. Each line is a JSON event with a UTC timestamp, severity,
+component and context. The log is available directly on disk.
+
+It records server lifecycle, HTTP/WebSocket activity, response status and timing,
+job states and progress, skipped files, OpenCTI transport activity, and browser
+exceptions, including failed file previews. Request IDs correlate browser and
+server errors. Exceptions include stack frames with code filenames, line numbers
+and functions. Credentials are redacted; request bodies, original file contents
+and local evidence paths are omitted. File targets have stable fingerprints.
+Browser reports reach the file while the local server is reachable.
+
+The active file rotates at 10 MiB; five previous files (`shellhound.log.1` through
+`shellhound.log.5`) are retained. Reload the browser after updating Shellhound to
+activate the current browser error reporting.
 
 ## Security
 

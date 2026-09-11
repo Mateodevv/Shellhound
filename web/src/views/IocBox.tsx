@@ -1,7 +1,8 @@
 import { useT } from '../i18n'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Box, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { Activity, Box, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { IocDeleteDialog } from '../components/IocDeleteDialog'
 import { api, post, downloadUrl, downloadSelection, type Ioc, type CrossCaseIocResponse } from '../api'
 import type { Navigate } from '../App'
 import { Button, Modal, SearchInput } from '../components/ui'
@@ -38,6 +39,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
   const [filters, setFilters] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [activity, setActivity] = useState(false)
+  const [deleteSelection, setDeleteSelection] = useState<Ioc[] | null>(null)
   const [value, setValue] = useState('')
   const [note, setNote] = useState('')
   const update = (patch: Partial<Session>) => setState(s => ({ ...s, ...patch }))
@@ -67,6 +69,18 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
     return true
   }
   const setTab = (tab: string) => { update({ tab }); const url = new URL(location.href); url.searchParams.set('iocTab', tab); history.replaceState(null, '', url) }
+  const deleted = (ids: number[]) => {
+    const removed = new Set(ids)
+    setSelection(previous => new Set([...previous].filter(id => !removed.has(id))))
+    setTrail(previous => previous.filter(id => !removed.has(id)))
+    if (state.active != null && removed.has(state.active)) {
+      setDirty(false)
+      update({ active: null, tab: 'Overview' })
+      const url = new URL(location.href)
+      url.searchParams.delete('ioc'); url.searchParams.delete('iocTab')
+      history.replaceState(null, '', url)
+    }
+  }
   const add = useMutation({
     mutationFn: () => post<{ id: number }>(`/api/cases/${slug}/iocs`, { value, note }), onSuccess: result => {
       setAddOpen(false); setValue(''); setNote(''); qc.invalidateQueries({ queryKey: ['iocs'] }); open(result.id)
@@ -95,7 +109,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
   const hiddenSelected = selected.filter(i => !filtered.some(f => f.id === i.id)).length
   const select = (rows: Ioc[]) => setSelection(previous => new Set([...previous, ...rows.map(i => i.id)]))
   const active = state.active == null ? null : byId.get(state.active)
-  const jobs = cti.data?.jobs ?? [], running = jobs.filter(j => ['queued', 'running'].includes(j.state)).length, failures = jobs.filter(j => j.state === 'failed').length
+  const jobs = (cti.data?.jobs ?? []).filter(job => !job.activity_hidden), running = jobs.filter(j => ['queued', 'running'].includes(j.state)).length, failures = jobs.filter(j => j.state === 'failed').length
   const filterCount = [state.assessment, state.origin, cti.configured && state.status, state.type].filter(Boolean).length
   const crossMatches = cross?.entries.find(i => i.id === state.active)?.matches ?? []
   const filterSelect = (label: string, key: 'assessment' | 'origin' | 'status' | 'type', choices: [string, string][]) => <select
@@ -106,7 +120,8 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
     <option value="">{label}</option>
     {choices.map(([v, name]) => <option key={v} value={v}>{name}</option>)}
   </select>
-  return <section className="ioc-workspace flex min-w-0 flex-col gap-3" aria-label="IOC workspace">
+  return <section className="ioc-workspace flex min-w-0 flex-col gap-2" aria-label="IOC workspace">
+    {deleteSelection && <IocDeleteDialog slug={slug} objects={deleteSelection} onClose={() => setDeleteSelection(null)} onDeleted={deleted} />}
 
     <header className="flex flex-wrap items-center gap-2">
       <div className="mr-auto">
@@ -116,6 +131,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
       <OpenCtiToolbar
         mode="inline"
         actionScope="case"
+        grouped
         slug={slug}
         iocs={iocs}
         selectedIds={[]}
@@ -138,7 +154,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
       key={g.name}
       aria-pressed={state.group === g.name}
       onClick={() => filter({ group: g.name, type: '' })}
-      className={`border-b-2 px-3 py-3 text-[13px] ${state.group === g.name ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-transparent text-[var(--muted)]'}`}>
+      className={`border-b-2 px-3 py-2 text-[13px] ${state.group === g.name ? 'border-[var(--accent)] text-[var(--accent-text)]' : 'border-transparent text-[var(--muted)]'}`}>
       {g.name}
       <span className="ml-1 text-[11px]">{roots.filter(i => !g.types.length || g.types.includes(i.type)).length}</span>
     </button>)}</nav>
@@ -148,6 +164,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
         <strong>{selected.length} {tr('iocWorkspace.objects_selected')}</strong>
         {hiddenSelected > 0 && <span>{hiddenSelected} {tr('iocWorkspace.outside_current_filters')}</span>}
         <Button onClick={() => setSelection(new Set())}>{tr('iocWorkspace.clear_selection')}</Button>
+        <Button variant="danger" onClick={() => setDeleteSelection([...selected])}><Trash2 size={14} />{tr('iocDelete.selected')}</Button>
       </div>
       <OpenCtiToolbar
         mode="actions"
@@ -169,7 +186,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
         className={`ioc-list flex min-h-0 min-w-0 flex-col ${state.active != null ? 'ioc-list-hidden-mobile' : ''}`}
         aria-label="IOC objects">
 
-        <div className="space-y-3 border-b border-[var(--line)] p-3">
+        <div className="space-y-2 border-b border-[var(--line)] p-2.5">
           <SearchInput
             className="w-full"
             value={state.search}
@@ -230,14 +247,14 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
                 onClick={() => open(ioc.id)}
                 aria-label={`Open ${iocName(ioc)}`}
                 aria-current={state.active === ioc.id ? 'true' : undefined}
-                className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left">
+                className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
                 <IocTypeBadge type={ioc.type} value={ioc.value} />
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-[13px] font-medium" title={iocName(ioc)}>{iocName(ioc)}</span>
                     {ioc.type === 'ip' && <IpFlag ip={ioc.value} />}
                   </span>
-                  <span className="mt-1 flex items-center gap-1 text-[11px] text-[var(--muted)]">
+                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--muted)]">
                     <IocAssessmentBadge assessment={ioc.assessment || 'malicious'} />
                     {ioc.assessment_manual && ' ✎'}
                     {cti.configured && (sync.get(ioc.id) === 'error' ? 'Transfer error' : sync.get(ioc.id) !== 'changed' && ctiLabel(lookups.get(ioc.id)))}
@@ -248,7 +265,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           })}</div>
 
         <footer
-          className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] p-3 text-[11px]">
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] p-2 text-[11px]">
           <span>{filtered.length ? (page - 1) * state.size + 1 : 0}–{Math.min(page * state.size, filtered.length)} {tr('iocWorkspace.of')} {filtered.length}</span>
           <div className="flex items-center gap-2">
             <Button aria-label="Previous page" disabled={page <= 1} onClick={() => update({ page: page - 1, scroll: 0 })}>
@@ -303,6 +320,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           onNavigate={open}
           gotoView={navigate}
           onDirtyChange={setDirty}
+          onDeleted={deleted}
           crossMatches={crossMatches} /> : <p className="p-5">{tr('iocWorkspace.this_object_is_no_longer_available')}</p>}</> : <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-[var(--muted)]">
           <Box size={32} />
           <p>{tr('iocWorkspace.select_an_object_to_explore_its_evidence_and_relationships')}</p>
@@ -335,7 +353,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
       </form>
     </Modal>
 
-    <Modal open={activity} onClose={() => setActivity(false)} title="IOC activity">
+    <Modal open={activity} onClose={() => setActivity(false)} title={tr('ctiActivity.title')}>
       <div className="space-y-4">
         <OpenCtiToolbar
           mode="activity"
@@ -345,17 +363,14 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           onSelectAll={() => { }}
           onClear={() => { }}
           onSettings={() => navigate('settings')} />
-        <p className="text-[12px]">{tr('iocWorkspace.download')} {filtered.length} {tr('iocWorkspace.filtered_objects')}</p>
-        <div className="flex gap-2">{['csv', 'json', 'stix'].map(format => <Button
-          key={format}
-          disabled={download.isPending}
-          onClick={() => download.mutate({ ids: [...new Set(filtered.flatMap(i => members(i.id)))], format })}>{format.toUpperCase()}</Button>)}</div>
-        {download.error && <p role="alert">{download.error.message}</p>}
-        <p className="text-[12px]">{tr('iocWorkspace.download_all')} {iocs.length} {tr('iocWorkspace.case_ioc_entries')}</p>
-        <div className="flex gap-4">{['csv', 'json', 'stix'].map(fmt => <a
-          key={fmt}
-          className="text-[var(--accent-text)]"
-          href={downloadUrl(`/api/cases/${slug}/iocs/export?format=${fmt}`)}>{fmt.toUpperCase()}</a>)}</div>
+        <section className="space-y-2 border-t border-[var(--line)] pt-3" aria-label={tr('ctiActivity.downloads')}>
+          <h3 className="text-[13px] font-semibold">{tr('ctiActivity.downloads')}</h3>
+          {[{ id: 'filtered', n: filtered.length }, { id: 'all', n: iocs.length }].map(scope => <div key={scope.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--line)] px-3 py-2">
+            <span className="text-[12px]">{tr(`ctiActivity.${scope.id}`, { n: scope.n })}</span>
+            <div className="flex gap-2">{['csv', 'json', 'stix'].map(format => scope.id === 'filtered' ? <Button key={format} disabled={download.isPending || !filtered.length} onClick={() => download.mutate({ ids: [...new Set(filtered.flatMap(i => members(i.id)))], format })}>{format.toUpperCase()}</Button> : <a key={format} className="ui-press rounded-md border border-[var(--line-strong)] bg-[var(--panel-2)] px-3 py-2 text-[12px] font-medium" href={downloadUrl(`/api/cases/${slug}/iocs/export?format=${format}`)}>{format.toUpperCase()}</a>)}</div>
+          </div>)}
+          {download.error && <p role="alert">{download.error.message}</p>}
+        </section>
         {!!cross?.cases_skipped && <p>{cross.cases_skipped} {tr('iocWorkspace.cases_unavailable_for_cross_case_comparison')}</p>}
       </div>
     </Modal>

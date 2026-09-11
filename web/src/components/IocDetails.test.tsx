@@ -1,12 +1,12 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, post, type Ioc } from '../api'
+import { api, post, del, type Ioc } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { IocField } from './IocField'
 import { IocDetails } from './IocDetails'
 import { iocOrigins } from './iocPresentation'
 
-vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn(), patch: vi.fn() }))
+vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn(), del: vi.fn(), patch: vi.fn() }))
 vi.mock('../geo', () => ({ useGeo: () => ({ iso: 'de', name: 'Germany', special: false }) }))
 vi.mock('../flags', () => ({ useFlagUrl: () => '/flags/de.svg' }))
 const ip: Ioc = { id: 1, type: 'ip', value: '198.51.100.9', note: '', origin: 'Test source', tags: [],
@@ -26,6 +26,101 @@ beforeEach(() => {
 const show = () => renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} />)
 
 describe('Structured IOC details', () => {
+  it('confirms individual deletion, retains the IOC on failure and closes only after success', async () => {
+    const onDeleted = vi.fn()
+    vi.mocked(del).mockRejectedValueOnce(new Error('Database unavailable')).mockResolvedValueOnce({ deleted_ids: [ip.id] })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip]} onClose={() => {}} onDeleted={onDeleted} embedded />)
+    fireEvent.click(await screen.findByRole('button', { name: 'IOC actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete IOC' }))
+    expect(del).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(del).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'IOC actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete IOC' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Database unavailable')
+    expect(onDeleted).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledWith([ip.id]))
+    expect(del).toHaveBeenLastCalledWith('/api/cases/synthetic/iocs/1')
+  })
+
+  it('opens recorded file content on click even without OpenCTI and ignores unrelated source paths', async () => {
+    const file = { ...ip, type: 'file', value: 'sample.txt' }
+    const path = 'C:/synthetic/evidence/sample.txt'
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file,
+      observations: [detail.observations[0], { ...detail.observations[0], id: 'location', kind: 'file-location', local_path: path, path: 'sample.txt' }] }
+      : url.includes('/file?') ? { mode: 'raw', size: 6, window: 262144, offset: 0, length: 6, eof: true, lines: ['sample'], from_line: 1 }
+      : { configured: false })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
+    const button = await screen.findByRole('button', { name: 'View file content' })
+    expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?'))).toBe(false)
+    fireEvent.click(button)
+    expect(await screen.findByText('sample')).toBeVisible()
+    expect(api).toHaveBeenCalledWith(`/api/cases/synthetic/file?path=${encodeURIComponent(path)}&mode=raw&offset=0`)
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('requires a choice between file locations and excludes withdrawn observations', async () => {
+    const file = { ...ip, type: 'file', value: 'sample.txt' }
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file,
+      observations: [1, 2, 3].map(n => ({ ...detail.observations[0], id: `location-${n}`, kind: 'file-location',
+        local_path: `C:/synthetic/source-${n}/sample.txt`, path: `source-${n}/sample.txt`, evidence_id: n, active: n < 3 })) }
+      : url.includes('/file?') ? { mode: 'raw', size: 6, window: 262144, offset: 0, length: 6, eof: true, lines: ['sample'], from_line: 1 }
+      : { configured: false })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View file content' }))
+    expect(await screen.findByRole('dialog', { name: 'Choose evidence location' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /source-3/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /source-2\/sample.txt/ }))
+    expect(await screen.findByText('sample')).toBeVisible()
+    expect(api).toHaveBeenCalledWith('/api/cases/synthetic/file?path=C%3A%2Fsynthetic%2Fsource-2%2Fsample.txt&mode=raw&offset=0')
+  })
+
+  it('offers a trace popup for the selected IP without requiring OpenCTI', async () => {
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? detail : { configured: false })
+    vi.mocked(post).mockImplementation(async url => url.endsWith('/timeline') ? { timeline: [] } : { total: 0, methods: [], rows: [] })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip]} onClose={() => {}} embedded />)
+    const button = await screen.findByRole('button', { name: 'Open trace' })
+    expect(post).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(await screen.findByRole('dialog')).toBeVisible()
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value] })))
+  })
+
+  it('leaves unavailable file content disabled and passes domain searches to access logs', async () => {
+    const file = { ...ip, type: 'file', value: 'sample.txt' }
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file } : { configured: false })
+    const view = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
+    expect(await screen.findByRole('button', { name: 'View file content' })).toBeDisabled()
+    view.unmount()
+    const domain = { ...ip, type: 'domain', value: 'example.test' }
+    const navigate = vi.fn()
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: domain } : { configured: false })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[domain]} gotoView={navigate} onClose={() => {}} embedded />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Search access logs' }))
+    expect(navigate).toHaveBeenCalledWith('logs', { search: domain.value })
+  })
+
+  it('keeps scan dates out of object activity and uses only active request evidence', async () => {
+    const domain = { ...ip, type: 'domain', value: 'example.test', first_seen: '2026-09-09', last_seen: '2026-09-09' }
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: domain, observations: [
+      { ...detail.observations[0], kind: 'finding', first_seen: '2026-09-09', last_seen: '2026-09-09' },
+      { ...detail.observations[0], id: 'withdrawn', active: false, first_seen: '2020-01-01', last_seen: '2020-01-01' },
+    ] } : { configured: false })
+    const view = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[domain]} onClose={() => {}} />)
+    await screen.findByText('DNS name')
+    expect(screen.queryByText('First observed')).not.toBeInTheDocument()
+    expect(screen.queryByText('2026-09-09')).not.toBeInTheDocument()
+    view.unmount()
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: domain, observations: [
+      { ...detail.observations[0], first_seen: '2026-06-01', last_seen: '2026-06-02' },
+    ] } : { configured: false })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[domain]} onClose={() => {}} />)
+    expect(await screen.findByText('2026-06-01')).toBeVisible()
+    expect(screen.getByText('2026-06-02')).toBeVisible()
+    expect(post).not.toHaveBeenCalled()
+  })
   it('shows database registration attributes with their sources instead of observation dates', async () => {
     const user = { ...ip, type: 'user', value: 'account-test', account_sources: [
       { source_key: 'one', cms: 'joomla', table: 'cms_users', registered: '2024-01-02 03:04:05' },
@@ -40,21 +135,40 @@ describe('Structured IOC details', () => {
     expect(screen.queryByText('First observed')).not.toBeInTheDocument()
     expect(screen.queryByText('Last observed')).not.toBeInTheDocument()
   })
-  it('loads inline Trace only on selection and scopes requests to the selected IP', async () => {
+  it('loads Trace through its button and scopes requests to the selected IP', async () => {
     vi.mocked(post).mockImplementation(async url => url.endsWith('/timeline') ? { timeline: [] } : { total: 1, methods: ['GET'], rows: [
       { client: ip.value, epoch: 1, tz: 0, method: 'GET', uri: '/documentation', status: 200, agent: 'Synthetic browser' },
     ] })
     renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} embedded />)
-    const trace = await screen.findByRole('tab', { name: 'Trace' })
+    const trace = await screen.findByRole('button', { name: 'Open trace' })
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(trace)
     expect(await screen.findByText('/documentation')).toBeVisible()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(trace).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('dialog')).toBeVisible()
+    expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
     expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value], offset: 0 }))
     fireEvent.change(screen.getByPlaceholderText('URI or user agent…'), { target: { value: 'documentation' } })
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value], search: 'documentation' })))
     expect(vi.mocked(post).mock.calls.every(([url]) => url.startsWith('/api/cases/synthetic/trace'))).toBe(true)
+  })
+
+  it.each(['ip', 'file', 'hash', 'domain', 'url', 'email', 'user', 'vulnerability'])('shows cached enrichment for %s without starting network work', async type => {
+    const object = { ...ip, type, context: type === 'user' ? 'account-context' : '' }
+    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true }
+      : url.endsWith('/detail') ? { ...detail, object } : { lookups: [{ ioc_id: 1, status: 'known', checked_at: '2026-09-10', stale: true,
+        entities: [{ id: 'remote', type: type === 'vulnerability' ? 'Vulnerability' : 'IPv4-Addr', name: 'Remote result', description: 'Saved provider details', labels: ['provider-tag'], sources: [{ source_name: 'Example provider', url: 'https://example.test/report' }],
+          x_opencti_epss_score: 0.025, x_opencti_epss_percentile: 0.8, x_opencti_cvss_base_score: 9.8 }] }] })
+    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[object]} onClose={() => {}} embedded />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Enrichment' }))
+    expect(screen.getByText('Saved provider details')).toBeVisible()
+    expect(screen.getByText('Example provider')).toBeVisible()
+    expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
+    if (type === 'vulnerability') {
+      expect(screen.getByText('2.50%')).toBeVisible()
+      expect(screen.getByText('80.00%')).toBeVisible()
+      expect(screen.getByText('9.8 / 10')).toBeVisible()
+    }
+    expect(post).not.toHaveBeenCalled()
   })
 
   it('falls back to Overview for a non-IP opened with a saved Trace tab', async () => {
@@ -81,6 +195,24 @@ describe('Structured IOC details', () => {
     expect(post).not.toHaveBeenCalled()
   })
 
+  it('uses identical editable tags and score badges in Overview and Enrichment', async () => {
+    const object = { ...ip, tags: ['CVE-2026-12345', 'Provider tag', 'Manual tag'] }
+    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true }
+      : url.endsWith('/detail') ? { ...detail, object } : { lookups: [{ ioc_id: 1, status: 'known', checked_at: '2026-09-11',
+        entities: [{ id: 'remote', type: 'IPv4-Addr', name: ip.value, score: 58, labels: ['Provider tag'], sources: [] }] }] })
+    const { container } = show()
+    const badge = await screen.findByText('58 / 100')
+    const overviewScore = badge.outerHTML
+    const tags = () => [...container.querySelectorAll('.ioc-tag')].map(el => el.textContent).sort()
+    const overviewTags = tags()
+    expect(overviewTags).toEqual([...object.tags].sort())
+    fireEvent.click(screen.getByRole('tab', { name: 'Enrichment' }))
+    expect(screen.getByText('58 / 100').outerHTML).toEqual(overviewScore)
+    expect(tags()).toEqual(overviewTags)
+    expect(screen.getByRole('button', { name: 'Add tag' })).toBeVisible()
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it('keeps different entity scores distinct, including zero, and shows missing scores explicitly', async () => {
     vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [
       { ioc_id: 1, status: 'known', entities: [{ id: 'a', name: 'First observable', score: 0 }, { id: 'b', name: 'Second observable', score: 100 }] },
@@ -96,7 +228,7 @@ describe('Structured IOC details', () => {
     expect(screen.queryByText('0 / 100')).not.toBeInTheDocument()
   })
 
-  it('offers direct object actions while retaining the associated file hash scope', async () => {
+  it('groups object actions while retaining the associated file hash scope', async () => {
     const file = { ...ip, type: 'file', value: 'sample.php', assessment: 'malicious' as const }
     const hash = { ...ip, id: 3, type: 'hash', value: 'a'.repeat(64), file_ids: [1] }
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file }
@@ -104,13 +236,24 @@ describe('Structured IOC details', () => {
     const { container } = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file, hash, cve]} onClose={() => {}} embedded />)
     await screen.findByRole('heading', { name: 'sample.php' })
     expect(container.querySelector('header summary')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Change assessment' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Transfer to OpenCTI' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'IOC actions' })).toBeVisible()
+    const toggle = await screen.findByRole('button', { name: 'OpenCTI actions' })
+    expect(screen.queryByRole('button', { name: 'Check in OpenCTI' })).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.keyDown(toggle, { key: 'Escape' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    fireEvent.pointerDown(document.body)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(screen.queryByRole('button', { name: 'Transfer to OpenCTI' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Enrich via OpenCTI' })).toBeVisible()
     const check = screen.getByRole('button', { name: 'Check in OpenCTI' })
     await waitFor(() => expect(check).toBeEnabled())
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(check)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/opencti/lookup', { ioc_ids: [1, 3] }))
   })
 
@@ -127,7 +270,7 @@ describe('Structured IOC details', () => {
     await screen.findByRole('heading', { name: ip.value })
     expect(post).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Trace'])
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Enrichment'])
     expect(post).not.toHaveBeenCalled()
   })
 
@@ -159,23 +302,29 @@ describe('Structured IOC details', () => {
 
   it('cancels an assessment draft without submitting it', async () => {
     show()
-    fireEvent.click(await screen.findByRole('button', { name: 'Change assessment' }))
-    fireEvent.change(screen.getByLabelText('Assessment reason'), { target: { value: 'Unfinished assessment' } })
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+    fireEvent.click(await screen.findByRole('button', { name: 'IOC actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit IOC' }))
+    fireEvent.change(screen.getByLabelText('Assessment'), { target: { value: 'suspicious' } })
+    fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Unfinished assessment' } })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(post).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
   })
 
-  it('saves a separate assessment with an explicit reason', async () => {
+  it('saves value, note and assessment together through Edit IOC', async () => {
     show()
     await screen.findByRole('heading', { name: ip.value })
-    fireEvent.click(screen.getByRole('button', { name: 'Change assessment' }))
-    fireEvent.change(screen.getByLabelText('New assessment'), { target: { value: 'suspicious' } })
-    fireEvent.change(screen.getByLabelText('Assessment reason'), { target: { value: 'Hostile request in log line 5' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save assessment' }))
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/iocs/1/assessments', {
-      state: 'suspicious', reason: 'Hostile request in log line 5',
-    }))
+    fireEvent.click(screen.getByRole('button', { name: 'IOC actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit IOC' }))
+    fireEvent.change(screen.getByLabelText('Value'), { target: { value: '192.0.2.8' } })
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Reviewed IOC' } })
+    fireEvent.change(screen.getByLabelText('Assessment'), { target: { value: 'suspicious' } })
+    fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Hostile request in log line 5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/iocs/1/edit', expect.objectContaining({
+      value: '192.0.2.8', note: 'Reviewed IOC', assessment: 'suspicious', reason: 'Hostile request in log line 5', expected_value: ip.value,
+    })))
   })
 
   it.each(['Evidence', 'Relationships', 'OpenCTI'])('opens Overview for the removed %s tab', async tab => {

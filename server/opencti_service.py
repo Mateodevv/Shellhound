@@ -14,10 +14,11 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import db, opencti_graph as graph, settings, workspace
+from server import db, ioc_model, opencti_graph as graph, settings, workspace
 from server.jobs import manager
 from server.opencti_client import OpenCTIClient, OpenCTIError, WORK_ERROR_MESSAGES
 from server.paths import io_path
+from server.opencti_sample_context import context_plan, legacy_context_plans
 
 _LOCK = threading.RLock()
 _ACTIVE = set()
@@ -103,6 +104,7 @@ def _revisions(case_dir):
     conn = db.connect(case_dir)
     try:
         rows = db.rows(conn, "SELECT * FROM iocs ORDER BY id")
+        ioc_model.enrich_rows(conn, rows)
         links = db.ioc_links(conn)
         sources = db.rows(conn, "SELECT * FROM ioc_sources ORDER BY id")
         decisions = db.rows(conn, "SELECT fingerprint,source,rule,rule_id,artifact_kind,artifact,evidence,"
@@ -169,6 +171,38 @@ def connection_test(root):
                 "external_file_uploads": False}}
 
 
+_ACTIVITY_TERMINAL = {"done", "complete", "completed", "failed", "error", "partial", "cancelled"}
+_ACTIVITY_TABLES = {"jobs": "jobs", "exports": "opencti_exports", "enrichments": "opencti_enrichments"}
+
+
+def _activity_key(group, row):
+    return json.dumps([group, row["id"], row["state"], row.get("updated"),
+                       row.get("finished"), row.get("error")], separators=(",", ":"))
+
+
+def clear_activity(case_dir):
+    """Dismiss terminal activity; retain receipts, results, and running work."""
+    conn = db.connect(case_dir)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        previous = db.one(conn, "SELECT value FROM meta WHERE key='opencti_activity_cleared'")
+        hidden = set(json.loads(previous["value"])) if previous else set()
+        count = 0
+        for group, table in _ACTIVITY_TABLES.items():
+            clause = " WHERE kind LIKE 'opencti-%'" if group == "jobs" else ""
+            for row in db.rows(conn, "SELECT * FROM " + table + clause):
+                key = _activity_key(group, row)
+                if row["state"] in _ACTIVITY_TERMINAL and key not in hidden:
+                    hidden.add(key)
+                    count += 1
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('opencti_activity_cleared',?)",
+                     (json.dumps(sorted(hidden)),))
+        conn.commit()
+        return {"cleared": count}
+    finally:
+        conn.close()
+
+
 def state(root, case_dir):
     """No network requests and no implicit cache refresh on page load."""
     destination = _destination(settings.opencti_config(root))
@@ -177,10 +211,15 @@ def state(root, case_dir):
     revisions = _revisions(case_dir)
     conn = db.connect(case_dir)
     try:
+        cleared = db.one(conn, "SELECT value FROM meta WHERE key='opencti_activity_cleared'")
+        hidden = set(json.loads(cleared["value"])) if cleared else set()
         stored = db.rows(conn, "SELECT * FROM opencti_lookups")
         exports = db.rows(conn, "SELECT * FROM opencti_exports ORDER BY created DESC")
         jobs = db.rows(conn, "SELECT * FROM jobs WHERE kind LIKE 'opencti-%' ORDER BY id DESC LIMIT 50")
         enrichment = db.rows(conn, "SELECT * FROM opencti_enrichments ORDER BY updated DESC")
+        for group, entries in (("jobs", jobs), ("exports", exports), ("enrichments", enrichment)):
+            for entry in entries:
+                entry["activity_hidden"] = entry["state"] in _ACTIVITY_TERMINAL and _activity_key(group, entry) in hidden
         enrichment_meta = {r["key"]: json.loads(r["value"]) for r in db.rows(conn,
             "SELECT key,value FROM meta WHERE key LIKE 'opencti_enrichment:%'")}
         for entry in enrichment:
@@ -200,7 +239,7 @@ def state(root, case_dir):
     # Apply oldest first so a later successful retry replaces an earlier error.
     for receipt in reversed(exports):
         payload = json.loads(receipt["payload"])
-        receipts.append({k: receipt[k] for k in ("id", "state", "created", "updated", "error")})
+        receipts.append({k: receipt[k] for k in ("id", "state", "created", "updated", "error", "activity_hidden")})
         receipts[-1]["stats"] = {"objects": len(payload.get("objects", [])),
                                 "batches": payload.get("batches", []),
                                 "samples": payload.get("samples", []),
@@ -233,6 +272,7 @@ def _store_lookup(case_dir, ioc, payload, destination):
         current = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc["id"],))
         if current and _identity(current) == _identity(ioc):
             if payload.get("status") in ("known", "own"):
+                from server.ioc_tags import record_choices
                 # Union with the latest local tags inside the same transaction.
                 # Provider labels classify knowledge, not the case assessment.
                 tags = json.loads(current["tags"] or "[]")
@@ -245,6 +285,7 @@ def _store_lookup(case_dir, ioc, payload, destination):
                         value = value.strip()
                         if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
                             continue
+                        record_choices(conn, current, [value], "opencti")
                         if value.casefold() not in existing:
                             tags.append(value)
                             existing.add(value.casefold())
@@ -376,6 +417,8 @@ def preview(root, case_dir, options=None):
     finally:
         conn.close()
     previous = [json.loads(r["object_json"]) for r in old]
+    if any(o.get("type") == "report" and o.get("x_shellhound_case_reference") == result["case_reference"] for o in previous):
+        result["warnings"].append("This transfer uses an Incident Response case. Earlier Reports remain as export history and are not updated or deleted.")
     result["mapping_revision"] = _digest(sorted([graph._stable(o) for o in previous], key=lambda o: o["id"]))
     result["mapping_destination"] = _mapping_destination(config)
     if previous:
@@ -397,8 +440,12 @@ def preview(root, case_dir, options=None):
         withdrawals = graph.withdrawal_objects(previous, full_objects, result["case_reference"])
         result["objects"].extend(withdrawals)
         for report in result["objects"]:
-            if report["type"] == "report":
-                report["object_refs"] = list(dict.fromkeys(report["object_refs"] + [o["id"] for o in withdrawals]))
+            if report["type"] in ("report", "x-opencti-case-incident"):
+                # Import revocations, but keep obsolete entities out of the
+                # active Case graph. The summary Note retains their history.
+                history = [o["id"] for o in withdrawals
+                           if report["type"] == "report" or o.get("x_shellhound_withdrawal")]
+                report["object_refs"] = list(dict.fromkeys(report["object_refs"] + history))
         if withdrawals:
             result["warnings"].append("Previously exported case assertions are withdrawn in this transfer. Review the generated objects.")
     result["fingerprint"] = _digest(graph._stable({k: v for k, v in result.items() if k != "fingerprint"}))
@@ -468,7 +515,7 @@ def _prepare_shared(client, case_dir, receipt, payload):
     """
     if payload.get("preflight_complete"):
         return
-    case_types = {"incident", "report", "note", "indicator", "relationship", "malware"}
+    case_types = {"incident", "x-opencti-case-incident", "report", "note", "indicator", "relationship", "malware"}
     reused = {}
     for obj in payload["objects"]:
         if obj["type"] in case_types and obj.get("x_shellhound_case_reference") == payload["case_reference"]:
@@ -601,11 +648,47 @@ def _queue_export(root, case_dir, receipt):
                     _save_export(case_dir, receipt, payload)
                 remote_file_id = payload.get("reused_shared", {}).get(sample["file_id"], {}).get("standard_id", sample["file_id"])
                 remote_file = client.resolve(remote_file_id)
-                report = client.resolve(payload["report_id"])
+                report = client.resolve(payload.get("case_id") or payload["report_id"])
                 if not remote_file or not report:
-                    raise ValueError("Sample uploaded but file/report is not yet visible; resume to finish the links.")
+                    raise ValueError("Sample uploaded but file/case container is not yet visible; resume to finish the links.")
                 client.link_sample(remote_file["id"], sample["remote_id"], report["id"])
                 sample["state"] = "complete"
+                _save_export(case_dir, receipt, payload)
+            if "sample_context" not in payload:
+                conn = db.connect(case_dir)
+                try:
+                    historical = db.rows(conn, "SELECT payload FROM opencti_exports ORDER BY created DESC")
+                finally:
+                    conn.close()
+                uploaded = {s["remote_id"]: s for s in payload["samples"] if s.get("remote_id")}
+                for row in historical:
+                    old = json.loads(row["payload"])
+                    if old.get("mapping_destination") == payload["mapping_destination"]:
+                        for sample in old.get("samples", []):
+                            if sample.get("remote_id") and sample.get("state") == "complete":
+                                uploaded.setdefault(sample["remote_id"], sample)
+                payload["sample_context"] = legacy_context_plans([json.loads(row["payload"]) for row in historical], payload)
+                payload["sample_context"].extend(context_plan(payload, sample) for sample in uploaded.values())
+                _save_export(case_dir, receipt, payload)
+            for entry in payload["sample_context"]:
+                if entry["state"] in ("complete", "unavailable"):
+                    continue
+                if ctx.cancelled():
+                    _save_export(case_dir, receipt, payload, "paused")
+                    return {"state": "paused"}
+                if entry["target_ids"] or entry["withdraw_ids"]:
+                    def mapped(source_id):
+                        return payload.get("reused_shared", {}).get(source_id, {}).get("standard_id", source_id)
+                    try:
+                        client.sync_sample_context(mapped(entry["file_id"]), entry["artifact_id"], entry.get("container_id") or payload.get("case_id") or payload["report_id"],
+                            [mapped(i) for i in entry["target_ids"]], [mapped(i) for i in entry["withdraw_ids"]])
+                    except OpenCTIError as exc:
+                        if exc.code != "not_found" or any(s.get("remote_id") == entry["artifact_id"] for s in payload["samples"]):
+                            raise
+                        entry.update(state="unavailable", error="Previously uploaded sample context is no longer visible; no sample was uploaded again.")
+                        _save_export(case_dir, receipt, payload)
+                        continue
+                entry["state"] = "complete"
                 _save_export(case_dir, receipt, payload)
             if "descriptions" not in payload:
                 payload["descriptions"] = [{"source_id": o["id"], "text": o["x_opencti_description"], "state": "new"}
@@ -629,7 +712,10 @@ def _queue_export(root, case_dir, receipt):
                                          and (o.get("hashes") or {}).get("SHA-256") == sample["sha256"]), "")
                     if file_context:
                         payload["descriptions"].append({"source_id": sample["remote_id"],
-                            "text": file_context + "\nOriginal file content explicitly selected for upload.", "state": "new"})
+                            "text": (f"Original file bytes explicitly selected from Shellhound case {payload['case_reference']}. "
+                                     "The artifact SHA-256 matches the linked File observable. "
+                                     "Supporting evidence and the complete relationship context are available in the linked Shellhound case container and Notes."),
+                            "state": "new"})
                 _save_export(case_dir, receipt, payload)
             for index, entry in enumerate(payload["descriptions"]):
                 if entry["state"] in ("complete", "unavailable"):
@@ -760,14 +846,14 @@ def enrichment_preview(root, case_dir, ioc_ids=None):
         matches = _lookup_row(client, row)
         entities.append({"ioc_id": row["id"], "id": matches[0]["id"] if matches else None,
                          "value": row["value"], "type": row["type"], "requires_creation": not matches,
-                         "requires_transfer": not matches and row["type"] in ("user", "vulnerability")})
-        if not matches and row["type"] in ("user", "vulnerability"):
-            warnings.append(f"Transfer IOC {row['id']} (account or CVE) before starting enrichment, or remove it from this selection.")
+                         "requires_transfer": not matches and row["type"] == "user"})
+        if not matches and row["type"] == "user":
+            warnings.append(f"Transfer IOC {row['id']} (account) before starting enrichment, or remove it from this selection.")
     types = {_ioc_entity_type(row) for row in rows if not _unsupported(row)}
     connectors = [c for c in _connectors(client) if c.get("active") and not c.get("auto")
                   and any(_scope_matches(c, kind) for kind in types)]
     if any(e["requires_creation"] for e in entities):
-        warnings.append("Unknown IOCs require creating marked observables before the selected connectors can run.")
+        warnings.append("Unknown IOCs require creating marked observables or vulnerabilities before the selected connectors can run.")
     return {"entities": entities, "connectors": connectors, "warnings": warnings}
 
 
@@ -779,7 +865,7 @@ def _ioc_entity_type(row):
 def _scope_matches(connector, entity_type):
     scope = {str(value).lower() for value in connector.get("scope", [])}
     return bool(entity_type) and entity_type.lower() != "artifact" and (
-        entity_type.lower() in scope or "stix-cyber-observable" in scope)
+        entity_type.lower() in scope or (entity_type.lower() != "vulnerability" and "stix-cyber-observable" in scope))
 
 
 def _poll_enrichment(client, case_dir, entry, ctx):
@@ -875,13 +961,14 @@ def enrich(root, case_dir, ioc_ids, connector_ids, create_missing=False):
                 continue
             matches = _lookup_row(client, row)
             if not matches:
-                if row["type"] in ("user", "vulnerability"):
-                    raise ValueError("Transfer this account or CVE to OpenCTI before requesting enrichment.")
+                if row["type"] == "user":
+                    raise ValueError("Transfer this account to OpenCTI before requesting enrichment.")
                 if not create_missing:
-                    raise ValueError("An unknown IOC requires explicit permission to create an observable. Review enrichment again.")
+                    raise ValueError("An unknown IOC requires explicit permission to create an OpenCTI object. Review enrichment again.")
                 _manual_only(client)
                 marking = graph.MARKINGS[workspace.case_info(case_dir)["profile"]["marking"]]
-                matches = [client.create_observable(row["type"], row["value"], marking)]
+                matches = [client.create_vulnerability(row["value"], marking) if row["type"] == "vulnerability"
+                           else client.create_observable(row["type"], row["value"], marking)]
             for entity in matches:
                 entity_type = entity.get("entity_type", entity.get("type", ""))
                 if entity_type == "Artifact":

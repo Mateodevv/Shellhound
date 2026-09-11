@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { ChevronLeft, ChevronRight, FileCode2 } from 'lucide-react'
-import { api, type FileContent } from '../api'
+import { api, reportClientError, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, CopyButton, Modal, Tag } from './ui'
 
@@ -37,6 +37,10 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
       `/api/cases/${slug}/file?path=${encodeURIComponent(path!)}&mode=${mode}&offset=${offset}`),
     enabled: Boolean(path),
   })
+
+  useEffect(() => {
+    if (isError) reportClientError('file-content-open', error, path)
+  }, [error, isError, path])
 
   const pages = data ? Math.max(1, Math.ceil(data.size / data.window)) : 1
   const page = data ? Math.floor(data.offset / data.window) + 1 : 1
@@ -116,7 +120,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
         )}
 
         {data?.mode === 'raw' && data.lines && (
-          <pre className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre data-file-content-scroll tabIndex={0} aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.lines.map((line, i) => {
               const n = data.from_line != null ? data.from_line + i : null
               const hit = n != null && n === focusLine
@@ -134,7 +138,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
         )}
 
         {data?.mode === 'hex' && data.rows && (
-          <pre className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre data-file-content-scroll tabIndex={0} aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.rows.map((r) => (
               <div key={r.offset} className="flex gap-4 px-3">
                 <span className="w-20 shrink-0 select-none text-right text-[#4b5566]">

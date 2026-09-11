@@ -2,8 +2,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  ChevronDown, Code2, Download, FileCode2,
-  Globe, PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight,
+  ChevronDown, Code2, FileCode2,
+  PencilLine, Plus, ShieldAlert, ToggleLeft, ToggleRight,
   Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -17,8 +17,7 @@ import {
   Button, Card, Section, SeverityBadge, Tabs, Tag,
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
-import { GeoDownloadModal } from '../components/GeoBanner'
-import { useGeoStatus } from '../geo'
+import { GeoSettings } from '../components/GeoSettings'
 import { OpenCtiSettings } from '../components/OpenCtiSettings'
 
 type Tab = 'intel' | 'detection'
@@ -51,7 +50,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
 
       {tab === 'intel' && <>
         <OpenCtiSettings />
-        <GeoSection />
+        <GeoSettings />
       </>}
 
       {tab === 'detection' && <>
@@ -184,42 +183,6 @@ function DetectionRules() {
 }
 
 const ENGINE_ORDER = ['webshell', 'sqldb', 'logs', 'errorlog']
-
-/** GeoIP is downloaded explicitly, then all country lookups stay local. */
-function GeoSection() {
-  const tr = useT()
-  const [confirming, setConfirming] = useState(false)
-  const { data } = useGeoStatus()
-
-  return (
-    <Section title={tr('settings.geo')} sub={tr('settings.geo.sub')}>
-      <Card className="flex items-center gap-3 px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-2)]">
-          <Globe size={15} className="text-[var(--muted)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold">
-              {tr('settings.geo.db')}
-            </span>
-            {data?.available
-              ? <Tag tone="accent">{tr('settings.geo.present')}</Tag>
-              : <Tag>{tr('settings.geo.absent')}</Tag>}
-          </div>
-          <div className="mt-0.5 text-[12px] text-[var(--muted)]">
-            {data?.available ? data.source : tr('settings.geo.absent.body')}
-          </div>
-        </div>
-        <Button variant={data?.available ? 'default' : 'primary'}
-          onClick={() => setConfirming(true)}>
-          <Download size={14} />
-          {data?.available ? tr('settings.geo.refresh') : tr('geo.download.cta')}
-        </Button>
-      </Card>
-      <GeoDownloadModal open={confirming} onClose={() => setConfirming(false)} />
-    </Section>
-  )
-}
 
 /** The analyst's own YARA rules. Workspace, not case -- a rule set grows
  *  across cases, the way the pattern library does.

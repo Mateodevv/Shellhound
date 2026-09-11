@@ -17,6 +17,76 @@ from tests.test_http import _LiveServer
 
 
 class OpenCTIHTTPTests(unittest.TestCase):
+    def test_wizard_archive_refuses_active_work_without_cancelling_it(self):
+        conn = db.connect(self.case)
+        try:
+            conn.execute("INSERT INTO jobs(kind,state,created) VALUES('opencti-export','running',?)", (db.now(),))
+            conn.commit()
+        finally:
+            conn.close()
+        path = f'/api/cases/{self.slug}/archive?require_idle=true'
+        with patch('server.app.manager.cancel') as cancel, patch('server.app.workspace.archive_case') as archive:
+            self.assertEqual(401, self.request('POST', path, {}, token='bad')[0])
+            self.assertEqual(409, self.request('POST', path, {})[0])
+            cancel.assert_not_called()
+            archive.assert_not_called()
+            conn = db.connect(self.case)
+            try:
+                self.assertEqual('running', db.one(conn, "SELECT state FROM jobs")["state"])
+                conn.execute("UPDATE jobs SET state='done'")
+                conn.commit()
+            finally:
+                conn.close()
+            archive.return_value = (self.root / 'closed.zip', {})
+            status, result = self.request('POST', path, {})
+            self.assertEqual(200, status)
+            self.assertEqual(0, result['cancelled_jobs'])
+            archive.assert_called_once()
+            cancel.assert_not_called()
+
+    def test_clear_activity_requires_authentication_and_valid_case(self):
+        path = f'/api/cases/{self.slug}/opencti/activity/clear'
+        self.assertEqual(401, self.request('POST', path, {}, token='bad')[0])
+        self.assertEqual(404, self.request('POST', '/api/cases/missing/opencti/activity/clear', {})[0])
+        self.assertEqual((200, {'cleared': 0}), self.request('POST', path, {}))
+
+    def test_edit_ioc_is_atomic_validated_and_records_assessment_and_value_history(self):
+        base = f'/api/cases/{self.slug}/iocs'
+        ioc_id = self.request('POST', base, {'value': '192.0.2.1', 'type': 'ip'})[1]['id']
+        other = self.request('POST', base, {'value': '192.0.2.2', 'type': 'ip'})[1]['id']
+        body = {'value': '192.0.2.3', 'note': 'Corrected record', 'expected_value': '192.0.2.1', 'expected_note': '',
+                'assessment': 'suspicious', 'expected_assessment': 'malicious', 'reason': 'Analyst correction', 'add_tags': ['reviewed']}
+        url = f'{base}/{ioc_id}/edit'
+        self.assertEqual(401, self.request('POST', url, body, token='bad')[0])
+        for change in ({'value': 'bad-ip'}, {'value': '192.0.2.2'}, {'reason': ''}, {'add_tags': ['']}):
+            self.assertEqual(400, self.request('POST', url, {**body, **change})[0])
+            current = self.request('GET', f'{base}/{ioc_id}/detail')[1]
+            self.assertEqual('192.0.2.1', current['object']['value'])
+            self.assertEqual('malicious', current['object']['assessment'])
+            self.assertFalse(current['edits'])
+        status, result = self.request('POST', url, body)
+        self.assertEqual(200, status, result)
+        current = self.request('GET', f'{base}/{ioc_id}/detail')[1]
+        self.assertEqual('192.0.2.3', current['object']['value'])
+        self.assertEqual('suspicious', current['object']['assessment'])
+        self.assertIn('reviewed', current['object']['tags'])
+        self.assertEqual('192.0.2.1', current['edits'][0]['previous_value'])
+        self.assertEqual('Analyst correction', current['assessments'][0]['reason'])
+        self.assertEqual(400, self.request('POST', url, body)[0])
+        self.assertEqual('192.0.2.2', self.request('GET', f'{base}/{other}/detail')[1]['object']['value'])
+
+    def test_bulk_delete_is_authenticated_scoped_and_validated(self):
+        base = f'/api/cases/{self.slug}/iocs'
+        ids = [self.request('POST', base, {'value': value, 'type': 'ip'})[1]['id']
+               for value in ('192.0.2.1', '192.0.2.2', '192.0.2.3')]
+        self.assertEqual(401, self.request('POST', base + '/delete', {'ids': ids}, token='bad')[0])
+        self.assertEqual(422, self.request('POST', base + '/delete', {'ids': [True]})[0])
+        self.assertEqual(422, self.request('POST', base + '/delete', {'ids': []})[0])
+        status, result = self.request('POST', base + '/delete', {'ids': ids[:2]})
+        self.assertEqual(200, status)
+        self.assertEqual(ids[:2], result['deleted_ids'])
+        self.assertEqual([ids[2]], [row['id'] for row in self.request('GET', base)[1]])
+
     def test_database_user_keeps_registration_in_ioc_details_and_export_context(self):
         conn = db.connect(self.case)
         try:
@@ -72,7 +142,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
             status, payload = self.request("POST", url, {"add": [" IOC ", "ioc", "true positive"]})
             self.assertEqual(200, status)
             self.assertEqual(1, sum(t.casefold() == "ioc" for t in payload["tags"]))
-            self.assertIn("analyst", payload["tags"])
+            self.assertNotIn("analyst", payload["tags"])
             self.request("POST", url, {"add": ["scanner"]})
             _, payload = self.request("POST", url, {"remove": ["IOC"], "add": ["OpenCTI label"]})
             self.assertIn("scanner", payload["tags"])
@@ -117,6 +187,17 @@ class OpenCTIHTTPTests(unittest.TestCase):
             self.assertEqual(410, self.request("POST", f"/api/cases/{self.slug}/enrich",
                 {"service": "abuseipdb", "value": "198.51.100.7"})[0])
 
+    def test_profile_choices_are_authenticated_and_read_only(self):
+        for route in ("/api/profile/geography", "/api/opencti/sectors"):
+            self.assertEqual(401, self.request("GET", route, token="bad")[0])
+        code, geo = self.request("GET", "/api/profile/geography")
+        self.assertEqual(200, code)
+        self.assertEqual(["DE", "AT"], [item["code"] for item in geo["countries"][:2]])
+        self.assertEqual(16, len(geo["states"]["DE"]))
+        with patch("server.profile_options.sectors", return_value={"sectors": [], "stale": False}) as read:
+            self.assertEqual(200, self.request("GET", "/api/opencti/sectors")[0])
+            read.assert_called_once()
+
     def test_case_profile_and_preview_are_reviewable_without_token(self):
         code, organization = self.request("POST", "/api/organizations", {})
         self.assertEqual(200, code)
@@ -129,7 +210,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(200, code, preview)
         self.assertTrue(preview["preview_id"])
         self.assertIn("incident", {o["type"] for o in preview["objects"]})
-        self.assertIn("report", {o["type"] for o in preview["objects"]})
+        self.assertIn("x-opencti-case-incident", {o["type"] for o in preview["objects"]})
         self.assertEqual(400, self.request("POST", f"/api/cases/{self.slug}/opencti/export",
                                          {"preview_id": preview["preview_id"]})[0])
 
@@ -152,7 +233,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
             })
             self.assertEqual(200, status, created)
             _, saved = self.request("GET", f"/api/cases/{created['slug']}")
-        expected = {**profile, "countries": ["DE", "AT"]}
+        expected = {**profile, "countries": ["DE", "AT"], "organization_name": "", "subsectors": [], "state": "", "city": ""}
         self.assertEqual(expected, saved["profile"])
         self.assertEqual("PIM-WIZARD-1", saved["reference"])
         _, state = self.request("GET", f"/api/cases/{created['slug']}/opencti")
@@ -161,7 +242,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         status, preview = self.request("POST", f"/api/cases/{created['slug']}/opencti/preview", {})
         self.assertEqual(200, status, preview)
         types = {obj["type"] for obj in preview["objects"]}
-        self.assertTrue({"incident", "report", "identity", "location", "vulnerability"} <= types)
+        self.assertTrue({"incident", "x-opencti-case-incident", "identity", "location", "vulnerability"} <= types)
 
     def test_keys_are_masked_and_case_id_collision_is_validation_error(self):
         code, response = self.request("PATCH", "/api/opencti/settings", {
@@ -242,6 +323,10 @@ class OpenCTIHTTPTests(unittest.TestCase):
                 code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {})
                 self.assertEqual(200, code, preview)
                 self.assertEqual([], preview["errors"])
+                self.assertFalse(any(o["type"] == "malware" for o in preview["objects"]))
+                selected = next(i["id"] for i in preview["iocs"] if i["type"] == "file" and i["indicator_supported"])
+                code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {"indicator_ids": [selected]})
+                self.assertEqual(200, code, preview)
                 malware = [o for o in preview["objects"] if o["type"] == "malware"]
                 self.assertEqual(1, len(malware), malware)
                 self.assertEqual([malware_type], malware[0]["malware_types"])
@@ -249,7 +334,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         conn = db.connect(self.case)
         try:
             event = db.one(conn, "SELECT note FROM triage_events ORDER BY id DESC LIMIT 1")
-            self.assertIn("Classification changed to malware:", event["note"])
+            self.assertIn("File classifications: Malware", event["note"])
         finally:
             conn.close()
         self.assertEqual(200, self.request("POST", route, {"path": str(sample),
@@ -286,6 +371,9 @@ class OpenCTIHTTPTests(unittest.TestCase):
         finally:
             conn.close()
         code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {})
+        self.assertEqual(200, code, preview)
+        selected = next(i["id"] for i in preview["iocs"] if i["value"] == new_hash and i["indicator_supported"])
+        code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {"indicator_ids": [selected]})
         self.assertEqual(200, code, preview)
         malware = [o for o in preview["objects"] if o["type"] == "malware"]
         self.assertEqual(1, len(malware), malware)

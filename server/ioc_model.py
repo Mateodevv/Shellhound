@@ -193,6 +193,8 @@ def migrate(conn):
     for row in db.rows(conn, "SELECT * FROM ioc_links"):
         if not conn.execute("SELECT 1 FROM ioc_relationship_evidence WHERE link_id=?", (row["id"],)).fetchone():
             add_support(conn, row["id"], "Legacy collection relationship", row["note"])
+    from server.ioc_tags import preserve_imported_labels
+    preserve_imported_labels(conn)
 
 
 def _migrate_file_relationships(conn):
@@ -306,7 +308,13 @@ def register_file(conn, hashes, artifact="", *, hash_id=None, path_id=None, size
 
 def enrich_rows(conn, rows):
     from server import db
+    from server.ioc_tags import finding_classification
     files = {f["ioc_id"]: f for f in db.rows(conn, "SELECT * FROM ioc_files")}
+    classified_findings = {}
+    for finding in db.rows(conn, "SELECT s.ioc_id,f.rule,f.source FROM findings f " + db.RETIRE_JOIN +
+                           " JOIN ioc_sources s ON s.artifact=f.artifact AND s.active=1 AND s.role='hash' "
+                           "WHERE f.triage='confirmed' AND " + db.LIVE_PREDICATE):
+        classified_findings.setdefault(finding['ioc_id'], []).append(finding)
     assessed = {a[0] for a in conn.execute("SELECT DISTINCT ioc_id FROM ioc_assessments")}
     members = {}
     spans = {o["ioc_id"]: o for o in db.rows(conn, "SELECT ioc_id,min(nullif(first_seen,'')) AS first_seen,"
@@ -322,22 +330,32 @@ def enrich_rows(conn, rows):
         if row["id"] in files:
             f = files[row["id"]]
             row["file"] = {**f, "hashes": json.loads(f["hashes"]), "names": json.loads(f["names"])}
+            if not row['file']['classification'] and f['verified_at']:
+                row['file']['classification'] = finding_classification(classified_findings.get(row['id'], []))
         else:
             row["file"] = None
         row["summary"] = ((", ".join(row["file"]["names"]) or "File content") if row["file"] else
                           row.get("origin", ""))
-    return rows
+    from server.ioc_tags import apply_labels
+    return apply_labels(conn, rows)
 
 
 def collect_file(conn, artifact, digest, hash_id, path_id, classification="", findings=()):
     """Attach metadata only if a coherent read matches the recorded hash."""
     from server.opencti_graph import _snapshot
+    from server.ioc_tags import finding_classification
+    findings = list(findings)
+    from server.file_classifications import saved
+    explicit_classes = saved(conn, artifact)
+    classification = next(iter(explicit_classes), '') if explicit_classes is not None else classification or finding_classification(findings)
     snapshot, _ = _snapshot(artifact)
     verified = bool(snapshot and snapshot["sha256"] == digest.lower())
     file_id = register_file(conn, snapshot["hashes"] if verified else {"SHA-256": digest}, artifact,
                             hash_id=hash_id, path_id=path_id,
                             size=snapshot["size"] if verified else None,
                             classification=classification if verified else "", verified=verified)
+    if verified and explicit_classes is not None:
+        conn.execute('UPDATE ioc_files SET classification=? WHERE ioc_id=?', (classification, file_id))
     for finding in findings:
         observe(conn, file_id, "finding", finding_id=finding.get("id"), source_ref=finding.get("fingerprint", ""),
                 local_path=artifact, first_seen=finding.get("created", ""), last_seen=finding.get("last_seen", ""),
@@ -456,10 +474,64 @@ def supported_links(conn, links):
     return out
 
 
+def edit_object(conn, ioc_id, *, value, note, expected_value, expected_note, assessment, expected_assessment, reason="", add_tags=(), remove_tags=()):
+    from server import db
+    from urllib.parse import urlsplit
+    row = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc_id,))
+    if not row:
+        raise LookupError("IOC does not exist.")
+    if row["value"] != expected_value or row["note"] != expected_note or row["assessment"] != expected_assessment:
+        raise ValueError("This IOC changed. Reopen the editor to load its current values.")
+    value = value.strip()
+    if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError("Enter a non-empty, single-line IOC value.")
+    changed = value != row["value"]
+    if changed:
+        kind = row["type"]
+        if kind == "file" or (kind == "hash" and conn.execute("SELECT 1 FROM ioc_file_members WHERE ioc_id=?", (ioc_id,)).fetchone()):
+            raise ValueError("Verified file identities are bound to their content. Edit the note or tags instead.")
+        if not reason.strip():
+            raise ValueError("Explain the correction to this IOC value.")
+        if kind == "ip":
+            value = str(ipaddress.ip_address(value))
+        elif kind == "vulnerability":
+            if not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+                raise ValueError("Enter a valid CVE identifier.")
+            value = value.upper()
+        elif kind == "hash":
+            if not re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", value):
+                raise ValueError("Enter an MD5, SHA-1 or SHA-256 hash.")
+            value = value.lower()
+        elif kind == "domain":
+            value = value.rstrip('.').encode('idna').decode('ascii').lower()
+            if len(value) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in value.split('.')):
+                raise ValueError("Enter a valid domain name.")
+        elif kind == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+", value):
+            raise ValueError("Enter a valid email address.")
+        elif kind == "url":
+            url = urlsplit(value)
+            if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
+                raise ValueError("Enter an HTTP or HTTPS URL without credentials.")
+        key = identity(value, kind, row["context"], row["path_context"])
+        if conn.execute("SELECT 1 FROM iocs WHERE identity_key=? AND id!=?", (key, ioc_id)).fetchone():
+            raise ValueError("This IOC already exists. Existing objects were retained.")
+        event = {"previous_value": row["value"], "value": value, "reason": reason.strip(), "created": now()}
+        conn.execute("INSERT INTO meta(key,value) VALUES(?,?)", (f"ioc-edit:{ioc_id}:{uuid.uuid4()}", json.dumps(event)))
+        conn.execute("UPDATE iocs SET value=?,identity_key=? WHERE id=?", (value, key, ioc_id))
+        conn.execute("DELETE FROM opencti_lookups WHERE ioc_id=?", (ioc_id,))
+    conn.execute("UPDATE iocs SET note=? WHERE id=?", (note, ioc_id))
+    if assessment not in ASSESSMENTS:
+        raise ValueError("Invalid assessment.")
+    if assessment != row["assessment"]:
+        assess(conn, ioc_id, assessment, reason)
+    edit_tags(conn, ioc_id, add_tags, remove_tags)
+    return {"ok": True}
+
+
 def edit_tags(conn, ioc_id, add=(), remove=()):
     """Apply tag deltas inside the caller's transaction, preserving concurrent additions."""
     from server import db
-    row = db.one(conn, "SELECT tags FROM iocs WHERE id=?", (ioc_id,))
+    row = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc_id,))
     if not row:
         raise LookupError("IOC does not exist.")
 
@@ -484,7 +556,12 @@ def edit_tags(conn, ioc_id, add=(), remove=()):
         raise ValueError("An IOC can have up to 100 tags.")
     tags = sorted(current.values(), key=str.casefold)
     conn.execute("UPDATE iocs SET tags=? WHERE id=?", (json.dumps(tags, ensure_ascii=False), ioc_id))
-    return {"tags": tags}
+    from server.ioc_tags import record_choices
+    record_choices(conn, row, additions.values(), "manual")
+    record_choices(conn, row, removals.values(), "removed")
+    row["tags"] = json.dumps(tags)
+    enrich_rows(conn, [row])
+    return {"tags": json.loads(row["tags"])}
 
 
 def detail(conn, ioc_id):
@@ -512,8 +589,28 @@ def detail(conn, ioc_id):
             link["withdrawal_reason"] = "Supporting observations are no longer active."
         links.append(link)
     return {"object": row, "observations": recorded, "sources": sources, "findings": findings,
+            "edits": [json.loads(e["value"]) for e in db.rows(conn, "SELECT value FROM meta WHERE key LIKE ? ORDER BY rowid DESC", (f"ioc-edit:{ioc_id}:%",))],
             "assessments": db.rows(conn, "SELECT * FROM ioc_assessments WHERE ioc_id=? ORDER BY id DESC", (ioc_id,)),
             "relationships": links, "relationship_types": {k: {"sources": sorted(s), "targets": sorted(t)} for k, (s, t) in RELATIONS.items()}}
+
+
+def delete_objects(conn, ids):
+    """Delete explicit objects and exclusively owned hidden hash members.
+
+    Caller owns the transaction. Triggers remove local dependent records;
+    export receipts/mappings remain available for withdrawal history.
+    """
+    from server import db
+    existing = {row['id']: row['type'] for row in db.rows(conn, 'SELECT id,type FROM iocs')}
+    selected = set(ids).intersection(existing)
+    memberships = {}
+    for row in db.rows(conn, 'SELECT ioc_id,file_id FROM ioc_file_members'):
+        memberships.setdefault(row['ioc_id'], set()).add(row['file_id'])
+    files = {identifier for identifier in selected if existing[identifier] == 'file'}
+    selected.update(identifier for identifier, parents in memberships.items()
+                    if existing.get(identifier) == 'hash' and parents and parents <= files)
+    conn.executemany('DELETE FROM iocs WHERE id=?', ((identifier,) for identifier in sorted(selected)))
+    return {'deleted_ids': sorted(selected)}
 
 
 def assess(conn, ioc_id, state, reason):

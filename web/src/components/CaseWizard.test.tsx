@@ -4,6 +4,7 @@ import { api, post } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Start } from '../views/Start'
 
+vi.mock('../geo', () => ({ useGeoStatus: () => ({ data: { available: true } }) }))
 vi.mock('../api', async original => ({ ...(await original<typeof import('../api')>()), api: vi.fn(), post: vi.fn() }))
 let configured: boolean
 beforeEach(() => {
@@ -13,6 +14,12 @@ beforeEach(() => {
     if (path === '/api/state') return { workspace: 'Synthetic workspace', cases: [] }
     if (path === '/api/archives') return { archives: [] }
     if (path === '/api/organizations') return [{ id: 'org-1', name: 'Organization-0123456789ab' }]
+    if (path === '/api/profile/geography') return { countries: [{ code: 'DE', name: 'Germany' }, { code: 'AT', name: 'Austria' }], states: { DE: [{ code: 'DE-BE', name: 'Berlin' }], AT: [{ code: 'AT-9', name: 'Wien' }] } }
+    if (path === '/api/opencti/sectors') return { sectors: [
+      { id: 's1', name: 'Technology', parents: [], subsector: false },
+      { id: 's2', name: 'Manufacturing', parents: [], subsector: false },
+      { id: 's3', name: 'Software', parents: ['Technology'], subsector: true },
+    ], stale: false }
     throw new Error(`Unexpected API: ${path}`)
   })
   vi.mocked(post).mockResolvedValue({ slug: 'synthetic', name: 'Synthetic incident' })
@@ -31,10 +38,14 @@ function fillCase() {
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
 }
 async function fillAffected() {
-  const org = await screen.findByRole('option', { name: 'Organization-0123456789ab' })
-  fireEvent.change(org.parentElement!, { target: { value: 'org-1' } })
-  fireEvent.change(screen.getByLabelText('Sectors (comma separated) *'), { target: { value: 'Technology, Manufacturing' } })
-  fireEvent.change(screen.getByLabelText('Affected countries (ISO codes, comma separated) *'), { target: { value: 'DE, AT' } })
+  await screen.findByRole('option', { name: 'Technology' })
+  fireEvent.change(screen.getByLabelText('Organisation name *'), { target: { value: 'Synthetic Research GmbH' } })
+  fireEvent.change(screen.getByLabelText('Sectors *'), { target: { value: 'Technology' } })
+  fireEvent.change(screen.getByLabelText('Sectors *'), { target: { value: 'Manufacturing' } })
+  fireEvent.change(screen.getByLabelText('Subsectors'), { target: { value: JSON.stringify({ name: 'Software', sector: 'Technology' }) } })
+  fireEvent.change(screen.getByLabelText('Country *'), { target: { value: 'DE' } })
+  fireEvent.change(screen.getByLabelText('State'), { target: { value: 'DE-BE' } })
+  fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Berlin' } })
 }
 
 it('collects a granular profile, preserves back navigation and saves it in one explicit case request', async () => {
@@ -57,7 +68,7 @@ it('collects a granular profile, preserves back navigation and saves it in one e
   fireEvent.change(screen.getByRole('combobox', { name: 'Vulnerabilities' }), { target: { value: 'confirmed' } })
   fireEvent.change(screen.getByLabelText('Vulnerability context'), { target: { value: 'Verified by the incident response team' } })
   fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-  expect(screen.getByLabelText('Sectors (comma separated) *')).toHaveValue('Technology, Manufacturing')
+  expect(screen.getByText('Technology', { selector: 'span' })).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
   expect(screen.getByLabelText('Software name')).toHaveValue('Joomla')
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
@@ -69,20 +80,21 @@ it('collects a granular profile, preserves back navigation and saves it in one e
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith('synthetic'))
   expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases', {
     name: 'Synthetic incident', reference: 'PIM-5165', profile: {
-      organization_id: 'org-1', pseudonym: 'Organization-0123456789ab', summary: 'Investigation of suspicious requests',
-      sectors: ['Technology', 'Manufacturing'], countries: ['DE', 'AT'], first_seen: '2026-09-01', last_seen: '2026-09-08',
+      organization_id: '', organization_name: 'Synthetic Research GmbH', pseudonym: '', state: 'DE-BE', city: 'Berlin', subsectors: [{ name: 'Software', sector: 'Technology' }], summary: 'Investigation of suspicious requests',
+      sectors: ['Technology', 'Manufacturing'], countries: ['DE'], first_seen: '2026-09-01', last_seen: '2026-09-08',
       marking: 'TLP:AMBER+STRICT', software: [{ name: 'Joomla', version: '5.2' }],
       vulnerabilities: [{ name: 'CVE-2026-12345', status: 'confirmed', description: 'Verified by the incident response team' }],
     },
   })
 })
 
-it('validates country codes and chronology and requires context for vulnerabilities without a CVE', async () => {
+it('resets dependent locations and validates chronology and requires context for vulnerabilities without a CVE', async () => {
   await open(); fillCase(); await fillAffected()
-  fireEvent.change(screen.getByLabelText('Affected countries (ISO codes, comma separated) *'), { target: { value: 'Germany' } })
-  expect(screen.getByRole('alert')).toHaveTextContent('two-letter country codes')
+  fireEvent.change(screen.getByLabelText('Country *'), { target: { value: '' } })
+  expect(screen.getByLabelText('State')).toHaveValue('')
+  expect(screen.getByLabelText('City')).toHaveValue('')
   expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText('Affected countries (ISO codes, comma separated) *'), { target: { value: 'DE' } })
+  fireEvent.change(screen.getByLabelText('Country *'), { target: { value: 'DE' } })
   fireEvent.change(screen.getByLabelText('Incident start'), { target: { value: '2026-09-08' } })
   fireEvent.change(screen.getByLabelText('Incident end'), { target: { value: '2026-09-01' } })
   expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
@@ -116,4 +128,51 @@ it('keeps local creation short when OpenCTI is not configured and retains inputs
   await waitFor(() => expect(onOpen).toHaveBeenCalledWith('synthetic'))
   expect(vi.mocked(post).mock.calls.every(([url]) => url === '/api/cases')).toBe(true)
   expect(vi.mocked(api).mock.calls.some(([url]) => url === '/api/organizations')).toBe(false)
+})
+
+
+it('keeps custom sectors local until export and saves a new subsector with its parent', async () => {
+  await open(); fillCase()
+  await screen.findByRole('option', { name: 'Technology' })
+  expect(screen.getByRole('button', { name: 'New subsector' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Organisation name *'), { target: { value: 'Synthetic organization' } })
+  fireEvent.change(screen.getByLabelText('Country *'), { target: { value: 'DE' } })
+  fireEvent.click(screen.getByRole('button', { name: 'New sector' }))
+  expect(screen.getByRole('button', { name: 'Add to case' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Sector name'), { target: { value: '  Custom Industry  ' } })
+  fireEvent.keyDown(screen.getByLabelText('Sector name'), { key: 'Enter' })
+  expect(screen.getByRole('heading', { name: 'Affected organization' })).toBeVisible()
+  expect(screen.getByText('Custom Industry', { selector: 'span' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'New subsector' }))
+  expect(screen.getByLabelText('Parent sector')).toHaveValue('Custom Industry')
+  fireEvent.change(screen.getByLabelText('Subsector name'), { target: { value: 'Custom specialization' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
+  expect(screen.getByText('Custom specialization', { selector: 'span' })).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
+  await waitFor(() => expect(post).toHaveBeenCalledOnce())
+  expect(post).toHaveBeenCalledWith('/api/cases', expect.objectContaining({ profile: expect.objectContaining({
+    sectors: ['Custom Industry'], subsectors: [{ name: 'Custom specialization', sector: 'Custom Industry' }],
+  }) }))
+})
+
+it('reuses matching names and prevents conflicting subsector identities', async () => {
+  await open(); fillCase(); await fillAffected()
+  fireEvent.click(screen.getByRole('button', { name: 'New sector' }))
+  fireEvent.change(screen.getByLabelText('Sector name'), { target: { value: 'technology' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
+  expect(screen.getAllByRole('button', { name: 'Remove tag Technology' })).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'New subsector' }))
+  expect(screen.getByLabelText('Parent sector')).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('Subsector name'), { target: { value: 'Technology' } })
+  expect(screen.getByRole('button', { name: 'Add to case' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Parent sector'), { target: { value: 'Manufacturing' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
+  expect(screen.getByRole('alert')).toHaveTextContent('already belongs')
+  fireEvent.click(within(screen.getByRole('group', { name: 'New subsector' })).getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Remove tag Technology' }))
+  expect(screen.queryByRole('button', { name: 'Remove tag Software' })).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
 })

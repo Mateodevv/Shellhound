@@ -12,13 +12,16 @@ export const TOKEN: string =
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  requestId: string
+  constructor(status: number, message: string, requestId = '') {
     super(message)
     this.status = status
+    this.requestId = requestId
   }
 }
 
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  try {
   const res = await fetch(path, {
     ...init,
     headers: {
@@ -35,9 +38,15 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
       const body = await res.json()
       detail = body.detail ?? detail
     } catch { /* not JSON */ }
-    throw new ApiError(res.status, String(detail))
+    throw new ApiError(res.status, String(detail), res.headers.get('x-request-id') ?? '')
   }
-  return res.json() as Promise<T>
+  return await res.json() as T
+  } catch (error) {
+    const url = new URL(path, location.origin)
+    reportClientError(url.pathname.endsWith('/file') ? 'file-content-open' : 'api-request',
+      error, url.searchParams.get('path') ?? url.pathname)
+    throw error
+  }
 }
 
 export const post = <T = unknown>(path: string, body?: unknown) =>
@@ -52,6 +61,24 @@ export const put = <T = unknown>(path: string, body: unknown) =>
   api<T>(path, { method: 'PUT', body: JSON.stringify(body) })
 
 export const del = <T = unknown>(path: string) => api<T>(path, { method: 'DELETE' })
+
+/** Record a UI failure without making the original failure worse. The server
+ * strips secrets and turns the optional target into a one-way fingerprint. */
+const reportedErrors = new WeakSet<object>()
+export function reportClientError(action: string, error: unknown, target = ''): void {
+  if (error && typeof error === 'object') {
+    if (reportedErrors.has(error)) return
+    reportedErrors.add(error)
+  }
+  const message = String((error as Error)?.message ?? error ?? 'Unknown browser error').slice(0, 16000)
+  void fetch('/api/diagnostics/client-error', {
+    method: 'POST',
+    headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action.slice(0, 80), message, route: location.pathname.slice(0, 120),
+      target: target.slice(0, 16000), stack: String((error as Error)?.stack ?? '').slice(0, 16000),
+      request_id: error instanceof ApiError ? error.requestId : '' }),
+  }).catch(() => undefined)
+}
 
 export function downloadUrl(path: string): string {
   const sep = path.includes('?') ? '&' : '?'
@@ -633,7 +660,7 @@ export interface Ioc {
   legacy_warning?: string
   summary?: string
   file_ids?: number[]
-  file?: { hashes: Record<string, string>; names: string[]; size: number | null; classification: string; verified_at: string } | null
+  file?: { hashes: Record<string, string>; names: string[]; size: number | null; classification: string; classifications?: string[]; verified_at: string } | null
   id: number
   value: string
   type: string
@@ -1450,6 +1477,8 @@ export interface RetainedIoc {
  *  Each of them can be opened directly as a trace. */
 export interface RelatedIp {
   ip: string
+  first_epoch?: number | null
+  last_epoch?: number | null
   why: string
   hits: number | null
   ok_hits: number | null
@@ -1469,6 +1498,7 @@ export interface ArtifactContext {
   related_ips: RelatedIp[]
   file?: {
     exists: boolean
+    classifications?: string[] | null
     changed_since_scan?: boolean
     scanned_sha256?: string
     size?: number
