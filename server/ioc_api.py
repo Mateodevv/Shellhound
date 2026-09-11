@@ -1,6 +1,6 @@
 """Local IOC detail and analyst assertion endpoints."""
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from server import db, ioc_model
 
 
@@ -29,6 +29,22 @@ class TagsBody(BaseModel):
     remove: list[str] = Field(default_factory=list, max_length=100)
 
 
+class DeleteObjectsBody(BaseModel):
+    ids: list[StrictInt] = Field(min_length=1, max_length=10000)
+
+
+class EditObjectBody(BaseModel):
+    value: str = Field(min_length=1, max_length=8192)
+    note: str = Field(max_length=10000)
+    expected_value: str
+    expected_note: str
+    assessment: str
+    expected_assessment: str
+    reason: str = Field(default="", max_length=2000)
+    add_tags: list[str] = Field(default_factory=list, max_length=100)
+    remove_tags: list[str] = Field(default_factory=list, max_length=100)
+
+
 def register(app, resolve_case, auth, hub):
     def run(slug, action, *, write=False):
         conn = db.connect(resolve_case(slug))
@@ -51,9 +67,17 @@ def register(app, resolve_case, auth, hub):
     def detail(slug: str, ioc_id: int):
         return run(slug, lambda conn: ioc_model.detail(conn, ioc_id))
 
+    @app.post("/api/cases/{slug}/iocs/delete", dependencies=[auth])
+    def delete_selected(slug: str, body: DeleteObjectsBody):
+        return run(slug, lambda conn: ioc_model.delete_objects(conn, body.ids), write=True)
+
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/tags", dependencies=[auth])
     def tags(slug: str, ioc_id: int, body: TagsBody):
         return run(slug, lambda conn: ioc_model.edit_tags(conn, ioc_id, body.add, body.remove), write=True)
+
+    @app.post("/api/cases/{slug}/iocs/{ioc_id}/edit", dependencies=[auth])
+    def edit(slug: str, ioc_id: int, body: EditObjectBody):
+        return run(slug, lambda conn: ioc_model.edit_object(conn, ioc_id, **body.model_dump()), write=True)
 
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/assessments", dependencies=[auth])
     def assess(slug: str, ioc_id: int, body: AssessmentBody):

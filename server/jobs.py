@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 from server import db
+from server import diagnostics
 from server.analysis import decode_job, refresh_receipts
 from server.events import hub
 from server.paths import display_path
@@ -50,6 +51,8 @@ class JobContext:
 
     def detailed_skip(self, path, reason, category="file", root=""):
         self.skipped_files.append((display_path(path), str(reason), category, display_path(root)))
+        diagnostics.record(Path(self.case_dir).parent, "warning", "job", reason, event="file-skipped",
+                           job_id=self.job_id, target=diagnostics.fingerprint(path), category=category)
 
     def file_result(self, path, root, status, reason=""):
         # Engines call this only after committing that file. Ordinals belong
@@ -78,6 +81,8 @@ class JobContext:
         nowts = time.monotonic()
         if nowts - self._last_db_write >= 1.0:
             self._last_db_write = nowts
+            diagnostics.record(Path(self.case_dir).parent, "debug", "job", "Progress",
+                               job_id=self.job_id, progress=fraction, phase=self.progress_details.get("phase"))
             # BEST-EFFORT: the engine calling this may itself hold an open
             # write transaction on case.db -- waiting on the lock here would
             # deadlock the thread against its own connection. The DB copy of
@@ -93,8 +98,9 @@ class JobContext:
                     conn.commit()
                 finally:
                     conn.close()
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.OperationalError as exc:
+                diagnostics.record(Path(self.case_dir).parent, "debug", "job", str(exc),
+                                   event="progress-write-deferred", job_id=self.job_id)
 
 
 def _key(case_dir, job_id):
@@ -183,6 +189,7 @@ class JobManager:
             conn.close()
 
         ctx = JobContext(self, case_dir, job_id, scan_context)
+        diagnostics.record(Path(case_dir).parent, "info", "job", "Job queued", job_id=job_id, kind=kind)
         with self._lock:
             self.live[_key(case_dir, job_id)] = ctx
         hub.publish({"type": "job", "case_slug": Path(case_dir).name, "job": {"id": job_id, "kind": kind,
@@ -196,6 +203,7 @@ class JobManager:
             ctx = self.live.get(_key(case_dir, job_id))
         if ctx is not None:
             ctx.cancel_event.set()
+            diagnostics.record(Path(case_dir).parent, "info", "job", "Cancellation requested", job_id=job_id)
             return True
         return False
 
@@ -229,6 +237,8 @@ class JobManager:
             self._idle.wait_for(lambda: not self.live)
 
     def _set_state(self, ctx, state, error="", stats=None):
+        diagnostics.record(Path(ctx.case_dir).parent, "info", "job", "State changed",
+                           job_id=ctx.job_id, state=state)
         conn = db.connect(ctx.case_dir)
         try:
             fields = {"state": state, "error": error}
@@ -275,8 +285,15 @@ class JobManager:
             state = "cancelled" if ctx.cancelled() else "done"
             self._set_state(ctx, state, stats=stats)
             hub.publish({"type": "invalidate", "scope": kind})
-        except Exception:
-            self._set_state(ctx, "failed", error=traceback.format_exc(limit=8))
+        except Exception as exc:
+            diagnostics.exception(Path(ctx.case_dir).parent, "background-job", exc,
+                               job_id=ctx.job_id, job_kind=kind,
+                               case_slug=Path(ctx.case_dir).name)
+            try:
+                self._set_state(ctx, "failed", error=traceback.format_exc(limit=8))
+            except Exception as state_exc:
+                diagnostics.exception(Path(ctx.case_dir).parent, "background-job", state_exc,
+                                      job_id=ctx.job_id, operation="persist-failure")
             # A retry may have committed earlier files before a later one
             # failed. Those findings and resolved warnings must refresh too.
             hub.publish({"type": "invalidate", "scope": kind})

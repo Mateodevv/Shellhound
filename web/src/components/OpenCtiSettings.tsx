@@ -29,6 +29,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
   }), onSuccess: () => {
     setToken(''); setClearToken(false); setSaved(true)
     qc.invalidateQueries({ queryKey: ['opencti-settings'] })
+    qc.removeQueries({ queryKey: ['opencti-sectors'] })
   } })
   const test = useMutation({ mutationFn: () => post<{ ok: boolean; version?: string; connectors: OpenCtiConnector[]; warnings: string[] }>('/api/opencti/test', {}) })
   const dirty = url !== initial.url || ingester !== initial.ingester_id || token !== '' || clearToken || samples !== initial.sample_uploads

@@ -88,6 +88,39 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.conn.commit()
         return file
 
+    def test_clear_activity_preserves_data_and_active_work(self):
+        now = db.now()
+        for kind, state in (("opencti-lookup", "done"), ("opencti-lookup", "failed"),
+                            ("opencti-lookup", "running"), ("scan", "failed")):
+            self.conn.execute("INSERT INTO jobs(kind,state,created) VALUES(?,?,?)", (kind, state, now))
+        identity = service._identity(next(row for row in service._iocs(self.case) if row["id"] == self.ip_id))
+        destination = service._destination(self.config)
+        self.conn.execute("INSERT INTO opencti_enrichments VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("enrich-1", self.ip_id, identity, "remote", "connector", "work", "complete", now, "", destination))
+        self.conn.execute("INSERT INTO opencti_exports(id,destination,state,created,updated,error,payload) VALUES(?,?,?,?,?,?,?)",
+            ("export-1", destination, "complete", now, now, "", json.dumps({"objects": [{"id": "file--example"}]})))
+        self.conn.commit()
+        before = service.state(self.root, self.case)
+        self.assertEqual(4, service.clear_activity(self.case)["cleared"])
+        after = service.state(self.root, self.case)
+        self.assertEqual(before["lookups"], after["lookups"])
+        self.assertEqual(before["sync"], after["sync"])
+        self.assertEqual(3, len(after["jobs"]))
+        self.assertEqual(2, sum(job["activity_hidden"] for job in after["jobs"]))
+        self.assertTrue(after["exports"][0]["activity_hidden"])
+        self.assertEqual(before["exports"][0]["stats"], after["exports"][0]["stats"])
+        self.assertTrue(after["enrichments"][0]["activity_hidden"])
+        self.assertEqual(4, db.one(self.conn, "SELECT count(*) n FROM jobs")["n"])
+        self.assertEqual(0, service.clear_activity(self.case)["cleared"])
+        # Finishing a previously running job and changing a receipt makes them visible.
+        self.conn.execute("UPDATE jobs SET state='done',finished=? WHERE state='running'", (now,))
+        self.conn.execute("UPDATE opencti_exports SET state='failed',error='new failure'")
+        self.conn.commit()
+        latest = service.state(self.root, self.case)
+        self.assertEqual(1, sum(not job["activity_hidden"] for job in latest["jobs"]))
+        self.assertFalse(latest["exports"][0]["activity_hidden"])
+        self.assertFalse(self.client_factory.called)
+
     def test_state_and_export_preview_are_offline(self):
         self.assertEqual([], service.state(self.root, self.case)["lookups"])
         result = self.preview()
@@ -149,10 +182,16 @@ class OpenCTIServiceTests(unittest.TestCase):
         sample_id = self.preview()["samples"][0]["id"]
         self.export(sample_ids=[sample_id])
         self.client.update_case_description.reset_mock()
+        self.client.sync_sample_context.reset_mock()
         self.export(sample_ids=[])
+        self.client.sync_sample_context.assert_called_once()
+        context_args = self.client.sync_sample_context.call_args.args
+        self.assertEqual("artifact-remote", context_args[1])
+        self.assertTrue(any(i.startswith("incident--") for i in context_args[3]))
+        self.assertTrue(any(i.startswith("note--") for i in context_args[3]))
         self.client.upload_sample.assert_called_once()
         calls = self.client.update_case_description.call_args_list
-        self.assertTrue(any(c.args[0] == "artifact-remote" and "Original file content" in c.args[2] for c in calls))
+        self.assertTrue(any(c.args[0] == "artifact-remote" and "Original file bytes explicitly selected" in c.args[2] for c in calls))
         def update(source_id, *_args):
             if source_id == "artifact-remote":
                 raise OpenCTIError("Artifact no longer exists", code="not_found")
@@ -164,6 +203,21 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertEqual("unavailable", entry["state"])
         self.assertIn("not uploaded again", entry["error"])
         self.client.upload_sample.assert_called_once()
+
+    def test_sample_context_failure_resumes_without_uploading_again(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        sample_id = self.preview()["samples"][0]["id"]
+        self.client.sync_sample_context.side_effect = OpenCTIError("Context temporarily unavailable")
+        queued = service.transfer(self.root, self.case, self.preview(sample_ids=[sample_id])["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Context temporarily unavailable"):
+            self.jobs.run()
+        self.assertEqual("new", self.receipt(queued["export_id"])["payload"]["sample_context"][0]["state"])
+        self.client.sync_sample_context.side_effect = None
+        service.retry(self.root, self.case, queued["export_id"])
+        self.jobs.run()
+        self.client.upload_sample.assert_called_once()
+        self.assertEqual("complete", self.receipt(queued["export_id"])["state"])
 
     def test_transfer_is_bound_to_case_data_and_destination(self):
         preview = self.preview()
@@ -333,6 +387,23 @@ class OpenCTIServiceTests(unittest.TestCase):
         full = self.preview(indicator_ids=[self.ip_id])
         self.assertEqual({o["id"] for o in previous}, {o["id"] for o in full["objects"]})
 
+    def test_new_case_keeps_legacy_report_history_and_excludes_revoked_nodes(self):
+        preview = self.preview()
+        case = next(o for o in preview["objects"] if o["id"] == preview["case_id"])
+        report = {**case, "type": "report", "id": graph._id("report", ["PIM-1234", "report"])}
+        old_note = {"type": "note", "id": graph._id("note", ["PIM-1234", "legacy-context"]),
+                    "created_by_ref": graph._id("identity", "shellhound"), "x_shellhound_case_reference": "PIM-1234",
+                    "content": "Legacy context", "object_refs": [preview["incident_id"]]}
+        for obj in (report, old_note):
+            service._mapping(self.case, obj, {"id": "remote", "standard_id": obj["id"]}, service._mapping_destination(self.config))
+        current = self.preview()
+        case = next(o for o in current["objects"] if o["id"] == current["case_id"])
+        self.assertNotIn(report["id"], {o["id"] for o in current["objects"]})
+        self.assertNotIn(old_note["id"], case["object_refs"])
+        self.assertTrue(any(o["id"] == old_note["id"] and o.get("revoked") for o in current["objects"]))
+        self.assertTrue(any(o.get("x_shellhound_withdrawal") and o["id"] in case["object_refs"] for o in current["objects"]))
+        self.assertTrue(any("Earlier Reports remain" in w for w in current["warnings"]))
+
     def test_shared_foreign_observable_is_referenced_without_overwriting_its_fields(self):
         preview = self.preview()
         source = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
@@ -342,7 +413,7 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.jobs.run()
         sent = self.client.push.call_args.args[0]
         self.assertNotIn(source["id"], {obj["id"] for obj in sent})
-        report = next(obj for obj in sent if obj["type"] == "report")
+        report = next(obj for obj in sent if obj["type"] == "x-opencti-case-incident")
         self.assertIn(foreign["standard_id"], report["object_refs"])
         self.assertNotIn(source["id"], report["object_refs"])
         receipt = self.receipt(result["export_id"])
@@ -496,6 +567,38 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertTrue(preview["entities"][0]["requires_creation"])
         self.client.create_observable.assert_not_called()
         self.client.enrich.assert_not_called()
+
+    def test_cve_enrichment_creates_only_after_approval_and_reuses_existing(self):
+        cve_id = db.add_ioc(self.conn, "CVE-2026-12345", "vulnerability")
+        self.conn.commit()
+        self.client.connectors.return_value = [
+            {"id": "epss", "name": "FIRST EPSS", "active": True, "auto": False, "scope": ["vulnerability"]},
+            {"id": "observables", "active": True, "auto": False, "scope": ["Stix-Cyber-Observable"]}]
+        preview = service.enrichment_preview(self.root, self.case, [cve_id])
+        self.assertEqual(["epss"], [c["id"] for c in preview["connectors"]])
+        self.assertTrue(preview["entities"][0]["requires_creation"])
+        self.assertFalse(preview["entities"][0]["requires_transfer"])
+        self.client.create_vulnerability.assert_not_called()
+        self.client.enrich.assert_not_called()
+        service.enrich(self.root, self.case, [cve_id], ["epss"])
+        with self.assertRaisesRegex(ValueError, "explicit permission"):
+            self.jobs.run()
+        self.client.create_vulnerability.assert_not_called()
+        entity = {"id": "cve-entity", "entity_type": "Vulnerability", "name": "CVE-2026-12345"}
+        self.client.create_vulnerability.return_value = entity
+        self.client.lookup.side_effect = [[], [entity]]
+        service.enrich(self.root, self.case, [cve_id], ["epss"], create_missing=True)
+        self.assertEqual({"requested": 1}, self.jobs.run())
+        self.client.create_vulnerability.assert_called_once_with("CVE-2026-12345", graph.MARKINGS[workspace.case_info(self.case)["profile"]["marking"]])
+        self.client.create_observable.assert_not_called()
+        self.client.enrich.assert_called_once_with("cve-entity", "epss")
+        self.assertEqual("complete", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+        self.client.lookup.side_effect = None
+        self.client.lookup.return_value = [entity]
+        service.enrich(self.root, self.case, [cve_id], ["epss"])
+        self.jobs.run()
+        self.assertEqual(1, self.client.create_vulnerability.call_count)
+        self.assertEqual(2, self.client.enrich.call_count)
 
     def test_unknown_enrichment_requires_explicit_creation_and_tracks_work(self):
         self.connectors()

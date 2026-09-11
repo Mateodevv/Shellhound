@@ -17,8 +17,22 @@ import { Download, Globe } from 'lucide-react'
 import { post } from '../api'
 import { formatBytes } from '../format'
 import { clearGeoCache, useGeoStatus } from '../geo'
-import { Button, Modal } from './ui'
+import { Button, Card, Modal } from './ui'
 import { SetupBanner } from './SetupBanners'
+
+export function StartGeoBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const tr = useT()
+  const { data } = useGeoStatus()
+  if (data?.available !== false) return null
+  return <Card className="mb-5 flex flex-wrap items-center gap-3 border-[var(--accent)]/40 bg-[var(--accent-soft)] px-4 py-3">
+    <Globe size={20} className="shrink-0 text-[var(--accent-text)]" />
+    <div className="min-w-0 flex-1">
+      <p className="text-sm font-semibold">{tr('start.geoMissing')}</p>
+      <p className="mt-1 text-xs text-[var(--muted)]">{tr('start.geoMissingHint')}</p>
+    </div>
+    <Button onClick={onOpenSettings}>{tr('start.setupGeo')}</Button>
+  </Card>
+}
 
 export function GeoBanner({ onOpenSettings }: {
   onOpenSettings?: () => void

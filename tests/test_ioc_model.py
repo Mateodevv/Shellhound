@@ -32,6 +32,19 @@ class StructuredIocTests(unittest.TestCase):
         file_id = model.collect_file(self.conn, str(path), digest, hash_id, path_id, classification)
         return path, path_id, hash_id, file_id
 
+    def test_edit_protects_file_and_member_hash_identity(self):
+        _, _, hash_id, file_id = self.collect()
+        for ioc_id in (hash_id, file_id):
+            row = db.one(self.conn, 'SELECT * FROM iocs WHERE id=?', (ioc_id,))
+            body = dict(value='f' * 64, note=row['note'], expected_value=row['value'], expected_note=row['note'],
+                        assessment=row['assessment'], expected_assessment=row['assessment'], reason='Correction')
+            with self.assertRaisesRegex(ValueError, 'bound to their content'):
+                model.edit_object(self.conn, ioc_id, **body)
+            model.edit_object(self.conn, ioc_id, **{**body, 'value': row['value'], 'note': 'Reviewed content'})
+            current = db.one(self.conn, 'SELECT * FROM iocs WHERE id=?', (ioc_id,))
+            self.assertEqual(row['value'], current['value'])
+            self.assertEqual('Reviewed content', current['note'])
+
     def test_identity_is_typed_and_scoped(self):
         domain = db.add_ioc(self.conn, "EXAMPLE.test.", "domain")
         self.assertEqual(domain, db.add_ioc(self.conn, "example.test", "domain"))
@@ -55,12 +68,15 @@ class StructuredIocTests(unittest.TestCase):
         ip = db.one(self.conn, "SELECT * FROM iocs WHERE type='ip'")
         self.assertEqual("malicious", ip["assessment"])
         detail = model.detail(self.conn, ip["id"])
+        self.assertEqual(['CVE-2026-12345', 'CVE-2026-12346'], detail['object']['tags'])
         self.assertEqual(1, len(detail["observations"]))
         self.assertEqual(3, detail["observations"][0]["count"])
         self.assertEqual(2, len(detail["relationships"]))
         self.assertEqual({"cve-context"}, {l["kind"] for l in detail["relationships"]})
         self.conn.commit()
         preview = graph.build_preview(self.case, {"include_evidence": True})
+        exported_ip = next(o for o in preview['objects'] if o['type'] == 'ipv4-addr')
+        self.assertEqual(detail['object']['tags'], exported_ip['labels'])
         self.assertNotIn("PrivateCustomer", json.dumps(preview))
         self.assertIn("Pattern Hunt test #5", json.dumps(preview))
         self.assertEqual(2, sum(o["type"] == "relationship" and o["source_ref"].startswith("ipv4-addr--")
@@ -69,6 +85,55 @@ class StructuredIocTests(unittest.TestCase):
             model.withdraw(self.conn, link["id"], "Reviewed false positive")
         model.collect_hunt_cves(self.conn, entry, 6, client, "rule-sha", "index-sha")
         self.assertEqual([], db.ioc_links(self.conn))
+        self.assertEqual([], model.detail(self.conn, ip['id'])['object']['tags'])
+
+    def test_file_classification_tags_and_manual_overrides_are_shared_with_export(self):
+        for index, classification in enumerate(('webshell', 'seo-spam', 'malware')):
+            with self.subTest(classification=classification):
+                _, _, _, file_id = self.collect(content=f'inert content {index}'.encode(), classification=classification)
+                label = {'webshell': 'Webshell', 'seo-spam': 'SEO-Spam', 'malware': 'Malware'}[classification]
+                model.edit_tags(self.conn, file_id, ['Reviewed'])
+                self.assertCountEqual([label, 'Reviewed'], model.detail(self.conn, file_id)['object']['tags'])
+                self.conn.commit()
+                preview = graph.build_preview(self.case, {'ioc_ids': [file_id]})
+                exported = next(o for o in preview['objects'] if o['type'] == 'file')
+                self.assertCountEqual([label, 'Reviewed'], exported['labels'])
+                from server.opencti_service import _revisions
+                before = _revisions(self.case)[file_id]
+                model.edit_tags(self.conn, file_id, remove=[label])
+                self.assertEqual(['Reviewed'], model.detail(self.conn, file_id)['object']['tags'])
+                self.conn.commit()
+                self.assertNotEqual(before, _revisions(self.case)[file_id])
+                model.edit_tags(self.conn, file_id, add=[label])
+                self.assertIn(label, model.detail(self.conn, file_id)['object']['tags'])
+
+    def test_technical_labels_keep_explicit_manual_and_imported_names(self):
+        from server.ioc_tags import record_choices
+        ioc_id = db.add_ioc(self.conn, '198.51.100.20', 'ip', ['hunt', 'finding', 'confirmed', 'derived', 'Local'])
+        self.assertEqual(['Local'], model.detail(self.conn, ioc_id)['object']['tags'])
+        model.edit_tags(self.conn, ioc_id, ['hunt'])
+        row = db.one(self.conn, 'SELECT * FROM iocs WHERE id=?', (ioc_id,))
+        record_choices(self.conn, row, ['confirmed'], 'opencti')
+        self.assertEqual(['confirmed', 'hunt', 'Local'], model.detail(self.conn, ioc_id)['object']['tags'])
+        model.edit_tags(self.conn, ioc_id, remove=['confirmed'])
+        record_choices(self.conn, row, ['confirmed'], 'opencti')
+        self.assertEqual(['hunt', 'Local'], model.detail(self.conn, ioc_id)['object']['tags'])
+
+    def test_seo_classification_uses_explicit_finding_category(self):
+        from server.ioc_tags import finding_classification
+        self.assertEqual('seo-spam', finding_classification([{'source': 'webshell', 'rule': 'SEO spam page'}]))
+        self.assertEqual('', finding_classification([{'source': 'custom', 'rule': 'Unusual content', 'evidence': 'SEO spam'}]))
+
+    def test_existing_imported_labels_survive_local_migration(self):
+        ioc_id = db.add_ioc(self.conn, '198.51.100.21', 'ip', ['confirmed', 'hunt'])
+        self.conn.execute("INSERT INTO opencti_lookups VALUES(?,?,?,?,?)", (ioc_id, 'identity', '2026-09-11',
+            json.dumps({'status': 'known', 'entities': [{'labels': ['confirmed']}]}), 'destination'))
+        self.conn.execute("DELETE FROM meta WHERE key='ioc-label-origins-v1'")
+        with patch('urllib.request.urlopen', side_effect=AssertionError('Unexpected network')):
+            model.migrate(self.conn)
+            model.migrate(self.conn)
+        self.assertEqual(['confirmed'], model.detail(self.conn, ioc_id)['object']['tags'])
+        self.assertEqual(0, self.conn.execute('SELECT count(*) FROM opencti_exports').fetchone()[0])
 
     def test_hunt_without_explicit_cve_or_without_hits_creates_no_iocs(self):
         client = {"ip": "198.51.100.9", "hits": 1}
@@ -144,7 +209,7 @@ class StructuredIocTests(unittest.TestCase):
         model.assess(self.conn, ioc, "benign", "Authorized assessment exercise")
         detail = model.detail(self.conn, ioc)
         self.assertEqual(["benign", "malicious"], [r["state"] for r in detail["assessments"]])
-        self.assertEqual(["confirmed"], detail["object"]["tags"])
+        self.assertEqual([], detail["object"]["tags"])
 
     def test_default_migration_and_recollection_preserve_explicit_assessments(self):
         defaults = db.add_ioc(self.conn, "198.51.100.10", "ip")
@@ -241,9 +306,20 @@ class StructuredIocTests(unittest.TestCase):
         model.relationship(self.conn, ip, cve, "cve-context", "Finding 1")
         model.assess(self.conn, ip, "suspicious", "Finding 1")
         model.observe(self.conn, ip, "finding", finding_id=1)
-        self.conn.execute("DELETE FROM iocs WHERE id=?", (ip,))
+        self.assertEqual({'deleted_ids': [ip]}, model.delete_objects(self.conn, [ip]))
         for table in ("ioc_assessments", "ioc_observations", "ioc_relationship_evidence", "ioc_relationship_events"):
             self.assertEqual(0, self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+
+    def test_delete_file_keeps_shared_hashes_and_original_evidence(self):
+        path, path_id, hash_id, file_id = self.collect()
+        second = model.register_file(self.conn, {'SHA-256': 'b' * 64})
+        self.conn.execute('INSERT INTO ioc_file_members(ioc_id,file_id) VALUES(?,?)', (hash_id, second))
+        self.assertEqual({'deleted_ids': [file_id]}, model.delete_objects(self.conn, [file_id]))
+        self.assertIsNotNone(db.one(self.conn, 'SELECT id FROM iocs WHERE id=?', (hash_id,)))
+        self.assertTrue(path.exists())
+        self.assertIsNotNone(db.one(self.conn, 'SELECT id FROM iocs WHERE id=?', (path_id,)))
+        self.assertEqual(sorted([hash_id, second]), model.delete_objects(self.conn, [second])['deleted_ids'])
+        self.assertEqual([], model.delete_objects(self.conn, [second])['deleted_ids'])
 
     def test_legacy_migration_preserves_ids_source_uids_and_applies_default(self):
         old = self.root / "legacy"

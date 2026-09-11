@@ -10,16 +10,19 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import math
 import ntpath
 import re
 import socket
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from server import diagnostics
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
@@ -37,15 +40,33 @@ _DESCRIPTION_LOCK = threading.RLock()
 
 
 def _case_description(existing, reference, description):
-    """Replace only this case's managed section; preserve other authors/cases."""
+    """Replace one readable case section without overwriting other authors."""
     key = hashlib.sha256(reference.encode("utf-8")).hexdigest()
-    start, end = f"<!-- shellhound-case:{key}:start -->", f"<!-- shellhound-case:{key}:end -->"
-    block = f"{start}\n{description}\n{end}" if description else ""
-    if start in existing or end in existing:
-        if existing.count(start) != 1 or existing.count(end) != 1 or existing.index(start) > existing.index(end):
+    legacy_start, legacy_end = f"<!-- shellhound-case:{key}:start -->", f"<!-- shellhound-case:{key}:end -->"
+    heading = f"Shellhound case {reference}"
+    footer = f"— Shellhound case {reference}"
+    block = f"{heading}\n\n{description}\n\n{footer}" if description else ""
+    # Migrate the previous invisible HTML wrapper while preserving any text
+    # outside this case-owned section.
+    if legacy_start in existing or legacy_end in existing:
+        if (existing.count(legacy_start) != 1 or existing.count(legacy_end) != 1 or
+                existing.index(legacy_start) > existing.index(legacy_end)):
             raise OpenCTIError("The Shellhound description section was edited or duplicated; review it before retrying.",
                                code="description_conflict")
-        a, b = existing.index(start), existing.index(end) + len(end)
+        a, b = existing.index(legacy_start), existing.index(legacy_end) + len(legacy_end)
+        return existing[:a] + block + existing[b:]
+    starts = [index for index in range(len(existing)) if existing.startswith(heading, index) and
+              (index == 0 or existing[index - 1] == "\n")]
+    if len(starts) > 1:
+        raise OpenCTIError("The Shellhound case section was duplicated; review it before retrying.",
+                           code="description_conflict")
+    if starts:
+        a = starts[0]
+        footer_index = existing.find("\n\n" + footer, a + len(heading))
+        if footer_index < 0:
+            raise OpenCTIError("The Shellhound case section was edited; review it before retrying.",
+                               code="description_conflict")
+        b = footer_index + 2 + len(footer)
         return existing[:a] + block + existing[b:]
     return existing + ("\n\n" if existing and block else "") + block
 _BASIC_FIELDS = """
@@ -82,7 +103,7 @@ importFiles(first: 1) { edges { node { id name } } }
 ... on Artifact { hashes { algorithm hash } }
 stixCoreRelationships(first: 50) {
   edges { node {
-    id standard_id relationship_type description confidence start_time stop_time
+    id standard_id relationship_type description confidence start_time stop_time revoked
     createdBy { id name }
     from { BASIC_FIELDS }
     to { BASIC_FIELDS }
@@ -92,12 +113,12 @@ stixCoreRelationships(first: 50) {
 """.replace("BASIC_FIELDS", _BASIC_FIELDS)
 _ENTITY_FIELDS = _OBSERVABLE_FIELDS + """
 ... on Report { name description published confidence }
-... on Incident { name description confidence }
-... on Malware { name description confidence is_family malware_types }
-... on Vulnerability { name description }
+... on Incident { name description confidence revoked }
+... on Malware { name description confidence is_family malware_types revoked }
+... on Vulnerability { name description x_opencti_score x_opencti_cvss_base_score x_opencti_epss_score x_opencti_epss_percentile }
 ... on Organization { name }
 ... on Indicator { name description confidence pattern valid_from valid_until revoked }
-... on Note { attribute_abstract content }
+... on Note { attribute_abstract content revoked }
 """
 
 
@@ -244,12 +265,26 @@ class OpenCTIClient:
             raise ValueError("OpenCTI timeout must be between 1 and 120 seconds")
         self.url = raw_url.rstrip("/")
         self._token = token
+        diagnostics.protect_secret(token)
         self.timeout = timeout
         self.ingester_id = str(config.get("ingester_id") or "")
         self._opener = urllib.request.build_opener(
             _NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
 
     def _request(self, path, payload=None, *, content_type="application/json", raw=False):
+        logger = logging.getLogger("shellhound.opencti.transport")
+        started = time.monotonic()
+        endpoint = "TAXII" if path.startswith("/taxii2/") else "GraphQL" if path == "/graphql" else "API"
+        logger.debug("%s request started", endpoint)
+        try:
+            result = self._request_impl(path, payload, content_type=content_type, raw=raw)
+            logger.info("%s request completed in %.1f ms", endpoint, (time.monotonic() - started) * 1000)
+            return result
+        except Exception:
+            logger.exception("%s request failed", endpoint)
+            raise
+
+    def _request_impl(self, path, payload=None, *, content_type="application/json", raw=False):
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError("OpenCTI requests must use an internal API path")
         data = payload if raw else (json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -317,6 +352,30 @@ class OpenCTIClient:
         if not isinstance(response.get("data"), dict):
             raise OpenCTIError("OpenCTI returned no API result.", code="invalid_response")
         return response["data"]
+
+    def sectors(self):
+        query = '''query ShellhoundSectors($after: ID) {
+          sectors(first: 200, after: $after, orderBy: name, orderMode: asc) {
+            edges { node { id name isSubSector parentSectors { edges { node { id name } } } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }'''
+        entries, seen, after = {}, set(), None
+        for _ in range(50):
+            connection = self._graphql(query, {'after': after}).get('sectors') or {}
+            for edge in connection.get('edges') or []:
+                item = edge['node']
+                entries[item['id']] = {'id': item['id'], 'name': item['name'],
+                    'parents': [e['node']['name'] for e in (item.get('parentSectors') or {}).get('edges', [])],
+                    'subsector': bool(item.get('isSubSector'))}
+            page = connection.get('pageInfo') or {}
+            if not page.get('hasNextPage'):
+                return sorted(entries.values(), key=lambda item: item['name'].casefold())
+            after = page.get('endCursor')
+            if not after or after in seen:
+                break
+            seen.add(after)
+        raise OpenCTIError('The sector catalogue is incomplete. Retry loading sectors.', code='incomplete_catalogue')
 
     def _graphql(self, query, variables=None):
         return self._graphql_result(self._request("/graphql", {"query": query, "variables": variables or {}}))
@@ -417,7 +476,7 @@ class OpenCTIClient:
           ... on StixCoreObject { ENTITY_FIELDS }
           ... on MarkingDefinition { definition }
           ... on StixCoreRelationship {
-            id standard_id entity_type relationship_type description confidence created_at updated_at
+            id standard_id entity_type relationship_type description confidence created_at updated_at revoked
             createdBy { id standard_id name } from { BASIC_FIELDS } to { BASIC_FIELDS }
           }
           ... on StixSightingRelationship { id standard_id entity_type }
@@ -526,7 +585,9 @@ class OpenCTIClient:
                 obj.get("identity_class"), "Identity")]
             collection = "identities"
         elif kind == "location" and obj.get("country"):
-            collection, types = "locations", ["Country"]
+            location_type = obj.get("x_opencti_location_type", "Country")
+            if location_type in ("Country", "Administrative-Area", "City"):
+                collection, types = "locations", [location_type]
         if collection:
             name = str(obj.get("name") or obj.get("country") or "").strip()
             if not name:
@@ -613,6 +674,17 @@ class OpenCTIClient:
                                    code="description_unverified")
             return {"id": remote_id, "updated": True}
 
+    def create_vulnerability(self, value, marking_id):
+        if not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+            raise ValueError("Invalid CVE identifier")
+        result = self._graphql("""mutation ShellhoundCreateVulnerability($input:VulnerabilityAddInput!) {
+          vulnerabilityAdd(input:$input) { id standard_id entity_type name }
+        }""", {"input": {"name": value.upper(), "objectMarking": [_identifier(marking_id, "marking ID")],
+                          "update": False}}).get("vulnerabilityAdd")
+        if not result or not result.get("id") or result.get("entity_type") != "Vulnerability":
+            raise OpenCTIError("OpenCTI did not confirm the vulnerability creation.", code="invalid_response")
+        return result
+
     def create_observable(self, ioc_type, value, marking_id):
         if ioc_type == "vulnerability":
             raise ValueError("Transfer this CVE to OpenCTI before requesting enrichment.")
@@ -640,7 +712,7 @@ class OpenCTIClient:
             raise OpenCTIError("Choose an active connector configured for manual enrichment.", code="connector_unavailable")
         scopes = {str(value).lower() for value in connector["scope"]}
         entity_type = str(entity.get("entity_type", "")).lower()
-        if entity_type not in scopes and "stix-cyber-observable" not in scopes:
+        if entity_type not in scopes and not (entity_type != "vulnerability" and "stix-cyber-observable" in scopes):
             raise OpenCTIError("This connector does not support the selected observable type.", code="connector_scope")
         data = self._graphql("""mutation ShellhoundEnrich($id:ID!,$connectorId:ID!) {
           stixCoreObjectEdit(id:$id) { askEnrichment(connectorId:$connectorId) { id } }
@@ -696,9 +768,110 @@ class OpenCTIClient:
             self._graphql("""mutation ShellhoundSampleContent($id:ID!,$input:StixRefRelationshipAddInput!) {
               stixCyberObservableEdit(id:$id) { relationAdd(input:$input) { id } }
             }""", {"id": file_id, "input": {"toId": artifact_id, "relationship_type": "obs_content"}})
+        relationship_id = self.link_sample_relationship(file_id, artifact_id)
         # OpenCTI relationAdd upserts the existing object-ref instead of adding
         # duplicate memberships, including when replayed after a lost response.
         self._graphql("""mutation ShellhoundSampleReport($id:ID!,$input:StixRefRelationshipAddInput!) {
-          reportEdit(id:$id) { relationAdd(input:$input) { id } }
+          stixDomainObjectEdit(id:$id) { relationAdd(input:$input) { id } }
         }""", {"id": report_id, "input": {"toId": artifact_id, "relationship_type": "object"}})
+        self._graphql("""mutation ShellhoundSampleRelationshipReport($id:ID!,$input:StixRefRelationshipAddInput!) {
+          stixDomainObjectEdit(id:$id) { relationAdd(input:$input) { id } }
+        }""", {"id": report_id, "input": {"toId": relationship_id, "relationship_type": "object"}})
         return {"file_id": file_id, "artifact_id": artifact_id, "report_id": report_id}
+
+    def link_sample_relationship(self, file_id, artifact_id):
+        """Visible content association; safe to replay and to add to old exports."""
+        file_id, artifact_id = map(_identifier, (file_id, artifact_id))
+        file, artifact = self.resolve(file_id), self.resolve(artifact_id)
+        if not file or file.get("entity_type") != "StixFile" or not artifact or artifact.get("entity_type") != "Artifact":
+            raise OpenCTIError("The sample relationship needs a visible File and Artifact.", code="sample_target")
+        def sha256(entity):
+            return next((h.get("hash", "").lower() for h in entity.get("hashes", []) if h.get("algorithm") == "SHA-256"), "")
+        if not sha256(file) or sha256(file) != sha256(artifact):
+            raise OpenCTIError("File and Artifact hashes do not match.", code="sample_hash")
+        source_id = "relationship--" + str(uuid.uuid5(uuid.NAMESPACE_URL,
+            "shellhound:sample-content:" + file["standard_id"] + ":" + artifact["standard_id"]))
+        existing = self.resolve(source_id)
+        if existing:
+            if (existing.get("relationship_type") != "related-to" or
+                    (existing.get("from") or {}).get("id") != file_id or
+                    (existing.get("to") or {}).get("id") != artifact_id):
+                raise OpenCTIError("The sample relationship has conflicting endpoints.", code="sample_conflict")
+            return existing["id"]
+        markings = sorted({m["id"] for obj in (file, artifact) for m in obj.get("objectMarking", []) if m.get("id")})
+        result = self._graphql("""mutation ShellhoundSampleRelationship($input:StixCoreRelationshipAddInput!) {
+          stixCoreRelationshipAdd(input:$input) { id relationship_type from { ... on StixObject { id } } to { ... on StixObject { id } } }
+        }""", {"input": {"stix_id": source_id, "fromId": file_id, "toId": artifact_id,
+            "relationship_type": "related-to", "description": "Artifact contains the original bytes of this file.",
+            "objectMarking": markings, "update": False}}).get("stixCoreRelationshipAdd") or {}
+        if (not result.get("id") or result.get("relationship_type") != "related-to" or
+                (result.get("from") or {}).get("id") != file_id or (result.get("to") or {}).get("id") != artifact_id):
+            raise OpenCTIError("OpenCTI did not acknowledge the sample relationship.", code="invalid_response")
+        return result["id"]
+
+    def sync_sample_context(self, file_id, artifact_id, report_id, target_ids, withdraw_ids=()):
+        """Project approved content context; only revoke our deterministic case edges."""
+        file, artifact, report = [self.resolve(_identifier(i)) for i in (file_id, artifact_id, report_id)]
+        if not file or not artifact or not report:
+            raise OpenCTIError("A sample context object is no longer visible.", code="not_found")
+        if file.get("entity_type") != "StixFile" or artifact.get("entity_type") != "Artifact" or report.get("entity_type") not in ("Report", "Case-Incident"):
+            raise OpenCTIError("Unexpected sample context object type.", code="sample_target")
+        hashes = lambda obj: {h.get("hash", "").lower() for h in obj.get("hashes", []) if h.get("algorithm") == "SHA-256" and h.get("hash")}
+        if not hashes(file) or hashes(file) != hashes(artifact):
+            raise OpenCTIError("File and Artifact hashes do not match.", code="sample_hash")
+        results = []
+        for target_id in dict.fromkeys([*target_ids, *withdraw_ids]):
+            target = self.resolve(_identifier(target_id))
+            if target is None and target_id in withdraw_ids:
+                # Deleting the target also removes its relationships. Legacy
+                # receipt cleanup must not block a new, reviewed case export.
+                continue
+            if not target or target.get("entity_type") not in ("Incident", "Malware", "Note"):
+                raise OpenCTIError("A reviewed sample context target is not visible.", code="sample_target")
+            source_id = "relationship--" + str(uuid.uuid5(uuid.NAMESPACE_URL, "shellhound:sample-context:" +
+                report["standard_id"] + ":" + artifact["standard_id"] + ":" + target["standard_id"]))
+            existing = self.resolve(source_id)
+            if existing and (existing.get("relationship_type") != "related-to" or
+                    (existing.get("from") or {}).get("id") != artifact["id"] or
+                    (existing.get("to") or {}).get("id") != target["id"]):
+                raise OpenCTIError("Sample context relationship identity conflict.", code="sample_conflict")
+            withdrawn = target_id in withdraw_ids or target.get("revoked", False)
+            if withdrawn:
+                if existing and not existing.get("revoked", False):
+                    result = self._graphql("""mutation ShellhoundWithdrawSampleContext($id:ID!,$input:[EditInput!]!) {
+                      stixCoreRelationshipEdit(id:$id) { fieldPatch(input:$input) { id revoked } }
+                    }""", {"id": existing["id"], "input": [{"key": "revoked", "value": ["true"]}]})
+                    acknowledged = (result.get("stixCoreRelationshipEdit") or {}).get("fieldPatch") or {}
+                    if acknowledged.get("id") != existing["id"] or acknowledged.get("revoked") is not True:
+                        raise OpenCTIError("OpenCTI did not acknowledge the context withdrawal.", code="invalid_response")
+                continue
+            if existing and existing.get("revoked"):
+                raise OpenCTIError("A withdrawn sample context assertion requires a new source version.", code="sample_conflict")
+            # Reuse a foreign same-direction edge without attaching our source ID
+            # to it. Later withdrawals only address our own namespaced source ID.
+            if not existing:
+                existing = next((r for r in artifact.get("relationships", [])
+                    if r.get("relationship_type") == "related-to" and
+                    (r.get("from") or {}).get("id") == artifact["id"] and
+                    (r.get("to") or {}).get("id") == target["id"] and not r.get("revoked")), None)
+                if not existing and artifact.get("relationships_truncated"):
+                    raise OpenCTIError("Artifact relationships are truncated; existing context cannot be verified.", code="result_limit")
+            if not existing:
+                markings = sorted({m["id"] for obj in (artifact, file, report, target)
+                                   for m in obj.get("objectMarking", []) if m.get("id")})
+                description = {"Incident": "Original file sample associated with this incident.",
+                               "Malware": "Original file sample of the confirmed malware classification.",
+                               "Note": "Reviewed context for the file content preserved in this artifact."}[target["entity_type"]]
+                existing = self._graphql("""mutation ShellhoundSampleContext($input:StixCoreRelationshipAddInput!) {
+                  stixCoreRelationshipAdd(input:$input) { id standard_id }
+                }""", {"input": {"stix_id": source_id, "fromId": artifact["id"], "toId": target["id"],
+                    "relationship_type": "related-to", "description": description, "objectMarking": markings,
+                    "update": False}}).get("stixCoreRelationshipAdd")
+                # OpenCTI keeps supplied STIX IDs as aliases of its own standard ID.
+                if not existing or not existing.get("id"):
+                    raise OpenCTIError("OpenCTI did not acknowledge the sample context.", code="invalid_response")
+            self._graphql("""mutation ShellhoundSampleContextReport($id:ID!,$input:StixRefRelationshipAddInput!) {
+              stixDomainObjectEdit(id:$id) { relationAdd(input:$input) { id } }
+            }""", {"id": report["id"], "input": {"toId": existing["id"], "relationship_type": "object"}})
+            results.append(existing["id"])
+        return results

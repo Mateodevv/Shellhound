@@ -37,6 +37,7 @@ access_log*/
 *.dump
 # Log-Dateien und rotierte Archive
 *.log
+shellhound.log.*
 *.log.gz
 *.log.bz2
 # Fall-Archive (enthalten den kompletten Fall)

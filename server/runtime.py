@@ -14,6 +14,7 @@ def run(args):
     import uvicorn
     from server.app import create_app
     from server.jobs import manager
+    from server import diagnostics
 
     config = Config(workspace=args.workspace, host=args.host, port=args.port, token=args.token)
     sock = socket.socket(socket.AF_INET6 if ":" in config.host else socket.AF_INET, socket.SOCK_STREAM)
@@ -23,21 +24,29 @@ def run(args):
         else:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((config.host, config.port))
-    except OSError:
+    except OSError as exc:
+        if config.workspace.exists():
+            diagnostics.exception(config.workspace, "startup", exc)
+            diagnostics.close(config.workspace)
         sock.close()
         raise StartupError(f"Cannot use {config.host}:{config.port}. Stop the existing server "
                            "or choose another --port. No browser was opened.") from None
     done = threading.Event()
     host = f"[{config.host}]" if ":" in config.host else config.host
     url = f"http://{host}:{config.port}/"
+    cleanup_log = diagnostics.configure(config.workspace, config.token)
+    diagnostics.record(config.workspace, "info", "server", "Server starting", port=config.port, python=sys.version.split()[0])
     try:
-        server = uvicorn.Server(uvicorn.Config(create_app(config), log_level="warning", access_log=False))
+        # Protocol DEBUG includes WebSocket payloads; application DEBUG is
+        # captured separately without copying evidence into the log.
+        server = uvicorn.Server(uvicorn.Config(create_app(config), log_config=None, log_level="info", access_log=False))
 
         def ready():
             while not done.wait(0.05):
                 if server.started:
                     announce(f"Ready: {url}")
                     announce(f"Workspace: {config.workspace}")
+                    announce(f"Log file: {diagnostics._file(config.workspace)}")
                     announce("Keep this window open. Press Ctrl+C here to stop Shellhound.")
                     if not args.no_browser:
                         try:
@@ -64,6 +73,7 @@ def run(args):
     finally:
         done.set()
         sock.close()
+        cleanup_log()
 
 
 if __name__ == "__main__":

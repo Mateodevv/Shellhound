@@ -3,11 +3,13 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, post, type Ioc, type CrossCaseIocMatch } from '../api'
 import { safeCtiUrl, useOpenCti } from '../opencti'
-import { OpenCtiToolbar, OpenCtiScore } from './OpenCti'
-import { Button, Card, Modal, CopyButton, Tabs } from './ui'
+import { OpenCtiToolbar, OpenCtiScore, OpenCtiDetails, GroupedActions } from './OpenCti'
+import { Button, Modal, CopyButton, Tabs } from './ui'
 import { TraceWindow } from './TraceWindow'
 import { FileViewer } from './FileViewer'
-import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ExternalLink, FileCode2, Search, Route, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
+import { IocDeleteDialog } from './IocDeleteDialog'
+import { IocEditDialog } from './IocEditDialog'
 import { InfoDot, Tooltip } from './Tooltip'
 import { descriptions, iocName, iocOrigins, observationTime } from './iocPresentation'
 import { IocField } from './IocField'
@@ -15,6 +17,7 @@ import { IpFlag } from './IpFlag'
 import { IocTypeBadge } from './IocTypeBadge'
 import { IocAssessmentBadge } from './IocAssessmentBadge'
 import { IocTags } from './IocTags'
+import { IocAttributes } from './IocAttributes'
 import type { Navigate } from '../App'
 
 interface Observation {
@@ -33,11 +36,10 @@ interface Detail {
   sources: { id: number; artifact: string; role: string; active: boolean }[]
   findings: { id: number; rule: string; artifact: string; triage: string; evidence: string; retired?: boolean }[]
   assessments: { id: number; state: string; reason: string; created: string }[]
+  edits?: { previous_value: string; value: string; reason: string; created: string }[]
   relationships: Relationship[]
   relationship_types: Record<string, { sources: string[]; targets: string[] }>
 }
-const field = 'w-full rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px]'
-const states = ['unassessed', 'suspicious', 'malicious', 'benign'] as const
 const labels: Record<string, string> = {
   'hash-of': 'Hash of', requested: 'Requested', 'host-in': 'Appears in code of', 'account-of': 'Email of account',
   'located-at': 'Collected at', 'request-context': 'Request-path association', used: 'Used (evidence required)',
@@ -45,9 +47,10 @@ const labels: Record<string, string> = {
   'exploit-attempt': 'Exploitation attempt', 'exploitation-confirmed': 'Confirmed exploitation',
 }
 
-export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: controlledTab, onTab, onNavigate, gotoView, onDirtyChange, crossMatches = [] }: {
+export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: controlledTab, onTab, onNavigate, gotoView, onDirtyChange, onDeleted, crossMatches = [] }: {
   slug: string; id: number; iocs: Ioc[]; onClose: () => void; embedded?: boolean; tab?: string; onTab?: (tab: string) => void
   onNavigate?: (id: number) => void; gotoView?: Navigate; onDirtyChange?: (dirty: boolean) => void; crossMatches?: CrossCaseIocMatch[]
+  onDeleted?: (ids: number[]) => void
 }) {
   const tr = useT()
   const qc = useQueryClient()
@@ -58,30 +61,52 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
   const cti = useOpenCti(slug)
   const [localTab, setLocalTab] = useState('Overview')
   const requestedTab = controlledTab || localTab
-  const tab = requestedTab === 'Trace' && data?.object.type === 'ip' ? 'Trace' : 'Overview'
+  const canEnrich = cti.configured && !!data?.object && (
+    ['ip', 'domain', 'url', 'email', 'hash', 'file', 'vulnerability'].includes(data.object.type)
+    || (data.object.type === 'user' && !!data.object.context))
+  const tab = requestedTab === 'Enrichment' && canEnrich ? 'Enrichment' : 'Overview'
   const setTab = (value: string) => { setLocalTab(value); onTab?.(value) }
-  const [assessOpen, setAssessOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [viewPath, setViewPath] = useState<string | null>(null)
-  const [assessment, setAssessment] = useState<Ioc['assessment']>('malicious')
-  const [reason, setReason] = useState('')
-  useEffect(() => { onDirtyChange?.(Boolean(reason || (assessOpen && assessment !== data?.object.assessment))) }, [reason, assessOpen, assessment, data?.object.assessment, onDirtyChange])
+  const [chooseLocation, setChooseLocation] = useState(false)
+  const [traceOpen, setTraceOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  useEffect(() => { setViewPath(null); setChooseLocation(false); setTraceOpen(false) }, [slug, id])
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['iocs'] })
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
   }
-  const saveAssessment = useMutation({
-    mutationFn: () => post(`/api/cases/${slug}/iocs/${id}/assessments`, { state: assessment, reason }),
-    onSuccess: () => { setReason(''); setAssessOpen(false); invalidate() }
-  })
   const verifyFile = useMutation({ mutationFn: () => post<{ verified_locations: number; unavailable_or_changed_locations: number }>(`/api/cases/${slug}/iocs/${id}/verify-file`, {}), onSuccess: invalidate })
   const object = data?.object
-  const failure = error || saveAssessment.error || verifyFile.error
+  const failure = error || verifyFile.error
   const current = iocs.find(i => i.id === id)
   const observed = data?.observations.filter(o => o.active) ?? []
-  const times = observed.flatMap(o => [o.first_seen, o.last_seen]).filter(Boolean).sort()
+  const fileLocations = object?.type === 'file'
+    ? observed.filter(o => o.kind === 'file-location' && o.local_path)
+      .filter((o, index, all) => all.findIndex(other => other.local_path === o.local_path) === index)
+      .map(o => ({ path: o.local_path, label: o.path || o.local_path, evidenceId: o.evidence_id }))
+    : object?.type === 'path' && current?.resolved
+      ? [{ path: current.resolved, label: object.value, evidenceId: null }] : []
+  const associatedFiles = object?.type === 'hash' ? iocs.filter(i => i.type === 'file' && object.file_ids?.includes(i.id)) : []
+  const openFile = () => {
+    if (fileLocations.length === 1) setViewPath(fileLocations[0].path)
+    else setChooseLocation(true)
+  }
+  const activity = observed.filter(o => ['http-request', 'pattern-hunt'].includes(o.kind))
+  const times = activity.flatMap(o => [o.first_seen, o.last_seen]).filter(Boolean).sort()
+  const showActivity = object?.type === 'ip' || times.length > 0
+  // The IP list includes spans from the access-log index. Scan/collection dates
+  // belong to their source records, not generic object activity fields.
+  const indexedFirst = object?.type === 'ip' ? current?.first_seen : undefined
+  const indexedLast = object?.type === 'ip' ? current?.last_seen : undefined
   const links = data?.relationships.filter(r => r.active) ?? []
   const targetOf = (r: Relationship) => r.src === id ? r.dst : r.src
   const lookup = cti.data?.lookups?.find(entry => entry.ioc_id === id)
+  // Lookup writes import provider labels transactionally; refresh the shared
+  // local object when that snapshot changes, including during enrichment polling.
+  useEffect(() => {
+    if (lookup?.checked_at) void qc.invalidateQueries({ queryKey: ['iocs', slug] })
+  }, [lookup?.checked_at, qc, slug])
   const ctiLinks = (lookup?.entities ?? []).filter(entity => safeCtiUrl(entity.url))
   const relationshipTable = (relations: Relationship[]) => <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
     <table className="ioc-relationships w-full text-left text-[12px]">
@@ -99,11 +124,11 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       })}{!relations.length && <tr><td colSpan={3} className="text-[var(--muted)]">{tr('iocWorkspace.no_recorded_relationships')}</td></tr>}</tbody>
     </table>
   </div>
-  const content = <div className={`flex flex-col gap-4 text-[13px] ${embedded ? 'p-4 sm:p-5' : ''}`}>
+  const content = <div className={`flex flex-col gap-3 text-[13px] ${embedded ? 'p-3' : ''}`}>
 
     {object && <header className="flex flex-wrap items-start gap-3">
       <div className="min-w-0 flex-1 basis-60">
-        <div className="mb-2"><IocTypeBadge type={object.type} value={object.value} /></div>
+        <div className="mb-1"><IocTypeBadge type={object.type} value={object.value} /></div>
         <div className="flex items-center gap-2">
           {object.type === 'ip' && <IpFlag ip={object.value} />}
           <h2 className="min-w-0 break-all text-xl font-semibold">{iocName(object)}</h2>
@@ -112,13 +137,26 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
             <a href={safeCtiUrl(entity.url)} target="_blank" rel="noopener noreferrer" aria-label={ctiLinks.length === 1 ? tr('cti.open') : tr('cti.openObject', { name: entity.name || entity.id })} className="ui-press inline-flex shrink-0 items-center rounded p-1.5 text-[var(--accent-text)] hover:bg-[var(--panel-2)]"><ExternalLink size={16} /></a>
           </Tooltip>)}
         </div>
-        <div className="mt-2 flex items-center gap-2 text-[12px]">
+        <div className="mt-1 flex items-center gap-2 text-[12px]">
           <IocAssessmentBadge assessment={object.assessment} />
         </div>
       </div>
       <OpenCtiToolbar
         mode="inline"
-        leadingAction={<Button type="button" onClick={() => { setAssessment(object.assessment); setAssessOpen(v => !v) }}>{tr('iocWorkspace.change_assessment')}</Button>}
+        grouped
+        trailingAction={<GroupedActions label={tr('iocEdit.actions')} icon={<SlidersHorizontal size={14} />}>
+          <Button type="button" variant="ghost" onClick={() => setEditOpen(true)}><Pencil size={14} />{tr('iocEdit.title')}</Button>
+          <Button type="button" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 size={14} />{tr('iocDelete.single')}</Button>
+        </GroupedActions>}
+        leadingAction={<>
+          {['file', 'path'].includes(object.type) && <Tooltip body={tr(fileLocations.length ? 'iocAction.contentHelp' : 'iocAction.noContent')}>
+            <span><Button type="button" variant="special" disabled={!fileLocations.length} onClick={openFile}><FileCode2 size={14} />{tr('iocAction.content')}</Button></span>
+          </Tooltip>}
+          {object.type === 'ip' && <Button type="button" variant="special" onClick={() => setTraceOpen(true)}><Route size={14} />{tr('artifact.openTrace')}</Button>}
+          {gotoView && (['domain', 'url'].includes(object.type) || (object.type === 'path' && object.path_context === 'http-request')) &&
+            <Button type="button" variant="special" onClick={() => gotoView('logs', { search: object.value })}><Search size={14} />{tr('iocAction.searchLogs')}</Button>}
+          {onNavigate && associatedFiles.map(file => <Button type="button" variant="special" key={file.id} onClick={() => onNavigate(file.id)}><FileCode2 size={14} />{tr('iocAction.associatedFile', { name: iocName(file) })}</Button>)}
+        </>}
         slug={slug}
         iocs={iocs}
         selectedIds={[id, ...iocs.filter(i => i.file_ids?.includes(id)).map(i => i.id)]}
@@ -127,35 +165,10 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         onSettings={() => gotoView?.('settings')} />
     </header>}
 
-    {object && assessOpen && <form
-      className="animate-fade-in space-y-3 rounded-lg border border-[var(--line)] p-3"
-      onSubmit={e => { e.preventDefault(); saveAssessment.mutate() }}>
-      <label className="block">
-        {tr('iocWorkspace.new_assessment')}
-        <select
-          aria-label="New assessment"
-          value={assessment}
-          onChange={e => setAssessment(e.target.value as Ioc['assessment'])}
-          className={field}>{states.map(s => <option key={s} value={s}>{s}</option>)}</select>
-      </label>
-      <label className="block">
-        {tr('iocWorkspace.assessment_reason')}
-        <textarea required value={reason} onChange={e => setReason(e.target.value)} className={field} />
-      </label>
-      <Button disabled={!reason.trim() || saveAssessment.isPending}>{tr('iocWorkspace.save_assessment')}</Button>
-      <Button type="button" onClick={() => { setAssessOpen(false); setReason('') }}>{tr('iocWorkspace.cancel')}</Button>
-            <details>
-        <summary className="cursor-pointer text-[var(--accent-text)]">{tr('iocWorkspace.assessment_history')}</summary>
-        <div className="mt-3 space-y-2">{!data?.assessments.length && <p>{tr('iocWorkspace.default_assessment_malicious')}</p>}{data?.assessments.map(a => <Card key={a.id} className="p-3">
-          <strong>{a.state}</strong> ·
-          {a.created}
-          <p className="whitespace-pre-wrap">{a.reason}</p>
-        </Card>)}</div>
-      </details>
-    </form>}
+    {object && editOpen && <IocEditDialog slug={slug} object={object} assessments={data?.assessments} edits={data?.edits} onClose={() => setEditOpen(false)} />}
 
     <div className="overflow-x-auto" aria-label={tr('iocWorkspace.detail_tabs')}>
-      <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(object?.type === 'ip' ? ['Trace'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
+      <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(canEnrich ? ['Enrichment'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
     </div>
 
     {failure && <p role="alert" className="text-[var(--danger-text)]">{String(failure instanceof Error ? failure.message : failure)}</p>}
@@ -163,8 +176,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     {isPending && <p>{tr('iocWorkspace.loading_case_details')}</p>}
 
     {object && tab === 'Overview' && <>
-      {current?.resolved && <div><Button type="button" onClick={() => setViewPath(current.resolved!)}>{tr('iocWorkspace.view_file')}</Button></div>}
-      <h3 className="ioc-section-title">{tr('iocWorkspace.observation')}</h3>
+      <h3 className="ioc-section-title">{tr('iocAttr.title')}</h3>
       <div className="grid grid-cols-1 gap-x-6 border-b border-[var(--line)] sm:grid-cols-2">
 
         {object.type === 'user' && !!object.account_sources?.length ? <div className="sm:col-span-2">
@@ -174,22 +186,19 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
               <span className="text-[12px] text-[var(--muted)]">{[source.cms, source.table].filter(Boolean).join(' · ')}</span>
             </div>)}</div>
           </IocField>
-        </div> : <>
-          <IocField name="First observed">{observationTime(times[0] || current?.first_seen)}</IocField>
-          <IocField name="Last observed">{observationTime(times[times.length - 1] || current?.last_seen)}</IocField>
+        </div> : showActivity && <>
+          <IocField name="First observed">{observationTime(indexedFirst || times[0])}</IocField>
+          <IocField name="Last observed">{observationTime(indexedLast || times[times.length - 1])}</IocField>
         </>}
+        <IocAttributes object={object} observations={observed} iocs={iocs} relationships={links} onNavigate={onNavigate} />
 
-        <div className="min-w-0"><IocField name="Origin">
+        <IocField name="Origin">
           <div className="space-y-1 break-words">{iocOrigins(object, observed, data?.findings ?? []).map(origin => <p key={origin}>{origin}</p>)}</div>
         </IocField>
         {cti.configured && <OpenCtiScore lookup={cti.data?.lookups?.find(entry => entry.ioc_id === id)} loading={cti.isPending} error={Boolean(cti.error)} />}
-        </div>
         <IocField name={tr('iocTags.title')} help={tr(cti.configured ? 'iocTags.help' : 'iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
       </div>
-      {object.file && <><div className="grid grid-cols-2 gap-x-6">
-        <IocField name="Classification">{object.file.classification || 'Not classified'}</IocField>
-        <IocField name="Size">{object.file.size == null ? 'Not verified' : `${object.file.size.toLocaleString()} bytes`}</IocField>
-      </div><details className="rounded-lg border border-[var(--line)] p-3">
+      {object.file && <details className="rounded-lg border border-[var(--line)] p-3">
           <summary className="flex cursor-pointer items-center gap-2">
             {tr('iocWorkspace.hashes')}
             <InfoDot body={descriptions.Hashes} />
@@ -205,14 +214,13 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
             <Button disabled={verifyFile.isPending} onClick={() => verifyFile.mutate()}>{tr('iocWorkspace.verify_available_file_metadata')}</Button>
             {verifyFile.data && <p role="status">{verifyFile.data.verified_locations} {tr('iocWorkspace.verified')} {verifyFile.data.unavailable_or_changed_locations} {tr('iocWorkspace.unavailable_or_changed')}</p>}
           </div>
-        </details></>}
+        </details>}
       {object.legacy_warning && <details className="text-[var(--review-text)]">
         <summary className="cursor-pointer">{tr('iocWorkspace.review_legacy_metadata')}</summary>
         <p>{object.legacy_warning}</p>
       </details>}
-      {!!object.context && <IocField name="Context">{object.path_context && object.type === 'path' ? `${object.path_context} · ` : ''}{object.context}</IocField>}
       <div>
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-2 flex items-center gap-2">
           <h3 className="ioc-section-title">
           {tr('iocWorkspace.relationships')}</h3><span className="rounded bg-[var(--panel-2)] px-2 text-[12px] text-[var(--muted)]">{links.length}</span>
           <InfoDot body={descriptions.Relationships} />
@@ -232,9 +240,33 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       </details>}
     </>}
 
-    {object?.type === 'ip' && tab === 'Trace' && <TraceWindow key={`${slug}:${id}`} slug={slug} ips={[object.value]} embedded onClose={() => setTab('Overview')} />}
+    {object && tab === 'Enrichment' && <section aria-label={tr('iocWorkspace.tab.Enrichment')} className="space-y-3">
+      <h3 className="ioc-section-title">{tr('cti.enrichmentResults')}</h3>
+      {cti.isPending && <p>{tr('common.loading')}</p>}
+      {cti.error && <p role="alert" className="text-[var(--danger-text)]">{String(cti.error instanceof Error ? cti.error.message : cti.error)}</p>}
+      {!!cti.data?.enrichments?.some(entry => entry.ioc_id === id) && <div className="space-y-2">
+        {cti.data.enrichments.filter(entry => entry.ioc_id === id).map(entry => <div key={entry.id} className="flex flex-wrap items-center gap-2 rounded border border-[var(--line)] p-3 text-[12px]">
+          <strong>{entry.connector_name || tr('cti.connectorJob', { id: entry.connector_id.slice(0, 8) })}</strong>
+          <span>{entry.state}</span><span className="text-[var(--muted)]">{entry.updated}</span>
+          {entry.error && <span className="text-[var(--danger-text)]">{entry.error}</span>}
+        </div>)}
+      </div>}
+      {!cti.isPending && !lookup?.entities?.length && <p className="text-[var(--muted)]">{tr('cti.enrichmentEmpty')}</p>}
+      <OpenCtiDetails lookup={lookup} object={object} slug={slug} loading={cti.isPending} error={Boolean(cti.error)} />
+    </section>}
 
-    <FileViewer slug={slug} path={viewPath} layer={1} onClose={() => setViewPath(null)} />
+    {chooseLocation && <Modal open onClose={() => setChooseLocation(false)} layer={2} title={tr('iocAction.chooseLocation')}>
+      <div className="flex flex-col gap-2">{fileLocations.map(location => <Button key={location.path} type="button" className="justify-start text-left" onClick={() => { setChooseLocation(false); setViewPath(location.path) }}>
+        <FileCode2 size={14} /><span className="min-w-0 break-all">{location.label}</span>
+        {location.evidenceId != null && <span className="shrink-0 text-[var(--muted)]">{tr('iocAttr.source', { id: location.evidenceId })}</span>}
+      </Button>)}</div>
+    </Modal>}
+    {traceOpen && object?.type === 'ip' && <TraceWindow slug={slug} ips={[object.value]} layer={2} onClose={() => setTraceOpen(false)} />}
+    <FileViewer slug={slug} path={viewPath} layer={2} onClose={() => setViewPath(null)} />
+    {deleteOpen && object && <IocDeleteDialog slug={slug} objects={[object]} onClose={() => setDeleteOpen(false)} onDeleted={ids => {
+      onDirtyChange?.(false)
+      if (onDeleted) onDeleted(ids); else onClose()
+    }} />}
 
   </div>
   return embedded ? content : <Modal open onClose={onClose} title={object ? iocName(object) : 'IOC details'}>{content}</Modal>
