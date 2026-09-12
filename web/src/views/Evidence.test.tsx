@@ -32,6 +32,17 @@ beforeEach(() => {
 })
 
 describe('evidence registration', () => {
+  it('does not label OpenCTI work as an evidence analysis run', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/jobs')) return [{ id: 9, kind: 'opencti-export', state: 'running',
+        created: '2026-09-07T12:00:00', progress: 0.5, stats: {}, error: '', message: '' }]
+      return CASE
+    })
+    renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Add Webroot' })
+    expect(screen.queryByText('opencti-export')).not.toBeInTheDocument()
+    expect(screen.queryByText(/0 of 1 engines complete/)).not.toBeInTheDocument()
+  })
   it('allows analysis of a single source without requiring the other types', async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path.endsWith('/jobs')) return []

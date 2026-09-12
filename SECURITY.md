@@ -56,23 +56,23 @@ data** goes out — the request contains nothing but the file name. On a
 machine without network access you place the `*.mmdb` into the workspace by
 hand instead.
 
-**Third-party lookups** for a single indicator: a SHA-256 to VirusTotal, an
-IP address to AbuseIPDB. These are off until you enable them under
-*Settings*, and they need an API key you supply — no key, no lookup. Then:
+**OpenCTI integration** uses a dedicated token configured under *Settings*.
+Direct VirusTotal and AbuseIPDB network calls are retired; historical results
+remain local and readable.
 
 | Point | What holds |
 |---|---|
-| **One value per click** | The request carries the indicator and nothing else: not the case name, not the path the hash belongs to, not the other indicators, not a user agent that identifies the case. |
-| **Which service gets what is enforced** | An IP is refused before it can reach VirusTotal, a hash before it can reach AbuseIPDB — in code, not in documentation. |
-| **Only hashes and addresses** | A path would name the server, a login would name a person. Neither is offered for lookup. |
-| **No sweep, no background refresh** | Every request is one deliberate click. Nothing is enriched on load or on a schedule. |
-| **It still costs something** | Sending a hash tells VirusTotal that somebody holds that file; sending an IP tells AbuseIPDB that somebody is investigating it. **On a mandate under an NDA that can itself be the leak.** That sentence is on the settings page, not only here. |
-| **API keys are cleartext** | They live in `settings.json` in the workspace, owner-readable where the platform supports it. There is no key store to hide them in, and an encrypted-looking wrapper would only pretend. They are never in a case archive, and the interface only ever sees the last four characters. |
+| **Separate actions** | Lookup reads existing OpenCTI knowledge. Transfer submits only a reviewed preview. Enrichment requires a separate connector selection; unknown observables need explicit creation consent. |
+| **No network on display** | Views read stored responses. Explicit jobs may poll their submitted work; a separate status action resumes later checks. |
+| **Manual enrichment** | Transfers are refused while any active internal enrichment connector is automatic. External feed imports may continue. |
+| **Original files** | Uploads default off, require per-file selection, and verify the exact snapshot against preview hashes. Metadata enrichment refuses Artifacts and files with attached content. |
+| **Privacy review** | Random organization pseudonyms do not anonymize domains, emails, notes or evidence. Preview exclusions and workstation-path redaction apply before transfer. TLP markings do not replace OpenCTI permissions. |
+| **Token storage** | The integration token lives in cleartext `settings.json` outside case archives, owner-readable where supported. Public settings expose only its last four characters. Changing the server URL clears the old token. TLS verification stays enabled; redirects are refused. |
 
 What comes back is stored as a **third-party opinion**: apart from the
 findings, never a severity, never a triage decision.
 
-Everything else — analysis, traces, country attribution, exports — runs
+Everything else — analysis, traces, local country attribution, local file exports — runs
 entirely offline.
 
 ## Handling live web shells

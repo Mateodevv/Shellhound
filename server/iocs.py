@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-IOC_TYPES = ("ip", "hash", "url", "domain", "email", "path", "user", "other")
+IOC_TYPES = ("ip", "hash", "url", "domain", "email", "path", "user", "other", "file", "vulnerability")
 
 # provenance
 TAG_ANALYST = "analyst"
@@ -53,6 +53,13 @@ LINK_ACCOUNT_OF = "account-of"
 # translated: an export is a snapshot for a recipient who cannot ask back,
 # and it has to read the same in every case file of a team.
 LINK_LABELS = {
+    "located-at": ("was collected at", "held collected file"),
+    "request-context": ("requested a path associated with", "has request context from"),
+    "used": ("used", "was used by"),
+    "executed": ("executed", "was executed by"),
+    "cve-context": ("has specific evidence for", "has specific evidence from"),
+    "exploit-attempt": ("attempted to exploit", "has an exploit attempt from"),
+    "exploitation-confirmed": ("has confirmed exploitation evidence for", "has confirmed exploitation evidence from"),
     LINK_HASH_OF: ("is the SHA-256 of", "has the SHA-256"),
     LINK_REQUESTED: ("requested", "was requested by"),
     LINK_HOST_IN: ("appears in the code of", "points to"),
@@ -84,6 +91,8 @@ IP_RE = re.compile(
 
 def classify(value):
     v = str(value).strip()
+    if re.fullmatch(r"CVE-\d{4}-\d{4,}", v, re.I):
+        return "vulnerability"
     try:
         ipaddress.ip_address(v)
         return "ip"

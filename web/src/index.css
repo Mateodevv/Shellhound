@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Geist";
+  src: url("/assets/fonts/geist/Geist-Variable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("/assets/fonts/geist/Geist-Italic-Variable.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
 @keyframes progress-indeterminate {
   from { transform: translateX(-100%); }
   to { transform: translateX(350%); }
@@ -23,6 +43,9 @@
    its own, it is the set of values every other theme overrides. */
 :root {
   color-scheme: dark;
+  --motion-fast: 120ms;
+  --motion-enter: 180ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --bg: #0b0e14;
   --panel: #121720;
   --panel-2: #1b222d;
@@ -102,7 +125,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 14px/1.5 var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -115,8 +138,8 @@ body {
 *::-webkit-scrollbar-track { background: transparent; }
 
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pulseSoft {
@@ -124,9 +147,72 @@ body {
   50% { opacity: 0.55; }
 }
 
-.animate-fade-up { animation: fadeUp 0.28s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
-.animate-fade-in { animation: fadeIn 0.2s ease both; }
+.animate-fade-up { animation: fadeUp var(--motion-enter) var(--motion-ease) backwards; }
+.animate-fade-in { animation: fadeIn var(--motion-enter) ease backwards; }
 .animate-pulse-soft { animation: pulseSoft 1.6s ease-in-out infinite; }
+
+/* Press feedback belongs to controls, never to positioned or virtualized rows. */
+.ui-press, :where([role="tab"], summary) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, translate;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--motion-ease);
+}
+.ui-press:where(:not(:disabled, [aria-disabled="true"])):active {
+  translate: 0 1px;
+  transition-duration: 60ms;
+}
+.ui-press:where(:disabled, [aria-disabled="true"]) { transition: none; }
+:where([role="tab"], summary):not(:disabled, [aria-disabled="true"]):active { background-color: var(--panel-2); }
+.ui-disclosure-icon { transition: rotate var(--motion-fast) var(--motion-ease); }
+.ui-disclosure-icon[data-open="true"] { rotate: 90deg; }
+details[open] > :not(summary) { animation: fadeIn var(--motion-enter) ease backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  .ui-press:active { translate: none; }
+}
 
 .mono { font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace; }
 .tabular { font-variant-numeric: tabular-nums; }
+
+/* IOC workspace: independent object and detail scrolling. */
+.ioc-workspace { container-type: inline-size; }
+.ioc-split { display: flex; flex-direction: column; height: max(560px, calc(100dvh - 185px)); }
+.ioc-list, .ioc-detail { flex: 1; }
+.ioc-divider { display: none; touch-action: none; }
+.ioc-list-hidden-mobile, .ioc-detail-hidden-mobile { display: none; }
+@container (min-width: 900px) {
+  .ioc-split { display: grid; grid-template-columns: min(var(--ioc-list-width), 42%) 5px minmax(0, 1fr); }
+  .ioc-list-hidden-mobile { display: flex; }
+  .ioc-mobile-navigation { display: none; }
+  .ioc-detail-hidden-mobile, .ioc-divider { display: block; }
+}
+
+/* IOC object types, labels and relationship rows share the same compact palette. */
+.ioc-tone-rose { --ioc-color: #fb7185; }
+.ioc-tone-green { --ioc-color: #34d399; }
+.ioc-tone-yellow { --ioc-color: #facc15; }
+.ioc-tone-blue { --ioc-color: #60a5fa; }
+.ioc-tone-purple { --ioc-color: #c084fc; }
+.ioc-tone-neutral { --ioc-color: var(--muted); }
+.ioc-type-badge, .ioc-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: color-mix(in srgb, var(--ioc-color) 78%, var(--fg));
+  background: color-mix(in srgb, var(--ioc-color) 15%, var(--panel));
+  font-size: 11px; line-height: 1.5;
+}
+.ioc-type-badge { flex-shrink: 0; border-radius: 4px; padding: 3px 7px; white-space: nowrap; }
+.ioc-type-badge svg { color: var(--ioc-color); }
+.ioc-tag { border-radius: 999px; padding: 2px 8px; max-width: 100%; }
+.ioc-tag button { display: inline-flex; padding: 2px; border-radius: 50%; }
+.ioc-tag button:hover { background: color-mix(in srgb, var(--ioc-color) 20%, transparent); }
+.ioc-tag-add { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 999px; font-size: 11px; color: var(--accent-text); }
+.ioc-section-title { font-size: 16px; line-height: 1.5; font-weight: 650; }
+.ioc-relationships th { color: var(--muted); font-size: 11px; font-weight: 600; background: var(--panel-2); }
+.ioc-relationships th, .ioc-relationships td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.ioc-relationships tbody tr:last-child td { border-bottom: 0; }
+.ioc-relationships tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 65%, transparent); }

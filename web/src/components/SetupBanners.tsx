@@ -1,23 +1,6 @@
-// SetupBanners.tsx -- what this workstation could do and has not been set up
-// to do yet.
-//
-// Three things sit outside the tool proper: the GeoIP database, and the two
-// lookup services. All three are OPTIONAL BY DESIGN, and two of them send a
-// value off this machine. So these are reminders, not prompts -- they say
-// what is available and what it would cost, and they take "no" for an answer
-// permanently.
-//
-// THE RESTRAINT IS THE POINT. A banner that reappears in every case teaches
-// the analyst to dismiss banners without reading them, and the next one that
-// matters gets the same treatment. Each is dismissed once, per workstation,
-// and stays dismissed.
-//
-// Missing-key reminders also appear before consent. They only navigate to
-// settings; enabling external requests remains a separate, explicit action.
+// Optional workstation setup reminders are dismissible and never start external requests.
 import { useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { KeyRound, Settings2, X } from 'lucide-react'
-import { api, type SettingsInfo } from '../api'
+import { Settings2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { Card } from './ui'
 
@@ -71,31 +54,5 @@ export function SetupBanner({ id, icon, title, body, cta, onCta, onOpenSettings 
         </button>
       </div>
     </Card>
-  )
-}
-
-/** Missing optional API keys, with an explicit route to their setup. */
-export function EnrichmentBanners({ onOpenSettings }: {
-  onOpenSettings?: () => void
-}) {
-  const tr = useT()
-  const { data } = useQuery({
-    queryKey: ['settings'],
-    queryFn: () => api<SettingsInfo>('/api/settings'),
-    staleTime: 60_000,
-  })
-  if (!data) return null
-
-  const missing = Object.entries(data.services).filter(([, s]) => !s.configured)
-  return (
-    <>
-      {missing.map(([name, svc]) => (
-        <SetupBanner key={name} id={`key.${name}`}
-          icon={<KeyRound size={15} className="shrink-0 text-[var(--accent)]" />}
-          title={tr(`setup.key.${name}`)}
-          body={tr(data.enrichment_ack ? 'setup.key.body' : 'setup.key.beforeConsent', { sends: tr(`settings.kind.${svc.sends}`) })}
-          onOpenSettings={onOpenSettings} />
-      ))}
-    </>
   )
 }

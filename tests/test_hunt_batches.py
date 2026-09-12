@@ -90,6 +90,36 @@ class HuntBatchTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_saved_checks_keep_all_ip_cve_links_and_reuse_them_on_repeat(self):
+        patterns.update(self.config.workspace, self.entry["id"], cve="CVE-2026-12345 CVE-2026-54321")
+        for iteration in (1, 2):
+            run = self.finish(self.start([self.entry["id"]]))
+            self.assertEqual("done", run["state"])
+            self.assertEqual(206, run["patterns"][0]["test"]["clients"])
+            conn = db.connect(self.case)
+            try:
+                links = [r for r in db.ioc_links(conn) if r["kind"] == "cve-context"]
+                self.assertEqual(412, len(links), "Every matched IP keeps both CVEs beyond UI page limits")
+                self.assertEqual(206, conn.execute("SELECT count(*) FROM iocs WHERE type='ip'").fetchone()[0])
+                self.assertEqual(0, conn.execute("SELECT count(*) FROM findings").fetchone()[0])
+                self.assertEqual(412 * iteration, conn.execute("SELECT count(*) FROM ioc_relationship_evidence WHERE observation_id IS NOT NULL").fetchone()[0])
+            finally:
+                conn.close()
+
+        from server import opencti_graph
+        workspace.update_case(self.case, reference="PIM-SYNTHETIC-CVE")
+        preview = opencti_graph.build_preview(self.case)
+        self.assertFalse(preview["errors"])
+        exported = [o for o in preview["objects"] if o["type"] == "relationship"
+                    and o["source_ref"].startswith("ipv4-addr--")
+                    and o["target_ref"].startswith("vulnerability--")]
+        self.assertEqual(412, len(exported))
+        self.assertTrue(all(o["relationship_type"] == "related-to" for o in exported))
+
+    def test_cve_collection_rejects_a_different_index_generation(self):
+        with self.assertRaises(logindex.StaleHuntIndex):
+            list(logindex.iter_rule_clients(self.case, marker_rule(), expected_fingerprint="old-generation"))
+
     def test_dashboard_links_latest_check_without_creating_or_combining_findings(self):
         patterns.add(self.config.workspace, [], name="Overlapping marker", rule=marker_rule("/mar"))
         run = self.finish(self.start())

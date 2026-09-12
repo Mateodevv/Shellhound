@@ -20,7 +20,7 @@ export interface TriageController {
   /** Awaitable form for review windows that must save successfully before
    *  advancing or closing. Uses the exact same payload and receipts. */
   decideAsync: (artifacts: string[], state: string, note?: string,
-                propagate?: boolean) => Promise<TriageResult>
+                propagate?: boolean, classifications?: string[]) => Promise<TriageResult>
   saving: boolean
   /** Take a propagation back: every artifact returns to the state the
    *  server supplied. */
@@ -60,7 +60,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     // something else happened to refetch them.
     for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors',
                        'chain', 'first-sign', 'browse', 'database', 'cms', 'file',
-                       'search']) {
+                       'search', 'opencti']) {
       qc.invalidateQueries({ queryKey: [key] })
     }
   }
@@ -79,7 +79,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
 
   const mutation = useMutation({
     mutationFn: (v: {
-      artifacts: string[]; state: string; note?: string; propagate?: boolean
+      artifacts: string[]; state: string; note?: string; propagate?: boolean; classifications?: string[]
     }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
     onSuccess: (result) => {
       // A DECISION THAT RECORDED NOTHING IS NOT A DECISION. The server
@@ -104,8 +104,8 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     dismissNothingToDecide: () => setNothingToDecide(false),
     decide: (artifacts, state, note, propagate) =>
       mutation.mutate({ artifacts, state, note, propagate }),
-    decideAsync: (artifacts, state, note, propagate) =>
-      mutation.mutateAsync({ artifacts, state, note, propagate }),
+    decideAsync: (artifacts, state, note, propagate, classifications) =>
+      mutation.mutateAsync({ artifacts, state, note, propagate, ...(classifications !== undefined ? { classifications } : {}) }),
     saving: mutation.isPending,
     // Grouped by state so that it stays one call per group.
     // `propagate: false`, otherwise taking it back triggers a new wave.

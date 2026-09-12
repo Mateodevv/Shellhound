@@ -11,16 +11,68 @@ import os
 import re
 import shutil
 import stat
+import threading
 import time
 import zipfile
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
-from server import db
+from server import case_profile, db
 
 ARCHIVE_DIR = "archive"
 CASE_FILE = "case.json"          # human-readable identity next to case.db
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_CASE_LOCK = threading.RLock()
+
+
+def _serialized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _CASE_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
+
+
+def _reference(value):
+    if not isinstance(value, str):
+        raise ValueError("Case ID must be text")
+    value = value.strip()
+    if len(value) > 200 or any(ord(char) < 32 for char in value):
+        raise ValueError("Case ID is too long or contains invalid characters")
+    return value
+
+
+def _check_reference(workspace, reference, excluding=None, *, archives=False):
+    """Case IDs identify a single investigation, independently of its folder."""
+    if not reference or not Path(workspace).is_dir():
+        return
+    for entry in Path(workspace).iterdir():
+        if not entry.is_dir() or entry.name == ARCHIVE_DIR or entry == excluding:
+            continue
+        try:
+            identity = json.loads((entry / CASE_FILE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(identity, dict) and
+                str(identity.get("reference", "")).strip().casefold() == reference.casefold()):
+            raise ValueError("This Case ID is already used by another open case")
+    if archives:
+        for path in (Path(workspace) / ARCHIVE_DIR).glob("*.zip"):
+            try:
+                with zipfile.ZipFile(path) as zf:
+                    identity = json.loads(zf.read(CASE_FILE))
+            except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+                continue
+            if (isinstance(identity, dict) and
+                    str(identity.get("reference", "")).strip().casefold() == reference.casefold()):
+                raise ValueError("This Case ID belongs to an archived case; restore its archive")
+
+
+def _meta_values(identity):
+    return [(key, json.dumps(value, ensure_ascii=False) if key == "profile" else value)
+            for key, value in identity.items() if key in
+            ("name", "reference", "notes", "created", "profile")]
 
 
 def slug(name):
@@ -41,19 +93,24 @@ def _unique_dir(workspace, name):
     return candidate
 
 
-def create_case(workspace, name, reference="", notes=""):
+@_serialized
+def create_case(workspace, name, reference="", notes="", profile=None):
     workspace = Path(workspace)
+    reference = _reference(reference)
+    _check_reference(workspace, reference, archives=True)
+    profile = case_profile.normalize({} if profile is None else profile, workspace)
     workspace.mkdir(parents=True, exist_ok=True)
     case_dir = _unique_dir(workspace, name)
     case_dir.mkdir()
     identity = {"name": name.strip() or case_dir.name, "reference": reference,
-                "notes": notes, "created": datetime.now().isoformat(timespec="seconds")}
+                "notes": notes, "created": datetime.now().isoformat(timespec="seconds"),
+                "profile": profile}
     (case_dir / CASE_FILE).write_text(
         json.dumps(identity, indent=2, ensure_ascii=False), encoding="utf-8")
     conn = db.connect(case_dir)
     try:
         conn.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)",
-                         list(identity.items()))
+                         _meta_values(identity))
         conn.commit()
     finally:
         conn.close()
@@ -67,10 +124,15 @@ def case_info(case_dir):
         identity.update(json.loads((case_dir / CASE_FILE).read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    identity["profile"] = case_profile.defaults(identity.get("profile"))
     info = {"slug": case_dir.name, "dir": str(case_dir), **identity}
+    info["reference_locked"] = False
     if db.case_db_path(case_dir).is_file():
         conn = db.connect(case_dir)
         try:
+            reference_lock = conn.execute(
+                "SELECT value FROM meta WHERE key='opencti_case_reference'").fetchone()
+            info["reference_locked"] = bool(reference_lock and reference_lock[0])
             info["findings"] = conn.execute(
                 "SELECT count(*) FROM findings").fetchone()[0]
             # Artifacts, not findings: the case card should say how much WORK
@@ -88,7 +150,8 @@ def case_info(case_dir):
     return info
 
 
-def update_case(case_dir, *, name=None, reference=None, notes=None):
+@_serialized
+def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None):
     """Update the human-owned case identity, atomically on disk and in DB."""
     case_dir = Path(case_dir)
     path = case_dir / CASE_FILE
@@ -98,6 +161,23 @@ def update_case(case_dir, *, name=None, reference=None, notes=None):
         identity.update(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    if reference is not None:
+        reference = _reference(reference)
+        _check_reference(case_dir.parent, reference, excluding=case_dir,
+                         archives=reference.casefold() !=
+                         str(identity.get("reference", "")).strip().casefold())
+        if db.case_db_path(case_dir).is_file():
+            conn = db.connect(case_dir)
+            try:
+                locked = conn.execute(
+                    "SELECT value FROM meta WHERE key='opencti_case_reference'").fetchone()
+            finally:
+                conn.close()
+            if locked and locked[0] and reference != locked[0]:
+                raise ValueError("Case ID cannot change after an OpenCTI export")
+    if profile is not None:
+        identity["profile"] = case_profile.normalize(
+            profile, case_dir.parent, existing=identity.get("profile"))
     for key, value in (("name", name), ("reference", reference),
                        ("notes", notes)):
         if value is not None:
@@ -111,8 +191,7 @@ def update_case(case_dir, *, name=None, reference=None, notes=None):
         conn.executemany(
             "INSERT INTO meta (key, value) VALUES (?,?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [(key, identity.get(key, "")) for key in
-             ("name", "reference", "notes", "created")])
+            _meta_values(identity))
         conn.commit()
     finally:
         conn.close()
@@ -155,6 +234,7 @@ def case_summary(case_dir):
     case_dir = Path(case_dir)
     info = case_info(case_dir)
     out = {"name": info["name"], "reference": info.get("reference", ""),
+           "profile": info["profile"],
            "slug": case_dir.name, "created": info.get("created", ""),
            "closed": datetime.now().isoformat(timespec="seconds"),
            "findings": 0, "artifacts": 0, "confirmed": 0, "dismissed": 0,
@@ -337,6 +417,7 @@ def _safe_member(name):
     return Path(*parts) if parts else None
 
 
+@_serialized
 def import_archive(workspace, zip_path):
     """Restore a closed case from its archive.
 
@@ -363,6 +444,15 @@ def import_archive(workspace, zip_path):
             identity = json.loads(zf.read(CASE_FILE))
         except ValueError as e:
             raise ImportError_(f"{CASE_FILE} in the archive is damaged: {e}") from e
+        try:
+            if not isinstance(identity, dict):
+                raise ValueError("Case identity must be an object")
+            _check_reference(workspace, _reference(identity.get("reference", "")))
+            if "profile" in identity:
+                case_profile.validate(identity["profile"])
+                case_profile.restore_organization(workspace, identity["profile"], dry_run=True)
+        except ValueError as exc:
+            raise ImportError_(str(exc)) from exc
         members = [(n, _safe_member(n)) for n in names]
 
         wanted = slug(identity.get("name") or zip_path.stem)
@@ -380,6 +470,8 @@ def import_archive(workspace, zip_path):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(name) as src, open(dest, "wb") as out:
                     shutil.copyfileobj(src, out)
+            if "profile" in identity:
+                case_profile.restore_organization(workspace, identity["profile"])
         except Exception:
             shutil.rmtree(target, ignore_errors=True)
             raise

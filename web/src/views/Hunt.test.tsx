@@ -73,6 +73,30 @@ beforeEach(() => {
 })
 
 describe('Pattern Hunt investigation workflow', () => {
+  it('opens IOC query evidence without replacing the saved editor draft', async () => {
+    saveSession('case-1', { ...DEFAULT_SESSION, draft: emptyDraft({ name: 'Keep my draft' }) })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=41')
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async path => path.endsWith('/hunt/tests?limit=500') ? { tests: [] } : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Saved query #41')).toBeVisible()
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients', expect.anything()))
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
+    expect(new URLSearchParams(location.search).get('section')).toBe('41')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Back to Pattern Hunt' })[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByDisplayValue('Keep my draft')).toBeVisible()
+  })
+
+  it('passes explicit draft CVE metadata when previewing a query', async () => {
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.change(await screen.findByPlaceholderText('CVE-…'), { target: { value: 'CVE-2026-12345' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview in this case' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests', expect.objectContaining({ name: PATTERN.name, cve: 'CVE-2026-12345' })))
+  })
+
   it('opens the dashboard-linked run instead of the saved selection and preserves the draft', async () => {
     allRuns = [{ ...RUN, batch_id: 'newer-run' }, RUN]
     saveSession('case-1', { ...DEFAULT_SESSION, batchId: 'newer-run', runPatternId: 'sample',

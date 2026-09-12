@@ -1,4 +1,5 @@
 // The case overview separates analyst decisions from technical scan coverage.
+import { CaseProfileButton } from '../components/CaseProfile'
 import { useT } from '../i18n'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowRight, Check, Database, FileSearch, HardDrive, Layers, Radar, ShieldAlert, ShieldCheck } from 'lucide-react'
@@ -130,6 +131,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
     ? (action.count ?? outstanding) === 1 ? copy.reviewOne : copy.reviewCount.replace('{n}', formatCount(action.count ?? outstanding)) : copy.actions[action.id][0]
 
   return <div className="flex flex-col gap-7 pb-4">
+    <div className="flex justify-end"><CaseProfileButton slug={slug} /></div>
     <section aria-label={copy.status}>
       <Heading title={copy.status} sub={copy.statusSub} />
       <div className="grid gap-4 lg:grid-cols-2">

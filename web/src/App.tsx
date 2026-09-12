@@ -24,7 +24,7 @@ import type { EvidenceRoot } from './format'
 import { queryClient } from './queryClient'
 import { JobPopup } from './components/JobPopup'
 import { GeoBanner } from './components/GeoBanner'
-import { EnrichmentBanners } from './components/SetupBanners'
+import { useOpenCtiSettings } from './opencti'
 
 const Start = lazy(() => import('./views/Start').then((m) => ({ default: m.Start })))
 const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default: m.Dashboard })))
@@ -93,7 +93,7 @@ export function CaseNavigation({
       aria-current={view === id ? 'page' : undefined}
       className={clsx(
         'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium',
-        'transition-colors duration-150 cursor-pointer',
+        'ui-press cursor-pointer',
         view === id
           ? 'border border-[var(--accent)]/45 bg-[var(--accent-soft)] text-[var(--fg)]'
           : 'border border-transparent text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
@@ -122,7 +122,7 @@ export function CaseNavigation({
     <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2">
       <button
         onClick={onSearch}
-        className="mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] transition-colors cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
+        className="ui-press mb-1 flex items-center gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--muted)] cursor-pointer hover:border-[var(--accent)]/60 hover:text-[var(--fg)]"
       >
         <Search size={14} />
         {tr('nav.search')}
@@ -159,6 +159,7 @@ function viewFromUrl(): ViewId {
 
 function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const tr = useT()
+  const ctiSettings = useOpenCtiSettings()
   const [view, setView] = useState<ViewId>(viewFromUrl)
   const [huntVisit, setHuntVisit] = useState(0)
 
@@ -201,7 +202,12 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     refetchInterval: 4000,
   })
 
+  const leaveCase = () => {
+    if (window.dispatchEvent(new Event('shellhound:before-navigate', { cancelable: true }))) onBack()
+  }
+
   const gotoView = useCallback<Navigate>((next, params = {}) => {
+    if (!window.dispatchEvent(new Event('shellhound:before-navigate', { cancelable: true }))) return
     const url = new URL(location.href)
     url.searchParams.set('case', slug)
     url.searchParams.set('view', next)
@@ -232,7 +238,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  const running = (jobs ?? []).filter((job) => job.state === 'running' || job.state === 'queued')
+  const running = (jobs ?? []).filter((job) => (ctiSettings.data?.configured || !job.kind.startsWith('opencti-')) && (job.state === 'running' || job.state === 'queued'))
 
   const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((e) => ({
     kind: e.kind, path: e.path, label: e.label,
@@ -245,7 +251,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     <div className="h-full">
       <div className="flex h-full flex-col md:grid md:grid-cols-[14rem_minmax(0,1fr)] md:grid-rows-[auto_minmax(0,1fr)]">
         <button
-          onClick={onBack}
+          onClick={leaveCase}
           className="group hidden h-full md:col-start-1 md:row-start-1 items-center gap-2 border-b border-r border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-left cursor-pointer md:flex"
         >
           <ArrowLeft size={14} className="text-[var(--muted)] transition-transform group-hover:-translate-x-0.5" />
@@ -290,7 +296,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 py-2 md:hidden">
-        <button onClick={onBack} aria-label={tr('nav.switchCase')}
+        <button onClick={leaveCase} aria-label={tr('nav.switchCase')}
           className="cursor-pointer rounded-lg p-2 text-[var(--muted)] hover:bg-[var(--panel-2)]">
           <ArrowLeft size={16} />
         </button>
@@ -322,12 +328,11 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-1 md:row-span-2">
-        <div key={view} className={clsx('mx-auto', running.length > 0 && 'pt-16! sm:pt-16!', view === 'hunt'
+        <div key={view} className={clsx('mx-auto animate-fade-in', running.length > 0 && 'pt-16! sm:pt-16!', (view === 'hunt' || view === 'iocbox')
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
           {view !== 'settings' && <div className="mb-4 flex flex-col gap-2 empty:hidden">
             <GeoBanner onOpenSettings={() => gotoView('settings')} />
-            <EnrichmentBanners onOpenSettings={() => gotoView('settings')} />
           </div>}
           <Suspense fallback={<PageSkeleton />}>
             {view === 'dashboard' && <Dashboard {...props} />}
@@ -341,7 +346,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'database' && <DatabaseView {...props} />}
             {view === 'evidence' && <Evidence {...props} />}
             {view === 'timeline' && <Timeline {...props} />}
-            {view === 'report' && <Report {...props} onClosed={onBack} />}
+            {view === 'report' && <Report {...props} onClosed={leaveCase} />}
             {view === 'settings' && <Settings />}
           </Suspense>
         </div>
@@ -367,9 +372,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         onView={(path, line) => setPaletteViewing({ path, line })}
         onTrace={(ips, m) => { setPaletteMarks(m); setPaletteTrace(ips) }}
         onClose={() => { setPaletteArtifact(null); t.clearCollected() }}
-        onSave={(state, note) => {
+        onSave={(state, note, classifications) => {
           if (!paletteArtifact) return Promise.reject(new Error('No artifact selected'))
-          return t.decideAsync([paletteArtifact.artifact], state, note)
+          return t.decideAsync([paletteArtifact.artifact], state, note, undefined, classifications)
         }}
       />
       <TraceWindow slug={slug} ips={paletteTrace} layer={1} marks={paletteMarks}

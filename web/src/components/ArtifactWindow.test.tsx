@@ -13,10 +13,10 @@
 // is typing. Both halves are asserted here, because a fix for one that
 // breaks the other is a fix that loses text either way.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
-  api, post, type ArtifactContext, type FileContent, type SettingsInfo, type TriageResult,
+  api, post, type ArtifactContext, type FileContent, type Finding, type SettingsInfo, type TriageResult,
 } from '../api'
 import { renderWithProviders, testQueryClient } from '../test/setup'
 import { ArtifactWindow, type ArtifactStub } from './ArtifactWindow'
@@ -30,6 +30,7 @@ vi.mock('../api', async (orig) => ({
   api: vi.fn(),
   post: vi.fn(),
 }))
+vi.mock('../geo', () => ({ useGeo: () => null }))
 
 const SHELL = '/var/www/Images/shell.php'
 
@@ -114,14 +115,14 @@ describe('case review progress', () => {
     expect(bar).toHaveAttribute('aria-valuemax', '2500')
     expect(bar).toHaveAttribute('aria-valuenow', '1700')
     expect(bar).toHaveAttribute('aria-valuetext', expect.stringMatching(/1,700.*2,500 reviewed.*800 remaining/))
-    await userEvent.setup().type(noteBox(), 'Keep my reasoning')
+    await userEvent.click(screen.getByRole('button', { name: 'Dropper' }))
 
     vi.mocked(api).mockResolvedValue(context({
       review_progress: { total: 2500, reviewed: 1701, remaining: 799, skipped: 2 },
     }))
     await act(async () => { await qc.invalidateQueries({ queryKey: ['artifact', 'case'] }) })
     await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '1701'))
-    expect(noteBox().value).toBe('Keep my reasoning')
+    expect(screen.getByRole('button', { name: 'Dropper' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('does not advance when a decision is only selected or fails to save', async () => {
@@ -160,6 +161,52 @@ describe('case review progress', () => {
 })
 
 describe('the note box', () => {
+  it('keeps reasons compact, focuses the selected code and preserves drafts across the IP tab', async () => {
+    const finding: Finding = {
+      id: 1, fingerprint: 'first', artifact: SHELL, artifact_kind: 'file' as const,
+      source: 'webshell' as const, rule: 'Synthetic first rule', severity: 0,
+      evidence: 'Duplicate code excerpt', line: 2, retired: 0, last_seen: '', created: '',
+      triage: 'new' as const, triage_note: '',
+    }
+    const ctx = context({
+      findings: [finding, { ...finding, id: 2, fingerprint: 'second', rule: 'Synthetic distant rule', line: 90 }],
+      file: { exists: true, hashes: { sha256: '3'.repeat(64) }, preview: { lines: ['safe first line', 'safe second line'], from_line: 1, focus: 2 } },
+      related_ips: [{ ip: '192.0.2.1', why: 'Requested the exact file path', hits: 3, ok_hits: 1, in_box: true,
+        first_epoch: 1000, last_epoch: 2000 }],
+    })
+    vi.mocked(api).mockImplementation(async path => path.includes('/file-preview?')
+      ? { from_line: 90, focus: 90, lines: ['safe distant line'] } : ctx)
+    const onTrace = vi.fn()
+    renderWithProviders(<ArtifactWindow slug="case" artifact={stub()} roots={[]} collected={[]}
+      onSave={async () => SAVED} onClose={() => {}} onView={() => {}} onTrace={onTrace} />)
+    await screen.findByRole('tab', { name: 'Findings · 2' })
+    expect(screen.queryByText('Duplicate code excerpt')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Historical results remain available/)).not.toBeInTheDocument()
+    const distant = screen.getByRole('button', { name: /Synthetic distant rule/ })
+    expect(distant).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(distant)
+    expect((await screen.findAllByText('safe distant line')).length).toBe(2)
+    expect(screen.getAllByText('safe distant line').some(el => el.parentElement?.getAttribute('data-focus-line') === '90')).toBe(true)
+    expect(distant).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByText('Duplicate code excerpt')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Dropper' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Linked IPs · 1' }))
+    const ips = screen.getByRole('tabpanel', { name: 'Linked IPs' })
+    expect(within(ips).getByText('192.0.2.1')).toBeVisible()
+    expect(within(ips).getByText('3 matching requests')).toBeVisible()
+    expect(within(ips).getByText(/First request/)).toBeVisible()
+    await userEvent.click(within(ips).getByRole('button', { name: 'Trace' }))
+    expect(onTrace).toHaveBeenCalledWith(['192.0.2.1'], expect.objectContaining({ contains: [SHELL] }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Findings · 2' }))
+    expect(screen.getByRole('button', { name: 'Dropper' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
+    expect(screen.getByText('safe distant line')).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: /Synthetic first rule/ }))
+    expect(screen.getAllByText('safe second line').some(el => el.parentElement?.getAttribute('data-focus-line') === '2')).toBe(true)
+    expect(vi.mocked(api).mock.calls.filter(([url]) => url.includes('/file-preview?'))).toHaveLength(1)
+  })
+
   it('enables decisions after an intentionally empty server note has loaded', async () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: '' }))
     mount()
@@ -176,7 +223,7 @@ describe('the note box', () => {
     vi.mocked(api).mockResolvedValue(
       context({ triage_note: 'dropper, uploaded via the media form' }))
 
-    mount(stub({ triage_note: '' }))
+    mount(stub({ artifact_kind: 'client', triage_note: '' }))
 
     await waitFor(() =>
       expect(noteBox().value).toBe('dropper, uploaded via the media form'))
@@ -188,7 +235,7 @@ describe('the note box', () => {
     // up with the server sent '' and erased the note server-side.
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'confirmed by hash' }))
 
-    const { onSave } = mount(stub({ triage_note: '' }))
+    const { onSave } = mount(stub({ artifact_kind: 'client', triage_note: '' }))
     await waitFor(() => expect(noteBox().value).toBe('confirmed by hash'))
 
     await userEvent.click(screen.getByRole('radio', { name: /True positive: Collect/i }))
@@ -202,7 +249,7 @@ describe('the note box', () => {
     // lands in the middle of writing more or less constantly. Re-seeding on
     // each answer would delete the sentence being written.
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'first pass' }))
-    const { qc } = mount()
+    const { qc } = mount(stub({ artifact_kind: 'client' }))
     await waitFor(() => expect(noteBox().value).toBe('first pass'))
 
     await userEvent.clear(noteBox())
@@ -215,7 +262,7 @@ describe('the note box', () => {
 
   it('keeps the decision and save action after a changed context and stub refresh', async () => {
     vi.mocked(api).mockResolvedValue(context({ worst: 1 }))
-    const { qc, rerender } = mount()
+    const { qc, rerender } = mount(stub({ artifact_kind: 'client' }))
     await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
     await userEvent.type(noteBox(), 'unsaved reasoning')
     await act(async () => {
@@ -223,7 +270,7 @@ describe('the note box', () => {
     })
     // Wait for the actual query rerender, not just the cache write.
     expect(await screen.findByText('HIGH')).toBeVisible()
-    rerender(window_(stub({ worst: 0 })))
+    rerender(window_(stub({ artifact_kind: 'client', worst: 0 })))
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled()
     expect(noteBox()).toHaveValue('unsaved reasoning')
@@ -233,9 +280,9 @@ describe('the note box', () => {
     vi.mocked(api).mockImplementation(async (path: string) => context({
       triage_note: path.includes('/other-case/') ? 'other case note' : 'first case note',
     }))
-    const { rerender } = mount()
+    const { rerender } = mount(stub({ artifact_kind: 'client' }))
     await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
-    rerender(<ArtifactWindow slug="other-case" artifact={stub()} roots={[]}
+    rerender(<ArtifactWindow slug="other-case" artifact={stub({ artifact_kind: 'client' })} roots={[]}
       collected={[]} onSave={async () => SAVED} onClose={() => {}}
       onView={() => {}} onTrace={() => {}} />)
     await waitFor(() => expect(noteBox()).toHaveValue('other case note'))
@@ -253,10 +300,10 @@ describe('the note box', () => {
         ? context({ artifact: other, triage_note: 'second file, unrelated' })
         : context({ triage_note: 'first file' }))
 
-    const { rerender } = mount()
+    const { rerender } = mount(stub({ artifact_kind: 'client' }))
     await waitFor(() => expect(noteBox().value).toBe('first file'))
 
-    rerender(window_(stub({ artifact: other })))
+    rerender(window_(stub({ artifact_kind: 'client', artifact: other })))
 
     await waitFor(() => expect(noteBox().value).toBe('second file, unrelated'))
   })
@@ -273,10 +320,10 @@ describe('the note box', () => {
         ? new Promise<ArtifactContext>((res) => { release = res })
         : Promise.resolve(context({ triage_note: 'first file' })))
 
-    const { rerender } = mount()
+    const { rerender } = mount(stub({ artifact_kind: 'client' }))
     await waitFor(() => expect(noteBox().value).toBe('first file'))
 
-    rerender(window_(stub({ artifact: other })))
+    rerender(window_(stub({ artifact_kind: 'client', artifact: other })))
     expect(noteBox().value).toBe('')
     expect(noteBox()).toBeDisabled()
     expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeDisabled()
@@ -291,9 +338,130 @@ describe('the note box', () => {
 })
 
 describe('deliberate decision submission', () => {
+  it('scrolls the active pane with held arrow keys without changing the decision', async () => {
+    vi.mocked(api).mockResolvedValue(context({ file: { exists: true,
+      preview: { lines: ['Safe preview'], from_line: 1 } } }))
+    mount()
+    const code = await screen.findByRole('region', { name: 'File content' })
+    Object.defineProperties(code, {
+      scrollHeight: { value: 1000 }, clientHeight: { value: 200 },
+      scrollWidth: { value: 1000 }, clientWidth: { value: 300 },
+    })
+    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
+    fireEvent.pointerOver(code)
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    fireEvent.keyDown(window, { key: 'ArrowDown', repeat: true })
+    expect(code.scrollTop).toBe(96)
+    fireEvent.keyDown(window, { key: 'ArrowUp' })
+    expect(code.scrollTop).toBe(48)
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(code.scrollLeft).toBe(48)
+    fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    expect(code.scrollLeft).toBe(0)
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
+    const metadata = screen.getByText('File').closest('[data-artifact-scroll]') as HTMLElement
+    Object.defineProperties(metadata, { scrollHeight: { value: 900 }, clientHeight: { value: 200 } })
+    fireEvent.pointerOver(metadata)
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    expect(metadata.scrollTop).toBe(48)
+    expect(code.scrollTop).toBe(48)
+    code.scrollTop = 800
+    fireEvent.focus(code)
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    expect(code.scrollTop).toBe(800)
+    expect(metadata.scrollTop).toBe(48)
+  })
+
+  it('keeps Enter and arrows available for editing a note without saving', async () => {
+    vi.mocked(api).mockResolvedValue(context())
+    const { onSave } = mount(stub({ artifact_kind: 'client' }))
+    await waitFor(() => expect(noteBox()).toBeEnabled())
+    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
+    await userEvent.type(noteBox(), 'first{Enter}second')
+    expect(noteBox()).toHaveValue('first\nsecond')
+    expect(fireEvent.keyDown(noteBox(), { key: 'ArrowUp' })).toBe(true)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('defaults files to Webshell, saves multiple tags and keeps historical notes', async () => {
+    vi.mocked(api).mockResolvedValue(context({ triage_note: 'Existing historical note', file: { exists: true } }))
+    const { onSave } = mount()
+    const webshell = await screen.findByRole('button', { name: 'Webshell' })
+    await waitFor(() => expect(webshell).toBeEnabled())
+    expect(webshell).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Dropper' }))
+    await userEvent.keyboard('1')
+    expect(onSave).not.toHaveBeenCalled()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('confirmed', 'Existing historical note', ['webshell', 'dropper']))
+  })
+
+  it('restores saved classifications including an empty selection and resets between artifacts', async () => {
+    vi.mocked(api).mockResolvedValue(context({ file: { exists: true, classifications: ['seo-spam'] } }))
+    const { rerender } = mount()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'SEO-Spam' })).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByRole('button', { name: 'Webshell' })).toHaveAttribute('aria-pressed', 'false')
+    const other = '/var/www/other.txt'
+    vi.mocked(api).mockResolvedValue(context({ artifact: other, file: { exists: true, classifications: [] } }))
+    rerender(window_(stub({ artifact: other })))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Webshell' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Webshell' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'SEO-Spam' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('supports file expansion, three decisions, save-next and save-close without duplicate saves', async () => {
+    const ctx = context({ file: { exists: true, classifications: ['dropper'] } })
+    vi.mocked(api).mockImplementation(async path => path.includes('/file?') ? {
+      path: SHELL, mode: 'raw', size: 12, window: 262144, offset: 0, length: 12,
+      eof: true, binary: false, hashes: {}, hashes_limited: false, from_line: 1, lines: ['safe preview'],
+    } : ctx)
+    const { onSave, onSavedNext, onClose } = mount(stub(), true)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Dropper' })).toBeEnabled())
+    await userEvent.keyboard('f')
+    expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
+    const expandedCode = (await screen.findByText('safe preview')).closest('pre')!
+    Object.defineProperties(expandedCode, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 } })
+    fireEvent.keyDown(window, { key: 'ArrowDown' })
+    expect(expandedCode.scrollTop).toBe(48)
+    await userEvent.keyboard('f')
+    expect(screen.getByRole('tab', { name: 'Findings · 0' })).toBeVisible()
+    await userEvent.keyboard('1')
+    expect(screen.getByRole('radio', { name: /True positive: Collect/ })).toBeChecked()
+    await userEvent.keyboard('2')
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
+    await userEvent.keyboard('3')
+    expect(screen.getByRole('radio', { name: 'False positive: Discard' })).toBeChecked()
+    let resolveSave: (value: TriageResult) => void = () => {}
+    onSave.mockImplementationOnce(() => new Promise<TriageResult>(resolve => { resolveSave = resolve }))
+    fireEvent.keyDown(window, { key: 'Enter' })
+    fireEvent.keyDown(window, { key: 'Enter' })
+    fireEvent.keyDown(window, { key: 'Enter', repeat: true })
+    expect(onSave).toHaveBeenCalledTimes(1)
+    await act(async () => resolveSave(SAVED))
+    expect(onSavedNext).toHaveBeenCalledOnce()
+    await userEvent.keyboard('2{Control>}{Shift>}{Enter}{/Shift}{/Control}')
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  })
+
+  it('ignores decision shortcuts while editing text, loading context or composing input', async () => {
+    let resolveContext: (value: ArtifactContext) => void = () => {}
+    vi.mocked(api).mockImplementation(() => new Promise<ArtifactContext>(resolve => { resolveContext = resolve }))
+    const { onSave } = mount(stub({ artifact_kind: 'client' }))
+    fireEvent.keyDown(window, { key: '1' })
+    expect(screen.getByRole('radio', { name: /True positive: Collect/ })).not.toBeChecked()
+    await act(async () => resolveContext(context()))
+    await waitFor(() => expect(noteBox()).toBeEnabled())
+    await userEvent.type(noteBox(), '123f')
+    expect(screen.getByRole('radio', { name: /True positive: Collect/ })).not.toBeChecked()
+    expect(noteBox()).toHaveValue('123f')
+    fireEvent.keyDown(window, { key: '1', isComposing: true })
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
   it('keeps the selectors exclusive and submits only from Save & next', async () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'initial note' }))
-    const { onSave, onSavedNext } = mount(stub(), true)
+    const { onSave, onSavedNext } = mount(stub({ artifact_kind: 'client' }), true)
 
     const confirmed = await screen.findByRole('radio', { name: /True positive: Collect/i })
     const reviewed = screen.getByRole('radio', { name: 'Skip for now' })
@@ -319,7 +487,7 @@ describe('deliberate decision submission', () => {
     const pending = new Promise<TriageResult>((resolve) => { finish = resolve })
     const onSave = vi.fn().mockReturnValue(pending)
     const onClose = vi.fn()
-    renderWithProviders(window_(stub(), onSave, undefined, onClose), testQueryClient())
+    renderWithProviders(window_(stub({ artifact_kind: 'client' }), onSave, undefined, onClose), testQueryClient())
 
     await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
     await userEvent.click(screen.getByRole('button', { name: 'Save & close' }))
@@ -331,7 +499,7 @@ describe('deliberate decision submission', () => {
 
   it('retains the selected decision and typed note after a failed save', async () => {
     vi.mocked(api).mockResolvedValue(context())
-    const { onSave } = mount()
+    const { onSave } = mount(stub({ artifact_kind: 'client' }))
     onSave.mockRejectedValueOnce(new Error('local request failed'))
 
     const dismissed = await screen.findByRole('radio', { name: 'False positive: Discard' })
@@ -346,7 +514,7 @@ describe('deliberate decision submission', () => {
 
   it('closes without saving when no draft is submitted', async () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'leave this untouched' }))
-    const { onSave, onClose } = mount()
+    const { onSave, onClose } = mount(stub({ artifact_kind: 'client' }))
 
     await waitFor(() => expect(noteBox()).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: /Close \(Esc\)/i }))
@@ -406,6 +574,18 @@ describe('what the window states about the artifact', () => {
     expect(screen.getByRole('button', { name: 'Back to evidence' })).toBeVisible()
   })
 
+  it('does not open unavailable evidence through either buttons or the keyboard', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      file: { exists: true, available: false, unavailable_reason: 'Evidence source is no longer registered.' },
+    }))
+    mount()
+    expect(await screen.findByText('Evidence source is no longer registered.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Expand file' })).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'f' })
+    expect(screen.queryByRole('button', { name: 'Back to evidence' })).not.toBeInTheDocument()
+    expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?') || url.includes('/file-preview?'))).toBe(false)
+  })
+
   it('reveals explicitly and never starts enrichment on mount', async () => {
     const artifactContext = context({
       file: { exists: true, size: 42, sha256: 'a'.repeat(64) },
@@ -420,7 +600,8 @@ describe('what the window states about the artifact', () => {
       (path === '/api/settings' ? settings : artifactContext) as never)
 
     mount()
-    expect(await screen.findByRole('button', { name: /Ask VirusTotal/i })).toBeVisible()
+    expect(await screen.findByText('a'.repeat(64))).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Open IOC Box' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))
@@ -450,8 +631,8 @@ describe('what the window states about the artifact', () => {
     }))
 
     mount()
-    const evidenceHeading = await screen.findByText(/Why this artifact was flagged/)
-    const reasoningHeading = screen.getByText('Optional analyst reasoning')
+    const evidenceHeading = await screen.findByRole('tab', { name: /Findings/ })
+    const reasoningHeading = screen.getByText('File classification')
 
     expect(evidenceHeading.compareDocumentPosition(reasoningHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy()
