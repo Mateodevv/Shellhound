@@ -227,6 +227,26 @@ unconfirmed matches stay separate from Findings and do not inflate artifact
 counts or confirm compromise. Partial and historical results are labelled;
 changed log evidence requires a new check before drilling into saved matches.
 
+The **First known sign of compromise** marker sits below Case status. It
+suggests the earliest dated activity tied to a confirmed finding: requests to
+a confirmed webshell, the requests behind a confirmed log alert, or selected
+Pattern Hunt evidence that was added to Findings and confirmed. Ordinary earlier
+traffic from a confirmed IP does not become the automatic starting point.
+Recorded activity takes precedence over file creation/modification timestamps
+from an evidence copy; those are a yellow **needs review** fallback. A request
+or HTTP response does not establish successful exploitation, and this marker
+does not establish when the incident actually began. Dates are shown in UTC.
+
+Click the marker or **View in timeline** to jump to its exact observation.
+In Timeline, use **Choose another event**, select **Use this event**, and add
+an optional note. The analyst's choice stays fixed when new evidence arrives;
+an earlier automatic candidate is highlighted separately. **Restore automatic**
+returns to the current suggestion. Removed or changed evidence, or a finding
+that is no longer confirmed, leaves a saved choice visible with a review warning.
+When no confirmed finding has usable timing, the marker says timing is not
+established instead of inventing a date. Database dates without a known time
+zone are not used automatically.
+
 ### Pattern Hunt
 
 Pattern Hunt checks indexed access logs against the enabled patterns in the
@@ -360,6 +380,14 @@ bar. You can add one shared note. Subfolders are included even when collapsed;
 a partially checked box means only some files are selected. Selection follows
 the current category and filters and covers the loaded list (up to 2,000
 artifacts). Check the selected count before applying the decision.
+
+The review window's thin header line shows **Case review** progress, with
+reviewed and remaining counts beside the title. Totals cover the whole case,
+including items hidden by list filters or beyond the 2,000-item list limit.
+Confirmed and dismissed artifacts count as reviewed; **Skip for now** stays
+unfinished. Informational-only observations and hidden new detections are
+excluded. The bar updates after a successful save, and full progress means
+review is complete, not that the evidence was harmless.
 
 | Key | Action |
 |---|---|

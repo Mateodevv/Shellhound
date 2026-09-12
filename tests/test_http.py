@@ -81,6 +81,8 @@ EVIDENCE = None
 APP = None
 SERVER = None
 BASE = ""
+ROW_FINDING_ID = 0
+ROW_DUMP_ID = 0
 
 
 # --- the server ------------------------------------------------------------
@@ -251,6 +253,7 @@ def case_copy(name):
 
 def setUpModule():
     global WORKSPACE, CASE_DIR, CASE, SNAPSHOT, EVIDENCE, APP, SERVER, BASE
+    global ROW_FINDING_ID, ROW_DUMP_ID
     WORKSPACE = Path(tempfile.mkdtemp(prefix="shellhound-http-ws-"))
     CASE_DIR = workspace.create_case(WORKSPACE, "Hostile HTTP case")
     CASE = CASE_DIR.name
@@ -268,6 +271,14 @@ def setUpModule():
     EVIDENCE.build().analyse(confirm=False)
     _widen_the_matrix(CASE_DIR)
     conn = db.connect(CASE_DIR)
+    row_source = conn.execute(
+        "SELECT f.id, t.dump_id FROM findings f JOIN db_tables t ON t.name = f.artifact "
+        "WHERE f.source = 'sqldb' AND f.artifact_kind = 'table' AND f.line > 0 "
+        "ORDER BY f.id, t.dump_id LIMIT 1").fetchone()
+    if row_source is None:
+        conn.close()
+        raise RuntimeError("The HTTP fixture must contain a recorded database row.")
+    ROW_FINDING_ID, ROW_DUMP_ID = row_source
     conn.execute("INSERT INTO jobs (kind, state, created) VALUES ('webshell', 'done', ?)",
                  (db.now(),))
     conn.commit()
@@ -315,6 +326,8 @@ def tearDownModule():
 # A value of None means "not an API answer": the two below serve the built
 # interface and are asserted separately.
 GET_ROUTES = {
+    "/api/opencti/sectors": "",
+    "/api/profile/geography": "",
     "/api/organizations": "",
     "/api/opencti/settings": "",
     "/api/cases/{slug}/opencti": "",
@@ -338,11 +351,13 @@ GET_ROUTES = {
     "/api/cases/{slug}/activity": "",
     "/api/cases/{slug}/dashboard": "",
     "/api/cases/{slug}/chain": "",
+    "/api/cases/{slug}/first-sign": "",
     "/api/cases/{slug}/report.html": "",
     "/api/cases/{slug}/search": "q=203.0.113",
     "/api/cases/{slug}/findings": "",
     "/api/cases/{slug}/artifact": "artifact={artifact}",
     "/api/cases/{slug}/file": "path={file}",
+    "/api/cases/{slug}/file-preview": "path={file}&line=1",
     "/api/cases/{slug}/hunt/runs": "",
     "/api/cases/{slug}/hunt/tests": "",
     "/api/cases/{slug}/hunt/batch-tests": "",
@@ -363,6 +378,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/iocs/export": "",
     "/api/cases/{slug}/cms": "",
     "/api/cases/{slug}/database": "",
+    "/api/cases/{slug}/database/row": "finding_id={row_finding}&dump_id={row_dump}",
     "/api/cases/{slug}/database/accounts.csv": "",
     "/": None,
     "/favicon.svg": None,
@@ -378,6 +394,8 @@ def _url(route, slug, artifact=None, file_path=None):
     query = (GET_ROUTES[route] or "")
     query = query.replace("{artifact}", q(artifact or "x"))
     query = query.replace("{file}", q(file_path or "x"))
+    query = query.replace("{row_finding}", str(ROW_FINDING_ID))
+    query = query.replace("{row_dump}", str(ROW_DUMP_ID))
     return path + ("?" + query if query else "")
 
 
@@ -426,6 +444,49 @@ class EndpointSurfaceTests(unittest.TestCase):
                     _url(route, "no-such-case-at-all", artifact="x",
                          file_path="x"))
                 self.assertEqual(404, status, f"{route}: {body[:200]!r}")
+
+    def test_database_row_requires_an_explicit_export_and_returns_its_saved_row(self):
+        slug = case_copy("database-row-api")
+        path = WORKSPACE / slug / "harmless row preview.sql"
+        path.write_text(
+            "CREATE TABLE `preview_items` (`id` int, `label` text);\n"
+            "INSERT INTO `preview_items` VALUES (1,'first');\n"
+            "INSERT INTO `preview_items` (`label`,`id`) VALUES ('selected row',2);\n",
+            encoding="utf-8")
+        conn = db.connect(WORKSPACE / slug)
+        try:
+            conn.execute("INSERT INTO evidence (kind,path,added) VALUES (?,?,?)",
+                         ("sql_dump", str(path), db.now()))
+            dump_id = conn.execute("INSERT INTO db_dumps (path) VALUES (?)",
+                                   (str(path),)).lastrowid
+            conn.execute("INSERT INTO db_tables (dump_id,name,rows) VALUES (?,?,?)",
+                         (dump_id, "preview_items", 2))
+            fingerprint = db.upsert_finding(
+                conn, "sqldb", 1, "Harmless row observation", "table", "preview_items",
+                line=2, evidence="Recorded excerpt")
+            finding_id = conn.execute("SELECT id FROM findings WHERE fingerprint = ?",
+                                      (fingerprint,)).fetchone()[0]
+            conn.commit()
+        finally:
+            conn.close()
+
+        base = f"/api/cases/{slug}/database/row"
+        status, response = get_json(f"{base}?finding_id={finding_id}&dump_id={dump_id}")
+        self.assertEqual(200, status, response)
+        self.assertEqual({
+            "table": "preview_items", "row": 2, "dump_id": dump_id,
+            "dump_path": str(path), "truncated": False,
+            "columns": [
+                {"name": "label", "value": "selected row", "truncated": False},
+                {"name": "id", "value": "2", "truncated": False},
+            ],
+        }, response)
+        for query in (f"finding_id={finding_id}", f"dump_id={dump_id}",
+                      f"finding_id=invalid&dump_id={dump_id}",
+                      f"finding_id={finding_id}&dump_id=invalid"):
+            with self.subTest(query=query):
+                status, _headers, _body = get(f"{base}?{query}")
+                self.assertEqual(422, status)
 
     def test_an_unknown_yara_rule_is_refused(self):
         """The rule files are the analyst's own, so a name that is not there

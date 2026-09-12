@@ -47,7 +47,7 @@ export type ViewId =
 
 export type ViewParams = Partial<Record<
   | 'severity' | 'triage' | 'source' | 'search' | 'category' | 'artifact' | 'retired' | 'request'
-  | 'actor' | 'section' | 'batch' | 'pattern' | 'next', string
+  | 'actor' | 'section' | 'batch' | 'pattern' | 'next' | 'event', string
 >>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
@@ -213,7 +213,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     url.searchParams.set('view', next)
     for (const key of [
       'severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'request',
-      'actor', 'section', 'batch', 'pattern', 'next',
+      'actor', 'section', 'batch', 'pattern', 'next', 'event',
     ] as const) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)

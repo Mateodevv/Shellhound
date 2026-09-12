@@ -50,7 +50,7 @@ class WindowsEvidencePathTests(unittest.TestCase):
         with patch("server.app.subprocess.Popen") as launch:
             self.endpoints["/api/cases/{slug}/reveal-file"](
                 self.case.name, SimpleNamespace(path=self.normal_file), "en")
-        self.assertEqual(["explorer.exe", f"/select,{self.normal_file}"], launch.call_args.args[0])
+        self.assertEqual(["explorer.exe", "/select,", self.normal_file], launch.call_args.args[0])
         listing = self.endpoints["/api/cases/{slug}/browse"](
             self.case.name, display_path(self.deep), "en")
         self.assertEqual(self.normal_file, listing["files"][0]["path"])

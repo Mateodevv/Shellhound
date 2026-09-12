@@ -26,7 +26,7 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
   const [path, setPath] = useState('')
   const [filter, setFilter] = useState('')
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [viewing, setViewing] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<{ path: string; line?: number | null } | null>(null)
   const [artifact, setArtifact] = useState<ArtifactStub | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
@@ -179,16 +179,16 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
         canPrevious={selectedIndex > 0} canNext={selectedIndex >= 0 && selectedIndex < files.length - 1}
         onPrevious={() => move(-1)} onNext={() => move(1)}
         onRecorded={triage.recordResult}
-        onView={() => selected && setViewing(selected.path)}
+        onView={() => selected && setViewing({ path: selected.path })}
         onOpenArtifact={() => selected && selected.worst != null && setArtifact({
           artifact: selected.path, artifact_kind: 'file', worst: selected.worst,
           triage: selected.triage ?? 'new', triage_note: selected.review?.note ?? '',
         })} />
     </div>}
 
-    <FileViewer slug={slug} path={viewing} layer={2} onClose={() => setViewing(null)} />
+    <FileViewer slug={slug} path={viewing?.path ?? null} focusLine={viewing?.line} layer={2} onClose={() => setViewing(null)} />
     <ArtifactWindow slug={slug} artifact={artifact} roots={roots}
-      collected={triage.collected} onView={(file) => setViewing(file)}
+      collected={triage.collected} onView={(path, line) => setViewing({ path, line })}
       onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
       onClose={() => { setArtifact(null); triage.clearCollected() }}
       onSave={(state, note, classifications) => {

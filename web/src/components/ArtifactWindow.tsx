@@ -26,6 +26,7 @@ import type { TraceMarks } from './TraceWindow'
 import { explainRule } from '../explain'
 import { EnrichPanel } from './Enrich'
 import { FileContentPane } from './FileViewer'
+import { DatabaseRowWindow } from './DatabaseRowWindow'
 
 const KIND_THIS: Record<string, string> = {
   file: 'artifact.this.file', table: 'artifact.this.table',
@@ -79,10 +80,12 @@ function Block({ title, children, right, className }: {
   )
 }
 
-function Reasons({ findings, artifact, onView, bounded = false }: {
+function Reasons({ findings, artifact, onView, onRow, canOpenFile = true, bounded = false }: {
   findings: Finding[]
   artifact: string
   onView: (path: string, line: number | null) => void
+  onRow?: (finding: Finding) => void
+  canOpenFile?: boolean
   bounded?: boolean
 }) {
   const tr = useT()
@@ -100,10 +103,12 @@ function Reasons({ findings, artifact, onView, bounded = false }: {
               <div className="flex flex-wrap items-center gap-2">
                 <SeverityBadge severity={finding.severity} />
                 <span className="text-[12.5px] font-semibold">{finding.rule}</span>
-                {finding.retired !== 1 && finding.line != null && finding.line !== 0 && (
+                {finding.retired !== 1 && finding.line != null && finding.line > 0 && (
+                  (finding.artifact_kind === 'table' && finding.source === 'sqldb' && onRow) ||
+                  (['file', 'dump'].includes(finding.artifact_kind) && canOpenFile)) && (
                   <button className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                    onClick={() => onView(artifact, finding.line)}>
-                    {tr('artifact.line')} {finding.line}
+                    onClick={() => finding.artifact_kind === 'table' ? onRow?.(finding) : onView(artifact, finding.line)}>
+                    {tr(finding.artifact_kind === 'table' ? 'database.row.label' : 'artifact.line')} {finding.line}
                   </button>
                 )}
                 {finding.retired === 1 && (
@@ -220,7 +225,7 @@ function Clients({ ips, marks, onTrace }: {
 
 function ContextPreview({ preview, onExpand, loading = false }: {
   preview: NonNullable<ArtifactContext['file']>['preview'] | undefined
-  onExpand: () => void
+  onExpand?: () => void
   loading?: boolean
 }) {
   const tr = useT()
@@ -236,7 +241,7 @@ function ContextPreview({ preview, onExpand, loading = false }: {
           ? tr('artifact.aroundLine', { n: preview.focus })
           : tr('artifact.fromStart')}
         {preview?.truncated && ` — ${tr('artifact.readTruncated')}`}</>}
-      right={<Button variant="default" onClick={onExpand}>
+      right={onExpand && <Button variant="default" onClick={onExpand}>
         <Expand size={13} /> {tr('artifact.expandFile')} <KeyHint>F</KeyHint>
       </Button>}>
       {loading ? <div role="status" className="flex flex-1 items-center justify-center"><LoaderCircle size={18} className="animate-spin" /></div>
@@ -298,6 +303,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
+  const [rowFinding, setRowFinding] = useState<Finding | null>(null)
 
   const { data: ctx, isError: contextError } = useQuery({
     queryKey: ['artifact', slug, artifact?.artifact],
@@ -311,7 +317,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const inPreview = previewLine != null && initialPreview?.lines != null &&
     previewLine >= (initialPreview.from_line ?? 1) &&
     previewLine < (initialPreview.from_line ?? 1) + initialPreview.lines.length
-  const needsPreview = !!artifact && selectedFinding?.artifact === artifact.artifact && !!previewLine && !inPreview
+  const needsPreview = !!artifact && !!ctx?.file?.exists && ctx.file.available !== false && selectedFinding?.artifact === artifact.artifact && !!previewLine && !inPreview
   const { data: linePreview, isFetching: previewLoading, error: previewError } = useQuery({
     queryKey: ['artifact-line-preview', slug, artifact?.artifact, previewLine],
     queryFn: () => api<FilePreview>(`/api/cases/${slug}/file-preview?path=${encodeURIComponent(artifact!.artifact)}&line=${previewLine}`),
@@ -342,6 +348,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setEvidenceTab('findings')
     setSelectedFinding(null)
     setClassifications(['webshell'])
+    setRowFinding(null)
   }, [artifactKey])
   useEffect(() => {
     if (!artifactKey || noteFor.current === artifactKey) return
@@ -357,6 +364,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   if (!artifact) return null
   const kind = artifact.artifact_kind
   const file = ctx?.file
+  const fileAvailable = !!file?.exists && file.available !== false
   const fileHashes = file?.hashes ?? (file?.sha256 ? { sha256: file.sha256 } : {})
   const actor = ctx?.actor
   const findings = ctx?.findings ?? artifact.items ?? []
@@ -370,6 +378,12 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     ? `${rootName} · ${rel}`
     : artifact.artifact
   const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifactKey
+  const progress = !contextError && ctx?.artifact === artifact.artifact
+    ? ctx.review_progress : undefined
+  const progressText = progress && tr('artifact.reviewProgress.counts', {
+    done: formatCount(progress.reviewed), total: formatCount(progress.total),
+    remaining: formatCount(progress.remaining),
+  })
   const controlsDisabled = !contextReady || saving
   const Icon = KIND_ICON[kind] ?? Bug
   const focusLine = selectedFinding ? selectedLine : findings.find((finding) => finding.retired !== 1 && finding.line)?.line ?? null
@@ -434,7 +448,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       } else if (['1', '2', '3'].includes(key) && !controlsDisabled) {
         event.preventDefault(); event.stopImmediatePropagation()
         setDraftDecision(({ '1': 'confirmed', '2': 'reviewed', '3': 'dismissed' } as const)[key as '1' | '2' | '3'])
-      } else if (key === 'f' && kind === 'file') {
+      } else if (key === 'f' && kind === 'file' && fileAvailable) {
         event.preventDefault(); event.stopImmediatePropagation()
         setExpanded(value => !value)
       }
@@ -448,7 +462,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         <CopyButton value={artifact.artifact} label={tr('copy.path')} className="shrink-0" />
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
-        {kind === 'file' && file?.exists && <>
+        {kind === 'file' && fileAvailable && <>
           <Button onClick={() => setExpanded(true)}>
             <FileSearch size={14} /> {tr('artifact.expandFile')}
           </Button>
@@ -604,8 +618,25 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       selectedBackground: 'color-mix(in srgb, var(--ok) 18%, var(--panel-2))' },
   ]
 
-  return (
+  return (<>
     <Modal open onClose={() => { if (!saving) onClose() }} contained bodyClassName="overflow-hidden"
+      headerMeta={progress && progress.total > 0 && (
+        <div className="text-[11px] font-normal text-[var(--muted)] tabular"
+          title={tr('artifact.reviewProgress.explain', { skipped: formatCount(progress.skipped) })}>
+          <span className="mr-2">{tr('artifact.reviewProgress.label')}</span>
+          <span className="text-[var(--fg)]">{progressText}</span>
+        </div>
+      )}
+      headerDivider={progress && progress.total > 0 && (
+        <div role="progressbar" aria-label={tr('artifact.reviewProgress.label')}
+          aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.reviewed}
+          aria-valuetext={progressText || undefined}
+          className="h-0.5 shrink-0 overflow-hidden bg-[var(--line)]">
+          <div className="h-full transition-[width] duration-300 motion-reduce:transition-none"
+            style={{ width: `${100 * progress.reviewed / progress.total}%`,
+              backgroundColor: progress.remaining === 0 ? 'var(--ok)' : 'var(--accent)' }} />
+        </div>
+      )}
       title={<span className="flex min-w-0 items-center gap-2">
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
@@ -658,7 +689,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               ]} /></div>
               {evidenceTab === 'findings' ? <div role="tabpanel" aria-label={tr('artifact.findingsTab')} className="flex min-h-0 flex-1 flex-col gap-3">
                 <FindingList key={artifactKey} findings={findings} selected={selectedFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={preview} loading={needsPreview && previewLoading} />
-                <ContextPreview preview={preview} loading={needsPreview && previewLoading} onExpand={() => setExpanded(true)} />
+                <ContextPreview preview={preview} loading={needsPreview && previewLoading} onExpand={fileAvailable ? () => setExpanded(true) : undefined} />
+                {!fileAvailable && file && <p role="status" className="rounded-lg bg-[var(--panel-2)] p-3 text-[13px] text-[var(--muted)]">
+                  {file.unavailable_reason || tr('artifact.sourceUnavailable')}
+                </p>}
               </div> : <div data-artifact-scroll="primary" tabIndex={0} role="tabpanel" aria-label={tr('artifact.ipsTab')} className="min-h-0 flex-1 overflow-y-auto">
                 <Clients ips={ips} marks={marks} onTrace={onTrace} />
               </div>}
@@ -667,7 +701,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         ) : (
           <div data-artifact-scroll="primary" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto p-4">
             <div className="mx-auto flex max-w-4xl flex-col gap-4">
-              <Reasons findings={findings} artifact={artifact.artifact} onView={onView} />
+              <Reasons findings={findings} artifact={artifact.artifact} onView={onView}
+                onRow={contextReady ? setRowFinding : undefined} />
               {identity}
               {nonFileContext}
               <Clients ips={ips} marks={marks} onTrace={onTrace} />
@@ -775,5 +810,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         </div>
       </div>
     </Modal>
-  )
+    {rowFinding && <DatabaseRowWindow key={`${slug}:${rowFinding.id}`} slug={slug}
+      finding={rowFinding} sources={ctx?.table_sources ?? []} onClose={() => setRowFinding(null)} />}
+  </>)
 }

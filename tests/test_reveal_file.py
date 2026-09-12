@@ -22,10 +22,10 @@ class RevealFileTests(unittest.TestCase):
         self.config = Config(workspace=self.root / "workspace", token="test-token")
         self.case_dir = workspace.create_case(self.config.workspace, "Synthetic reveal")
         self.slug = self.case_dir.name
-        self.evidence = self.root / "registered-evidence"
+        self.evidence = self.root / "registered evidence"
         self.evidence.mkdir()
-        self.file = self.evidence / "hostile.php"
-        self.file.write_text("<?php echo 'synthetic';", encoding="utf-8")
+        self.file = self.evidence / "synthetic note.txt"
+        self.file.write_text("Harmless evidence marker", encoding="utf-8")
         conn = db.connect(self.case_dir)
         try:
             conn.execute(
@@ -53,8 +53,13 @@ class RevealFileTests(unittest.TestCase):
         self.assertIsInstance(command, list)
         self.assertFalse(launch.call_args.kwargs["shell"])
         if os.name == "nt":
-            self.assertEqual("explorer.exe", command[0])
-            self.assertEqual(f"/select,{self.file.resolve()}", command[1])
+            self.assertEqual(["explorer.exe", "/select,", str(self.file.resolve())],
+                             command)
+            # Windows quotes only the path. Quoting '/select,path with spaces'
+            # as one argument makes Explorer open its default folder instead.
+            self.assertEqual(
+                f'explorer.exe /select, "{self.file.resolve()}"',
+                app_module.subprocess.list2cmdline(command))
         elif sys.platform == "darwin":
             self.assertEqual(["open", "-R", str(self.file.resolve())], command)
         else:
