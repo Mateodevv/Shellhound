@@ -1,5 +1,34 @@
 # Testing SHELLHOUND
 
+## First known sign of compromise
+
+Focused backend coverage (use the project `.venv`, with Windows `TEMP` and
+`TMP` set to `workspace/defender-safe-temp`):
+
+    python -m unittest tests.test_first_sign tests.test_first_sign_log_anchors tests.test_first_sign_api
+
+Frontend coverage, from `web/`:
+
+    npm test -- src/components/FirstSign.test.tsx src/components/CaseChain.test.tsx
+
+Harmless synthetic evidence covers confirmed-only eligibility, UTC ordering,
+copied metadata fallback, unrelated earlier IP activity, stale/removed sources,
+partial anchor reads, saved analyst choices, and case isolation. The HTTP tests
+exercise an exact timeline link beyond 200 events, including missing links.
+Component tests cover note preservation, failures, keyboard focus, pagination
+without unwanted jumps, and deliberate repeat jumps.
+
+For visual verification, use a disposable case: follow the dashboard marker,
+choose a different event and note, refresh, then restore automatic selection.
+Check the marker and editor in both themes at laptop and narrow widths. Stop
+the test server and remove the disposable case afterward.
+
+The managed-shutdown regression in `tests.test_startup` deliberately delays
+Windows signal handling. This covers Python 3.10's expired subprocess wait:
+the coordinator must still forward cancellation, let workers finish, and keep
+the checkout lock until cleanup is complete. Do not lengthen its timeout to
+hide a stalled supervisor.
+
 ## The diagnosis
 
 Three hundred and three tests were green. A deliberate bug hunt over the same
@@ -239,6 +268,29 @@ neither produces a raw catalogue key.
 combined shape, not the sixty-odd combinations. The combinations mostly retest
 the same decision, and a suite that takes a quarter of an hour is a suite
 people stop running before they push.
+
+## Evidence navigation regressions
+
+Run `python -m unittest tests.test_evidence_files tests.test_evidence_rows
+tests.test_evidence_navigation tests.test_reveal_file tests.test_windows_paths`
+(on one command line) with the project environment. These cover source line
+lookup beyond the first raw page, UTF-8 byte boundaries, Explorer paths with
+spaces, SQL table row ordinals across INSERTs, compressed exports, bounded
+previews, multiple exports, case isolation, and unavailable evidence.
+
+The corresponding interface tests are `FileViewer.test.tsx` and
+`DatabaseRowWindow.test.tsx`. For browser verification, use harmless text and
+SQL exports in a disposable workspace: open a distant line, page backward and
+forward, and open the same table in two exports. Verify row selection and that
+closing its window preserves an unsaved analyst note. Stop the test server
+afterward; do not reuse real case evidence for these checks.
+
+Database finding links identify a **table row ordinal**, not a line of SQL.
+The row viewer shows the selected export's current contents. Existing findings
+can combine observations from several exports; the user must choose a source
+when several indexed exports contain the table. No existing finding identity
+or triage decision is rewritten. Missing or unregistered evidence remains
+unavailable until its location or case registration is corrected.
 
 ## Where a new test goes
 

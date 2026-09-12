@@ -9,6 +9,7 @@ import { KIND_ICON } from '../artifactKinds'
 import { artifactNoun, categories } from '../explain'
 import { Card, PageSkeleton, Tag } from '../components/ui'
 import { evidenceAttempt } from '../analysis'
+import { FirstSign } from '../components/FirstSign'
 import { deriveWorkflowActions, isBaseAnalysisJob, type WorkflowAction } from '../workflow'
 import type { Navigate } from '../App'
 import { dashboardCopy as copy } from './dashboard-copy'
@@ -178,6 +179,9 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
         </Card>
       </div>
     </section>
+
+    <FirstSign slug={slug} data={data.first_sign}
+      onTimeline={(id) => gotoView('timeline', id ? { event: id } : {})} />
 
     {primary && <section aria-label={copy.next}>
       <Heading title={copy.next} sub={copy.nextSub} />

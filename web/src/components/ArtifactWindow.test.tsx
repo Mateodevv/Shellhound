@@ -105,6 +105,61 @@ beforeEach(() => {
   vi.mocked(post).mockResolvedValue({})
 })
 
+describe('case review progress', () => {
+  it('shows full-case totals and refreshes after saved decisions without losing a draft', async () => {
+    const initial = context({ review_progress: { total: 2500, reviewed: 1700, remaining: 800, skipped: 2 } })
+    vi.mocked(api).mockResolvedValue(initial)
+    const qc = testQueryClient()
+    renderWithProviders(window_(stub()), qc)
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    expect(bar).toHaveAttribute('aria-valuemax', '2500')
+    expect(bar).toHaveAttribute('aria-valuenow', '1700')
+    expect(bar).toHaveAttribute('aria-valuetext', expect.stringMatching(/1,700.*2,500 reviewed.*800 remaining/))
+    await userEvent.click(screen.getByRole('button', { name: 'Dropper' }))
+
+    vi.mocked(api).mockResolvedValue(context({
+      review_progress: { total: 2500, reviewed: 1701, remaining: 799, skipped: 2 },
+    }))
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['artifact', 'case'] }) })
+    await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '1701'))
+    expect(screen.getByRole('button', { name: 'Dropper' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('does not advance when a decision is only selected or fails to save', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      review_progress: { total: 10, reviewed: 4, remaining: 6, skipped: 1 },
+    }))
+    const { onSave } = mount()
+    onSave.mockRejectedValue(new Error('Could not save'))
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: 'False positive: Discard' }))
+    expect(bar).toHaveAttribute('aria-valuenow', '4')
+    await user.click(screen.getByRole('button', { name: 'Save decision' }))
+    expect(await screen.findByText(/Could not save/)).toBeVisible()
+    expect(bar).toHaveAttribute('aria-valuenow', '4')
+  })
+
+  it('shows completed review without suggesting every finding was harmless', async () => {
+    vi.mocked(api).mockResolvedValue(context({ triage: 'confirmed',
+      review_progress: { total: 10, reviewed: 10, remaining: 0, skipped: 0 },
+    }))
+    mount()
+    const bar = await screen.findByRole('progressbar', { name: 'Case review' })
+    expect(bar).toHaveAttribute('aria-valuenow', '10')
+    expect(bar).toHaveAttribute('aria-valuetext', '10 / 10 reviewed · 0 remaining')
+    expect(screen.getByText('true positive')).toBeVisible()
+  })
+
+  it('does not present missing or failed counts as completed review', async () => {
+    vi.mocked(api).mockRejectedValue(new Error('Context unavailable'))
+    mount()
+    await waitFor(() => expect(api).toHaveBeenCalled())
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.queryByText(/0 remaining/)).not.toBeInTheDocument()
+  })
+})
+
 describe('the note box', () => {
   it('keeps reasons compact, focuses the selected code and preserves drafts across the IP tab', async () => {
     const finding: Finding = {
@@ -507,7 +562,7 @@ describe('what the window states about the artifact', () => {
       (path.includes('/file?') ? fileContent : artifactContext) as never)
 
     const { qc } = mount()
-    await userEvent.click(await screen.findByRole('button', { name: 'Expand file' }))
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Expand file' }))[0])
 
     expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
     expect(await screen.findByText('safe text')).toBeVisible()
@@ -517,6 +572,18 @@ describe('what the window states about the artifact', () => {
     })
     expect(await screen.findByText('MEDIUM')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Back to evidence' })).toBeVisible()
+  })
+
+  it('does not open unavailable evidence through either buttons or the keyboard', async () => {
+    vi.mocked(api).mockResolvedValue(context({
+      file: { exists: true, available: false, unavailable_reason: 'Evidence source is no longer registered.' },
+    }))
+    mount()
+    expect(await screen.findByText('Evidence source is no longer registered.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Expand file' })).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'f' })
+    expect(screen.queryByRole('button', { name: 'Back to evidence' })).not.toBeInTheDocument()
+    expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?') || url.includes('/file-preview?'))).toBe(false)
   })
 
   it('reveals explicitly and never starts enrichment on mount', async () => {

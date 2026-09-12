@@ -11,6 +11,7 @@ type Event = JobEvent | InvalidateEvent
 // beats a stale view; the queries are cheap reads of local SQLite.
 const SCOPE_KEYS: Record<string, string[]> = {
   'opencti-lookup': ['iocs', 'opencti', 'jobs'],
+  first_sign: ['first-sign', 'dashboard', 'chain'],
   index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request'],
   hunt: ['dashboard', 'hunt-batches', 'hunt-batch', 'hunt-tests', 'jobs'],
   webshell: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
@@ -58,6 +59,8 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
             }
           }
           if (event.job.state && event.job.state !== 'running') {
+            qc.invalidateQueries({ queryKey: ['chain'] })
+            qc.invalidateQueries({ queryKey: ['first-sign'] })
             qc.invalidateQueries({ queryKey: ['jobs'] })
             qc.invalidateQueries({ queryKey: ['dashboard'] })
             // Any engine may be the last prerequisite for an evidence
@@ -66,6 +69,10 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
             qc.invalidateQueries({ queryKey: ['job-skips'] })
           }
         } else if (event.type === 'invalidate') {
+          if (['findings', 'index_logs', 'webshell', 'yara', 'sqldb'].includes(event.scope)) {
+            qc.invalidateQueries({ queryKey: ['chain'] })
+            qc.invalidateQueries({ queryKey: ['first-sign'] })
+          }
           for (const key of SCOPE_KEYS[event.scope] ?? ['dashboard']) {
             qc.invalidateQueries({ queryKey: [key] })
           }

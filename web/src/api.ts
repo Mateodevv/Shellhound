@@ -1001,6 +1001,7 @@ export interface Dashboard {
     ok: number | null
   }[]
   chronology: DashboardChronology
+  first_sign?: FirstSign
 }
 
 export interface CaseSummary {
@@ -1063,6 +1064,9 @@ export interface FileContent {
   hashes: FileHashes
   hashes_limited: boolean
   from_line?: number | null
+  starts_mid_line?: boolean
+  requested_line?: number
+  focus_found?: boolean
   lines?: string[]
   rows?: { offset: number; hex: string; ascii: string }[]
 }
@@ -1370,9 +1374,16 @@ export interface HuntResult {
  *  absolute filesystem epochs are shifted into that reading by the server.
  *  Always format it with tz = 0 for that reason. */
 export interface ChainEvent {
+  /** Stable across display timezone, pagination and wording changes. */
+  id?: string
+  /** Absolute event time with any analyst clock correction; null if unknown. */
+  epoch?: number | null
+  first_sign_eligible?: boolean
+  first_sign_selectable?: boolean
+  first_sign_basis?: 'request' | 'hunt_match' | 'filesystem' | null
   at: number
   kind: 'erstkontakt' | 'versuch' | 'erfolg' | 'alarm' | 'letzter-zugriff' | 'konto'
-    | 'datei-erstellt' | 'datei-geaendert' | 'metadaten-geaendert'
+    | 'datei-erstellt' | 'datei-geaendert' | 'metadaten-geaendert' | 'hunt-match'
   title: string
   detail: string
   /** Where the time comes from: access log, SQL export, or evidence copy. */
@@ -1387,6 +1398,7 @@ export interface ChainEvent {
  *  `gaps` says what the case does NOT prove -- and that belongs in the
  *  report just as much as the events themselves. */
 export interface CaseChain {
+  focus_found?: boolean | null
   span: { first: number | null; last: number | null }
   /** First and last dated observation, independent of page and sort order. */
   event_span: { first: number | null; last: number | null }
@@ -1415,6 +1427,16 @@ export interface CaseChain {
    *  several servers. */
   tz_offsets: string[]
   tz_mixed: boolean
+}
+
+export interface FirstSign {
+  mode: 'automatic' | 'manual'
+  state: 'suggested' | 'metadata_only' | 'no_confirmed' | 'undated' | 'stale_override'
+  event: ChainEvent | null
+  automatic_event: ChainEvent | null
+  note: string
+  earlier_candidate: boolean
+  stale_reason: string | null
 }
 
 /** The record of the case: what was searched for -- unsuccessfully
@@ -1486,6 +1508,18 @@ export interface RelatedIp {
 }
 
 /** Everything about ONE artifact: the response a decision is made from. */
+export interface DatabaseRowSource {
+  dump_id: number
+  dump_path: string
+}
+
+export interface DatabaseRow extends DatabaseRowSource {
+  table: string
+  row: number
+  columns: { name: string; value: string | null; truncated: boolean }[]
+  truncated: boolean
+}
+
 export interface ArtifactContext {
   artifact: string
   kind: 'file' | 'table' | 'client' | 'dump'
@@ -1495,12 +1529,21 @@ export interface ArtifactContext {
   triaged_at: string
   worst: number
   sources: string[]
+  /** Whole-case actionable artifacts; temporary skips remain unfinished. */
+  review_progress?: {
+    total: number
+    reviewed: number
+    remaining: number
+    skipped: number
+  }
   related_ips: RelatedIp[]
   file?: {
     exists: boolean
     classifications?: string[] | null
     changed_since_scan?: boolean
     scanned_sha256?: string
+    available?: boolean
+    unavailable_reason?: string
     size?: number
     mtime?: string
     sha256?: string
@@ -1530,6 +1573,7 @@ export interface ArtifactContext {
     dump_path: string
     cms: string
   } | null
+  table_sources?: DatabaseRowSource[]
   dump?: {
     id: number
     path: string
