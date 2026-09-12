@@ -284,8 +284,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
   const tr = useT()
-  const [note, setNote] = useState('')
-  const [noteLoadedFor, setNoteLoadedFor] = useState<string | null>(null)
+  const [contextLoadedFor, setContextLoadedFor] = useState<string | null>(null)
   const [draftDecision, setDraftDecision] = useState<Decision | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -330,17 +329,15 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     onError: (error) => setRevealError(String((error as Error)?.message ?? error)),
   })
 
-  // The server note is authoritative. It seeds once per matching artifact;
-  // refetches never overwrite reasoning that is currently being typed.
-  const noteFor = useRef<string | null>(null)
+  // Seed classifications once per matching artifact so refetches preserve draft choices.
+  const contextFor = useRef<string | null>(null)
   const artifactKey = artifact ? JSON.stringify([slug, artifact.artifact]) : null
   const artifactPath = artifact?.artifact
   // Reset only when the identity changes, not when the query or caller's
   // stub refreshes. Those updates must preserve every unsaved control.
   useEffect(() => {
-    noteFor.current = null
-    setNoteLoadedFor(null)
-    setNote('')
+    contextFor.current = null
+    setContextLoadedFor(null)
     setDraftDecision(null)
     setSaveError('')
     setExpanded(false)
@@ -351,12 +348,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setRowFinding(null)
   }, [artifactKey])
   useEffect(() => {
-    if (!artifactKey || noteFor.current === artifactKey) return
+    if (!artifactKey || contextFor.current === artifactKey) return
     if (ctx && ctx.artifact === artifactPath) {
-      noteFor.current = artifactKey
-      setNote(ctx.triage_note ?? '')
+      contextFor.current = artifactKey
       setClassifications(ctx.file?.classifications ?? ['webshell'])
-      setNoteLoadedFor(artifactKey)
+      setContextLoadedFor(artifactKey)
     }
   }, [artifactKey, artifactPath, ctx])
 
@@ -377,7 +373,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const displayedIdentity = kind === 'file' && root
     ? `${rootName} · ${rel}`
     : artifact.artifact
-  const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifactKey
+  const contextReady = ctx?.artifact === artifact.artifact && contextLoadedFor === artifactKey
   const progress = !contextError && ctx?.artifact === artifact.artifact
     ? ctx.review_progress : undefined
   const progressText = progress && tr('artifact.reviewProgress.counts', {
@@ -402,6 +398,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setSaving(true)
     setSaveError('')
     try {
+      // Removing the editor must not clear historical notes when a decision is saved.
+      const note = ctx?.triage_note ?? ''
       const result = kind === 'file' ? await onSave(draftDecision, note, classifications) : await onSave(draftDecision, note)
       if (result.updated === 0) return
       setDraftDecision(null)
@@ -778,7 +776,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </div>
           </div>
 
-          {kind === 'file' ? <fieldset className="mt-3" disabled={controlsDisabled}>
+          {kind === 'file' && <fieldset className="mt-3" disabled={controlsDisabled}>
             <legend className="mb-2 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               {tr('artifact.classifications')} <InfoDot body={tr('artifact.classificationsHint')} />
             </legend>
@@ -793,13 +791,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
                 {classifications.includes(value) && <Check size={11} />}{tr(`artifact.class.${value}`)}
               </button>)}
             </div>
-          </fieldset> : <label className="mt-2 block text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('artifact.reasoning.optional')}
-            <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2}
-              disabled={controlsDisabled} aria-busy={!contextReady}
-              placeholder={tr('artifact.note.placeholder')}
-              className="mt-1 w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-normal normal-case tracking-normal text-[var(--fg)] outline-none focus:border-[var(--accent)]/70 disabled:cursor-wait disabled:opacity-60" />
-          </label>}
+          </fieldset>}
           <div role={contextError || saveError ? 'alert' : undefined}
             className={clsx('mt-1 text-[11px]',
             contextError || saveError ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]')}>
