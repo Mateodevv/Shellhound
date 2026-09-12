@@ -37,6 +37,11 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const mutateSession = (update: Partial<HuntSessionState>) => setSession((state) => ({ ...state, ...update }))
   const library = useQuery({ queryKey: ['patterns'], queryFn: () => api<{ patterns: HuntPattern[]; path: string }>('/api/patterns') })
   const tests = useQuery({ queryKey: ['hunt-tests', slug], queryFn: () => api<{ tests: HuntTest[] }>(`/api/cases/${slug}/hunt/tests?limit=500`) })
+  const [linkedTestId] = useState(() => Number(new URLSearchParams(location.search).get('section')) || 0)
+  const linkedRecord = useQuery({ queryKey: ['hunt-tests', slug, linkedTestId], enabled: linkedTestId > 0,
+    queryFn: () => api<{ tests: HuntTest[] }>(`/api/cases/${slug}/hunt/tests?test_id=${linkedTestId}`) })
+  const linkedTest = linkedRecord.data?.tests[0] ?? null
+  const showingEvidence = session.page === 'evidence'
   const caseInfo = useQuery({ queryKey: ['case', slug], queryFn: () => api<CaseDetail>(`/api/cases/${slug}`) })
   const dashboard = useQuery({ queryKey: ['dashboard', slug], queryFn: () => api<Dashboard>(`/api/cases/${slug}/dashboard`) })
   const jobs = useQuery({ queryKey: ['jobs', slug], queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`),
@@ -54,7 +59,7 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const audits = useMemo(() => tests.data?.tests ?? [], [tests.data])
   const draft = session.draft
   const previewTest = audits.find((test) => test.id === session.testId) ?? null
-  const activeTest = session.page === 'preview' ? previewTest : runPattern?.test ?? null
+  const activeTest = showingEvidence ? linkedTest : session.page === 'preview' ? previewTest : runPattern?.test ?? null
   const activePattern = patterns.find((p) => p.id === (session.page === 'preview' ? draft?.sourceId : runPattern?.id))
   const selected = useMemo(() => new Set(session.selectedClusters), [session.selectedClusters])
   const enabledPatterns = patterns.filter((p) => p.enabled && !p.archived)
@@ -72,14 +77,15 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     saveSession(slug, session)
     const url = new URL(location.href)
     if (url.searchParams.get('case') !== slug || url.searchParams.get('view') !== 'hunt') return
-    if (session.page === 'overview') url.searchParams.delete('section')
+    if (showingEvidence) url.searchParams.set('section', String(linkedTestId))
+    else if (session.page === 'overview') url.searchParams.delete('section')
     else url.searchParams.set('section', session.page)
     if (runId) url.searchParams.set('batch', runId)
     else url.searchParams.delete('batch')
     if (session.page === 'runs' && session.runPatternId) url.searchParams.set('pattern', session.runPatternId)
     else url.searchParams.delete('pattern')
     history.replaceState(null, '', url)
-  }, [session, slug, runId])
+  }, [session, slug, runId, showingEvidence, linkedTestId])
   useEffect(() => {
     if (!draft || cleanHash) return
     const source = patterns.find((p) => p.id === draft.sourceId)
@@ -146,7 +152,7 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       setError('')
     }, onError: fail })
   const testRule = useMutation({ mutationFn: (submitted: HuntDraft) => post<HuntTestResponse>(`/api/cases/${slug}/hunt/tests`, {
-    pattern_id: submitted.sourceId, ...(submitted.textMode ? { dsl: submitted.dsl } : { rule: submitted.rule }),
+    pattern_id: submitted.sourceId, name: submitted.name, cve: submitted.cve, ...(submitted.textMode ? { dsl: submitted.dsl } : { rule: submitted.rule }),
   }), onSuccess: (r, submitted) => {
     qc.setQueryData<{ tests: HuntTest[] }>(['hunt-tests', slug], (old) => ({ tests: [r.test, ...(old?.tests ?? []).filter((t) => t.id !== r.test.id)] }))
     if (isCurrentDraft(submitted) && sessionRef.current.page === 'editor') {
@@ -195,9 +201,9 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const pending = validate.isPending || testRule.isPending || saveRule.isPending || restore.isPending
   const currentRun = runs.data?.runs.find((r) => ['queued', 'running'].includes(r.state))
   const canRun = runReady && !runs.isPending && !runs.isError && !currentRun && !batch.isPending
-  const metadata = session.page === 'preview' ? { name: draft?.name, means: draft?.means, notMeans: draft?.notMeans }
+  const metadata = showingEvidence ? { name: tr('hunt.linked.title', { id: linkedTestId }), means: '', notMeans: '' } : session.page === 'preview' ? { name: draft?.name, means: draft?.means, notMeans: draft?.notMeans }
     : { name: runPattern?.name, ...splitDescription(runPattern?.description ?? '') }
-  const applyHint = session.page === 'preview' ? tr('hunt.flow.previewApplyHint')
+  const applyHint = showingEvidence ? tr('hunt.linked.evidenceHint') : session.page === 'preview' ? tr('hunt.flow.previewApplyHint')
     : !run?.fresh ? tr('hunt.flow.staleApplyHint')
       : !activePattern || activePattern.rule_hash !== activeTest?.rule_hash || activePattern.version !== activeTest?.pattern_version
         ? tr('hunt.flow.changedApplyHint') : ''
@@ -252,14 +258,16 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
       {draft?.sourceId && !dirty && <div className="border-t border-[var(--line)] bg-[var(--panel)] p-4">
         <Button disabled={!canRun || !patterns.find((p) => p.id === draft.sourceId)?.enabled} onClick={() => batch.mutate([draft.sourceId])}>{tr('hunt.flow.checkThisSavedPattern')}</Button></div>}
     </div> : <>
-      {session.page === 'preview' || runPattern ? <>
-        <Button variant="ghost" onClick={() => mutateSession({ page: session.page === 'preview' ? 'editor' : 'runs', runPatternId: '', selectedClusters: [] })}>
-          <ArrowLeft size={16} /> {session.page === 'preview' ? tr('hunt.flow.backToEditor') : tr('hunt.flow.backToRunOverview')}</Button>
+      {session.page === 'preview' || showingEvidence || runPattern ? <>
+        <Button variant="ghost" onClick={() => mutateSession({ page: showingEvidence ? 'overview' : session.page === 'preview' ? 'editor' : 'runs', runPatternId: '', selectedClusters: [] })}>
+          <ArrowLeft size={16} /> {showingEvidence ? tr('hunt.overview.back') : session.page === 'preview' ? tr('hunt.flow.backToEditor') : tr('hunt.flow.backToRunOverview')}</Button>
+        {showingEvidence && linkedRecord.isError && <ErrorMessage message={linkedRecord.error.message} onRetry={() => void linkedRecord.refetch()} />}
+        {showingEvidence && linkedRecord.data && !linkedTest && <p role="alert">{tr('hunt.linked.missing')}</p>}
         <HuntResults key={`${activeTest?.id}:${session.page}`} slug={slug} test={activeTest}
           ruleName={metadata.name} ruleMeaning={metadata.means} ruleNotMeaning={metadata.notMeans}
           selected={selected} onSelected={(value) => mutateSession({ selectedClusters: [...value] })}
-          fresh={session.page === 'preview' ? indexReady : Boolean(run?.fresh)} applyHint={applyHint}
-          applying={applyRule.isPending} onApply={() => applyRule.mutate()} onEdit={activePattern ? () => beginEdit(activePattern) : undefined} />
+          fresh={session.page === 'preview' || showingEvidence ? indexReady : Boolean(run?.fresh)} applyHint={applyHint}
+          applying={applyRule.isPending} onApply={() => applyRule.mutate()} onEdit={!showingEvidence && activePattern ? () => beginEdit(activePattern) : undefined} />
       </> : <>
         {runQuery.isError && <ErrorMessage message={runQuery.error.message} onRetry={() => void runQuery.refetch()} />}
         {(runs.isPending || (runId && runQuery.isPending)) ? <p role="status" className="p-6 text-sm">{tr('hunt.flow.loadingPatternChecks')}</p>

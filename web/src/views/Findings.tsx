@@ -26,7 +26,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ArrowRight, BellOff, BookmarkPlus, Bug, Check, ChevronDown, ChevronRight, CircleDashed, Code,
   Crosshair, Database, DoorOpen, Eye, EyeOff, FileCog, FileSearch,
-  Folder, FolderOpen, Keyboard, KeyRound, ListFilter, Radar, X,
+  Folder, FolderOpen, Keyboard, KeyRound, List, ListFilter, Radar, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { api, type ArtifactRow, type Finding, type FindingsResponse } from '../api'
@@ -254,6 +254,10 @@ export function Findings({ slug, gotoView }: {
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set())
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set())
+  const [layout, setLayout] = useState<'list' | 'folders'>(() => {
+    try { return localStorage.getItem('shellhound.findings-layout') === 'folders' ? 'folders' : 'list' }
+    catch { return 'list' }
+  })
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote] = useState('')
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
@@ -455,6 +459,14 @@ export function Findings({ slug, gotoView }: {
       }
     }
     const addDirectory = (directory: DirectoryNode, c: CatGroup, depth: number) => {
+      // Compress only uninterrupted chains. Files at an intermediate level
+      // and genuine branches retain their own directory row.
+      let name = directory.name
+      while (!directory.artifacts.length && directory.children.length === 1) {
+        directory = directory.children[0]
+        name += `/${directory.name}`
+      }
+      directory = { ...directory, name }
       out.push({ t: 'd', d: directory, depth })
       if (collapsedDirs.has(directory.key)) return
       for (const a of directory.artifacts) addArtifact(a, c, depth + 1)
@@ -464,6 +476,10 @@ export function Findings({ slug, gotoView }: {
       out.push({ t: 'c', c })
       const catOpen = filtering ? !collapsedCats.has(c.cat.id) : expandedCats.has(c.cat.id)
       if (!catOpen) continue
+      if (layout === 'list') {
+        for (const a of orderedQueue([c], roots)) addArtifact(a, c, 0)
+        continue
+      }
       const tree = directoryForest(c.artifacts, roots, c.cat.id)
       for (const a of tree.directories.length
         ? tree.direct.filter((artifact) => artifact.artifact_kind !== 'file')
@@ -476,7 +492,7 @@ export function Findings({ slug, gotoView }: {
       }
     }
     return out
-  }, [categories, roots, expanded, collapsedCats, collapsedDirs, expandedCats, filtering])
+  }, [categories, roots, expanded, collapsedCats, collapsedDirs, expandedCats, filtering, layout])
 
 
   /** Checked artifacts, otherwise the one under the cursor. */
@@ -621,6 +637,22 @@ export function Findings({ slug, gotoView }: {
         )}
         <div className="min-w-[16rem] flex-1 sm:max-w-md">
           <SearchInput value={search} onChange={setSearch} placeholder={tr('findings.search')} />
+        </div>
+        <div role="group" aria-label={tr('findings.layout')} className="flex shrink-0 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-1">
+          {(['list', 'folders'] as const).map((mode) => (
+            <button key={mode} type="button" aria-pressed={layout === mode}
+              className={clsx('ui-press flex cursor-pointer items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors',
+                layout === mode ? 'bg-[var(--accent-soft)] text-[var(--accent-text)]' : 'text-[var(--muted)] hover:bg-[var(--panel-2)] hover:text-[var(--fg)]')}
+              onClick={() => {
+                setLayout(mode)
+                setCursor(0)
+                if (parentRef.current) parentRef.current.scrollTop = 0
+                try { localStorage.setItem('shellhound.findings-layout', mode) } catch { /* Keep switching available without browser storage. */ }
+              }}>
+              {mode === 'list' ? <List size={14} /> : <Folder size={14} />}
+              {tr(`findings.layout.${mode}`)}
+            </button>
+          ))}
         </div>
         <Button onClick={() => setFiltersOpen((open) => !open)}
           aria-expanded={filtersOpen} aria-controls="findings-filter-panel">
@@ -926,7 +958,7 @@ export function Findings({ slug, gotoView }: {
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-25" style={{ background: tint }} />
                   <span className="hidden shrink-0 sm:block"
-                    style={{ width: `${item.depth * 18}px` }} />
+                    style={{ width: `${Math.min(item.depth, 3) * 18}px` }} />
                   <input type="checkbox" className="ml-1 shrink-0 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = someChecked }}
@@ -938,6 +970,8 @@ export function Findings({ slug, gotoView }: {
                     title={tr('findings.folder.scope')} />
                   <button
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded py-1 text-left"
+                    title={item.d.path}
+                    aria-expanded={open}
                     aria-label={open
                       ? tr('findings.folder.collapse', { name: item.d.name })
                       : tr('findings.folder.expand', { name: item.d.name })}
@@ -986,7 +1020,7 @@ export function Findings({ slug, gotoView }: {
                     a.findings === 0 && a.retired > 0 && 'opacity-35')}
                   style={style}>
                   <span className="h-full w-1 shrink-0 opacity-40" style={{ background: tint }} />
-                  <span className="hidden shrink-0 sm:block" style={{ width: `${item.depth * 18}px` }} />
+                  <span className="hidden shrink-0 sm:block" style={{ width: `${Math.min(item.depth, 3) * 18}px` }} />
                   <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={checked.has(a.artifact)}
                     aria-label={tr('findings.file.select', { path: a.artifact })}
@@ -1034,6 +1068,11 @@ export function Findings({ slug, gotoView }: {
                           </span>
                         )}
                       </div>
+                      {a.artifact_kind === 'file' && (
+                        <div className="mono truncate text-[10.5px] text-[var(--muted)]" title={a.artifact}>
+                          {relativeToRoot(a.artifact, roots).rel}
+                        </div>
+                      )}
                       <RuleChips items={a.items} />
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1081,7 +1120,7 @@ export function Findings({ slug, gotoView }: {
                 style={style}>
                 {/* The guide line keeps the findings visibly attached to
                     their artifact -- indented text alone loses the tie. */}
-                <span className="shrink-0" style={{ width: `${item.depth * 18}px` }} />
+                <span className="shrink-0" style={{ width: `${Math.min(item.depth, 3) * 18}px` }} />
                 <span className="ml-[3.25rem] h-full w-px shrink-0 bg-[var(--line)]" />
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ background: SEVERITY_VAR[f.severity] }} />
@@ -1111,9 +1150,9 @@ export function Findings({ slug, gotoView }: {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={closeArtifact}
-        onSave={(state, note) => {
+        onSave={(state, note, classifications) => {
           if (!selected) return Promise.reject(new Error('No artifact selected'))
-          return t.decideAsync([selected.artifact], state, note)
+          return t.decideAsync([selected.artifact], state, note, undefined, classifications)
         }}
         onSavedNext={(result) => {
           if (!selected || result.updated === 0) return
@@ -1279,8 +1318,7 @@ function ArtifactName({ artifact, kind, roots }: {
       title={rootName ? tr('findings.under', { root: rootName }) : tr('findings.fullPath')}
       body={<span className="mono break-all">{artifact}</span>}>
       <span className="mono min-w-0 truncate text-[13px] font-semibold">
-        <span className="sm:hidden">{leafName}</span>
-        <span className="hidden sm:inline">{displayName}</span>
+        {leafName}
       </span>
     </Tooltip>
   )

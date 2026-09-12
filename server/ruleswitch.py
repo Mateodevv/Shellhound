@@ -34,12 +34,13 @@ def enabled(workspace, rule_id) -> bool:
 
 
 def set_enabled(workspace, rule_id, on) -> dict:
-    off = disabled_ids(workspace)
-    rule_id = str(rule_id)
-    off.discard(rule_id) if on else off.add(rule_id)
-    data = settingslib.load(workspace)
-    data["rules_disabled"] = sorted(off)
-    settingslib.save(workspace, data)
+    with settingslib._LOCK:
+        off = disabled_ids(workspace)
+        rule_id = str(rule_id)
+        off.discard(rule_id) if on else off.add(rule_id)
+        data = settingslib.load(workspace)
+        data["rules_disabled"] = sorted(off)
+        settingslib.save(workspace, data)
     return {"id": rule_id, "enabled": bool(on)}
 
 

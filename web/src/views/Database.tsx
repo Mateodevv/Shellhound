@@ -113,9 +113,9 @@ export function DatabaseView({ slug, gotoView }: { slug: string; gotoView: (v: V
     <ArtifactWindow slug={slug} artifact={selected} roots={roots} collected={triage.collected}
       onView={(path, line) => setViewing({ path, line })} onTrace={(ips) => setTraceIps(ips)}
       onClose={() => { setSelected(null); triage.clearCollected() }}
-      onSave={(state, note) => {
+      onSave={(state, note, classifications) => {
         if (!selected) return Promise.reject(new Error('No artifact selected'))
-        return triage.decideAsync([selected.artifact], state, note)
+        return triage.decideAsync([selected.artifact], state, note, undefined, classifications)
       }} />
     <TraceWindow slug={slug} ips={traceIps} layer={1} onClose={() => setTraceIps(null)} />
     <FileViewer slug={slug} path={viewing?.path ?? null} focusLine={viewing?.line}

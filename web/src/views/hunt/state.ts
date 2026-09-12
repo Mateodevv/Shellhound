@@ -19,7 +19,7 @@ export interface HuntDraft {
 export interface HuntSessionState {
   batchId: string
   runPatternId: string
-  page: 'overview' | 'runs' | 'library' | 'editor' | 'preview'
+  page: 'overview' | 'runs' | 'library' | 'editor' | 'preview' | 'evidence'
   selectedId: string
   draft: HuntDraft | null
   testedHash: string
@@ -137,7 +137,7 @@ export function loadSession(slug: string): HuntSessionState {
   const inCase = url.searchParams.get('case') === slug && url.searchParams.get('view') === 'hunt'
   const section = inCase ? url.searchParams.get('section') : null
   const page = ['overview', 'runs', 'library', 'editor', 'preview'].includes(section ?? '')
-    ? section as HuntSessionState['page'] : 'overview'
+    ? section as HuntSessionState['page'] : Number(section) > 0 ? 'evidence' : 'overview'
   const batchId = inCase ? url.searchParams.get('batch') : null
   // An explicit link selects its saved check without replacing an editor draft.
   const runPatternId = inCase ? url.searchParams.get('pattern') ?? '' : ''

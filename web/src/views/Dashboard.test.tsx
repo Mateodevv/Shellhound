@@ -186,7 +186,7 @@ describe('actionable case dashboard', () => {
     expect(await screen.findByText('Analysis complete — no findings')).toBeVisible()
     expect(screen.queryByText('Unresolved skipped-file warnings')).not.toBeInTheDocument()
     expect(screen.queryByText('Accepted coverage gaps')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Prepare the report' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Prepare case hand-off' })).toBeVisible()
   })
 
   it.each([
@@ -217,7 +217,7 @@ describe('actionable case dashboard', () => {
     expect(await screen.findByText('Analysis complete — no findings')).toBeVisible()
     expect(screen.getByText(/This does not rule out a compromise/)).toBeVisible()
     const next = screen.getByRole('region', { name: 'Recommended next step' })
-    expect(within(next).getByRole('button', { name: 'Prepare the report' })).toBeVisible()
+    expect(within(next).getByRole('button', { name: 'Prepare case hand-off' })).toBeVisible()
     fireEvent.click(within(next).getByRole('button', { name: 'Check saved patterns' }))
     expect(gotoView).toHaveBeenCalledWith('hunt')
   })
@@ -227,7 +227,7 @@ describe('actionable case dashboard', () => {
     mockCase({ ...DATA, triage: { dismissed: 4 }, confirmed_artifacts: [], jobs_running: [hunt] }, [DONE, hunt])
     mount()
     expect(await screen.findByText('No compromise confirmed in reviewed evidence')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Prepare the report' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Prepare case hand-off' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'View dismissed findings' })).toBeVisible()
   })
 
@@ -361,7 +361,7 @@ describe('actionable case dashboard', () => {
       ? Promise.reject(new Error('Unavailable')) : implementation(path, options))
     mount()
     expect(await screen.findByRole('alert')).toHaveTextContent('The case overview could not be loaded.')
-    expect(screen.queryByRole('button', { name: 'Prepare the report' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Prepare case hand-off' })).not.toBeInTheDocument()
     expect(screen.queryByText('No findings detected in the analyzed evidence')).not.toBeInTheDocument()
     failing = false
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))

@@ -6,6 +6,19 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — OpenCTI integration
+
+- Add reusable random organization pseudonyms, unique case IDs and structured
+  incident profiles with TLP:AMBER+STRICT as the default marking.
+- Add separate IOC knowledge checks, reviewed TAXII transfers and manual
+  connector enrichment, with durable import receipts and cached local results.
+- Preview the complete IOC graph, evidence context, optional Indicators and
+  individually selected original files before sharing.
+- Preserve source identities across edits and remove orphaned IOC provenance
+  on deletion. Keep file hash groups tied to one verified file snapshot.
+- Replace direct VirusTotal/AbuseIPDB lookups and key settings with OpenCTI.
+  Historical results and local GeoIP remain available.
+
 ### Added — analysis details and setup reminders
 
 - Expand a job's skipped files and rules to see paths and reasons. Details are

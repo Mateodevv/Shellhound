@@ -1,0 +1,658 @@
+"""Explicit network actions, durable receipts, and replay boundaries."""
+import hashlib
+import json
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from server import db, opencti_graph as graph, opencti_service as service, workspace
+from server.opencti_client import OpenCTIClient, OpenCTIError
+
+
+class _Context:
+    def __init__(self):
+        self.cancel_event = threading.Event()
+    def cancelled(self):
+        return self.cancel_event.is_set()
+    def progress(self, *_args):
+        pass
+
+
+class _Jobs:
+    def __init__(self):
+        self.pending = []
+    def submit(self, case_dir, kind, run, **kwargs):
+        self.pending.append((run, kwargs))
+        return len(self.pending)
+    def run(self, index=-1):
+        return self.pending[index][0](_Context())
+
+
+class OpenCTIServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.case = workspace.create_case(self.root / "cases", "Private customer", "PIM-1234")
+        self.conn = db.connect(self.case)
+        self.addCleanup(self.conn.close)
+        self.ip_id = db.add_ioc(self.conn, "198.51.100.4", "ip")
+        self.domain_id = db.add_ioc(self.conn, "example.test", "domain")
+        self.conn.commit()
+        self.config = {"url": "https://cti.example.test", "token": "test-integration-token",
+                       "ingester_id": "ingester", "sample_uploads": False, "timeout": 30}
+        self.jobs = _Jobs()
+        self.client = MagicMock(spec=OpenCTIClient)
+        self.client.connectors.return_value = []
+        self.client.find_existing_shared = MagicMock(return_value=None)
+        self.client.push.return_value = {"id": "taxii-work-1"}
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
+        self.client.resolve.side_effect = lambda source: {"id": "remote-" + source, "standard_id": source}
+        self.client.lookup.return_value = []
+        self.client.work.return_value = {"status": "complete", "errors": []}
+        self.client.enrich.return_value = {"id": "enrichment-work-1"}
+        self.client.upload_sample.return_value = {"id": "artifact-remote"}
+        for target, value in (("settings.opencti_config", lambda _root: dict(self.config)),
+                              ("manager", self.jobs), ("POLL_LIMIT", 1), ("POLL_SECONDS", 0)):
+            patcher = patch("server.opencti_service." + target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.client_factory = patch("server.opencti_service.OpenCTIClient", return_value=self.client).start()
+        self.addCleanup(patch.stopall)
+        self.addCleanup(service._ACTIVE.clear)
+
+    def preview(self, **options):
+        return service.preview(self.root, self.case, options)
+
+    def receipt(self, identifier):
+        row = db.one(self.conn, "SELECT * FROM opencti_exports WHERE id=?", (identifier,))
+        row["payload"] = json.loads(row["payload"])
+        return row
+
+    def export(self, **options):
+        result = service.transfer(self.root, self.case, self.preview(**options)["preview_id"])
+        self.jobs.run()
+        return result
+
+    def add_file(self):
+        root = self.root / "evidence"
+        root.mkdir()
+        file = root / "sample.txt"
+        file.write_bytes(b"synthetic sample")
+        self.conn.execute("INSERT INTO evidence(kind,path,added) VALUES('webroot',?,?)", (str(root), db.now()))
+        self.hash_id = db.add_ioc(self.conn, hashlib.sha256(file.read_bytes()).hexdigest(), "hash")
+        path_id = db.add_ioc(self.conn, "sample.txt", "path")
+        db.link_iocs(self.conn, self.hash_id, path_id, "hash-of")
+        self.conn.commit()
+        return file
+
+    def test_clear_activity_preserves_data_and_active_work(self):
+        now = db.now()
+        for kind, state in (("opencti-lookup", "done"), ("opencti-lookup", "failed"),
+                            ("opencti-lookup", "running"), ("scan", "failed")):
+            self.conn.execute("INSERT INTO jobs(kind,state,created) VALUES(?,?,?)", (kind, state, now))
+        identity = service._identity(next(row for row in service._iocs(self.case) if row["id"] == self.ip_id))
+        destination = service._destination(self.config)
+        self.conn.execute("INSERT INTO opencti_enrichments VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("enrich-1", self.ip_id, identity, "remote", "connector", "work", "complete", now, "", destination))
+        self.conn.execute("INSERT INTO opencti_exports(id,destination,state,created,updated,error,payload) VALUES(?,?,?,?,?,?,?)",
+            ("export-1", destination, "complete", now, now, "", json.dumps({"objects": [{"id": "file--example"}]})))
+        self.conn.commit()
+        before = service.state(self.root, self.case)
+        self.assertEqual(4, service.clear_activity(self.case)["cleared"])
+        after = service.state(self.root, self.case)
+        self.assertEqual(before["lookups"], after["lookups"])
+        self.assertEqual(before["sync"], after["sync"])
+        self.assertEqual(3, len(after["jobs"]))
+        self.assertEqual(2, sum(job["activity_hidden"] for job in after["jobs"]))
+        self.assertTrue(after["exports"][0]["activity_hidden"])
+        self.assertEqual(before["exports"][0]["stats"], after["exports"][0]["stats"])
+        self.assertTrue(after["enrichments"][0]["activity_hidden"])
+        self.assertEqual(4, db.one(self.conn, "SELECT count(*) n FROM jobs")["n"])
+        self.assertEqual(0, service.clear_activity(self.case)["cleared"])
+        # Finishing a previously running job and changing a receipt makes them visible.
+        self.conn.execute("UPDATE jobs SET state='done',finished=? WHERE state='running'", (now,))
+        self.conn.execute("UPDATE opencti_exports SET state='failed',error='new failure'")
+        self.conn.commit()
+        latest = service.state(self.root, self.case)
+        self.assertEqual(1, sum(not job["activity_hidden"] for job in latest["jobs"]))
+        self.assertFalse(latest["exports"][0]["activity_hidden"])
+        self.assertFalse(self.client_factory.called)
+
+    def test_state_and_export_preview_are_offline(self):
+        self.assertEqual([], service.state(self.root, self.case)["lookups"])
+        result = self.preview()
+        self.assertTrue(result["preview_id"])
+        self.assertFalse(result["errors"])
+        self.client_factory.assert_not_called()
+        self.assertEqual(1, self.conn.execute("SELECT count(*) FROM opencti_previews").fetchone()[0])
+
+    def test_connector_denial_preserves_successful_connection_steps_and_blocks_transfer(self):
+        self.client.test.return_value = {"version": "7.test", "collection": {"can_write": True}}
+        self.client.connectors.side_effect = OpenCTIError(
+            "The integration user's role needs 'Access connectors' (MODULES).",
+            code="permission", status=403)
+        with self.assertRaises(OpenCTIError) as caught:
+            service.connection_test(self.root)
+        self.assertIn("Connection and TAXII write access succeeded", str(caught.exception))
+        self.assertIn("Access connectors", str(caught.exception))
+        self.assertEqual(403, caught.exception.status)
+        result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Access connectors"):
+            self.jobs.run()
+        self.assertEqual("failed", self.receipt(result["export_id"])["state"])
+        self.client.push.assert_not_called()
+        self.client.upload_sample.assert_not_called()
+        self.client.enrich.assert_not_called()
+
+    def test_descriptions_are_merged_after_import_and_resume_without_reimport(self):
+        self.client.update_case_description.side_effect = [None, OpenCTIError("Description temporarily unavailable")]
+        p = self.preview()
+        r = service.transfer(self.root, self.case, p["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Description temporarily unavailable"):
+            self.jobs.run()
+        receipt = self.receipt(r["export_id"])
+        self.assertEqual("partial", receipt["state"])
+        self.assertEqual(["complete", "new"], [x["state"] for x in receipt["payload"]["descriptions"]])
+        self.assertTrue(all("x_opencti_description" not in o for o in self.client.push.call_args.args[0]))
+        self.client.update_case_description.side_effect = None
+        service.retry(self.root, self.case, r["export_id"])
+        self.jobs.run()
+        self.client.push.assert_called_once()
+        self.assertEqual(3, self.client.update_case_description.call_count)
+        self.assertEqual("complete", self.receipt(r["export_id"])["state"])
+
+    def test_deleted_observation_removes_only_its_case_description(self):
+        self.export()
+        self.conn.execute("DELETE FROM iocs WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        preview = self.preview()
+        self.assertEqual(1, len(preview["description_withdrawals"]))
+        self.assertEqual("", preview["description_withdrawals"][0]["text"])
+        r = service.transfer(self.root, self.case, preview["preview_id"])
+        self.jobs.run()
+        self.assertEqual("complete", self.receipt(r["export_id"])["state"])
+        self.assertTrue(any(call.args[2] == "" for call in self.client.update_case_description.call_args_list))
+
+    def test_existing_uploaded_artifact_gets_context_without_uploading_again(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        sample_id = self.preview()["samples"][0]["id"]
+        self.export(sample_ids=[sample_id])
+        self.client.update_case_description.reset_mock()
+        self.client.sync_sample_context.reset_mock()
+        self.export(sample_ids=[])
+        self.client.sync_sample_context.assert_called_once()
+        context_args = self.client.sync_sample_context.call_args.args
+        self.assertEqual("artifact-remote", context_args[1])
+        self.assertTrue(any(i.startswith("incident--") for i in context_args[3]))
+        self.assertTrue(any(i.startswith("note--") for i in context_args[3]))
+        self.client.upload_sample.assert_called_once()
+        calls = self.client.update_case_description.call_args_list
+        self.assertTrue(any(c.args[0] == "artifact-remote" and "Original file bytes explicitly selected" in c.args[2] for c in calls))
+        def update(source_id, *_args):
+            if source_id == "artifact-remote":
+                raise OpenCTIError("Artifact no longer exists", code="not_found")
+        self.client.update_case_description.side_effect = update
+        r = self.export(sample_ids=[])
+        receipt = self.receipt(r["export_id"])
+        self.assertEqual("complete", receipt["state"])
+        entry = next(d for d in receipt["payload"]["descriptions"] if d["source_id"] == "artifact-remote")
+        self.assertEqual("unavailable", entry["state"])
+        self.assertIn("not uploaded again", entry["error"])
+        self.client.upload_sample.assert_called_once()
+
+    def test_sample_context_failure_resumes_without_uploading_again(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        sample_id = self.preview()["samples"][0]["id"]
+        self.client.sync_sample_context.side_effect = OpenCTIError("Context temporarily unavailable")
+        queued = service.transfer(self.root, self.case, self.preview(sample_ids=[sample_id])["preview_id"])
+        with self.assertRaisesRegex(ValueError, "Context temporarily unavailable"):
+            self.jobs.run()
+        self.assertEqual("new", self.receipt(queued["export_id"])["payload"]["sample_context"][0]["state"])
+        self.client.sync_sample_context.side_effect = None
+        service.retry(self.root, self.case, queued["export_id"])
+        self.jobs.run()
+        self.client.upload_sample.assert_called_once()
+        self.assertEqual("complete", self.receipt(queued["export_id"])["state"])
+
+    def test_transfer_is_bound_to_case_data_and_destination(self):
+        preview = self.preview()
+        self.config["url"] = "https://different.example.test"
+        with self.assertRaisesRegex(ValueError, "connection changed"):
+            service.transfer(self.root, self.case, preview["preview_id"])
+        self.config["url"] = "https://cti.example.test"
+        self.conn.execute("UPDATE iocs SET note='changed' WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "changed after preview"):
+            service.transfer(self.root, self.case, preview["preview_id"])
+        self.assertEqual([], self.jobs.pending)
+        self.client.push.assert_not_called()
+
+    def test_complete_import_requires_status_and_visible_objects_and_locks_reference(self):
+        result = self.export()
+        receipt = self.receipt(result["export_id"])
+        self.assertEqual("complete", receipt["state"])
+        self.assertEqual(len(receipt["payload"]["objects"]), self.conn.execute("SELECT count(*) FROM opencti_mappings").fetchone()[0])
+        self.client.taxii_status.assert_called_once_with("taxii-work-1")
+        self.assertTrue(all(r["status"] == "exported" for r in service.state(self.root, self.case)["sync"]))
+        self.assertTrue(workspace.case_info(self.case)["reference_locked"])
+        with self.assertRaisesRegex(ValueError, "already complete"):
+            service.retry(self.root, self.case, result["export_id"])
+
+    def test_pending_taxii_resume_checks_existing_work_without_reposting(self):
+        self.client.taxii_status.return_value = {"status": "pending", "pending_count": 3}
+        result = self.export()
+        self.assertEqual("pending", self.receipt(result["export_id"])["state"])
+        self.assertFalse(any(row["status"] == "exported" for row in service.state(self.root, self.case)["sync"]))
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+        self.client.push.assert_called_once()
+
+    def test_partial_import_retries_only_failed_ids_and_keeps_success_mappings(self):
+        preview = self.preview()
+        failed = preview["objects"][-1]["id"]
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 1, "pending_count": 0,
+                                                 "failures": [{"id": failed}]}
+        result = service.transfer(self.root, self.case, preview["preview_id"])
+        with self.assertRaisesRegex(ValueError, "import failed"):
+            self.jobs.run()
+        self.assertEqual("partial", self.receipt(result["export_id"])["state"])
+        self.assertEqual(len(preview["objects"]) - 1, self.conn.execute("SELECT count(*) FROM opencti_mappings").fetchone()[0])
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.assertEqual([failed], [o["id"] for o in self.client.push.call_args.args[0]])
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+
+    def test_invisible_object_does_not_become_complete_and_retry_never_reposts_work(self):
+        self.client.resolve.return_value = None
+        self.client.resolve.side_effect = None
+        preview = self.preview()
+        result = service.transfer(self.root, self.case, preview["preview_id"])
+        with self.assertRaisesRegex(ValueError, "not visible"):
+            self.jobs.run()
+        self.assertEqual("failed", self.receipt(result["export_id"])["state"])
+        self.client.resolve.side_effect = lambda source: {"id": "remote-" + source, "standard_id": source}
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.client.push.assert_called_once()
+
+    def test_partial_retry_keeps_visibility_checks_for_successful_objects_without_reposting(self):
+        preview = self.preview()
+        failed = preview["objects"][-1]["id"]
+        invisible = preview["objects"][-2]["id"]
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 1,
+                                                 "pending_count": 0, "failures": [{"id": failed}]}
+        self.client.resolve.side_effect = lambda source: None if source == invisible else {
+            "id": "remote-" + source, "standard_id": source}
+        result = service.transfer(self.root, self.case, preview["preview_id"])
+        with self.assertRaisesRegex(ValueError, "import failed"):
+            self.jobs.run()
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
+        service.retry(self.root, self.case, result["export_id"])
+        with self.assertRaisesRegex(ValueError, "not visible"):
+            self.jobs.run()
+        self.assertNotEqual("complete", self.receipt(result["export_id"])["state"])
+        self.assertEqual([failed], [obj["id"] for obj in self.client.push.call_args.args[0]])
+        self.assertEqual(2, self.client.push.call_count)
+        self.client.resolve.side_effect = lambda source: {"id": "remote-" + source, "standard_id": source}
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+        self.assertEqual(2, self.client.push.call_count)
+        self.assertEqual(len(preview["objects"]), self.conn.execute("SELECT count(*) FROM opencti_mappings").fetchone()[0])
+
+    def test_no_automatic_enrichment_and_no_unselected_sample_upload(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        self.export()
+        self.client.enrich.assert_not_called()
+        self.client.upload_sample.assert_not_called()
+        self.client.connectors.return_value = [{"id": "automatic", "name": "Automatic enrichment", "active": True, "auto": True, "scope": ["StixFile"]}]
+        result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+        with self.assertRaisesRegex(ValueError, "manual"):
+            self.jobs.run()
+        self.assertEqual("failed", self.receipt(result["export_id"])["state"])
+        self.client.push.assert_called_once()
+
+    def test_selected_sample_is_rechecked_after_queueing_and_retry_rejects_changed_file(self):
+        file = self.add_file()
+        self.config["sample_uploads"] = True
+        sample = next(s for s in self.preview()["samples"] if s["available"])
+        preview = self.preview(sample_ids=[sample["id"]])
+        result = service.transfer(self.root, self.case, preview["preview_id"])
+        file.write_bytes(b"changed after scheduling")
+        with self.assertRaisesRegex(ValueError, "changed|missing"):
+            self.jobs.run()
+        self.client.upload_sample.assert_not_called()
+        self.assertEqual("partial", self.receipt(result["export_id"])["state"])
+        with self.assertRaisesRegex(ValueError, "changed"):
+            service.retry(self.root, self.case, result["export_id"])
+
+    def test_classification_changes_after_queue_block_transfer_before_network_mutation(self):
+        file = self.add_file()
+        fingerprint = db.upsert_finding(self.conn, "analyst", db.SEV_HIGH, "Manual file review", "file", str(file),
+                                         evidence="Analyst classified the file as a webshell.",
+                                         rule_id="analyst.file_review")
+        self.conn.execute("UPDATE findings SET triage='confirmed',triage_note='same decision',triaged_at=? WHERE fingerprint=?",
+                          (db.now(), fingerprint))
+        self.conn.commit()
+        baseline = db.one(self.conn, "SELECT * FROM findings WHERE fingerprint=?", (fingerprint,))
+        changes = {"source": "logs", "rule_id": "analyst.other",
+                   "evidence": "Analyst classified the file as a malware sample.",
+                   "rule": "Changed manual review", "artifact_kind": "table"}
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+                # Triage state, note and second-resolution timestamps deliberately
+                # remain unchanged while the classification inputs change.
+                self.conn.execute(f"UPDATE findings SET {field}=? WHERE fingerprint=?", (value, fingerprint))
+                self.conn.commit()
+                with self.assertRaisesRegex(ValueError, "changed while transfer was queued"):
+                    self.jobs.run()
+                self.assertEqual("failed", self.receipt(result["export_id"])["state"])
+                self.client.find_existing_shared.assert_not_called()
+                self.client.push.assert_not_called()
+                self.client.upload_sample.assert_not_called()
+                self.client.enrich.assert_not_called()
+                self.conn.execute(f"UPDATE findings SET {field}=? WHERE fingerprint=?", (baseline[field], fingerprint))
+                self.conn.commit()
+
+    def test_sample_upload_receipt_prevents_reupload_after_link_failure(self):
+        self.add_file()
+        self.config["sample_uploads"] = True
+        sample = next(s for s in self.preview()["samples"] if s["available"])
+        result = service.transfer(self.root, self.case, self.preview(sample_ids=[sample["id"]])["preview_id"])
+        self.client.link_sample.side_effect = OpenCTIError("OpenCTI could not be reached.")
+        with self.assertRaises(ValueError):
+            self.jobs.run()
+        self.assertEqual("uploaded", self.receipt(result["export_id"])["payload"]["samples"][0]["state"])
+        self.client.link_sample.side_effect = None
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.client.upload_sample.assert_called_once()
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+
+    def test_repeated_export_preserves_ids_and_deselection_does_not_revoke_indicators(self):
+        self.export(indicator_ids=[self.ip_id])
+        previous = [json.loads(r[0]) for r in self.conn.execute("SELECT object_json FROM opencti_mappings")]
+        current = self.preview(ioc_ids=[self.domain_id])
+        self.assertFalse(any(o.get("revoked") for o in current["objects"]))
+        full = self.preview(indicator_ids=[self.ip_id])
+        self.assertEqual({o["id"] for o in previous}, {o["id"] for o in full["objects"]})
+
+    def test_new_case_keeps_legacy_report_history_and_excludes_revoked_nodes(self):
+        preview = self.preview()
+        case = next(o for o in preview["objects"] if o["id"] == preview["case_id"])
+        report = {**case, "type": "report", "id": graph._id("report", ["PIM-1234", "report"])}
+        old_note = {"type": "note", "id": graph._id("note", ["PIM-1234", "legacy-context"]),
+                    "created_by_ref": graph._id("identity", "shellhound"), "x_shellhound_case_reference": "PIM-1234",
+                    "content": "Legacy context", "object_refs": [preview["incident_id"]]}
+        for obj in (report, old_note):
+            service._mapping(self.case, obj, {"id": "remote", "standard_id": obj["id"]}, service._mapping_destination(self.config))
+        current = self.preview()
+        case = next(o for o in current["objects"] if o["id"] == current["case_id"])
+        self.assertNotIn(report["id"], {o["id"] for o in current["objects"]})
+        self.assertNotIn(old_note["id"], case["object_refs"])
+        self.assertTrue(any(o["id"] == old_note["id"] and o.get("revoked") for o in current["objects"]))
+        self.assertTrue(any(o.get("x_shellhound_withdrawal") and o["id"] in case["object_refs"] for o in current["objects"]))
+        self.assertTrue(any("Earlier Reports remain" in w for w in current["warnings"]))
+
+    def test_shared_foreign_observable_is_referenced_without_overwriting_its_fields(self):
+        preview = self.preview()
+        source = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
+        foreign = {"id": "foreign-ip-id", "standard_id": "ipv4-addr--existing-standard-id"}
+        self.client.find_existing_shared.side_effect = lambda obj: foreign if obj["id"] == source["id"] else None
+        result = service.transfer(self.root, self.case, preview["preview_id"])
+        self.jobs.run()
+        sent = self.client.push.call_args.args[0]
+        self.assertNotIn(source["id"], {obj["id"] for obj in sent})
+        report = next(obj for obj in sent if obj["type"] == "x-opencti-case-incident")
+        self.assertIn(foreign["standard_id"], report["object_refs"])
+        self.assertNotIn(source["id"], report["object_refs"])
+        receipt = self.receipt(result["export_id"])
+        self.assertIn(source["id"], {obj["id"] for obj in receipt["payload"]["objects"]})
+        mapping = db.one(self.conn, "SELECT * FROM opencti_mappings WHERE source_id=?", (source["id"],))
+        self.assertEqual(foreign["id"], mapping["remote_id"])
+        self.assertEqual({**source, "_shellhound_origin": "reused"}, json.loads(mapping["object_json"]))
+        self.assertEqual("complete", receipt["state"])
+
+    def test_reusing_existing_bare_observable_does_not_claim_own_origin(self):
+        entity = {"id": "existing-ip", "standard_id": "ipv4-addr--existing", "entity_type": "IPv4-Addr",
+                  "observable_value": "198.51.100.4", "createdBy": None}
+        self.client.lookup.return_value = [entity]
+        self.client.find_existing_shared.side_effect = lambda obj: entity if obj["type"] == "ipv4-addr" else None
+        self.export()
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual("known", service.state(self.root, self.case)["lookups"][0]["status"])
+        self.assertNotIn(entity["id"], service._mapped_ids(self.case, self.config))
+        self.assertFalse(any("_shellhound_origin" in obj for obj in self.client.push.call_args.args[0]))
+
+    def test_later_reuse_keeps_proven_own_import_origin(self):
+        self.export()
+        source = next(obj for obj in self.preview()["objects"] if obj["type"] == "ipv4-addr")
+        entity = {"id": "remote-" + source["id"], "standard_id": source["id"], "entity_type": "IPv4-Addr",
+                  "observable_value": "198.51.100.4", "createdBy": None}
+        self.client.find_existing_shared.side_effect = lambda obj: entity if obj["type"] == "ipv4-addr" else None
+        self.export()
+        self.client.lookup.return_value = [entity]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual("own", service.state(self.root, self.case)["lookups"][0]["status"])
+
+    def test_shared_preflight_is_saved_and_not_repeated_when_resuming_pending_import(self):
+        self.client.taxii_status.return_value = {"status": "pending", "pending_count": 1}
+        result = self.export()
+        calls = self.client.find_existing_shared.call_count
+        self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.assertEqual(calls, self.client.find_existing_shared.call_count)
+        self.client.push.assert_called_once()
+
+    def test_cancel_before_worker_starts_persists_paused_receipt_and_releases_slot(self):
+        result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+        self.jobs.pending[-1][1]["on_cancel"]()
+        self.assertEqual("paused", self.receipt(result["export_id"])["state"])
+        self.assertEqual(set(), service._ACTIVE)
+        self.client.push.assert_not_called()
+        service.retry(self.root, self.case, result["export_id"])
+        self.jobs.run()
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+
+    def test_token_rotation_preserves_mapping_identity_but_invalidates_pending_preview(self):
+        self.export()
+        original = [r[0] for r in self.conn.execute("SELECT source_id FROM opencti_mappings")]
+        pending = self.preview()
+        self.config["token"] = "replacement-integration-token"
+        with self.assertRaisesRegex(ValueError, "connection changed"):
+            service.transfer(self.root, self.case, pending["preview_id"])
+        self.assertTrue(all(row["status"] == "exported" for row in service.state(self.root, self.case)["sync"]))
+        repeated = self.preview()
+        self.assertEqual(set(original), {o["id"] for o in repeated["objects"]})
+        self.assertEqual(pending["mapping_revision"], repeated["mapping_revision"])
+
+    def test_own_mapped_observable_without_author_is_not_independent_corroboration(self):
+        self.export()
+        source = next(r[0] for r in self.conn.execute("SELECT source_id FROM opencti_mappings") if r[0].startswith("ipv4-addr--"))
+        entity = {"id": "remote-" + source, "standard_id": source, "entity_type": "IPv4-Addr", "createdBy": None}
+        self.client.lookup.return_value = [entity]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual("own", service.state(self.root, self.case)["lookups"][0]["status"])
+        entity["externalReferences"] = [{"source_name": "Independent threat feed"}]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual("known", service.state(self.root, self.case)["lookups"][0]["status"])
+        self.assertFalse(service._only_own([{**entity, "externalReferences": [], "context_truncated": True}], {source, "remote-" + source}))
+        self.assertFalse(service._only_own([{**entity, "externalReferences": [], "createdBy": {"name": "Independent analyst"}}], {source, "remote-" + source}))
+
+    def test_lookup_automatically_merges_labels_without_changing_assessment(self):
+        self.conn.execute("UPDATE iocs SET tags=? WHERE id=?", ('["Local", "IOC"]', self.ip_id))
+        self.conn.commit()
+        self.client.lookup.return_value = [
+            {"id": "remote", "labels": [" ioc ", "scanner", {"value": "true positive"}, None, " ", "bad\nlabel"]},
+            {"id": "remote-2", "labels": ["SCANNER", "benign"]},
+        ]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        row = db.one(self.conn, "SELECT * FROM iocs WHERE id=?", (self.ip_id,))
+        self.assertEqual(["benign", "IOC", "Local", "scanner", "true positive"], json.loads(row["tags"]))
+        self.assertEqual("malicious", row["assessment"])
+        self.assertEqual(0, self.conn.execute("SELECT count(*) FROM ioc_assessments").fetchone()[0])
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.assertEqual(row["tags"], db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
+        self.client.enrich.assert_not_called()
+        self.client.push.assert_not_called()
+        self.client.upload_sample.assert_not_called()
+        exported = next(o for o in self.preview()["objects"] if o["type"] == "ipv4-addr")
+        self.assertCountEqual(json.loads(row["tags"]), exported["labels"])
+
+    def test_failed_lookup_does_not_reimport_historical_removed_tags(self):
+        self.client.lookup.return_value = [{"id": "remote", "labels": ["scanner"]}]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.conn.execute("UPDATE iocs SET tags='[]' WHERE id=?", (self.ip_id,))
+        self.conn.commit()
+        self.client.lookup.side_effect = OpenCTIError("OpenCTI could not be reached.")
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        service.state(self.root, self.case)
+        self.assertEqual('[]', db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
+
+    def test_lookup_failure_keeps_prior_knowledge_stale_and_state_never_refreshes(self):
+        entity = {"id": "known", "entity_type": "IPv4-Addr", "observable_value": "198.51.100.4",
+                  "createdBy": {"name": "Independent source"}}
+        self.client.lookup.return_value = [entity]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        self.client.lookup.side_effect = OpenCTIError("OpenCTI could not be reached.")
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.jobs.run()
+        calls = self.client.lookup.call_count
+        result = service.state(self.root, self.case)["lookups"][0]
+        self.assertEqual("error", result["status"])
+        self.assertTrue(result["stale"])
+        self.assertEqual("known", result["entities"][0]["id"])
+        self.assertEqual(calls, self.client.lookup.call_count)
+
+    def test_background_lookup_does_not_attach_to_reused_numeric_ioc_id(self):
+        self.client.lookup.return_value = [{"id": "old-knowledge", "entity_type": "IPv4-Addr", "labels": ["wrong-object"]}]
+        service.lookup(self.root, self.case, [self.ip_id])
+        self.conn.execute("DELETE FROM iocs WHERE id=?", (self.ip_id,))
+        self.conn.execute("INSERT INTO iocs(id,value,type,added) VALUES(?,?,?,?)", (self.ip_id, "198.51.100.4", "ip", db.now()))
+        self.conn.commit()
+        self.jobs.run()
+        self.assertEqual([], service.state(self.root, self.case)["lookups"])
+        self.assertNotIn("wrong-object", db.one(self.conn, "SELECT tags FROM iocs WHERE id=?", (self.ip_id,))["tags"])
+
+    def connectors(self):
+        self.client.connectors.return_value = [
+            {"id": "ip-manual", "name": "IP context", "active": True, "auto": False, "scope": ["IPv4-Addr"]},
+            {"id": "hash-manual", "name": "Hash context", "active": True, "auto": False, "scope": ["StixFile"]},
+            {"id": "automatic", "name": "Automatic", "active": True, "auto": True, "scope": ["IPv4-Addr"]}]
+
+    def test_enrichment_preview_filters_scope_and_does_not_start_work(self):
+        self.connectors()
+        preview = service.enrichment_preview(self.root, self.case, [self.ip_id])
+        self.assertEqual(["ip-manual"], [c["id"] for c in preview["connectors"]])
+        self.assertTrue(preview["entities"][0]["requires_creation"])
+        self.client.create_observable.assert_not_called()
+        self.client.enrich.assert_not_called()
+
+    def test_cve_enrichment_creates_only_after_approval_and_reuses_existing(self):
+        cve_id = db.add_ioc(self.conn, "CVE-2026-12345", "vulnerability")
+        self.conn.commit()
+        self.client.connectors.return_value = [
+            {"id": "epss", "name": "FIRST EPSS", "active": True, "auto": False, "scope": ["vulnerability"]},
+            {"id": "observables", "active": True, "auto": False, "scope": ["Stix-Cyber-Observable"]}]
+        preview = service.enrichment_preview(self.root, self.case, [cve_id])
+        self.assertEqual(["epss"], [c["id"] for c in preview["connectors"]])
+        self.assertTrue(preview["entities"][0]["requires_creation"])
+        self.assertFalse(preview["entities"][0]["requires_transfer"])
+        self.client.create_vulnerability.assert_not_called()
+        self.client.enrich.assert_not_called()
+        service.enrich(self.root, self.case, [cve_id], ["epss"])
+        with self.assertRaisesRegex(ValueError, "explicit permission"):
+            self.jobs.run()
+        self.client.create_vulnerability.assert_not_called()
+        entity = {"id": "cve-entity", "entity_type": "Vulnerability", "name": "CVE-2026-12345"}
+        self.client.create_vulnerability.return_value = entity
+        self.client.lookup.side_effect = [[], [entity]]
+        service.enrich(self.root, self.case, [cve_id], ["epss"], create_missing=True)
+        self.assertEqual({"requested": 1}, self.jobs.run())
+        self.client.create_vulnerability.assert_called_once_with("CVE-2026-12345", graph.MARKINGS[workspace.case_info(self.case)["profile"]["marking"]])
+        self.client.create_observable.assert_not_called()
+        self.client.enrich.assert_called_once_with("cve-entity", "epss")
+        self.assertEqual("complete", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+        self.client.lookup.side_effect = None
+        self.client.lookup.return_value = [entity]
+        service.enrich(self.root, self.case, [cve_id], ["epss"])
+        self.jobs.run()
+        self.assertEqual(1, self.client.create_vulnerability.call_count)
+        self.assertEqual(2, self.client.enrich.call_count)
+
+    def test_unknown_enrichment_requires_explicit_creation_and_tracks_work(self):
+        self.connectors()
+        self.client.connectors.return_value = self.client.connectors.return_value[:2]
+        service.enrich(self.root, self.case, [self.ip_id], ["ip-manual"])
+        with self.assertRaisesRegex(ValueError, "explicit permission"):
+            self.jobs.run()
+        self.client.create_observable.assert_not_called()
+        entity = {"id": "ip-entity", "entity_type": "IPv4-Addr", "observable_value": "198.51.100.4"}
+        self.client.create_observable.return_value = entity
+        self.client.lookup.side_effect = [[], [entity]]
+        service.enrich(self.root, self.case, [self.ip_id], ["ip-manual"], create_missing=True)
+        self.jobs.run()
+        self.client.create_observable.assert_called_once()
+        self.client.enrich.assert_called_once_with("ip-entity", "ip-manual")
+        self.assertEqual("complete", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+
+    def test_refresh_enrichment_checks_pending_work_without_retrigger(self):
+        self.connectors()
+        self.client.lookup.return_value = [{"id": "ip-entity", "entity_type": "IPv4-Addr"}]
+        self.client.work.return_value = {"status": "pending", "errors": []}
+        service.enrich(self.root, self.case, [self.ip_id], ["ip-manual"])
+        self.jobs.run()
+        self.assertEqual("pending", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+        self.client.work.return_value = {"status": "complete", "errors": []}
+        service.refresh_enrichment(self.root, self.case)
+        self.jobs.run()
+        self.client.enrich.assert_called_once()
+        self.client.create_observable.assert_not_called()
+        self.assertEqual("complete", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+
+    def test_failed_work_can_refresh_its_reason_and_connector_without_retrigger(self):
+        self.connectors()
+        self.client.lookup.return_value = [{"id": "ip-entity", "entity_type": "IPv4-Addr"}]
+        self.client.work.return_value = {"status": "complete", "errors": [{"message": "private API_KEY"}]}
+        service.enrich(self.root, self.case, [self.ip_id], ["ip-manual"])
+        self.jobs.run()
+        self.assertEqual("failed", self.conn.execute("SELECT state FROM opencti_enrichments").fetchone()[0])
+        self.client.work.return_value = {"status": "complete", "connector": {"id": "ip-manual", "name": "AbuseIPDB"},
+                                         "errors": [{"code": "tlp_limit", "message": "private API_KEY"}]}
+        service.refresh_enrichment(self.root, self.case)
+        self.jobs.run()
+        self.client.enrich.assert_called_once()
+        self.client.create_observable.assert_not_called()
+        self.client.reset_mock()
+        entry = service.state(self.root, self.case)["enrichments"][0]
+        self.assertEqual("failed", entry["state"])
+        self.assertEqual("AbuseIPDB", entry["connector_name"])
+        self.assertIn("TLP marking exceeds", entry["error"])
+        self.assertNotIn("API_KEY", json.dumps(entry))
+        self.assertNotIn("private", json.dumps(entry))
+        self.client.work.assert_not_called()
+        self.client.connectors.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

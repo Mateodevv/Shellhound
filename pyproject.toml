@@ -8,8 +8,8 @@ name = "shellhound"
 version = "0.2.0"
 description = "Web-native DFIR workbench for webserver compromises (WordPress/Joomla)"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license = "Apache-2.0 AND LicenseRef-Shellhound-Source-Available-1.0"
+license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "LICENSES/pycountry-LGPL-2.1.txt", "NOTICE", "docs/LICENSING.md"]
 # 3.10 is the floor, not a matter of taste: the code uses `X | None` as a
 # type annotation throughout (PEP 604), and that is valid at runtime from
 # 3.10 on.
@@ -69,7 +69,7 @@ include = ["server*"]
 # than in the workspace: they are the same on every installation of a given
 # version, which is what makes "SHELLHOUND 0.2.0 ships this pattern" a
 # statement the reader of a report can verify.
-"server" = ["static/**/*", "patterns_bundled.json", "rules_bundled/*.yar"]
+"server" = ["static/**/*", "patterns_bundled.json", "rules_bundled/*.yar", "data/*.json", "data/*.md"]
 
 # ---------------------------------------------------------------------------
 # Mutation testing. See docs/TESTING.md.

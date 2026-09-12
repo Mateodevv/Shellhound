@@ -74,4 +74,4 @@ derived indexes can be rebuilt after the cause is corrected.
 
 ## Licence
 
-[Apache-2.0](../LICENSE). Third-party components: [NOTICE](../NOTICE).
+[Apache-2.0](../LICENSES/Apache-2.0.txt). Third-party components: [NOTICE](../NOTICE).

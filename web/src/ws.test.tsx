@@ -55,4 +55,23 @@ describe('analysis receipt updates', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['job-skips'] })
     unmount()
   })
+  it('refreshes IOC tags and saved intelligence after an OpenCTI lookup', () => {
+    let receive: ((event: { data: string }) => void) | undefined
+    class Socket {
+      set onmessage(handler: (event: { data: string }) => void) { receive = handler }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    const qc = testQueryClient()
+    qc.setQueryData(['iocs', 'case', 'detail', 1], { tags: [] })
+    qc.setQueryData(['opencti', 'case'], { lookups: [] })
+    const { unmount } = renderHook(() => useLiveEvents(), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    })
+    act(() => receive?.({ data: JSON.stringify({ type: 'invalidate', scope: 'opencti-lookup' }) }))
+    expect(qc.getQueryState(['iocs', 'case', 'detail', 1])?.isInvalidated).toBe(true)
+    expect(qc.getQueryState(['opencti', 'case'])?.isInvalidated).toBe(true)
+    unmount()
+  })
+
 })

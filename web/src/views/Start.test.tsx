@@ -4,6 +4,7 @@ import { api, del, post, type ArchivesResponse } from '../api'
 import { renderWithProviders } from '../test/setup'
 import { Start } from './Start'
 
+vi.mock('../geo', () => ({ useGeoStatus: () => ({ data: { available: true } }) }))
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
   api: vi.fn(),
@@ -22,6 +23,7 @@ const NO_ARCHIVES: ArchivesResponse = { archive_dir: 'C:/ws/archive', archives: 
 
 beforeEach(() => {
   vi.mocked(api).mockImplementation(async (path) => {
+    if (path === '/api/opencti/settings') return { configured: false }
     if (path === '/api/state') return STATE
     if (path === '/api/archives') return NO_ARCHIVES
     throw new Error(`unexpected API call: ${path}`)
@@ -60,4 +62,21 @@ describe('leaving a case from the start page', () => {
       expect(post).toHaveBeenCalledWith('/api/cases/the-case/archive', {}))
     expect(del).not.toHaveBeenCalled()
   })
+})
+
+
+it('keeps closed cases collapsed until the heading is clicked', async () => {
+  const original = vi.mocked(api).getMockImplementation()!
+  vi.mocked(api).mockImplementation(path => path === '/api/archives' ? Promise.resolve({ archive_dir: 'C:/ws/archive', archives: [
+    { file: 'closed.zip', size: 100, modified: '2026-09-01', readable: true },
+  ] }) : original(path))
+  renderWithProviders(<Start onOpen={() => {}} />)
+  const toggle = await screen.findByRole('button', { name: /Closed cases/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByRole('button', { name: 'Restore' })).toBeVisible()
+  fireEvent.click(toggle)
+  expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
 })

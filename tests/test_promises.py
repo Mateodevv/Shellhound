@@ -23,9 +23,8 @@ The five promises:
   5. A SWITCHED-OFF RULE HIDES, IT DOES NOT DELETE. A switch is not a
      retraction.
 
-Nothing here reaches the network: the enrichment lookups are replaced by the
-same mechanism `tests/test_enrich.py` uses, and what is asserted is that the
-request never gets that far.
+Nothing here reaches the network: OpenCTI lookups use a mocked server adapter
+while exercising the real local lookup job and persisted result handling.
 """
 import io
 import json
@@ -35,15 +34,18 @@ import unittest
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
-from server import db, enrich, i18n, rules as rulelib, ruleswitch, settings
+from server import db, i18n, opencti_service, rules as rulelib, ruleswitch, settings
 from server.app import create_app
 from server.artifacts import counts as artifact_counts
 from server.chain import EVENT_CAP, case_chain
 from server.config import Config
 from server.engines import logindex, sqldump, webshell
+from server.opencti_client import OpenCTIClient
 from tests.fixtures_hostile import ATTACKER, HostileEvidence, hostile_shapes
 
 
@@ -303,11 +305,11 @@ def registered_folder_names(case_dir):
 _GERMAN_LETTERS = "äöüÄÖÜß"
 
 
-# Columns whose value is a clock reading. Two runs of the same pipeline
-# differ in them by construction, and that says nothing about language.
+# Clock readings and random per-source identities differ across independent
+# investigations by construction; neither says anything about language.
 _VOLATILE = {"id", "added", "created", "last_seen", "triaged_at", "ran_at",
              "set_at", "scanned_at", "meta_at", "started", "finished",
-             "fetched"}
+             "fetched", "source_uid"}
 
 
 def stored_rows(case_dir):
@@ -564,14 +566,14 @@ class ChronologyAccountsForEverythingTests(unittest.TestCase):
 class ForeignVerdictsMoveNothingTests(unittest.TestCase):
     """PROMISE 4: a reputation score never changes a severity.
 
-    `server/enrich.py` says it outright: what comes back is an opinion, not a
+    OpenCTI's result is an opinion, not a
     measurement, and a file is not a webshell because VirusTotal says so, nor
     clean because VirusTotal is silent. The severity of a finding is this
     toolkit's own statement about evidence it read, and a third party must
     not be able to raise or lower it from outside.
 
-    No lookup here reaches the network -- `_LOOKUPS` is replaced the way the
-    module allows, and the verdicts injected are the extreme ones, because a
+    No lookup here reaches the network -- the OpenCTI adapter is mocked,
+    while the real lookup job runs and stores results. Verdicts are extreme because a
     middling score would not move anything even in code that let it.
     """
 
@@ -579,24 +581,22 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
         self.evidence = HostileEvidence(two_dumps=True).build().analyse()
         self.addCleanup(self.evidence.cleanup)
         self.workspace = self.evidence.root
-        settings.set_key(self.workspace, "virustotal", "vt-key")
-        settings.set_key(self.workspace, "abuseipdb", "abuse-key")
-        settings.set_ack(self.workspace, True)
-        self._real = dict(enrich._LOOKUPS)
-        self._intervals = dict(enrich.MIN_INTERVAL)
-        for name in enrich.MIN_INTERVAL:
-            enrich.MIN_INTERVAL[name] = 0.0
-        self.addCleanup(self._restore)
+        settings.set_opencti(self.workspace, {
+            "url": "https://cti.example.test", "token": "synthetic-integration-token",
+            "ingester_id": "11111111-1111-4111-8111-111111111111"})
+        self.client = Mock(spec=OpenCTIClient)
+        client_patch = patch.object(opencti_service, "OpenCTIClient", return_value=self.client)
+        client_patch.start()
+        self.addCleanup(client_patch.stop)
+        jobs_patch = patch.object(opencti_service.manager, "submit", side_effect=self._submit)
+        jobs_patch.start()
+        self.addCleanup(jobs_patch.stop)
 
-    def _restore(self):
-        enrich._LOOKUPS.clear()
-        enrich._LOOKUPS.update(self._real)
-        enrich.MIN_INTERVAL.clear()
-        enrich.MIN_INTERVAL.update(self._intervals)
-
-    def _answer(self, verdict):
-        for name in enrich._LOOKUPS:
-            enrich._LOOKUPS[name] = lambda key, value, v=verdict: dict(v)
+    def _submit(self, case_dir, kind, run, **kwargs):
+        self.assertEqual(self.evidence.case_dir, case_dir)
+        self.assertEqual("opencti-lookup", kind)
+        self.job_result = run(SimpleNamespace(cancelled=lambda: False, progress=lambda *_: None))
+        return 1
 
     def _findings(self):
         conn = db.connect(self.evidence.case_dir)
@@ -629,10 +629,32 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
         return digest, ATTACKER
 
     def _lookup_both(self, verdict):
-        self._answer(verdict)
         digest, ip = self._indicators()
-        enrich.lookup(self.workspace, self.evidence.case_dir, "virustotal", digest)
-        enrich.lookup(self.workspace, self.evidence.case_dir, "abuseipdb", ip)
+        conn = db.connect(self.evidence.case_dir)
+        try:
+            ids = [db.add_ioc(conn, digest, "hash", ["confirmed"]),
+                   db.add_ioc(conn, ip, "ip", ["confirmed"])]
+            conn.commit()
+        finally:
+            conn.close()
+        def answer(kind, value):
+            if not verdict.get("known"):
+                return []
+            return [{"id": "remote-" + kind,
+                     "entity_type": "StixFile" if kind == "hash" else "IPv4-Addr",
+                     "observable_value": value, "score": verdict.get("score"),
+                     "description": verdict.get("label", "External assessment"),
+                     "createdBy": {"name": "External intelligence provider"},
+                     "reports": [{"id": "report-" + kind, "name": "External report"}],
+                     "report_count": verdict.get("reports", 0),
+                     "relationships": [], "externalReferences": []}]
+        self.client.lookup.side_effect = answer
+        opencti_service.lookup(self.workspace, self.evidence.case_dir, ids)
+        self.assertEqual({"checked": 2, "errors": 0}, self.job_result)
+        self.assertEqual({("hash", digest), ("ip", ip)},
+                         {call.args for call in self.client.lookup.call_args_list})
+        self.client.enrich.assert_not_called()
+        self.client.upload_sample.assert_not_called()
 
     def test_a_damning_verdict_raises_no_severity(self):
         before, counts = self._findings(), self._counts()
@@ -659,16 +681,23 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
     def test_the_verdict_is_stored_where_it_belongs(self):
         """The counter-assertion: the two tests above would also pass if the
         lookup had silently done nothing at all. It has to land in
-        `enrichment` and nowhere else."""
+        the OpenCTI lookup cache and nowhere else."""
         self._lookup_both({"known": True, "score": 70, "of": 70})
         conn = db.connect(self.evidence.case_dir)
         try:
-            stored = db.rows(conn, "SELECT service, value, kind FROM enrichment")
+            stored = db.rows(conn, "SELECT i.type, i.value, l.payload FROM opencti_lookups l "
+                                  "JOIN iocs i ON i.id=l.ioc_id")
+            legacy_count = conn.execute("SELECT count(*) FROM enrichment").fetchone()[0]
         finally:
             conn.close()
-        self.assertEqual({"virustotal", "abuseipdb"},
-                         {r["service"] for r in stored},
+        self.assertEqual({"hash", "ip"}, {r["type"] for r in stored},
                          "the injected verdicts were never stored")
+        self.assertEqual(0, legacy_count)
+        for row in stored:
+            payload = json.loads(row["payload"])
+            self.assertEqual("known", payload["status"])
+            self.assertEqual(70, payload["entities"][0]["score"])
+            self.assertEqual(row["value"], payload["entities"][0]["observable_value"])
 
     def test_the_chronology_reports_the_same_severities_afterwards(self):
         """Severity travels: the chain hangs it on every event, and that is

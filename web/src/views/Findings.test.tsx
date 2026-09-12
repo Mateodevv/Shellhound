@@ -71,11 +71,61 @@ describe('folder selection in Findings', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.setItem('shellhound.findings-layout', 'folders')
     history.replaceState(null, '', '/?case=case-1&view=findings&search=php')
     vi.mocked(api).mockResolvedValue(response)
     vi.mocked(post).mockResolvedValue({
       updated: 3, artifacts: 3, collected: [], linked: [], suggested: [], retained_iocs: [],
     } satisfies TriageResult)
+  })
+
+  it('defaults to the flat list and preserves selection and collapsed folders across switches', async () => {
+    localStorage.removeItem('shellhound.findings-layout')
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    const file = await screen.findByRole('checkbox', { name: `Select file ${paths[0]}` })
+    expect(screen.getByRole('button', { name: 'File list' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('checkbox', { name: /Select folder/ })).not.toBeInTheDocument()
+    fireEvent.click(file)
+    fireEvent.click(screen.getByRole('button', { name: 'Folders' }))
+    expect(screen.getByRole('checkbox', { name: 'Select folder plugins (3 files)' })).toBePartiallyChecked()
+    const folder = screen.getByRole('checkbox', { name: 'Select folder plugins (3 files)' })
+    fireEvent.click(folder.parentElement!.querySelector('button')!)
+    fireEvent.click(screen.getByRole('button', { name: 'File list' }))
+    expect(screen.getByRole('checkbox', { name: `Select file ${paths[0]}` })).toBeChecked()
+    expect(screen.getAllByRole('checkbox', { name: /^Select file/ })).toHaveLength(paths.length)
+    fireEvent.click(screen.getByRole('button', { name: 'Folders' }))
+    expect(screen.getByRole('button', { name: 'Expand folder plugins' })).toBeVisible()
+    expect(localStorage.getItem('shellhound.findings-layout')).toBe('folders')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('compresses uninterrupted directory chains while keeping branches and evidence roots separate', async () => {
+    const deepPaths = [
+      '/evidence/site/content/plugins/example/includes/cache/a.php',
+      '/evidence/site/content/plugins/example/includes/cache/child/b.php',
+      '/evidence/site/content/plugins/example/includes/config/c.php',
+      '/evidence/other/content/plugins/example/includes/cache/a.php',
+    ]
+    vi.mocked(api).mockResolvedValue({ ...response, total: deepPaths.length,
+      artifacts: deepPaths.map((artifact) => ({ ...artifacts[0], artifact })),
+      findings: deepPaths.map((artifact, index) => ({ ...response.findings[index], artifact })),
+    })
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    const parent = await screen.findByRole('checkbox', {
+      name: 'Select folder content/plugins/example/includes (3 files)',
+    })
+    expect(screen.getByRole('button', { name: 'Collapse folder content/plugins/example/includes' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Collapse folder content' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse folder cache' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Collapse folder config' })).toBeVisible()
+    fireEvent.click(parent)
+    expect(screen.getByRole('checkbox', {
+      name: 'Select folder content/plugins/example/includes/cache (1 file)',
+    })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'skipped for now' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/triage', {
+      artifacts: deepPaths.slice(0, 3), state: 'reviewed', note: '', propagate: undefined,
+    }))
   })
 
   it('decides all nested files even when collapsed, without selecting neighboring folders, roots or categories', async () => {

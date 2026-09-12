@@ -183,7 +183,7 @@ class SizeSkipReviewTests(unittest.TestCase):
         conn.commit()
         conn.close()
         conn = db.connect(self.case)
-        self.assertEqual("13", db.one(conn, "SELECT value FROM meta WHERE key='schema_version'")["value"])
+        self.assertEqual(str(db.CASE_SCHEMA_VERSION), db.one(conn, "SELECT value FROM meta WHERE key='schema_version'")["value"])
         self.assertEqual(0, db.one(conn, "SELECT count(*) n FROM skip_reviews")["n"])
         self.assertEqual(2, db.one(conn, "SELECT count(*) n FROM job_skips WHERE job_id=?", (job,))["n"])
         conn.close()

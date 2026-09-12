@@ -1,8 +1,4 @@
-// IpFlag.tsx -- the country flag on an IP, with an honest tooltip.
-//
-// GeoIP is readily over-interpreted, so the tooltip on every flag says what
-// it is: an estimate of the REGISTRATION, not a location -- VPNs, proxies,
-// Tor and botnet nodes are somewhere else.
+// IpFlag.tsx -- local GeoIP attribution with a descriptive country tooltip.
 //
 // Special ranges (private, loopback, documentation) get a dashed
 // abbreviation instead of a flag: "the source IP is private" is often the

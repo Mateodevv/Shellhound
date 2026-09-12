@@ -31,6 +31,31 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT
 );
+CREATE TABLE IF NOT EXISTS opencti_lookups (
+    ioc_id INTEGER PRIMARY KEY, identity TEXT NOT NULL,
+    checked_at TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_previews (
+    id TEXT PRIMARY KEY, created TEXT NOT NULL, fingerprint TEXT NOT NULL,
+    options TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_exports (
+    id TEXT PRIMARY KEY, state TEXT NOT NULL, created TEXT NOT NULL,
+    updated TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_mappings (
+    source_id TEXT NOT NULL, remote_id TEXT NOT NULL DEFAULT '',
+    standard_id TEXT NOT NULL DEFAULT '', fingerprint TEXT NOT NULL,
+    object_json TEXT NOT NULL, exported_at TEXT NOT NULL,
+    destination TEXT NOT NULL, PRIMARY KEY (source_id, destination)
+);
+CREATE TABLE IF NOT EXISTS opencti_enrichments (
+    id TEXT PRIMARY KEY, ioc_id INTEGER NOT NULL, identity TEXT NOT NULL,
+    entity_id TEXT NOT NULL, connector_id TEXT NOT NULL, work_id TEXT NOT NULL,
+    state TEXT NOT NULL, updated TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+    destination TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,                -- webroot | access_logs | sql_dump
@@ -436,6 +461,8 @@ def log_db_path(case_dir):
 # (or restored from an archive) needs them added explicitly -- otherwise the
 # first query against a new column would fail on a real analyst's case.
 _ADDED_COLUMNS = {
+    "iocs": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
+    "ioc_links": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
     "evidence": [
         ("label", "TEXT DEFAULT ''"),
         ("files", "INTEGER DEFAULT 0"),
@@ -496,9 +523,12 @@ _ADDED_COLUMNS = {
 # 10: Pattern Hunt keeps immutable draft-test audits and the analyst's
 #     selected cluster applications separately from generated findings.
 # 11: skipped paths and reasons belong to their job, surviving later scans.
-# 12: targeted file retries, per-file retirement and discovery progress.
-# 13: append-only analyst acceptance of size skips, separate from scan results.
-CASE_SCHEMA_VERSION = 13
+# 12: stable IOC source identities, provenance cleanup and OpenCTI receipts.
+# 13: typed/scoped IOC identities, file content objects and evidence-backed assertions.
+# 14: Pattern Hunt test observations retain their explicit CVE context.
+# 15: IOC-box objects default to malicious; manual assessments remain unchanged.
+# 16: integrate main scan retries, skip reviews and saved hunt batches.
+CASE_SCHEMA_VERSION = 18
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -508,6 +538,10 @@ CASE_SCHEMA_VERSION = 13
 _CURRENT_SCHEMA_TABLES = {
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",
+    "opencti_lookups", "opencti_previews", "opencti_exports",
+    "opencti_mappings", "opencti_enrichments",
+    "ioc_files", "ioc_observations", "ioc_assessments", "ioc_file_members",
+    "ioc_relationship_evidence", "ioc_relationship_events",
     "file_scan_results", "file_completion", "skip_reviews",
 }
 
@@ -615,10 +649,40 @@ def _upgrade(conn):
                 (digest, encoded, row[1], row[3], row[4], row[5], row[6],
                  row[7], row[8], row[9], row[10], row[11], row[12], "{}",
                  row[3], digest))
-    if previous_version < 12:
+    if previous_version < 16:
         from server.analysis import refresh_receipts
         refresh_receipts(conn)
     _relativize_ioc_paths(conn)
+    from server import ioc_model
+    ioc_model.migrate(conn)
+    for table in ("iocs", "ioc_links"):
+        conn.execute(f"UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE source_uid=''")
+        conn.executescript(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_source_uid AFTER INSERT ON {table}
+            WHEN NEW.source_uid = '' BEGIN
+                UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE id=NEW.id;
+            END;
+        """)
+    # Old manual deletes did not remove provenance; rowid reuse could then
+    # attach a different IOC to an unrelated artifact.
+    conn.execute("DELETE FROM ioc_sources WHERE ioc_id NOT IN (SELECT id FROM iocs)")
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS delete_ioc_provenance AFTER DELETE ON iocs
+        BEGIN
+            DELETE FROM ioc_sources WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_links WHERE src = OLD.id OR dst = OLD.id;
+            DELETE FROM opencti_lookups WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_files WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_file_members WHERE ioc_id = OLD.id OR file_id = OLD.id;
+            DELETE FROM ioc_observations WHERE ioc_id = OLD.id;
+            DELETE FROM ioc_assessments WHERE ioc_id = OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS delete_ioc_link_context AFTER DELETE ON ioc_links
+        BEGIN
+            DELETE FROM ioc_relationship_evidence WHERE link_id = OLD.id;
+            DELETE FROM ioc_relationship_events WHERE link_id = OLD.id;
+        END;
+    """)
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -921,7 +985,7 @@ def absolute_from_evidence(roots, value):
     return None
 
 
-def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
+def add_ioc(conn, value, ioc_type, tags=(), note="", origin="", *, context="", path_context="unknown"):
     """Insert an IOC or merge tags into the existing entry. Existing type and
     note win -- the analyst's correction must never be overwritten by a sync.
 
@@ -931,12 +995,14 @@ def add_ioc(conn, value, ioc_type, tags=(), note="", origin=""):
     value = str(value).strip()
     if not value:
         return None
-    existing = one(conn, "SELECT * FROM iocs WHERE value = ?", (value,))
+    from server.ioc_model import identity
+    key = identity(value, ioc_type, context, path_context)
+    existing = one(conn, "SELECT * FROM iocs WHERE identity_key = ?", (key,))
     if existing is None:
         cur = conn.execute(
-            "INSERT INTO iocs (value, type, note, tags, origin, added) "
-            "VALUES (?,?,?,?,?,?)",
-            (value, ioc_type, note, json.dumps(sorted(set(tags))), origin, now()))
+            "INSERT INTO iocs (value, type, note, tags, origin, added,identity_key,context,path_context,source_uid) "
+            "VALUES (?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))",
+            (value, ioc_type, note, json.dumps(sorted(set(tags))), origin, now(), key, context, path_context))
         return cur.lastrowid
     merged = sorted(set(json.loads(existing["tags"] or "[]")) | set(tags))
     conn.execute("UPDATE iocs SET tags = ? WHERE id = ?",
@@ -955,6 +1021,9 @@ def link_iocs(conn, src_id, dst_id, kind, note=""):
     conn.execute(
         "INSERT OR IGNORE INTO ioc_links (src, dst, kind, note, added) "
         "VALUES (?,?,?,?,?)", (src_id, dst_id, kind, note[:200], now()))
+    from server.ioc_model import add_support
+    row = one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind=?", (src_id, dst_id, kind))
+    add_support(conn, row["id"], "Automatic collection", note)
 
 
 def ioc_links(conn):
@@ -963,11 +1032,14 @@ def ioc_links(conn):
     The INNER JOIN doubles as the cleanup: an edge whose indicator was
     deleted disappears from every view without any delete path having had to
     think of it."""
-    return rows(conn, """
-        SELECT l.id, l.kind, l.note, l.added,
+    from server.ioc_model import supported_links
+    return supported_links(conn, rows(conn, """
+        SELECT l.id, l.kind, l.note, l.added, l.source_uid,
+               l.origin, l.active, l.withdrawal_reason,
                l.src AS src_id, s.value AS src_value, s.type AS src_type,
                l.dst AS dst_id, d.value AS dst_value, d.type AS dst_type
           FROM ioc_links l
           JOIN iocs s ON s.id = l.src
           JOIN iocs d ON d.id = l.dst
-         ORDER BY l.id""")
+         WHERE l.active = 1
+         ORDER BY l.id"""))

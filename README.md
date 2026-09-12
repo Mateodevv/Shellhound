@@ -399,7 +399,7 @@ review is complete, not that the evidence was harmless.
 | <kbd>x</kbd> | Check |
 
 The bounded detail workspace keeps the decision footer still while evidence
-scrolls. For files, identity, hashes, the manual VirusTotal action and related
+scrolls. For files, identity, hashes, historical reputation results and related
 clients stay on the left; flagging reasons and a scrollable inert preview use
 the right. **Expand file** turns that preview into the existing paged raw/hex
 viewer without leaving the review, and **Show in file manager** selects the
@@ -539,22 +539,38 @@ remote resources and carries the SHA-256 of the exact response in its download
 header. Cross-case matching reads only the IOC boxes in the current workspace;
 it never searches raw findings or evidence.
 
-### Third-party lookups
+### OpenCTI integration
 
-Optional, off until switched on in *Settings*. One value leaves the machine
-per click:
+Configure an HTTPS OpenCTI URL, a dedicated integration token and the existing
+TAXII push ingester ID in *Settings*. Then use the IOC box's three separate
+actions: **Check in OpenCTI**, **Transfer to OpenCTI**, and **Enrich via OpenCTI**.
+Opening a case only reads the local cache. Checking searches existing knowledge;
+it never starts an external enrichment connector or changes local triage.
 
-| Service | Transmitted value |
-|---|---|
-| VirusTotal | one SHA-256 |
-| AbuseIPDB | one IP address |
+Transfers require a unique case ID and a reviewed preview. The chosen organization
+name (or an existing pseudonym), incident profile, Incident and Report retain
+the case context. The case wizard loads sectors and their subsectors from OpenCTI.
+Missing sectors and subsectors can be added to the case, with a parent sector
+for each subsector. They are created in OpenCTI on transfer; matching existing
+entries are reused.
+Country and state choices are available offline, with Germany and Austria first;
+the city is entered as free text. These locations and sectors are linked to the
+affected organization on export. All IOC rows are considered, including collapsed children.
+Notes, evidence, profile details, optional Indicators and original samples are
+reviewed separately. Local workstation paths are removed. Samples are disabled
+by default and must also be selected individually in the preview.
 
-Nothing else is sent: not the case, not the path, not the other indicators.
+Set internal enrichment connectors to **manual** before transferring data;
+automatic feed imports can keep running. Shellhound blocks transfer when an
+active enrichment connector still runs automatically. Metadata-only observables
+can be enriched explicitly; attached file contents are never forwarded by a
+Shellhound enrichment request. Historical VirusTotal/AbuseIPDB results remain
+readable, but their direct network APIs and key inputs are retired.
 
-![Settings](assets/docs/settings.png)
-
-The result is a foreign opinion, not a measurement. It is kept apart from the
-findings and never moves a severity or a triage decision.
+Results distinguish visible knowledge, own exports, no visible match, stale
+cache and errors. No visible match does not mean benign. Import receipts track
+pending, failed and completed batches; **Resume** checks existing work and
+retries unfinished parts. [Setup and behavior](docs/opencti.md).
 
 ## Configuration
 
@@ -573,8 +589,26 @@ findings and never moves a severity or a triage decision.
 | `SHELLHOUND_GEOIP` | Path to a GeoIP `.mmdb` file |
 
 A case is a directory. `logindex.db` is derived from the logs and is not
-archived. API keys live in `<workspace>/settings.json`, in the workspace and
+archived. The integration token lives in `<workspace>/settings.json`, in the workspace and
 never in a case archive.
+
+### Local application log
+
+Shellhound writes operational diagnostics to `logs/shellhound.log` inside the
+configured workspace. Each line is a JSON event with a UTC timestamp, severity,
+component and context. The log is available directly on disk.
+
+It records server lifecycle, HTTP/WebSocket activity, response status and timing,
+job states and progress, skipped files, OpenCTI transport activity, and browser
+exceptions, including failed file previews. Request IDs correlate browser and
+server errors. Exceptions include stack frames with code filenames, line numbers
+and functions. Credentials are redacted; request bodies, original file contents
+and local evidence paths are omitted. File targets have stable fingerprints.
+Browser reports reach the file while the local server is reachable.
+
+The active file rotates at 10 MiB; five previous files (`shellhound.log.1` through
+`shellhound.log.5`) are retained. Reload the browser after updating Shellhound to
+activate the current browser error reporting.
 
 ## Security
 
@@ -585,16 +619,18 @@ for the evidence directory.
 Single-seat tool, no user accounts, no TLS. For access from another machine an
 SSH tunnel is the intended route, not a bind to `0.0.0.0`.
 
-During analysis, outbound network access happens in three optional, opt-in
-places:
+During analysis, outbound network access is explicit:
 
 | Request | Transmitted value |
 |---|---|
 | GeoIP database download | — |
-| VirusTotal lookup | one SHA-256 |
-| AbuseIPDB lookup | one IP address |
+| OpenCTI lookup | selected observable values |
+| OpenCTI transfer | the reviewed case graph and individually selected samples |
+| OpenCTI enrichment | explicitly selected observable and connector IDs; creation of unknown observables requires consent |
 
-None of them transmits case data beyond the single value of the lookup.
+TLP:AMBER+STRICT is the default intended sharing boundary, not an access-control
+mechanism. Review domains, email addresses and free text as well as the case
+profile. Pseudonyms alone do not anonymize evidence.
 
 Separately, first setup and changed dependency manifests can download Python
 and npm packages from the configured package registries. Choosing Update
@@ -682,6 +718,11 @@ docs/rules.md      Every rule with trigger, statement and limits
 
 Bug reports and pull requests are welcome.
 
+- New original contributions must explicitly confirm the
+  [Shellhound Source Available License 1.0](LICENSE) in their pull request.
+  Preserve existing licenses and attribution for reused material; see the
+  [licensing and transition guide](docs/LICENSING.md).
+
 - Vulnerabilities do not belong in a public issue, see
   [SECURITY.md](SECURITY.md).
 - Contributions **must not contain data from real incidents**. For a
@@ -692,4 +733,12 @@ Bug reports and pull requests are welcome.
 
 ## License
 
-[Apache-2.0](LICENSE). Third-party components: [NOTICE](NOTICE).
+[Shellhound Source Available License 1.0](LICENSE) applies to new material
+expressly offered under those terms. It allows internal business use and paid
+forensic investigations for clients. Selling or renting covered software, or
+offering paid hosted access to it, requires separate written permission.
+
+Previously Apache-licensed material retains its [Apache-2.0 rights](LICENSES/Apache-2.0.txt),
+including commercial redistribution. This change does not retroactively
+restrict earlier code. See [licensing and transition details](docs/LICENSING.md).
+Third-party components: [NOTICE](NOTICE).
