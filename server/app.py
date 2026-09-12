@@ -367,7 +367,15 @@ def create_app(config: Config) -> FastAPI:
         database that is being packed would archive a half-written case."""
         case_dir = case_dir_or_404(slug)
         cancelled = _drain_jobs(case_dir, lang, require_idle=require_idle)
-        zip_path, summary = workspace.archive_case(config.workspace, case_dir)
+        try:
+            # Match transfer's lock order: case identity first, then scheduling.
+            # Recheck after draining; a new job may have arrived in between.
+            with workspace._CASE_LOCK:
+                case_dir = case_dir_or_404(slug)
+                with manager.case_operation(case_dir):
+                    zip_path, summary = workspace.archive_case(config.workspace, case_dir)
+        except CaseBusy as exc:
+            raise HTTPException(409, _t(lang, "err.jobsRunning")) from exc
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"archive": str(zip_path), "file": zip_path.name,
                 "summary": summary, "cancelled_jobs": cancelled}
