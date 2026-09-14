@@ -10,7 +10,7 @@ from server.artifacts import MUTED_CLAUSE, art_sql
 CATEGORY_ORDER = (
     "webshell", "obfuscation", "htaccess", "yara", "db_injected",
     "db_markup", "shell_access", "bruteforce", "probes", "errorlog",
-    "scanner", "other",
+    "scanner", "log_observation", "other",
 )
 
 # Ordered, case-sensitive substring matches, preserving the Findings taxonomy.
@@ -35,6 +35,7 @@ CATEGORY_RULES = (
     ("analyst", "Manual file review", "webshell"),
     ("yara", "", "yara"),
     ("errorlog", "", "errorlog"),
+    ("log_observation", "", "log_observation"),
 )
 
 
@@ -97,7 +98,8 @@ def top_findings(conn, muted=()):
                    SUM(artifact_kind = 'file') AS files,
                    SUM(artifact_kind = 'client') AS clients,
                    SUM(artifact_kind = 'table') AS tables,
-                   SUM(artifact_kind = 'dump') AS dumps
+                   SUM(artifact_kind = 'dump') AS dumps,
+                   SUM(artifact_kind = 'log_observation') AS log_observations
             FROM eligible GROUP BY category
         ), examples AS (
             SELECT *, ROW_NUMBER() OVER (
@@ -117,14 +119,16 @@ def top_findings(conn, muted=()):
     """)
     groups = []
     for row in rows:
+        from server.log_evidence import artifact_label
+        display_name = artifact_label(conn, row["artifact"]) if row["artifact_kind"] == "log_observation" else ""
         groups.append({
             "category": row["category"], "worst": row["worst"],
             "confirmed": row["confirmed"], "awaiting_review": row["awaiting_review"],
             "historical": row["historical"],
             "kinds": {kind: row[column] for kind, column in (
                 ("file", "files"), ("client", "clients"), ("table", "tables"),
-                ("dump", "dumps")) if row[column]},
-            "example": {key: row[key] for key in ("artifact", "artifact_kind", "rule", "source")},
+                ("dump", "dumps"), ("log_observation", "log_observations")) if row[column]},
+            "example": {**{key: row[key] for key in ("artifact", "artifact_kind", "rule", "source")}, "display_name": display_name},
         })
     return {"groups": groups, "total_groups": rows[0]["total_groups"] if rows else 0,
             "informational": summary["informational"], "hidden": summary["hidden"]}

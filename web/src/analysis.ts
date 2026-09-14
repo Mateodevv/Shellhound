@@ -24,6 +24,7 @@ export function jobComplete(job: Job): boolean {
 }
 
 export function jobWarnings(job: Job): number {
+  if (job.kind === 'log_events') return Number(job.stats?.log_warnings || 0)
   if (job.warning_count !== undefined) return job.warning_count
   return jobComplete(job) ? Number(job.stats?.file_skips || 0) : 0
 }
@@ -48,7 +49,7 @@ export function evidenceAttempt(item: EvidenceItem, jobs: Job[] = []): AnalysisA
   // Older cases have no per-source attempt record. Only infer an incomplete
   // attempt from this source's primary engine after its registration.
   if (item.scanned_at) return undefined
-  const primary = { webroot: 'webshell', access_logs: 'index_logs', sql_dump: 'sqldb', reference: '' }[item.kind]
+  const primary = { webroot: 'webshell', access_logs: 'index_logs', logs: 'log_events', sql_dump: 'sqldb', reference: '' }[item.kind]
   const latest = jobs.filter((job) => job.kind === primary && job.created >= item.added
       && job.scan_context?.mode !== 'retry')
     .sort((a, b) => b.id - a.id)[0]

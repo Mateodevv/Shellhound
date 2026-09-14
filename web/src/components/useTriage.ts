@@ -60,7 +60,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     // something else happened to refetch them.
     for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors',
                        'chain', 'first-sign', 'browse', 'database', 'cms', 'file',
-                       'search', 'opencti']) {
+                       'search', 'opencti', 'log-events', 'log-context']) {
       qc.invalidateQueries({ queryKey: [key] })
     }
   }

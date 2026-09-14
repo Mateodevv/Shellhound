@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS opencti_enrichments (
     state TEXT NOT NULL, updated TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
     destination TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS log_sources (
+    id TEXT PRIMARY KEY, path TEXT NOT NULL, identity TEXT NOT NULL UNIQUE,
+    settings TEXT NOT NULL DEFAULT '{}', fingerprint TEXT NOT NULL DEFAULT '',
+    marker TEXT NOT NULL DEFAULT '', format TEXT NOT NULL DEFAULT 'text',
+    state TEXT NOT NULL DEFAULT 'new', warning TEXT NOT NULL DEFAULT '',
+    accepted_fingerprint TEXT NOT NULL DEFAULT '', stats TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS log_observations (
+    event_id TEXT NOT NULL, finding_fingerprint TEXT NOT NULL,
+    source_id TEXT NOT NULL, snapshot TEXT NOT NULL,
+    PRIMARY KEY(event_id, finding_fingerprint)
+);
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,                -- webroot | access_logs | sql_dump
@@ -528,7 +540,7 @@ _ADDED_COLUMNS = {
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
-CASE_SCHEMA_VERSION = 18
+CASE_SCHEMA_VERSION = 19
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -536,6 +548,7 @@ CASE_SCHEMA_VERSION = 18
 # structure. These are the current sentinels whose absence is safe to repair
 # with the idempotent upgrade.
 _CURRENT_SCHEMA_TABLES = {
+    "log_sources", "log_observations",
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",
     "opencti_lookups", "opencti_previews", "opencti_exports",

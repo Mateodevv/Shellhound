@@ -36,6 +36,7 @@ const KIND_ICON: Record<ChainEvent['kind'], typeof DoorOpen> = {
   'datei-geaendert': FilePenLine,
   'metadaten-geaendert': FileCog,
   'hunt-match': Crosshair,
+  'log-observation': FileWarning,
 }
 
 // Keys only: the event kinds come from the server under English names and
@@ -51,6 +52,7 @@ const KIND_KEY: Record<ChainEvent['kind'], string> = {
   'datei-geaendert': 'chain.kind.fileModified',
   'metadaten-geaendert': 'chain.kind.metadataChanged',
   'hunt-match': 'firstSign.huntSource',
+  'log-observation': 'logEvidence.entry',
 }
 
 const SOURCE_KEY: Record<ChainEvent['source'], string> = {

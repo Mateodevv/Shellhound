@@ -5,8 +5,9 @@
 // where that window is not open at all (findings rows, suggestion window).
 //
 // Labels share the interface catalogue under `kind.<kind>`.
-import { Bug, FileCode2, ServerCog, Table2, Users } from 'lucide-react'
+import { Bug, FileCode2, FileText, ServerCog, Table2, Users } from 'lucide-react'
 
 export const KIND_ICON: Record<string, typeof Bug> = {
   file: FileCode2, table: Table2, client: Users, dump: ServerCog,
+  log_observation: FileText,
 }

@@ -14,8 +14,29 @@ vi.mock('./views/Hunt', () => ({ Hunt: () => {
   const [page] = useState(() => new URLSearchParams(location.search).get('section') ?? 'overview')
   return <div>Saved Hunt page: {page}</div>
 } }))
+vi.mock('./views/Logs', () => ({ Logs: ({ gotoView }: { gotoView: (view: 'logs', params: { section: string }) => void }) => {
+  const [section] = useState(() => new URLSearchParams(location.search).get('section') ?? 'access')
+  return <div>Log section: {section}<button onClick={() => gotoView('logs', { section: 'ftp' })}>Open FTP section</button></div>
+} }))
 
 describe('CaseNavigation', () => {
+  it('switches log sections immediately and restores the previous section on Back', async () => {
+    queryClient.clear()
+    history.replaceState(null, '', '/?case=log-case&view=logs&section=error')
+    vi.mocked(api).mockImplementation(async path => {
+      if (path.endsWith('/jobs')) return []
+      if (path.endsWith('/dashboard')) return { triage: {} }
+      if (path.endsWith('/log-case')) return { name: 'Log case', evidence_items: [] }
+      return {}
+    })
+    renderWithProviders(<App />)
+    expect(await screen.findByText('Log section: error')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Open FTP section' }))
+    expect(await screen.findByText('Log section: ftp')).toBeVisible()
+    history.replaceState(null, '', '/?case=log-case&view=logs&section=error')
+    fireEvent.popState(window)
+    expect(await screen.findByText('Log section: error')).toBeVisible()
+  })
   it('restores a Hunt results page on Back after revisiting Hunt in the sidebar', async () => {
     queryClient.clear()
     const resultUrl = '/?case=history-case&view=hunt&section=runs&batch=saved-check'
@@ -41,7 +62,7 @@ describe('CaseNavigation', () => {
 
     expect(screen.getByText('Investigation tools')).toBeInTheDocument()
     for (const label of [
-      'Actors', 'Files', 'Timeline', 'Database', 'CMS inventory', 'Pattern hunt', 'Access logs',
+      'Actors', 'Files', 'Timeline', 'Database', 'CMS inventory', 'Pattern hunt', 'Logs',
     ]) {
       expect(screen.getByRole('button', { name: new RegExp(label, 'i') })).toBeInTheDocument()
     }
