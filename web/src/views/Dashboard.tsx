@@ -25,11 +25,12 @@ const statusTones = {
   ok: { background: 'color-mix(in srgb, var(--ok) 10%, var(--panel))', borderColor: 'color-mix(in srgb, var(--ok) 45%, transparent)', color: 'color-mix(in srgb, var(--ok) 78%, white)' },
 }
 
-function artifactLabel(item: { artifact: string; artifact_kind: string }, evidence: DashboardData['evidence']) {
+function artifactLabel(item: { artifact: string; artifact_kind: string; display_name?: string }, evidence: DashboardData['evidence']) {
   if (item.artifact_kind === 'file') {
     const { root, rel } = relativeToRoot(item.artifact, evidence)
     return root ? rel : shortPath(item.artifact, 64)
   }
+  if (item.display_name) return item.display_name
   return item.artifact_kind === 'dump' ? shortPath(item.artifact, 64) : item.artifact
 }
 
@@ -47,6 +48,7 @@ function hasFailedCheck(evidence: DashboardData['evidence'], jobs: Job[]): boole
     (present.has('webroot') && ['webshell', 'cms', 'yara'].includes(job.kind))
     || (present.has('access_logs') && ['index_logs', 'sigma'].includes(job.kind))
     || (present.has('access_logs') && present.has('webroot') && job.kind === 'errorlog')
+    || (present.has('logs') && ['log_events', 'index_logs', 'sigma'].includes(job.kind))
     || (present.has('sql_dump') && job.kind === 'sqldb'))
   const latest = new Map<string, Job>()
   for (const job of jobs.filter(applicable).sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id)) {
@@ -118,13 +120,13 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   const highlights = data.top_findings
   const groups = highlights?.groups.slice(0, 3) ?? []
   const findingCategories = categories(tr)
-  const hasOtherFindings = Boolean(highlights && (highlights.informational || highlights.hidden))
+  const hasOtherFindings = Boolean(data.manual_log_sources || (highlights && (highlights.informational || highlights.hidden)))
   const highlightsUnavailable = !highlights || (!hasOtherFindings && !groups.length && (confirmed > 0 || outstanding > 0))
   const emptyTone = !analysisComplete ? 'warn' : hasOtherFindings || highlightsUnavailable ? undefined : 'ok'
   const emptyTitle = !analysisComplete ? copy.topPending : highlightsUnavailable ? copy.topUnavailable
-    : hasOtherFindings ? copy.topOther : dismissed ? copy.topDismissed : copy.topNone
+    : data.manual_log_sources ? tr('logEvidence.manualSummary') : hasOtherFindings ? copy.topOther : dismissed ? copy.topDismissed : copy.topNone
   const emptySub = !analysisComplete ? copy.topPendingSub : highlightsUnavailable ? copy.topUnavailableSub
-    : hasOtherFindings ? copy.topOtherSub : dismissed ? copy.topDismissedSub : copy.topNoneSub
+    : data.manual_log_sources ? tr('logEvidence.manualSummaryHelp') : hasOtherFindings ? copy.topOtherSub : dismissed ? copy.topDismissedSub : copy.topNoneSub
   const navigateAction = (action: WorkflowAction) => action.params
     ? gotoView(action.view, action.params) : gotoView(action.view)
   const actionTitle = (action: WorkflowAction) => action.id === 'triage'
@@ -221,7 +223,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
             const ArtifactIcon = KIND_ICON[group.example.artifact_kind]
             const label = copy.topCategories[group.category as keyof typeof copy.topCategories]
               ?? findingCategories[group.category]?.label ?? findingCategories.other.label
-            const affected = ['file', 'client', 'table', 'dump'].filter((kind) => group.kinds[kind] > 0)
+            const affected = ['file', 'client', 'table', 'dump', 'log_observation'].filter((kind) => group.kinds[kind] > 0)
               .map((kind) => `${formatCount(group.kinds[kind])} ${artifactNoun(tr, kind, group.kinds[kind])}`).join(' · ')
             return <button key={group.category} type="button"
               onClick={() => gotoView('findings', { category: group.category, triage: 'new,reviewed,confirmed', severity: allSeverities })}
@@ -252,8 +254,8 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
           <p className="font-semibold">{emptyTitle}</p>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--muted)]">{emptySub}</p>
           {hasOtherFindings && <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
-            {highlights!.informational > 0 && <span>{tr(highlights!.informational === 1 ? 'dashboard.top.informationalOne' : 'dashboard.top.informational', { n: formatCount(highlights!.informational) })}</span>}
-            {highlights!.hidden > 0 && <span>{tr(highlights!.hidden === 1 ? 'dashboard.top.hiddenOne' : 'dashboard.top.hidden', { n: formatCount(highlights!.hidden) })}</span>}
+            {(highlights?.informational ?? 0) > 0 && <span>{tr((highlights?.informational ?? 0) === 1 ? 'dashboard.top.informationalOne' : 'dashboard.top.informational', { n: formatCount((highlights?.informational ?? 0)) })}</span>}
+            {(highlights?.hidden ?? 0) > 0 && <span>{tr((highlights?.hidden ?? 0) === 1 ? 'dashboard.top.hiddenOne' : 'dashboard.top.hidden', { n: formatCount((highlights?.hidden ?? 0)) })}</span>}
           </p>}
         </div>}
         {hunt && <button type="button" aria-label={tr('dashboard.hunt.open')}

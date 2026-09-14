@@ -52,6 +52,7 @@ from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               uri_targets, web_path)
 from server.chain import case_chain
 from server import first_sign
+from server import log_evidence, log_routes
 from server.finding_categories import categorized_art_sql, top_findings
 from server.i18n import lang_of
 from server.i18n import t as _t
@@ -142,7 +143,7 @@ def _find_web_dist():
 
 WEB_DIST = _find_web_dist()
 
-EVIDENCE_KINDS = ("webroot", "access_logs", "sql_dump", "reference")
+EVIDENCE_KINDS = ("webroot", "access_logs", "logs", "sql_dump", "reference")
 
 
 def create_app(config: Config) -> FastAPI:
@@ -219,6 +220,8 @@ def create_app(config: Config) -> FastAPI:
         return case_dir
 
     # --- workspace / cases --------------------------------------------------
+
+    log_routes.install(app, auth, case_dir_or_404, manager)
 
     @app.get("/api/state", dependencies=[auth])
     def state():
@@ -311,10 +314,11 @@ def create_app(config: Config) -> FastAPI:
                     _refresh_meta(conn, e)
         finally:
             conn.close()
-        log_targets = [e["path"] for e in evidence if e["kind"] == "access_logs"]
+        log_targets = log_evidence.access_targets(case_dir)
         info["evidence_items"] = evidence
         info["log_index"] = logindex.status(
             case_dir, log_targets, lang)
+        info["has_access_logs"] = bool(log_targets)
         return info
 
     class PatchCase(BaseModel):
@@ -476,6 +480,7 @@ def create_app(config: Config) -> FastAPI:
         try:
             conn.execute("DELETE FROM evidence WHERE id = ?", (evidence_id,))
             conn.commit()
+            log_evidence.retire_removed(case_dir)
             return {"ok": True}
         finally:
             conn.close()
@@ -967,7 +972,7 @@ def create_app(config: Config) -> FastAPI:
         if mode not in ("new", "all"):
             raise HTTPException(400, "analysis mode must be 'new' or 'all'")
 
-        supported = ("webroot", "access_logs", "sql_dump")
+        supported = ("webroot", "access_logs", "logs", "sql_dump")
         pending_by_kind = {
             kind: [row for row in by_kind.get(kind, [])
                    if not str(row.get("scanned_at") or "").strip()]
@@ -997,15 +1002,16 @@ def create_app(config: Config) -> FastAPI:
         chosen = by_kind if mode == "all" else pending_by_kind
         authoritative = mode == "all"
         tasks = []
+        task_done = {}
         run_id = uuid.uuid4().hex[:12]
 
         # The index is one case-wide derived dataset. A new log source means
         # rebuilding it from ALL registered logs; only the pending rows get a
         # new scanned_at receipt.
-        selected_logs = chosen.get("access_logs", [])
-        logs = by_kind.get("access_logs", []) if selected_logs else []
+        selected_logs = chosen.get("access_logs", []) or chosen.get("logs", [])
+        logs = log_evidence.access_targets(case_dir) if selected_logs else []
         if logs:
-            paths = [e["path"] for e in logs]
+            paths = logs
             log_ready = threading.Event()
             log_result = {"complete": False}
 
@@ -1018,33 +1024,37 @@ def create_app(config: Config) -> FastAPI:
                 finally:
                     log_ready.set()
 
-            tasks.append(("index_logs", run_logs, ("access_logs",)))
+            log_kinds = tuple(k for k in ("access_logs", "logs") if chosen.get(k))
+            tasks.append(("index_logs", run_logs, log_kinds))
 
             # Error logs live beside the access logs but answer a different
             # question, so they keep their own visible job.
-            def run_errors(ctx, paths=paths, case_dir=case_dir):
+            def run_errors(ctx, paths=[e["path"] for e in by_kind.get("access_logs", [])], case_dir=case_dir):
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
             # File correlations need a webroot. Their absence is a coverage
             # limit, not a prerequisite for analyzing an access-log-only case.
             error_kinds = ()
-            if by_kind.get("webroot"):
+            if by_kind.get("webroot") and chosen.get("access_logs"):
                 error_kinds = ("access_logs", "webroot") if chosen.get("webroot") else ("access_logs",)
-            tasks.append(("errorlog", run_errors, error_kinds))
+            if not by_kind.get("logs"):
+                tasks.append(("errorlog", run_errors, error_kinds))
 
             # The analyst's own SIGMA rules over the finished index. Its own
             # job because it is the log-side counterpart to the YARA one:
             # somebody else's rules, running after the thing they read has
             # been built. Nothing here if the sigma/ folder is empty.
             def run_sigma(ctx, case_dir=case_dir):
-                log_ready.wait()
+                while not log_ready.wait(0.1):
+                    if ctx.cancelled():
+                        return {"partial": True, "reason": "Cancelled before the log index completed"}
                 if not log_result["complete"]:
                     return {"rules": 0, "findings": 0, "clients": 0,
                             "broken_rules": 0, "skipped": 1,
                             "reason": "log index build did not complete"}
                 return sigmascan.scan(case_dir, config.workspace, ctx)
 
-            tasks.append(("sigma", run_sigma, ("access_logs",)))
+            tasks.append(("sigma", run_sigma, log_kinds))
 
         webroots = chosen.get("webroot", [])
         if webroots:
@@ -1087,7 +1097,7 @@ def create_app(config: Config) -> FastAPI:
         # cross-source engine, but never rebuild the access index for a new
         # webroot alone.
         all_logs = by_kind.get("access_logs", [])
-        refresh_errors = mode == "new" and not logs and bool(webroots) and bool(all_logs)
+        refresh_errors = mode == "new" and not logs and bool(webroots) and bool(all_logs) and not by_kind.get("logs")
         if refresh_errors:
             error_paths = [e["path"] for e in all_logs]
 
@@ -1095,6 +1105,31 @@ def create_app(config: Config) -> FastAPI:
                 return errorlog.scan(case_dir, paths, ctx, config.workspace)
 
             tasks.append(("errorlog", run_errors, ("webroot",)))
+
+        if by_kind.get("logs") and (selected_logs or webroots):
+            kinds = tuple(k for k in ("logs", "access_logs", "webroot") if chosen.get(k))
+            # Correlations use the completed file checks. Every dependency is
+            # queued before this worker, and cancellation releases the wait.
+            prerequisites = []
+            wrapped = []
+            for engine, fn, evidence_kinds in tasks:
+                done = threading.Event()
+                prerequisites.append(done)
+                task_done[engine] = done
+                def finish(ctx, fn=fn, done=done):
+                    try:
+                        return fn(ctx)
+                    finally:
+                        done.set()
+                wrapped.append((engine, finish, evidence_kinds))
+            tasks = wrapped
+            def run_additional_logs(ctx):
+                for done in prerequisites:
+                    while not done.wait(0.1):
+                        if ctx.cancelled():
+                            return {"partial": True}
+                return log_evidence.build(case_dir, ctx)
+            tasks.append(("log_events", run_additional_logs, kinds))
 
         if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
@@ -1106,10 +1141,17 @@ def create_app(config: Config) -> FastAPI:
             lambda ids, attempt: _record_analysis_attempt(
                 case_dir, ids, run_id, attempt, initialize=not initialized))
         initialized = True
+        def cancel_engine(engine):
+            receipts.cancel(engine)
+            if engine == "index_logs":
+                log_ready.set()
+            if engine in task_done:
+                task_done[engine].set()
+
         started = [{"kind": kind, "job": manager.submit(
             case_dir, kind, receipts.wrap(kind, fn), run_id=run_id,
             scan_context=contexts[kind],
-            on_cancel=lambda engine=kind: receipts.cancel(engine))}
+            on_cancel=lambda engine=kind: cancel_engine(engine))}
             for kind, fn, _kinds in tasks]
         return {"run_id": run_id, "started": started}
 
@@ -1317,24 +1359,28 @@ def create_app(config: Config) -> FastAPI:
             latest_engines = db.rows(conn, """
                 SELECT * FROM jobs WHERE id IN (
                     SELECT max(id) FROM jobs
-                    WHERE kind IN ('webshell','cms','yara','index_logs','errorlog','sigma','sqldb')
+                    WHERE kind IN ('webshell','cms','yara','index_logs','errorlog','sigma','sqldb','log_events')
                     AND COALESCE(json_extract(scan_context, '$.mode'), '') != 'retry'
                     GROUP BY kind
                 )
             """)
             latest_engines = [describe_job(conn, j) for j in latest_engines]
             supported_evidence = [e for e in evidence
-                                  if e["kind"] in ("webroot", "access_logs", "sql_dump")]
+                                  if e["kind"] in ("webroot", "access_logs", "logs", "sql_dump")]
             present = {e["kind"] for e in supported_evidence}
             required_engines = set()
             if "webroot" in present:
                 required_engines.update(("webshell", "cms", "yara"))
             if "access_logs" in present:
                 required_engines.update(("index_logs", "sigma"))
-                if "webroot" in present:
+                if "webroot" in present and "logs" not in present:
                     required_engines.add("errorlog")
             if "sql_dump" in present:
                 required_engines.add("sqldb")
+            if "logs" in present:
+                required_engines.add("log_events")
+                if log_evidence.access_targets(case_dir):
+                    required_engines.update(("index_logs", "sigma"))
             analysis_complete = (
                 bool(supported_evidence)
                 and all(e.get("scanned_at") for e in supported_evidence)
@@ -1387,6 +1433,15 @@ def create_app(config: Config) -> FastAPI:
             (event for event in events if event["kind"] == "alarm"), None))
         observe("last", events[-1] if events else None)
         observations.sort(key=lambda event: event["at"])
+        additional_sources = [s for s in log_evidence.source_status(case_dir) if s["format"] != "access"]
+        log_warnings, log_accepted = log_evidence.warning_counts(case_dir)
+        analysis_warnings += log_warnings
+        analysis_accepted += log_accepted
+        if "logs" in present:
+            analysis_complete = analysis_complete and all(s["fresh"] or s["accepted"] or s["state"] == "failed" for s in additional_sources)
+            current_access = log_evidence.access_targets(case_dir)
+            if current_access:
+                analysis_complete = analysis_complete and bool(logindex.status(case_dir, current_access).get("fresh"))
 
         return {
             "severity": severity, "triage": triage, "iocs": ioc_count,
@@ -1404,6 +1459,7 @@ def create_app(config: Config) -> FastAPI:
             "analysis_complete": analysis_complete,
             "analysis_warnings": analysis_warnings,
             "analysis_accepted": analysis_accepted,
+            "manual_log_sources": sum(s["format"] == "text" or not s["fresh"] for s in additional_sources),
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
             "chronology": {
@@ -1670,7 +1726,7 @@ def create_app(config: Config) -> FastAPI:
             where.append(f"triage NOT IN ({','.join('?' * len(triages))})")
             params += triages
         allowed_sources = {"webshell", "sqldb", "logs", "yara", "errorlog",
-                           "analyst"}
+                           "analyst", "log_observation"}
         sources = csv_values(hide_source, allowed_sources)
         if sources:
             where.append(f"source NOT IN ({','.join('?' * len(sources))})")
@@ -1762,6 +1818,8 @@ def create_app(config: Config) -> FastAPI:
                 # Actual observations travel in the separate findings list.
                 artifact.pop("lead_rule", None)
                 artifact.pop("lead_source", None)
+                if artifact["artifact_kind"] == "log_observation":
+                    artifact["display_name"] = log_evidence.artifact_label(conn, artifact["artifact"])
             rows = []
             if artifacts:
                 names = [a["artifact"] for a in artifacts]
@@ -2424,6 +2482,7 @@ def create_app(config: Config) -> FastAPI:
                 "review_progress": review_progress(
                     conn, ruleswitch.disabled_ids(config.workspace)),
             }
+            out["log_observations"] = log_evidence.saved_for_artifact(conn, artifact)
             # The preview focuses the line of the STRONGEST finding that named
             # one -- that is the line the analyst came here to read.
             focus = next((f["line"] for f in findings if f["line"]), None)
@@ -2556,7 +2615,7 @@ def create_app(config: Config) -> FastAPI:
                 raise HTTPException(404, "The client finding is not available in this case.")
         finally:
             conn.close()
-        targets = [item["path"] for item in _evidence_by_kind(case_dir).get("access_logs", [])]
+        targets = log_evidence.access_targets(case_dir)
         if not targets or not logindex.status(case_dir, targets)["fresh"]:
             return {"available": False, "total": 0, "rows": [], "reason": "index"}
         return finding_requests(case_dir, finding, offset, limit)
@@ -2567,7 +2626,7 @@ def create_app(config: Config) -> FastAPI:
         if offset < 0 or not 1 <= limit <= 100:
             raise HTTPException(400, "Invalid access page.")
         case_dir = case_dir_or_404(slug)
-        targets = [item["path"] for item in _evidence_by_kind(case_dir).get("access_logs", [])]
+        targets = log_evidence.access_targets(case_dir)
         status = logindex.status(case_dir, targets)
         if not targets or not status["fresh"]:
             return {"available": False, "total": 0, "rows": [], "reason": "Analyze the current access logs before inspecting successful requests."}
@@ -3008,7 +3067,7 @@ def create_app(config: Config) -> FastAPI:
         return parsed_hunt_rule(body.rule, body.dsl), entry
 
     def hunt_log_targets(case_dir):
-        return [row["path"] for row in _evidence_by_kind(case_dir).get("access_logs", [])]
+        return log_evidence.access_targets(case_dir)
 
     def current_hunt_fingerprint(case_dir):
         targets = hunt_log_targets(case_dir)

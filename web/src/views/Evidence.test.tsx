@@ -76,7 +76,7 @@ describe('evidence registration', () => {
       { kind: 'webroot', path: 'C:\\Synthetic\\Evidence' },
     ))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Access logs' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add Logs' }))
     expect(screen.getByPlaceholderText('or type a path directly')).toHaveValue(
       'C:\\Synthetic\\Evidence')
   })

@@ -21,7 +21,7 @@ def stats_complete(stats, engine=""):
 def stats_status(stats, engine=""):
     if not stats_complete(stats, engine):
         return "partial"
-    return "complete_with_warnings" if stats.get("file_skips") else "complete"
+    return "complete_with_warnings" if stats.get("file_skips") or stats.get("log_warnings") else "complete"
 
 
 def decode_job(row):
@@ -89,7 +89,7 @@ def describe_job(conn, row):
                                 for s in skips)
     job["warning_count"] = max(0, int(stats.get("file_skips") or 0) - resolved)
     status = stats_status(stats, job["kind"])
-    if status == "complete_with_warnings" and not job["warning_count"]:
+    if status == "complete_with_warnings" and not job["warning_count"] and not stats.get("log_warnings"):
         status = "complete"
     job["analysis_status"] = status if job["state"] == "done" else job["state"]
     attempts = [json.loads(e["stats"] or "{}").get("last_attempt", {}).get("run_id")
@@ -183,6 +183,8 @@ def refresh_receipts(conn):
             stats["last_attempt"] = reconciled
             conn.execute("UPDATE evidence SET stats = ?, scanned_at = ? WHERE id = ?",
                          (json.dumps(stats), scanned_at, row["id"]))
+    from server.log_evidence import reconcile_receipts
+    reconcile_receipts(conn)
 
 
 class AnalysisReceipts:
@@ -249,7 +251,7 @@ class AnalysisReceipts:
                         continue
                     if any(self.finished[name][1].cancelled() for name in required):
                         continue
-                    primary = {"webroot": "webshell", "access_logs": "index_logs",
+                    primary = {"webroot": "webshell", "access_logs": "index_logs", "logs": "log_events",
                                "sql_dump": "sqldb"}[kind]
                     receipt = dict(self.finished[primary][0])
                     receipt["engines"] = {

@@ -96,7 +96,7 @@ export interface Category {
 const CATEGORY_ORDER: [string, number][] = [
   ['webshell', 1], ['obfuscation', 2], ['htaccess', 3], ['yara', 4],
   ['db_injected', 5], ['db_markup', 6], ['shell_access', 7],
-  ['bruteforce', 8], ['probes', 9], ['errorlog', 10], ['scanner', 11],
+  ['bruteforce', 8], ['probes', 9], ['errorlog', 10], ['scanner', 11], ['log_observation', 12],
   ['other', 99],
 ]
 
@@ -137,6 +137,7 @@ const CATEGORY_RULES: [string | null, string, string][] = [
   ['analyst', 'Manual file review', 'webshell'],
   ['yara', '', 'yara'],
   ['errorlog', '', 'errorlog'],
+  ['log_observation', '', 'log_observation'],
 ]
 
 export function categoryId(source: string, rule: string): string {
@@ -153,7 +154,7 @@ export function categorize(t: Translate, source: string, rule: string): Category
 
 /** "12 files" / "66 clients" — what the artifacts of a category are called. */
 export function artifactNoun(t: Translate, kind: string, n: number): string {
-  const known = ['file', 'client', 'table', 'dump'].includes(kind)
+  const known = ['file', 'client', 'table', 'dump', 'log_observation'].includes(kind)
   const base = known ? kind : 'artifact'
   return t(`kind.${base}.${n === 1 ? 'one' : 'many'}`)
 }

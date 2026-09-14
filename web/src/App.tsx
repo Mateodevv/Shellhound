@@ -31,7 +31,7 @@ const Dashboard = lazy(() => import('./views/Dashboard').then((m) => ({ default:
 const Evidence = lazy(() => import('./views/Evidence').then((m) => ({ default: m.Evidence })))
 const Findings = lazy(() => import('./views/Findings').then((m) => ({ default: m.Findings })))
 const Actors = lazy(() => import('./views/Actors').then((m) => ({ default: m.Actors })))
-const AccessLogs = lazy(() => import('./views/AccessLogs').then((m) => ({ default: m.AccessLogs })))
+const Logs = lazy(() => import('./views/Logs').then((m) => ({ default: m.Logs })))
 const Hunt = lazy(() => import('./views/Hunt').then((m) => ({ default: m.Hunt })))
 const Files = lazy(() => import('./views/Files').then((m) => ({ default: m.Files })))
 const IocBox = lazy(() => import('./views/IocBox').then((m) => ({ default: m.IocBox })))
@@ -162,6 +162,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
   const ctiSettings = useOpenCtiSettings()
   const [view, setView] = useState<ViewId>(viewFromUrl)
   const [huntVisit, setHuntVisit] = useState(0)
+  const [logsVisit, setLogsVisit] = useState(0)
 
   // The global search belongs to the shell: it has to be reachable from
   // EVERY view, and its hit opens the artifact window directly -- no matter
@@ -223,6 +224,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     // Re-enter the Hunt overview even when its library/details are already
     // open. The case-scoped session preserves drafts and the selected run.
     if (next === 'hunt') setHuntVisit((visit) => visit + 1)
+    if (next === 'logs') setLogsVisit((visit) => visit + 1)
     setView(next)
   }, [slug])
 
@@ -232,6 +234,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
       // Hunt has its own saved pages. Back can change its URL while the
       // outer view stays 'hunt', so reload that page from the restored URL.
       if (restored === 'hunt') setHuntVisit((visit) => visit + 1)
+      if (restored === 'logs') setLogsVisit((visit) => visit + 1)
       setView(restored)
     }
     window.addEventListener('popstate', onPopState)
@@ -338,7 +341,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'dashboard' && <Dashboard {...props} />}
             {view === 'findings' && <Findings {...props} />}
             {view === 'actors' && <Actors {...props} />}
-            {view === 'logs' && <AccessLogs {...props} />}
+            {view === 'logs' && <Logs key={logsVisit} {...props} />}
             {view === 'hunt' && <Hunt key={huntVisit} {...props} />}
             {view === 'iocbox' && <IocBox {...props} />}
             {view === 'files' && <Files {...props} />}

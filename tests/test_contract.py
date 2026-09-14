@@ -414,6 +414,8 @@ CONTRACT = [
           "FindingsResponse.counts", lambda a: [a["findings"]["counts"]]),
     Entry("ArtifactRow -- GET /findings",
           "ArtifactRow", lambda a: a["findings"]["artifacts"],
+          absent_here={"display_name": "friendly source-and-line label for log observations; "
+                                      "this legacy access fixture has none. Covered by test_log_evidence."},
           extras={"active": "findings from rules this workspace still runs. "
                             "The work list filters on it in SQL; nothing "
                             "renders it."}),

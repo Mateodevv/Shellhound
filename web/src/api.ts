@@ -116,7 +116,7 @@ export interface CaseInfo {
 
 export interface EvidenceItem {
   id: number
-  kind: 'webroot' | 'access_logs' | 'sql_dump' | 'reference'
+  kind: 'webroot' | 'access_logs' | 'logs' | 'sql_dump' | 'reference'
   path: string
   added: string
   scanned_at: string
@@ -140,6 +140,7 @@ export interface LogIndexStatus {
 }
 
 export interface CaseDetail extends CaseInfo {
+  has_access_logs?: boolean
   evidence_items: EvidenceItem[]
   log_index: LogIndexStatus
 }
@@ -188,7 +189,7 @@ export interface CaseActivity {
     hits: number; clients: number }[]
 }
 
-export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog' | 'analyst'
+export type FindingSource = 'webshell' | 'sqldb' | 'logs' | 'yara' | 'errorlog' | 'analyst' | 'log_observation'
 
 export interface Finding {
   id: number
@@ -196,7 +197,7 @@ export interface Finding {
   source: FindingSource
   severity: 0 | 1 | 2 | 3
   rule: string
-  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   artifact: string
   line: number | null
   evidence: string
@@ -219,8 +220,9 @@ export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
  *  over its findings. THAT is the unit decisions are made about -- the
  *  findings below it are the reasoning. */
 export interface ArtifactRow {
+  display_name?: string
   artifact: string
-  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   /** Category of the leading observation, assigned before server pagination. */
   category?: string
   worst: 0 | 1 | 2 | 3
@@ -894,7 +896,7 @@ export interface DashboardObservation extends ChainEvent {
 
 export interface DashboardConfirmedArtifact {
   artifact: string
-  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   worst: number
 }
 
@@ -911,8 +913,9 @@ export interface DashboardFindingGroup {
   /** Previously decided artifacts no longer reported by current scans. */
   historical: number
   example: {
+    display_name?: string
     artifact: string
-    artifact_kind: 'file' | 'table' | 'client' | 'dump'
+    artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
     rule: string
     source: FindingSource
   }
@@ -958,6 +961,7 @@ export interface DashboardChronology {
 }
 
 export interface Dashboard {
+  manual_log_sources?: number
   /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
   severity: Record<string, number>
   /** Artefakte je Entscheidung. */
@@ -1383,16 +1387,16 @@ export interface ChainEvent {
   epoch?: number | null
   first_sign_eligible?: boolean
   first_sign_selectable?: boolean
-  first_sign_basis?: 'request' | 'hunt_match' | 'filesystem' | null
+  first_sign_basis?: 'request' | 'hunt_match' | 'filesystem' | 'log_observation' | null
   at: number
   kind: 'erstkontakt' | 'versuch' | 'erfolg' | 'alarm' | 'letzter-zugriff' | 'konto'
-    | 'datei-erstellt' | 'datei-geaendert' | 'metadaten-geaendert' | 'hunt-match'
+    | 'datei-erstellt' | 'datei-geaendert' | 'metadaten-geaendert' | 'hunt-match' | 'log-observation'
   title: string
   detail: string
   /** Where the time comes from: access log, SQL export, or evidence copy. */
   source: 'log' | 'dump' | 'filesystem'
   artifact: string
-  artifact_kind: '' | 'file' | 'table' | 'client' | 'dump'
+  artifact_kind: '' | 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   ip: string
   severity: number | null
 }
@@ -1473,7 +1477,7 @@ export interface FilePreview {
  *  before -- with it the propagation can be taken back without guessing. */
 export interface TriageLink {
   artifact: string
-  kind: 'file' | 'table' | 'client' | 'dump'
+  kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   why: string
   hits: number | null
   ok_hits: number | null
@@ -1529,8 +1533,9 @@ export interface DatabaseRow extends DatabaseRowSource {
 }
 
 export interface ArtifactContext {
+  log_observations?: import('./logApi').LogEvent[]
   artifact: string
-  kind: 'file' | 'table' | 'client' | 'dump'
+  kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   ioc_ids?: number[]
   tables?: { id: number; name: string; rows: number; columns: number; dump_id: number }[]
   findings: Finding[]

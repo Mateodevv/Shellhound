@@ -4,7 +4,8 @@
 
 - Export one printable, self-contained HTML file without network requests.
 - Carry measured facts, analyst decisions, chronology, IOC relationships and
-  explicit gaps; never copy evidence content into the report.
+  explicit gaps. Selected log observations may include a bounded, escaped and
+  credential-redacted excerpt; full source files are never embedded.
 - Compare indicators across open cases without weakening case isolation or
   creating another database that can become stale.
 
@@ -52,3 +53,13 @@ Evidence-source hashes are not stored by the current schema, so the report
 states that limitation instead of inventing one or re-reading terabytes during
 a click. If acquisition hashes are added later, store them when evidence is
 registered or scanned and include the algorithm and acquisition time.
+
+## Additional log evidence
+
+Confirmed log observations appear with their source name and original line
+location. Their saved excerpts survive source removal and case archiving.
+Current, reliably dated confirmed observations can contribute to chronology;
+undated or stale evidence cannot become an automatic first-sign anchor. A
+scanner detection date describes discovery, not the start of an infection.
+
+See [log evidence](log-evidence.md) for format and timestamp limitations.
