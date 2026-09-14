@@ -98,6 +98,8 @@ export async function downloadSelection(path: string, ids: number[], format: str
 // ---- types -----------------------------------------------------------------
 
 export interface CaseInfo {
+  reference_locked?: boolean
+  profile_revision?: string
   profile?: import('./opencti').CaseProfile
   slug: string
   dir: string
@@ -492,6 +494,7 @@ export interface ActorsResponse {
 }
 
 export interface TraceRow {
+  finding_match?: boolean
   client: string
   epoch: number
   tz: number
@@ -1511,6 +1514,11 @@ export interface RelatedIp {
 export interface DatabaseRowSource {
   dump_id: number
   dump_path: string
+  table_id?: number
+  rows?: number
+  col_list?: string
+  bytes?: number
+  cms?: string
 }
 
 export interface DatabaseRow extends DatabaseRowSource {
@@ -1523,6 +1531,8 @@ export interface DatabaseRow extends DatabaseRowSource {
 export interface ArtifactContext {
   artifact: string
   kind: 'file' | 'table' | 'client' | 'dump'
+  ioc_ids?: number[]
+  tables?: { id: number; name: string; rows: number; columns: number; dump_id: number }[]
   findings: Finding[]
   triage: TriageState
   triage_note: string
@@ -1559,6 +1569,7 @@ export interface ArtifactContext {
   }
   hunt?: HuntHit[]
   actor?: {
+    ok_requests?: number
     actor: ActorProfile
     alerts: { kind: string; severity: number; detail: string; example: string }[]
     top_paths: { uri: string; n: number; ok: number }[]

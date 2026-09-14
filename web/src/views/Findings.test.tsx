@@ -6,6 +6,10 @@ import { renderWithProviders } from '../test/setup'
 import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import { Findings } from './Findings'
 
+vi.mock('../geo', async original => ({ ...(await original<typeof import('../geo')>()), useGeo: () => null }))
+
+vi.mock('../components/TraceWindow', () => ({ TraceWindow: () => <div>Embedded trace</div> }))
+
 vi.mock('../api', async (original) => ({
   ...(await original<typeof import('../api')>()),
   api: vi.fn(),

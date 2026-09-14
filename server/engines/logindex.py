@@ -1353,7 +1353,8 @@ def actor_profile(case_dir, ip):
                WHERE r.ip = ? GROUP BY r.agent ORDER BY n DESC LIMIT 5""",
             (ip_id,))]
         return {"actor": actor, "alerts": alerts, "top_paths": top_paths,
-                "top_agents": top_agents}
+                "top_agents": top_agents, "ok_requests": conn.execute(
+                    "SELECT count(*) FROM requests WHERE ip=? AND status BETWEEN 200 AND 299", (ip_id,)).fetchone()[0]}
     finally:
         conn.close()
 
@@ -1497,10 +1498,26 @@ _STATUS_RANGES = {
 }
 
 
+def request_matches_alert(kind, uri, method, status, agent=""):
+    """Whether this request contributes to an alert, including response gates."""
+    uri = uri or ""
+    ok = 200 <= (status or 0) < 300
+    if kind in ("upload_php", "cms_dir_php", "sqli", "traversal"):
+        return ok and kind in _access_uri_signals(uri)
+    login = method == "POST" and bool(LOGIN_POST_ENDPOINTS.search(uri))
+    if kind == "login_flood":
+        return login
+    if kind == "login_success":
+        return login or (ok and bool(AUTHENTICATED_AREA_RE.search(uri) or WP_AUTHENTICATED_AREA_RE.search(uri)))
+    if kind == "scanner_ua":
+        return bool(SCANNER_UA_RE.search(agent or ""))
+    return False
+
+
 def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
           offset=0, search="", status="", method="", sort="time",
           mark_exact=(), mark_contains=(), evidence_only=False,
-          expected_fingerprint="", after_request_id=None):
+          expected_fingerprint="", after_request_id=None, finding_rules=None):
     """Every request of these clients -- THE instant trace. Twenty clients
     cost one indexed query, not twenty log passes.
 
@@ -1549,8 +1566,16 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
             like = "%" + (search.strip().replace("\\", "\\\\")
                           .replace("%", "\\%").replace("_", "\\_")) + "%"
             params += [like, like]
+        if finding_rules is not None:
+            rules_by_id = {row["id"]: finding_rules.get(row["ip"], ()) for row in conn.execute("SELECT id,ip FROM ips WHERE ip IN (" + marks + ")", wanted)}
+            conn.create_function("finding_match", 5, lambda ip, uri, method, status, agent: int(any(
+                request_matches_alert(kind, uri, method, status, agent) for kind in rules_by_id.get(ip, ()))))
         if evidence_only:
             evidence_conditions = []
+            if finding_rules is not None:
+                evidence_conditions.append("finding_match(r.ip,u.text,r.method,r.status,a.text)=1")
+                # Finding predicates are authoritative; example URLs cannot widen them.
+                mark_exact, mark_contains = (), ()
             for value in dict.fromkeys(
                     str(v).strip().lower() for v in mark_exact if str(v).strip()):
                 evidence_conditions.append("lower(u.text) = ?")
@@ -1601,6 +1626,8 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
         out = []
         for row in rows:
             item = dict(row)
+            if finding_rules is not None:
+                item["finding_match"] = any(request_matches_alert(kind, item["uri"], item["method"], item["status"], item["agent"]) for kind in finding_rules.get(item["client"], ()))
             item["source"] = os.path.basename(item.get("source") or "")
             out.append(item)
         return {"total": total, "rows": out, "methods": methods}

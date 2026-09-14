@@ -86,7 +86,7 @@ class EvidenceNavigationTests(unittest.TestCase):
         snapshot = self.finding_snapshot(finding_id)
 
         context = self.context(self.slug, "items", "en")
-        self.assertEqual(context["table_sources"], [
+        self.assertEqual([{key: item[key] for key in ("dump_id", "dump_path")} for item in context["table_sources"]], [
             {"dump_id": first_id, "dump_path": str(first_path)},
             {"dump_id": second_id, "dump_path": str(second_path)},
         ])

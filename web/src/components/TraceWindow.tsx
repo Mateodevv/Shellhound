@@ -52,6 +52,7 @@ const SORTS = [
  *  about a FILE: there one knows the path, but not every query variant it
  *  was requested with. */
 export interface TraceMarks {
+  findingIds?: number[]
   exact?: string[]
   contains?: string[]
   reason?: string
@@ -93,13 +94,14 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
   const [status, setStatus] = useState('')
   const [method, setMethod] = useState('')
   const [sort, setSort] = useState('time')
-  const hasMarks = Boolean(marks?.exact?.some(Boolean) || marks?.contains?.some(Boolean))
+  const hasFindingMarks = marks?.findingIds != null
+  const hasMarks = hasFindingMarks || Boolean(marks?.exact?.some(Boolean) || marks?.contains?.some(Boolean))
   const anchored = Boolean(anchor)
   const [evidenceOnly, setEvidenceOnly] = useState(hasMarks && !anchor)
   const canFollowAnchor = Boolean(anchor?.epoch && anchor.epoch > 0)
   const [afterAnchor, setAfterAnchor] = useState(canFollowAnchor)
   const pageSize = 500
-  const traceIdentity = JSON.stringify([slug, ips, marks?.exact, marks?.contains,
+  const traceIdentity = JSON.stringify([slug, ips, marks?.exact, marks?.contains, marks?.findingIds,
     anchor?.requestId, anchor?.indexFingerprint, anchor?.epoch])
 
   // A new trace starts on page 1 and without the filters of the previous.
@@ -114,7 +116,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
 
   const { data: response, isFetching, error, refetch } = useQuery({
     queryKey: ['trace', slug, ips, page, search, status, method, sort,
-      evidenceOnly, marks?.exact, marks?.contains, anchor?.requestId,
+      evidenceOnly, marks?.exact, marks?.contains, marks?.findingIds, anchor?.requestId,
       anchor?.indexFingerprint, afterAnchor],
     queryFn: () => post<{ total: number; rows: TraceRow[]; methods: string[] }>(
       `/api/cases/${slug}/trace`,
@@ -122,6 +124,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
         ips, limit: pageSize, offset: page * pageSize, search, status, method, sort,
         mark_exact: marks?.exact ?? [], mark_contains: marks?.contains ?? [],
         evidence_only: anchor ? false : evidenceOnly,
+        ...(hasFindingMarks ? { finding_ids: marks!.findingIds } : {}),
         ...(anchor ? {
           index_fingerprint: anchor.indexFingerprint,
           after_request_id: afterAnchor ? anchor.requestId : null,
@@ -162,9 +165,8 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
   if (!ips) return null
   const filtering = Boolean(search || status || method)
   const points = anchor ? [] : timeline?.timeline ?? []
-  const markedRows = istMarkiert
-    ? (data?.rows.filter((r) => istMarkiert(r.uri)).length ?? 0)
-    : 0
+  const rowMarked = (row: TraceRow) => hasFindingMarks ? row.finding_match === true : !!istMarkiert?.(row.uri)
+  const markedRows = data?.rows.filter(rowMarked).length ?? 0
 
   return (
     <TraceFrame embedded={embedded} onClose={onClose} layer={layer}
@@ -211,7 +213,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
         </div>
       )}
 
-      {istMarkiert && (
+      {hasMarks && (
         <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--sev-high)]/40 bg-[var(--danger-soft)] px-3 py-1.5 text-[12px]">
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--sev-high)' }} />
           <span className="text-[var(--danger-text)]">
@@ -338,9 +340,9 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
           </thead>
           <tbody className="mono">
             {data?.rows.map((r, i) => {
-              const hit = istMarkiert ? istMarkiert(r.uri) : false
+              const hit = rowMarked(r)
               return (
-              <tr key={i} className={clsx(
+              <tr key={i} data-finding-match={hasFindingMarks ? hit : undefined} className={clsx(
                 'border-b border-[var(--line-soft)] last:border-0 hover:bg-[var(--panel-2)]',
                 hit && 'bg-[var(--danger-soft)]')}
                 style={hit ? { boxShadow: 'inset 3px 0 0 var(--sev-high)' } : undefined}>

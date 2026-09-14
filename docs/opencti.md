@@ -254,3 +254,27 @@ query preview or saved check, including results beyond the UI page limit.
 CVE collection validates the same log index generation as the saved check.
 IOC evidence links open the exact historical query without replacing an editor
 draft. The integration schema also retains main's scan retries and skip reviews.
+
+## Editing a case profile after export
+
+Use **Case profile** on the dashboard or in the first Transfer & Close step.
+The local display name, incident summary, organization, sectors/subsectors,
+location, dates, marking, software and vulnerability context remain editable.
+The Case ID becomes read-only after the first export, preserving its identity.
+Saving is local and does not contact OpenCTI. A form opened before a newer
+profile save is rejected with HTTP 409 and retains its draft in the browser.
+
+The final transfer review shows **Case profile changes**, with old and current
+values for changed fields. The baseline is the last completed transfer to the
+same destination, not a failed/partial attempt or a transfer to another server.
+Token rotation does not discard that baseline. Reordering a selection alone is
+not a change. Profile changes are local receipt comparisons, not a live diff
+against edits made directly in OpenCTI; shared objects continue to follow the
+existing reuse rules.
+
+Receipts created before profile snapshots existed explicitly show that no
+comparison is available. The next completed transfer establishes a baseline;
+old exports are not silently assigned today's profile. Snapshots travel with
+the case archive. Excluded context is identified as excluded, not as a command
+to erase previously shared information. The local display name is not part of
+the export comparison because OpenCTI names the case with its Case ID.

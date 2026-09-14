@@ -57,7 +57,14 @@ export interface OpenCtiOptions {
   exclude_note_ioc_ids: number[]; exclude_evidence_ioc_ids: number[]; exclude_profile_fields: string[]
   indicator_ids: number[]; sample_ids: string[]; include_notes: boolean; include_evidence: boolean
 }
+export interface CaseProfileChanges {
+  status: 'first_export' | 'unavailable' | 'unchanged' | 'changed'
+  export_id: string | null
+  exported_at: string | null
+  entries: { field: string; before: string[]; after: string[]; included: boolean }[]
+}
 export interface OpenCtiPreview {
+  profile_changes?: CaseProfileChanges
   preview_id: string; case_reference: string; fingerprint: string
   objects: ({ id: string; type: string } & Record<string, unknown>)[]
   iocs: { id: number; value: string; type: string; selected: boolean; tags?: string[]; object_ids: string[]; indicator_supported: boolean; indicator_suggested: boolean; indicator_default?: boolean; warnings: string[] }[]
@@ -89,8 +96,8 @@ export function useOpenCti(slug: string) {
   // Disabled queries retain cached data; keep it out of the optional integration UI.
   return { ...query, configured, data: configured ? query.data : undefined, error: configured ? query.error : null }
 }
-export function useOpenCtiSettings() {
-  return useQuery({ queryKey: ['opencti-settings'], queryFn: () => api<OpenCtiSettings>('/api/opencti/settings'), staleTime: 30_000 })
+export function useOpenCtiSettings(enabled = true) {
+  return useQuery({ enabled, queryKey: ['opencti-settings'], queryFn: () => api<OpenCtiSettings>('/api/opencti/settings'), staleTime: 30_000 })
 }
 /** Never turn provider supplied URLs into script links. */
 export function safeCtiUrl(value: string | undefined): string | undefined {

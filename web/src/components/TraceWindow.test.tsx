@@ -119,3 +119,20 @@ describe('Pattern Hunt follow-up activity', () => {
     expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/timeline'))).toBe(true)
   })
 })
+
+
+it('marks every server-verified finding match rather than every request to one example URI', async () => {
+  const rows = [
+    {...LATER,uri:'/tmp/first.php',finding_match:true},
+    {...LATER,uri:'/tmp/second.php',finding_match:true},
+    {...LATER,uri:'/tmp/first.php',status:404,finding_match:false},
+  ]
+  vi.mocked(post).mockImplementation(async path => path.endsWith('/timeline') ? {timeline:[]} : {total:3,rows,methods:['GET']})
+  renderWithProviders(<TraceWindow slug="sample" ips={IPS} marks={{findingIds:[4],exact:['/tmp/first.php']}} onClose={() => {}} />)
+  expect(await screen.findByText('/tmp/second.php')).toBeVisible()
+  expect(document.querySelectorAll('tr[data-finding-match="true"]')).toHaveLength(2)
+  expect(document.querySelectorAll('tr[data-finding-match="false"]')).toHaveLength(1)
+  expect(traceBodies().at(-1)).toMatchObject({finding_ids:[4],evidence_only:true})
+  fireEvent.click(screen.getByRole('button',{name:'All requests'}))
+  await waitFor(() => expect(traceBodies().at(-1)).toMatchObject({finding_ids:[4],evidence_only:false}))
+})
