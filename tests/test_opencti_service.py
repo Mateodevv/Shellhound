@@ -654,5 +654,52 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.connectors.assert_not_called()
 
 
+    def test_profile_comparison_uses_completed_export_and_updates_after_transfer(self):
+        self.assertEqual("first_export", self.preview()["profile_changes"]["status"])
+        workspace.update_case(self.case, profile={"summary": "Original summary", "sectors": ["Technology"]})
+        original = self.export()
+        workspace.update_case(self.case, profile={"summary": "Corrected summary", "city": "Berlin"})
+        delta = self.preview()["profile_changes"]
+        self.assertEqual("changed", delta["status"])
+        self.assertEqual(original["export_id"], delta["export_id"])
+        fields = {entry["field"]: entry for entry in delta["entries"]}
+        self.assertEqual(["Original summary"], fields["summary"]["before"])
+        self.assertEqual(["Corrected summary"], fields["summary"]["after"])
+        self.assertEqual(["Berlin"], fields["city"]["after"])
+        self.assertNotIn("sectors", fields)
+        self.export()
+        self.assertEqual("unchanged", self.preview()["profile_changes"]["status"])
+
+    def test_profile_comparison_ignores_failed_transfer_and_other_destination(self):
+        first = self.export()
+        workspace.update_case(self.case, profile={"summary": "Local correction"})
+        self.client.taxii_status.side_effect = ValueError("Synthetic connection error")
+        with self.assertRaises(ValueError):
+            self.export()
+        delta = self.preview()["profile_changes"]
+        self.assertEqual(first["export_id"], delta["export_id"])
+        self.config["token"] = "rotated-token"
+        self.assertEqual(first["export_id"], self.preview()["profile_changes"]["export_id"])
+        self.config["url"] = "https://another.example.test"
+        self.assertEqual("first_export", self.preview()["profile_changes"]["status"])
+
+    def test_profile_comparison_exclusions_and_legacy_are_explicit(self):
+        workspace.update_case(self.case, profile={"city": "Berlin"})
+        first = self.export()
+        delta = self.preview(exclude_profile_fields=["city"])["profile_changes"]
+        self.assertEqual([{"field": "city", "before": ["Berlin"], "after": [], "included": False}], delta["entries"])
+        receipt = self.receipt(first["export_id"])
+        receipt["payload"].pop("profile_snapshot")
+        self.conn.execute("UPDATE opencti_exports SET payload=? WHERE id=?", (json.dumps(receipt["payload"]), first["export_id"]))
+        self.conn.commit()
+        self.assertEqual("unavailable", self.preview()["profile_changes"]["status"])
+
+    def test_profile_list_order_is_not_a_change_and_read_does_not_use_network(self):
+        workspace.update_case(self.case, profile={"sectors": ["Technology", "Retail"]})
+        self.export()
+        workspace.update_case(self.case, profile={"sectors": ["Retail", "Technology"]})
+        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+            self.assertEqual("unchanged", service.profile_changes(self.root, self.case)["status"])
+
 if __name__ == "__main__":
     unittest.main()

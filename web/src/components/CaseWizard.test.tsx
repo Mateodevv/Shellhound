@@ -37,12 +37,19 @@ function fillCase() {
   fireEvent.change(screen.getByLabelText('Incident summary *'), { target: { value: 'Investigation of suspicious requests' } })
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
 }
-async function fillAffected() {
+async function showSectors() {
+  fireEvent.focus(screen.getByRole('combobox', { name: 'Sectors & subsectors *' }))
+  await waitFor(() => expect(screen.queryByText('Loading sectors from OpenCTI…')).not.toBeInTheDocument())
+  fireEvent.click(screen.getByRole('combobox', { name: 'Sectors & subsectors *' }))
   await screen.findByRole('option', { name: 'Technology' })
+}
+async function fillAffected() {
+  await showSectors()
   fireEvent.change(screen.getByLabelText('Organisation name *'), { target: { value: 'Synthetic Research GmbH' } })
-  fireEvent.change(screen.getByLabelText('Sectors *'), { target: { value: 'Technology' } })
-  fireEvent.change(screen.getByLabelText('Sectors *'), { target: { value: 'Manufacturing' } })
-  fireEvent.change(screen.getByLabelText('Subsectors'), { target: { value: JSON.stringify({ name: 'Software', sector: 'Technology' }) } })
+  fireEvent.click(screen.getByRole('option', { name: 'Technology' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Manufacturing' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Technology → Software' }))
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Sectors & subsectors *' }), { key: 'Escape' })
   fireEvent.change(screen.getByLabelText('Country *'), { target: { value: 'DE' } })
   fireEvent.change(screen.getByLabelText('State'), { target: { value: 'DE-BE' } })
   fireEvent.change(screen.getByLabelText('City'), { target: { value: 'Berlin' } })
@@ -133,8 +140,8 @@ it('keeps local creation short when OpenCTI is not configured and retains inputs
 
 it('keeps custom sectors local until export and saves a new subsector with its parent', async () => {
   await open(); fillCase()
-  await screen.findByRole('option', { name: 'Technology' })
-  expect(screen.getByRole('button', { name: 'New subsector' })).toBeDisabled()
+  await showSectors()
+  expect(screen.getByRole('button', { name: 'New subsector' })).toBeEnabled()
   fireEvent.change(screen.getByLabelText('Organisation name *'), { target: { value: 'Synthetic organization' } })
   fireEvent.change(screen.getByLabelText('Country *'), { target: { value: 'DE' } })
   fireEvent.click(screen.getByRole('button', { name: 'New sector' }))
@@ -143,11 +150,12 @@ it('keeps custom sectors local until export and saves a new subsector with its p
   fireEvent.keyDown(screen.getByLabelText('Sector name'), { key: 'Enter' })
   expect(screen.getByRole('heading', { name: 'Affected organization' })).toBeVisible()
   expect(screen.getByText('Custom Industry', { selector: 'span' })).toBeVisible()
+  await showSectors()
   fireEvent.click(screen.getByRole('button', { name: 'New subsector' }))
   expect(screen.getByLabelText('Parent sector')).toHaveValue('Custom Industry')
   fireEvent.change(screen.getByLabelText('Subsector name'), { target: { value: 'Custom specialization' } })
   fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
-  expect(screen.getByText('Custom specialization', { selector: 'span' })).toBeVisible()
+  expect(screen.getByText('Custom Industry → Custom specialization', { selector: 'span' })).toBeVisible()
   expect(post).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
@@ -160,10 +168,12 @@ it('keeps custom sectors local until export and saves a new subsector with its p
 
 it('reuses matching names and prevents conflicting subsector identities', async () => {
   await open(); fillCase(); await fillAffected()
+  await showSectors()
   fireEvent.click(screen.getByRole('button', { name: 'New sector' }))
   fireEvent.change(screen.getByLabelText('Sector name'), { target: { value: 'technology' } })
   fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
   expect(screen.getAllByRole('button', { name: 'Remove tag Technology' })).toHaveLength(1)
+  await showSectors()
   fireEvent.click(screen.getByRole('button', { name: 'New subsector' }))
   expect(screen.getByLabelText('Parent sector')).toHaveValue('')
   fireEvent.change(screen.getByLabelText('Subsector name'), { target: { value: 'Technology' } })
@@ -173,6 +183,18 @@ it('reuses matching names and prevents conflicting subsector identities', async 
   expect(screen.getByRole('alert')).toHaveTextContent('already belongs')
   fireEvent.click(within(screen.getByRole('group', { name: 'New subsector' })).getByRole('button', { name: 'Cancel' }))
   fireEvent.click(screen.getByRole('button', { name: 'Remove tag Technology' }))
-  expect(screen.queryByRole('button', { name: 'Remove tag Software' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Remove tag Technology → Software' })).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('prefills a custom subsector from search and selects an existing parent without writing to OpenCTI', async () => {
+  await open(); fillCase(); await showSectors()
+  fireEvent.change(screen.getByRole('combobox', { name: 'Sectors & subsectors *' }), { target: { value: 'Custom specialization' } })
+  fireEvent.click(screen.getByRole('button', { name: 'New subsector' }))
+  expect(screen.getByLabelText('Subsector name')).toHaveValue('Custom specialization')
+  fireEvent.change(screen.getByLabelText('Parent sector'), { target: { value: 'Technology' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
+  expect(screen.getByRole('button', { name: 'Remove tag Technology' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove tag Technology → Custom specialization' })).toBeVisible()
   expect(post).not.toHaveBeenCalled()
 })

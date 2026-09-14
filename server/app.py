@@ -322,6 +322,7 @@ def create_app(config: Config) -> FastAPI:
         reference: str | None = None
         notes: str | None = None
         profile: dict | None = None
+        expected_profile_revision: str | None = None
 
     @app.patch("/api/cases/{slug}", dependencies=[auth])
     def patch_case(slug: str, body: PatchCase):
@@ -329,7 +330,10 @@ def create_app(config: Config) -> FastAPI:
         try:
             return workspace.update_case(
                 case_dir, name=body.name, reference=body.reference,
-                notes=body.notes, profile=body.profile)
+                notes=body.notes, profile=body.profile,
+                expected_profile_revision=body.expected_profile_revision)
+        except workspace.CaseProfileConflict as exc:
+            raise HTTPException(409, str(exc)) from None
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
 
@@ -367,7 +371,15 @@ def create_app(config: Config) -> FastAPI:
         database that is being packed would archive a half-written case."""
         case_dir = case_dir_or_404(slug)
         cancelled = _drain_jobs(case_dir, lang, require_idle=require_idle)
-        zip_path, summary = workspace.archive_case(config.workspace, case_dir)
+        try:
+            # Match transfer's lock order: case identity first, then scheduling.
+            # Recheck after draining; a new job may have arrived in between.
+            with workspace._CASE_LOCK:
+                case_dir = case_dir_or_404(slug)
+                with manager.case_operation(case_dir):
+                    zip_path, summary = workspace.archive_case(config.workspace, case_dir)
+        except CaseBusy as exc:
+            raise HTTPException(409, _t(lang, "err.jobsRunning")) from exc
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"archive": str(zip_path), "file": zip_path.name,
                 "summary": summary, "cancelled_jobs": cancelled}
@@ -632,6 +644,10 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/opencti", dependencies=[auth])
     def opencti_state(slug: str):
         return _cti_call(opencti_service.state, config.workspace, case_dir_or_404(slug))
+
+    @app.get("/api/cases/{slug}/opencti/profile-changes", dependencies=[auth])
+    def opencti_profile_changes(slug: str):
+        return _cti_call(opencti_service.profile_changes, config.workspace, case_dir_or_404(slug))
 
     @app.post("/api/cases/{slug}/opencti/activity/clear", dependencies=[auth])
     def opencti_clear_activity(slug: str):
@@ -2469,7 +2485,7 @@ def create_app(config: Config) -> FastAPI:
                 out["actor"] = logindex.actor_profile(case_dir, artifact)
             elif kind == "table":
                 out["table_sources"] = db.rows(conn,
-                    "SELECT DISTINCT d.id AS dump_id, d.path AS dump_path "
+                    "SELECT DISTINCT d.id AS dump_id, d.path AS dump_path, t.id AS table_id, t.rows, t.columns, t.col_list, t.bytes, d.cms "
                     "FROM db_tables t JOIN db_dumps d ON d.id = t.dump_id "
                     "WHERE t.name = ? ORDER BY d.path", (artifact,))
                 out["table"] = db.one(conn,
@@ -2481,6 +2497,17 @@ def create_app(config: Config) -> FastAPI:
                                      (artifact,))
                 if out["dump"]:
                     out["dump"]["meta"] = json.loads(out["dump"]["meta"] or "{}")
+            out["ioc_ids"] = [r["id"] for r in db.rows(conn,
+                "SELECT DISTINCT i.id FROM iocs i LEFT JOIN ioc_sources s ON s.ioc_id=i.id "
+                "WHERE (s.artifact=? AND s.active=1 AND i.type IN ('file','ip')) OR (i.type='ip' AND i.value=?)",
+                (artifact, artifact))]
+            if kind == "file":
+                # A changed source file must never enrich the old collected hash.
+                digest = out["file"].get("sha256")
+                out["ioc_ids"] = [r["id"] for r in db.rows(conn,
+                    "SELECT id FROM iocs WHERE type='file' AND lower(value)=lower(?)", (digest or "",))]
+            if kind == "dump" and out.get("dump"):
+                out["tables"] = db.rows(conn, "SELECT * FROM db_tables WHERE dump_id=? ORDER BY name", (out["dump"]["id"],))
             out["related_ips"] = _related_ips(conn, kind, artifact,
                                               findings, hunt, lang)
             return out
@@ -2514,6 +2541,71 @@ def create_app(config: Config) -> FastAPI:
         except RowReadError as error:
             raise HTTPException(400, str(error)) from error
         return dict(result, dump_id=dump_id, dump_path=source["path"])
+
+    @app.get("/api/cases/{slug}/artifact/finding-requests", dependencies=[auth])
+    def artifact_finding_requests(slug: str, finding_id: int, offset: int = 0, limit: int = 50):
+        from server.artifact_review import finding_requests
+        if offset < 0 or not 1 <= limit <= 100:
+            raise HTTPException(400, "Invalid request page.")
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            finding = db.one(conn, f"SELECT f.*, CASE WHEN {db.LIVE_PREDICATE} THEN 0 ELSE 1 END AS retired "
+                             f"FROM findings f {db.RETIRE_JOIN} WHERE f.id=? AND f.artifact_kind='client'", (finding_id,))
+            if not finding:
+                raise HTTPException(404, "The client finding is not available in this case.")
+        finally:
+            conn.close()
+        targets = [item["path"] for item in _evidence_by_kind(case_dir).get("access_logs", [])]
+        if not targets or not logindex.status(case_dir, targets)["fresh"]:
+            return {"available": False, "total": 0, "rows": [], "reason": "index"}
+        return finding_requests(case_dir, finding, offset, limit)
+
+    @app.get("/api/cases/{slug}/artifact/accesses", dependencies=[auth])
+    def artifact_accesses(slug: str, ip: str, offset: int = 0, limit: int = 50):
+        from server.artifact_review import successful_accesses
+        if offset < 0 or not 1 <= limit <= 100:
+            raise HTTPException(400, "Invalid access page.")
+        case_dir = case_dir_or_404(slug)
+        targets = [item["path"] for item in _evidence_by_kind(case_dir).get("access_logs", [])]
+        status = logindex.status(case_dir, targets)
+        if not targets or not status["fresh"]:
+            return {"available": False, "total": 0, "rows": [], "reason": "Analyze the current access logs before inspecting successful requests."}
+        return successful_accesses(case_dir, ip, offset, limit)
+
+    @app.get("/api/cases/{slug}/database/table-row", dependencies=[auth])
+    def review_table_row(slug: str, table_id: int, row: int = 1, lang: str = lang_dep):
+        from server.evidence_rows import read_database_row, RowReadError
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            table = db.one(conn, "SELECT t.*,d.path AS dump_path FROM db_tables t JOIN db_dumps d ON d.id=t.dump_id WHERE t.id=?", (table_id,))
+            if not table:
+                raise HTTPException(404, "The table is not available in this case.")
+            if row < 1 or row > table["rows"]:
+                raise HTTPException(400, "The row is outside this table export.")
+        finally:
+            conn.close()
+        target = _within_evidence(case_dir, table["dump_path"], lang)
+        try:
+            return dict(read_database_row(target, table["name"], row), dump_id=table["dump_id"], dump_path=table["dump_path"], total_rows=table["rows"])
+        except RowReadError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/cases/{slug}/database/sql-preview", dependencies=[auth])
+    def review_sql_preview(slug: str, path: str, line: int | None = None, expanded: bool = False, lang: str = lang_dep):
+        from server.artifact_review import sql_preview
+        case_dir = case_dir_or_404(slug)
+        conn = db.connect(case_dir)
+        try:
+            source = db.one(conn, "SELECT id FROM db_dumps WHERE path=?", (path,))
+            if not source:
+                raise HTTPException(404, "This SQL export is not registered in the case.")
+        finally:
+            conn.close()
+        if line is not None and line < 1:
+            raise HTTPException(400, "Invalid SQL line.")
+        return sql_preview(_within_evidence(case_dir, path, lang), line, expanded)
 
     def _related_ips(conn, kind, artifact, findings, hunt, lang="en"):
         """Every client address this artifact points at, with WHY it is here.
@@ -3836,6 +3928,7 @@ def create_app(config: Config) -> FastAPI:
         evidence_only: bool = False
         index_fingerprint: str = ""
         after_request_id: int | None = None
+        finding_ids: list[int] | None = Field(default=None, max_length=1000)
 
     @app.post("/api/cases/{slug}/trace", dependencies=[auth])
     def trace(slug: str, body: TraceBody):
@@ -3844,13 +3937,36 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(400, "no client addresses given")
         if body.index_fingerprint or body.after_request_id is not None:
             require_current_hunt_index(case_dir, body.index_fingerprint)
+        finding_rules = None
+        fingerprint = body.index_fingerprint
+        if body.finding_ids is not None:
+            from server.artifact_review import finding_rule_kind
+            fingerprint = current_hunt_fingerprint(case_dir)
+            if not fingerprint:
+                raise HTTPException(409, "The access logs changed. Analyze them again before reviewing finding matches.")
+            finding_rules = {}
+            conn = db.connect(case_dir)
+            try:
+                for identifier in set(body.finding_ids):
+                    finding = db.one(conn, f"SELECT f.*, CASE WHEN {db.LIVE_PREDICATE} THEN 0 ELSE 1 END AS retired "
+                                     f"FROM findings f {db.RETIRE_JOIN} WHERE f.id=?", (identifier,))
+                    if not finding or finding["artifact_kind"] != "client" or finding["artifact"] not in body.ips:
+                        raise HTTPException(400, "The finding is outside this client selection.")
+                    kind = finding_rule_kind(finding)
+                    if not finding["retired"] and kind in logindex._ALERT_FINDING:
+                        finding_rules.setdefault(finding["artifact"], set()).add(kind)
+            finally:
+                conn.close()
         try:
-            return logindex.trace(case_dir, body.ips, body.from_epoch,
+            result = logindex.trace(case_dir, body.ips, body.from_epoch,
                                   body.to_epoch, min(body.limit, 10000),
                                   body.offset, body.search, body.status,
                                   body.method, body.sort, body.mark_exact,
                                   body.mark_contains, body.evidence_only,
-                                  body.index_fingerprint, body.after_request_id)
+                                  fingerprint, body.after_request_id, finding_rules)
+            if body.finding_ids is not None:
+                require_current_hunt_index(case_dir, fingerprint)
+            return result
         except logindex.StaleHuntIndex as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:

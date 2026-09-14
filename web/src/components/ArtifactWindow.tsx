@@ -8,25 +8,31 @@ import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  ArrowLeft, Bug, Check, ChevronRight, Clock3, Crosshair, Expand, FileSearch, FolderOpen,
-  LoaderCircle, ShieldCheck, ShieldOff,
+  ArrowLeft, Bug, Check, ChevronRight, Clock3, Crosshair, Expand, FolderOpen,
+  LoaderCircle, ShieldCheck, ShieldOff, ExternalLink, GripVertical, Database,
 } from 'lucide-react'
 import { KIND_ICON } from '../artifactKinds'
 import {
   api, post, type ArtifactContext, type FilePreview, type Finding, type TriageResult, type TriageState,
 } from '../api'
 import {
-  SEVERITY_VAR, absoluteTime, formatBytes, formatCount,
-  formatDay, relativeTime, relativeToRoot, type EvidenceRoot,
+  absoluteTime, formatBytes, formatCount,
+  formatLogTime, relativeTime, relativeToRoot, type EvidenceRoot,
 } from '../format'
 import { Button, CopyButton, Modal, SeverityBadge, Tabs, Tag, TriageBadge } from './ui'
 import { InfoDot, Tooltip } from './Tooltip'
 import { IpFlag } from './IpFlag'
-import type { TraceMarks } from './TraceWindow'
+import { TraceWindow, type TraceMarks } from './TraceWindow'
 import { explainRule } from '../explain'
-import { EnrichPanel } from './Enrich'
+import { useOpenCtiSettings } from '../opencti'
+import { useGeo } from '../geo'
+import { GroupedActions } from './OpenCti'
+import { ArtifactEnrichment } from './ArtifactEnrichment'
+import { SuccessfulAccesses, TableRecord } from './ReviewEvidence'
+import { IocTypeBadge } from './IocTypeBadge'
 import { FileContentPane } from './FileViewer'
-import { DatabaseRowWindow } from './DatabaseRowWindow'
+import { SyntaxText } from './SyntaxCode'
+import { useSyntaxLines } from '../useSyntaxLines'
 
 const KIND_THIS: Record<string, string> = {
   file: 'artifact.this.file', table: 'artifact.this.table',
@@ -55,11 +61,11 @@ function MetaCell({ label, children, explain }: {
   label: string; children: React.ReactNode; explain?: string
 }) {
   return (
-    <div className="rounded-lg bg-[var(--panel-2)] px-3 py-2">
-      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 border-b border-[var(--line-soft)] py-2">
+      <div className="flex items-center gap-1 text-[11px] font-medium text-[var(--muted)]">
         {label}{explain && <InfoDot body={explain} />}
       </div>
-      <div className="mt-0.5 text-[12px]">{children}</div>
+      <div className="min-w-0 max-w-full text-[12px]">{children}</div>
     </div>
   )
 }
@@ -80,69 +86,13 @@ function Block({ title, children, right, className }: {
   )
 }
 
-function Reasons({ findings, artifact, onView, onRow, canOpenFile = true, bounded = false }: {
-  findings: Finding[]
-  artifact: string
-  onView: (path: string, line: number | null) => void
-  onRow?: (finding: Finding) => void
-  canOpenFile?: boolean
-  bounded?: boolean
-}) {
-  const tr = useT()
-  return (
-    <Block title={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}
-      className={clsx('flex min-h-0 flex-col', bounded && 'max-h-[42%]')}>
-      <div className={clsx('flex flex-col gap-1.5', bounded && 'min-h-0 overflow-y-auto pr-1')}>
-        {findings.map((finding) => {
-          const explanation = explainRule(tr, finding.rule)
-          return (
-            <div key={finding.fingerprint}
-              className={clsx('rounded-lg border-l-2 bg-[var(--panel-2)] px-3 py-2',
-                finding.retired === 1 && 'opacity-60')}
-              style={{ borderLeftColor: SEVERITY_VAR[finding.severity] }}>
-              <div className="flex flex-wrap items-center gap-2">
-                <SeverityBadge severity={finding.severity} />
-                <span className="text-[12.5px] font-semibold">{finding.rule}</span>
-                {finding.retired !== 1 && finding.line != null && finding.line > 0 && (
-                  (finding.artifact_kind === 'table' && finding.source === 'sqldb' && onRow) ||
-                  (['file', 'dump'].includes(finding.artifact_kind) && canOpenFile)) && (
-                  <button className="cursor-pointer text-[11px] text-[var(--accent-text)] hover:underline"
-                    onClick={() => finding.artifact_kind === 'table' ? onRow?.(finding) : onView(artifact, finding.line)}>
-                    {tr(finding.artifact_kind === 'table' ? 'database.row.label' : 'artifact.line')} {finding.line}
-                  </button>
-                )}
-                {finding.retired === 1 && (
-                  <span className="text-[11px] text-[var(--muted)]">
-                    {tr('artifact.retired', { date: finding.last_seen })}
-                  </span>
-                )}
-              </div>
-              {explanation && (
-                <div className="mt-1 text-[12px] leading-snug">
-                  {explanation.what}
-                  {explanation.why && <span className="text-[var(--muted)]"> {explanation.why}</span>}
-                </div>
-              )}
-              {finding.evidence && (
-                <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--code-bg)] px-2 py-1 text-[11px] leading-relaxed text-[#e6edf3]">
-                  {finding.evidence}
-                </pre>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </Block>
-  )
-}
-
-function FindingList({ findings, selected, onSelect, preview, loading }: {
+function FindingList({ findings, selected, onSelect, preview, loading, kind = 'file' }: {
   findings: Finding[]; selected: string | null; onSelect: (finding: Finding) => void
-  preview?: FilePreview; loading: boolean
+  preview?: FilePreview; loading: boolean; kind?: string
 }) {
   const tr = useT()
   const [opened, setOpened] = useState<string | null>(null)
-  return <div data-artifact-scroll tabIndex={0} className="max-h-[35%] shrink-0 overflow-y-auto rounded-lg border border-[var(--line)]"
+  return <div data-artifact-scroll tabIndex={0} className="min-h-0 shrink-0 overflow-y-auto rounded-lg border border-[var(--line)]"
     aria-label={tr('artifact.whyFlagged', { n: formatCount(findings.length) })}>
     {findings.map(finding => {
       const explanation = explainRule(tr, finding.rule)
@@ -158,12 +108,13 @@ function FindingList({ findings, selected, onSelect, preview, loading }: {
           <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={finding.rule}>{finding.rule}</span>
           <span className="shrink-0 text-[11px] text-[var(--muted)]">
             {finding.retired === 1 ? tr('artifact.retired', { date: finding.last_seen })
-              : finding.line ? `${tr('artifact.line')} ${finding.line}` : tr('artifact.wholeFile')}
+              : finding.line ? `${tr(kind === 'table' ? 'database.row.label' : 'artifact.line')} ${finding.line}` : tr(kind === 'file' || kind === 'dump' ? 'artifact.wholeFile' : 'review.aggregate')}
           </span>
         </button>
         {open && <div className="border-t border-[var(--line-soft)] px-3 py-2 text-[12px] leading-relaxed">
           <p>{explanation?.what ?? tr('artifact.ruleMatched')}</p>
           {finding.retired === 1 ? <pre className="mono mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-all text-[11px]">{finding.evidence}</pre>
+            : kind !== 'file' && kind !== 'dump' ? <pre className="mono mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-all text-[11px]">{finding.evidence}</pre>
             : loading ? <LoaderCircle size={14} className="mt-2 animate-spin" />
             : preview?.lines ? <div className="mono mt-2 max-h-28 overflow-auto rounded bg-[var(--code-bg)] py-1 text-[11px] text-[#e6edf3]">
               {preview.lines.map((line, index) => ({ line, number: (preview.from_line ?? 1) + index }))
@@ -178,8 +129,9 @@ function FindingList({ findings, selected, onSelect, preview, loading }: {
   </div>
 }
 
-function Clients({ ips, marks, onTrace }: {
+function Clients({ ips, marks, onTrace, slug }: {
   ips: ArtifactContext['related_ips']
+  slug: string
   marks: TraceMarks
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
@@ -199,7 +151,7 @@ function Clients({ ips, marks, onTrace }: {
             <div key={entry.ip}
               className="flex flex-wrap items-center gap-2 px-3 py-2 text-[12px]">
               <IpFlag ip={entry.ip} />
-              <span className="mono font-medium">{entry.ip}</span>
+              <a className="mono font-medium text-[var(--accent-text)] hover:underline" href={`?case=${encodeURIComponent(slug)}&view=actors&actor=${encodeURIComponent(entry.ip)}`} target="_blank" rel="noreferrer">{entry.ip}</a>
               {entry.in_box && <Tag tone="accent" explain={tr('artifact.ipInBox')}>IOC</Tag>}
               <InfoDot body={entry.why} />
               {entry.hits != null && (
@@ -211,6 +163,7 @@ function Clients({ ips, marks, onTrace }: {
                 onClick={() => onTrace([entry.ip], marks)}>
                 <Crosshair size={12} /> Trace
               </Button>
+              {entry.ok_hits != null && <Tag tone={entry.ok_hits > 0 ? 'ok' : undefined}>{tr('review.successes', { n: entry.ok_hits })}</Tag>}
               {(entry.first_epoch != null || entry.last_epoch != null) && <div className="w-full text-[11px] text-[var(--muted)]">
                 {tr('artifact.firstRequest')}: {entry.first_epoch != null ? `${absoluteTime(new Date(entry.first_epoch * 1000).toISOString())} UTC` : '—'}
                 {' · '}{tr('artifact.lastRequest')}: {entry.last_epoch != null ? `${absoluteTime(new Date(entry.last_epoch * 1000).toISOString())} UTC` : '—'}
@@ -223,12 +176,15 @@ function Clients({ ips, marks, onTrace }: {
   )
 }
 
-function ContextPreview({ preview, onExpand, loading = false }: {
+function ContextPreview({ preview, onExpand, loading = false, sql = false, path = '' }: {
   preview: NonNullable<ArtifactContext['file']>['preview'] | undefined
   onExpand?: () => void
   loading?: boolean
+  sql?: boolean
+  path?: string
 }) {
   const tr = useT()
+  const syntax = useSyntaxLines(sql ? 'preview.sql' : path, preview?.lines, !preview?.binary)
   const hitRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const row = hitRef.current
@@ -236,17 +192,17 @@ function ContextPreview({ preview, onExpand, loading = false }: {
   }, [preview])
   return (
     <Block className="flex min-h-[12rem] flex-1 flex-col"
-      title={<>{tr('artifact.fileContent')}{' '}
+      title={<>{tr(sql ? 'review.sqlEvidence' : 'artifact.fileContent')}{' '}
         {preview?.focus
           ? tr('artifact.aroundLine', { n: preview.focus })
           : tr('artifact.fromStart')}
         {preview?.truncated && ` — ${tr('artifact.readTruncated')}`}</>}
-      right={onExpand && <Button variant="default" onClick={onExpand}>
-        <Expand size={13} /> {tr('artifact.expandFile')} <KeyHint>F</KeyHint>
+      right={onExpand && <Button variant="special" onClick={onExpand}>
+        <Expand size={13} /> {tr(sql ? 'review.expandSql' : 'artifact.expandFile')} <KeyHint>F</KeyHint>
       </Button>}>
       {loading ? <div role="status" className="flex flex-1 items-center justify-center"><LoaderCircle size={18} className="animate-spin" /></div>
       : preview && !preview.error && !preview.binary && preview.lines ? (
-        <div data-artifact-scroll="primary" tabIndex={0} role="region" aria-label={tr('artifact.fileContent')}
+        <div data-artifact-scroll="primary" tabIndex={0} role="region" aria-label={tr(sql ? 'review.sqlEvidence' : 'artifact.fileContent')}
           className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
           {preview.lines.map((line, index) => {
             const number = (preview.from_line ?? 1) + index
@@ -255,7 +211,7 @@ function ContextPreview({ preview, onExpand, loading = false }: {
               <div key={number} ref={hit ? hitRef : undefined} data-focus-line={hit ? number : undefined} className={clsx('flex px-3', hit && 'bg-[rgba(208,59,59,0.18)]')}>
                 <span className={clsx('w-10 shrink-0 select-none pr-3 text-right',
                   hit ? 'text-[#ff8b8b]' : 'text-[#4b5566]')}>{number}</span>
-                <span className="whitespace-pre-wrap break-all">{line || ' '}</span>
+                <SyntaxText text={line} tokens={syntax.tokens?.[index]} />
               </div>
             )
           })}
@@ -284,14 +240,18 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   onTrace: (ips: string[], marks?: TraceMarks) => void
 }) {
   const tr = useT()
-  const [note, setNote] = useState('')
-  const [noteLoadedFor, setNoteLoadedFor] = useState<string | null>(null)
+  const [contextLoadedFor, setContextLoadedFor] = useState<string | null>(null)
   const [draftDecision, setDraftDecision] = useState<Decision | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [expanded, setExpanded] = useState(false)
   const [revealError, setRevealError] = useState('')
-  const [evidenceTab, setEvidenceTab] = useState<'findings' | 'ips'>('findings')
+  const [evidenceTab, setEvidenceTab] = useState(artifact?.artifact_kind === 'client' ? 'trace' : 'findings')
+  const [leftWidth, setLeftWidth] = useState(28)
+  const splitRef = useRef<HTMLDivElement>(null)
+  const [selectedTable, setSelectedTable] = useState<number | null>(null)
+  const conf = useOpenCtiSettings(!!artifact)
+  const geo = useGeo(artifact?.artifact_kind === 'client' ? artifact.artifact : null)
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
   const [classifications, setClassifications] = useState<string[]>(['webshell'])
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -303,7 +263,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
-  const [rowFinding, setRowFinding] = useState<Finding | null>(null)
+
 
   const { data: ctx, isError: contextError } = useQuery({
     queryKey: ['artifact', slug, artifact?.artifact],
@@ -324,45 +284,55 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     enabled: needsPreview,
   })
 
+  const sqlFocus = selectedFinding ? (selectedFinding.retired !== 1 ? selectedLine : null) : ctx?.findings.find(item => item.retired !== 1 && item.line)?.line ?? null
+  const sqlQuery = useQuery({ queryKey: ['review-sql', slug, artifact?.artifact, sqlFocus, expanded],
+    queryFn: () => api<FilePreview>(`/api/cases/${slug}/database/sql-preview?path=${encodeURIComponent(artifact!.artifact)}${sqlFocus ? `&line=${sqlFocus}` : ''}&expanded=${expanded}`),
+    enabled: artifact?.artifact_kind === 'dump' && !!ctx?.dump })
+
   const reveal = useMutation({
     mutationFn: (path: string) => post(`/api/cases/${slug}/reveal-file`, { path }),
     onMutate: () => setRevealError(''),
     onError: (error) => setRevealError(String((error as Error)?.message ?? error)),
   })
 
-  // The server note is authoritative. It seeds once per matching artifact;
-  // refetches never overwrite reasoning that is currently being typed.
-  const noteFor = useRef<string | null>(null)
+  // Seed classifications once per matching artifact so refetches preserve draft choices.
+  const contextFor = useRef<string | null>(null)
   const artifactKey = artifact ? JSON.stringify([slug, artifact.artifact]) : null
   const artifactPath = artifact?.artifact
   // Reset only when the identity changes, not when the query or caller's
   // stub refreshes. Those updates must preserve every unsaved control.
   useEffect(() => {
-    noteFor.current = null
-    setNoteLoadedFor(null)
-    setNote('')
+    contextFor.current = null
+    setContextLoadedFor(null)
     setDraftDecision(null)
     setSaveError('')
     setExpanded(false)
     setRevealError('')
-    setEvidenceTab('findings')
+    setEvidenceTab(artifact?.artifact_kind === 'client' ? 'trace' : 'findings')
     setSelectedFinding(null)
     setClassifications(['webshell'])
-    setRowFinding(null)
+    setSelectedTable(null)
   }, [artifactKey])
   useEffect(() => {
-    if (!artifactKey || noteFor.current === artifactKey) return
+    if (!artifactKey || contextFor.current === artifactKey) return
     if (ctx && ctx.artifact === artifactPath) {
-      noteFor.current = artifactKey
-      setNote(ctx.triage_note ?? '')
+      contextFor.current = artifactKey
       setClassifications(ctx.file?.classifications ?? ['webshell'])
-      setNoteLoadedFor(artifactKey)
+      setContextLoadedFor(artifactKey)
     }
   }, [artifactKey, artifactPath, ctx])
 
   shortcutRef.current = () => {}
   if (!artifact) return null
   const kind = artifact.artifact_kind
+  const canEnrich = conf.data?.configured === true && (kind === 'file' || kind === 'client')
+  const tab = evidenceTab === 'enrichment' && !canEnrich ? (kind === 'client' ? 'trace' : 'findings') : evidenceTab
+  const activeFinding = selectedFinding ?? ctx?.findings.find(item => item.retired !== 1) ?? ctx?.findings[0]
+  const boxUrl = new URL(location.href)
+  boxUrl.searchParams.set('case', slug); boxUrl.searchParams.set('view', 'iocbox')
+  if (ctx?.ioc_ids?.[0]) boxUrl.searchParams.set('ioc', String(ctx.ioc_ids[0])); else boxUrl.searchParams.delete('ioc')
+  boxUrl.searchParams.delete('iocTab')
+  boxUrl.searchParams.delete('artifact')
   const file = ctx?.file
   const fileAvailable = !!file?.exists && file.available !== false
   const fileHashes = file?.hashes ?? (file?.sha256 ? { sha256: file.sha256 } : {})
@@ -374,10 +344,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const rootName = root && (root.label?.trim() ||
     root.path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop())
-  const displayedIdentity = kind === 'file' && root
+  const displayedIdentity = ['file', 'dump'].includes(kind) && root
     ? `${rootName} · ${rel}`
-    : artifact.artifact
-  const contextReady = ctx?.artifact === artifact.artifact && noteLoadedFor === artifactKey
+    : kind === 'dump' ? artifact.artifact.replace(/\\/g, '/').split('/').pop() || artifact.artifact : artifact.artifact
+  const contextReady = ctx?.artifact === artifact.artifact && contextLoadedFor === artifactKey
   const progress = !contextError && ctx?.artifact === artifact.artifact
     ? ctx.review_progress : undefined
   const progressText = progress && tr('artifact.reviewProgress.counts', {
@@ -393,8 +363,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const marks: TraceMarks = kind === 'file'
     ? { contains: [root ? rel : artifact.artifact.replace(/\\/g, '/')],
         reason: tr('marks.fileFetched') }
-    : { exact: (actor?.alerts ?? []).map((alert) => alert.example).filter(Boolean),
-        reason: tr('marks.alertTrigger') }
+    : kind === 'client' ? { findingIds: findings.map(finding => finding.id),
+        reason: tr('review.traceFindingMatches') } : {}
 
   const save = async (intent: 'stay' | 'next' | 'close') => {
     if (!draftDecision || controlsDisabled || saveInProgress.current) return
@@ -402,6 +372,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setSaving(true)
     setSaveError('')
     try {
+      // Removing the editor must not clear historical notes when a decision is saved.
+      const note = ctx?.triage_note ?? ''
       const result = kind === 'file' ? await onSave(draftDecision, note, classifications) : await onSave(draftDecision, note)
       if (result.updated === 0) return
       setDraftDecision(null)
@@ -428,9 +400,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       void save('close')
     } else if (!editing && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       if (key === 'enter') {
+        if (target?.closest('button,a,[role=tab],[role=separator]') && !target?.closest('[data-review-classifications]')) return
         event.preventDefault(); event.stopImmediatePropagation()
         void save(onSavedNext ? 'next' : 'stay')
       } else if (arrow) {
+        if (target?.closest('[role=tablist], [role=separator]')) return
         event.preventDefault(); event.stopImmediatePropagation()
         const workspace = workspaceRef.current!
         const horizontal = key === 'arrowleft' || key === 'arrowright'
@@ -448,44 +422,31 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       } else if (['1', '2', '3'].includes(key) && !controlsDisabled) {
         event.preventDefault(); event.stopImmediatePropagation()
         setDraftDecision(({ '1': 'confirmed', '2': 'reviewed', '3': 'dismissed' } as const)[key as '1' | '2' | '3'])
-      } else if (key === 'f' && kind === 'file' && fileAvailable) {
+      } else if (key === 'f' && ((kind === 'file' && fileAvailable) || (kind === 'dump' && !!ctx?.dump))) {
         event.preventDefault(); event.stopImmediatePropagation()
         setExpanded(value => !value)
       }
     }
   }
 
-  const identity = (
-    <Block title={tr(`kind.${kind}`)}>
-      <div className="mono flex items-center gap-2 break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[12px]">
-        <span className="min-w-0 flex-1" title={artifact.artifact}>{displayedIdentity}</span>
-        <CopyButton value={artifact.artifact} label={tr('copy.path')} className="shrink-0" />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {kind === 'file' && fileAvailable && <>
-          <Button onClick={() => setExpanded(true)}>
-            <FileSearch size={14} /> {tr('artifact.expandFile')}
-          </Button>
-          <Button onClick={() => reveal.mutate(artifact.artifact)} disabled={reveal.isPending}>
-            <FolderOpen size={14} /> {tr('artifact.showInFileManager')}
-          </Button>
-        </>}
-        {kind === 'client' && (
-          <Button onClick={() => onTrace([artifact.artifact], marks)}>
-            <Crosshair size={14} /> {tr('artifact.openTrace')}
-          </Button>
-        )}
-      </div>
-      {revealError && (
-        <div role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">
-          {tr('artifact.revealError')}: {revealError}
-        </div>
-      )}
-    </Block>
-  )
+  const identity = <Block title={tr(`review.context.${kind}`)}>
+    <div className="flex items-start gap-2 py-2 text-[12px]">
+      {kind === 'file' || kind === 'client' ? <IocTypeBadge type={kind === 'client' ? 'ip' : 'file'} value={artifact.artifact} /> : <Tag>{tr(`kind.${kind}`)}</Tag>}
+      {kind === 'client' ? <><IpFlag ip={artifact.artifact} /><span>{geo?.name || artifact.artifact}</span></> : <span className="mono min-w-0 flex-1 break-all" title={artifact.artifact}>{displayedIdentity}</span>}
+      <CopyButton value={artifact.artifact} label={tr('copy.path')} className="shrink-0" />
+    </div>
+    <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
+      {kind === 'client' ? <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
+        : <GroupedActions label={tr('review.open')} icon={<ExternalLink size={13} />}>
+          <Button variant="ghost" disabled={reveal.isPending || (kind === 'table' && (ctx?.table_sources?.length ?? 0) !== 1) || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(kind === 'table' ? ctx!.table_sources![0].dump_path : artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
+          <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
+        </GroupedActions>}
+    </div>
+    {revealError && <p role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">{tr('artifact.revealError')}: {revealError}</p>}
+  </Block>
 
   const fileFacts = file && (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="flex flex-col">
       {file.changed_since_scan && <div className="col-span-2 rounded-lg border border-[var(--warn)]/40 p-3 text-[12px] text-[var(--warn)]">
         <p>{tr('cti.fileChanged')}</p>{file.scanned_sha256 && <p className="mono mt-1 break-all" title={tr('cti.scannedHash')}>{file.scanned_sha256}</p>}
       </div>}
@@ -511,32 +472,20 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           ? <span className="text-[var(--sev-medium)]">{tr('artifact.uploadDirYes')}</span>
           : tr('artifact.uploadDirNo')}
       </MetaCell>
-      {Object.values(fileHashes).some(Boolean) && (
-        <div className="col-span-2 flex flex-col gap-2">
-          {([
-            ['MD5', fileHashes.md5], ['SHA-1', fileHashes.sha1], ['SHA-256', fileHashes.sha256],
-          ] as const).filter(([, value]) => value).map(([label, value]) => (
-            <MetaCell key={label} label={label}
-              explain={label === 'SHA-256' ? tr('field.sha256') : tr('files.hashes.compatibility')}>
-              <span className="mono flex items-center gap-2 break-all text-[11px]">
-                <span className="min-w-0 flex-1">{value}</span>
-                <CopyButton value={value!} label={tr('copy.hash')} className="shrink-0" />
-              </span>
-            </MetaCell>
-          ))}
-        </div>
-      )}
+      {fileHashes.sha256 && <div className="border-t border-[var(--line)] pt-3"><div className="mb-2 flex items-center gap-2 text-[12px]">SHA-256<InfoDot body={tr('field.sha256')} /><CopyButton value={fileHashes.sha256} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{fileHashes.sha256}</p></div>}
+      {(fileHashes.md5 || fileHashes.sha1) && <details className="mt-2 text-[12px]"><summary className="cursor-pointer text-[var(--muted)]">{tr('review.otherHashes')}</summary><div className="mt-2 space-y-2">{[['MD5', fileHashes.md5], ['SHA-1', fileHashes.sha1]].filter(([, value]) => value).map(([label, value]) => <div key={label}><div className="flex items-center gap-2">{label}<CopyButton value={value!} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{value}</p></div>)}</div></details>}
+
     </div>
   )
 
   const nonFileContext = <>
     {kind === 'client' && actor && (
       <div className="flex flex-col gap-2">
-        <EnrichPanel slug={slug} kind="ip" value={artifact.artifact} />
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col">
           <MetaCell label={tr('table.requests')}>{formatCount(actor.actor.requests)}</MetaCell>
+          {actor.ok_requests != null && <MetaCell label={tr('review.successCount')}>{formatCount(actor.ok_requests)} × 2xx</MetaCell>}
           <MetaCell label={tr('field.period')}>
-            {formatDay(actor.actor.first_epoch, actor.actor.tz)} → {formatDay(actor.actor.last_epoch, actor.actor.tz)}
+            {formatLogTime(actor.actor.first_epoch, actor.actor.tz, { withZone: true })} → {formatLogTime(actor.actor.last_epoch, actor.actor.tz, { withZone: true })}
           </MetaCell>
           <MetaCell label={tr('artifact.errors')}>{formatCount(actor.actor.err4 + actor.actor.err5)}</MetaCell>
           <MetaCell label={tr('artifact.loginPosts')}>
@@ -545,36 +494,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               <span className="text-[var(--sev-high)]"> · {actor.actor.login_redirects} Redirects!</span>}
           </MetaCell>
         </div>
-        {actor.alerts.length > 0 && (
-          <div className="flex flex-col gap-1">
-            {actor.alerts.map((alert, index) => (
-              <div key={index} className="rounded-lg bg-[var(--panel-2)] px-3 py-1.5 text-[12px]">
-                <SeverityBadge severity={alert.severity} /> <span className="ml-1">{alert.detail}</span>
-                {alert.example && <div className="mono mt-0.5 truncate text-[11px] text-[var(--muted)]">{alert.example}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-        <Block title={tr('artifact.topUris')}>
-          <div className="flex flex-col gap-0.5">
-            {actor.top_paths.map((path) => (
-              <div key={path.uri} className="flex items-center gap-2 text-[12px]">
-                <span className="mono min-w-0 flex-1 truncate" title={path.uri}>{path.uri}</span>
-                <span className="shrink-0 text-[var(--muted)] tabular">{path.n}× · {path.ok}× 2xx</span>
-              </div>
-            ))}
-          </div>
-        </Block>
-        {actor.top_agents.length > 0 && (
-          <div className="text-[11px] text-[var(--muted)]">
-            {tr('artifact.userAgents')} {actor.top_agents.map((entry) =>
-              `${entry.agent || tr('artifact.emptyAgent')} (${entry.n}×)`).join(' · ')}
-          </div>
-        )}
+
       </div>
     )}
-    {ctx?.table && (
-      <div className="grid grid-cols-2 gap-2">
+    {ctx?.table && (ctx.table_sources?.length ?? 0) <= 1 && (
+      <div className="flex flex-col">
         <MetaCell label={tr('artifact.rowsInDump')}>{formatCount(ctx.table.rows)}</MetaCell>
         <MetaCell label={tr('artifact.columns')}>{ctx.table.columns}</MetaCell>
         <MetaCell label={tr('artifact.dumpBytes')}>{formatBytes(ctx.table.bytes)}</MetaCell>
@@ -587,7 +511,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       </div>
     )}
     {ctx?.dump && (
-      <div className="grid grid-cols-2 gap-2">
+      <div className="flex flex-col">
         <MetaCell label={tr('database.statements')}>{formatCount(ctx.dump.statements)}</MetaCell>
         <MetaCell label={tr('artifact.size')}>{formatBytes(ctx.dump.size)}</MetaCell>
         <MetaCell label="CMS">{ctx.dump.cms || '—'}</MetaCell>
@@ -640,7 +564,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       title={<span className="flex min-w-0 items-center gap-2">
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
-        <span className="mono truncate">{kind === 'file' && root ? rel : artifact.artifact}</span>
+        <span className="mono truncate" title={artifact.artifact}>{kind === 'file' && root ? rel : kind === 'dump' ? displayedIdentity : artifact.artifact}</span>
         <TriageBadge state={state} label={tr(`triage.${state}`)} />
       </span>}>
       <div ref={workspaceRef} className="flex h-full min-h-0 flex-col"
@@ -666,51 +590,75 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           </div>
         )}
 
-        {expanded && kind === 'file' ? (
+        {expanded && (kind === 'file' || kind === 'dump') ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <div className="shrink-0">
-              <Button onClick={() => setExpanded(false)}>
-                <ArrowLeft size={14} /> {tr('artifact.backToEvidence')} <KeyHint>F</KeyHint>
-              </Button>
-            </div>
-            <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine}
-              className="min-h-0 flex-1" />
+            <div className="shrink-0"><Button onClick={() => setExpanded(false)}><ArrowLeft size={14} />{tr('artifact.backToEvidence')} <KeyHint>F</KeyHint></Button></div>
+            {kind === 'file' ? <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} className="min-h-0 flex-1" />
+              : <ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} />}
           </div>
-        ) : kind === 'file' ? (
-          <div data-artifact-scroll className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(19rem,0.86fr)_minmax(0,1.35fr)] lg:overflow-hidden">
-            <div data-artifact-scroll tabIndex={0} className="flex flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
-              {identity}
-              {fileFacts}
+        ) : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
+          <aside data-artifact-scroll tabIndex={0} className="min-w-0 space-y-4 p-3 lg:overflow-y-auto">
+            {identity}{kind === 'file' ? fileFacts : nonFileContext}
+            {kind === 'dump' && !!ctx?.tables?.length && <Block title={tr('review.tables')}><div className="space-y-1">{ctx.tables.map(table => <button key={table.id} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-[var(--panel-2)]" onClick={() => { setSelectedTable(table.id); setEvidenceTab('tables') }}><Database size={13} /><span className="mono min-w-0 flex-1 truncate">{table.name}</span><ChevronRight size={13} /></button>)}</div></Block>}
+          </aside>
+          <div role="separator" aria-label={tr('review.resize')} aria-orientation="vertical" aria-valuemin={20} aria-valuemax={42} aria-valuenow={leftWidth} tabIndex={0}
+            className="hidden cursor-col-resize items-center justify-center border-x border-[var(--line)] text-[var(--muted)] hover:bg-[var(--accent-soft)] lg:flex"
+            onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); setLeftWidth(value => Math.min(42, Math.max(20, value + (event.key === 'ArrowLeft' ? -2 : 2)))) } }}
+            onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault() }}
+            onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId) && splitRef.current) { const rect = splitRef.current.getBoundingClientRect(); setLeftWidth(Math.max(20, Math.min(42, 100 * (event.clientX - rect.left) / rect.width))) } }}
+            onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}><GripVertical size={12} /></div>
+          <div className="flex min-h-[30rem] min-w-0 flex-col gap-3 p-3 lg:min-h-0">
+            <div className="shrink-0 overflow-x-auto"><Tabs active={tab} onChange={setEvidenceTab} tabs={[
+              ...(kind === 'client' ? [{ id: 'trace', label: tr('review.trace') }] : []),
+              ...(kind !== 'client' ? [{ id: 'findings', label: `${tr('artifact.findingsTab')} · ${findings.length}` }] : []),
+              ...(kind === 'file' ? [{ id: 'ips', label: `${tr('artifact.ipsTab')} · ${ips.length}` }] : []),
+              ...(kind === 'client' ? [{ id: 'accesses', label: tr('review.accesses') }, { id: 'agents', label: tr('review.agents') }] : []),
+              ...(kind === 'table' ? [{ id: 'ips', label: `${tr('review.related')} · ${ips.length}` }] : []),
+              ...(kind === 'dump' ? [{ id: 'tables', label: `${tr('review.tables')} · ${ctx?.tables?.length ?? 0}` }] : []),
+              ...(canEnrich ? [{ id: 'enrichment', label: tr('review.enrichment') }] : []),
+            ]} /></div>
+            <div role="tabpanel" aria-label={tr(tab === 'findings' ? 'artifact.findingsTab' : tab === 'ips' ? 'artifact.ipsTab' : `review.${tab}`)}
+              data-artifact-scroll={kind === 'client' ? 'primary' : undefined} tabIndex={0}
+              className={clsx('flex min-h-0 flex-col gap-3', kind === 'file' ? 'max-h-[42%] overflow-y-auto' : 'flex-1 overflow-y-auto')}>
+              {tab === 'findings' && <FindingList key={artifactKey} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={kind === 'dump' ? sqlQuery.data : preview} loading={kind === 'dump' ? sqlQuery.isFetching : needsPreview && previewLoading} />}
+              {tab === 'ips' && <Clients slug={slug} ips={ips} marks={marks} onTrace={onTrace} />}
+              {tab === 'accesses' && <SuccessfulAccesses key={artifactKey} slug={slug} ip={artifact.artifact} onView={onView} />}
+              {kind === 'client' && tab === 'trace' && <div className="max-h-36 shrink-0 overflow-y-auto"><FindingList key={`trace:${artifactKey}`} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} loading={false} /></div>}
+              {tab === 'trace' && <TraceWindow key={artifactKey} slug={slug} ips={[artifact.artifact]} embedded marks={marks} onClose={() => setEvidenceTab('trace')} />}
+              {tab === 'agents' && <div className="overflow-x-auto rounded-lg border border-[var(--line)]"><table className="w-full text-left text-[12px]"><thead className="bg-[var(--panel-2)]"><tr><th className="p-2">{tr('review.agents')}</th><th className="p-2">{tr('table.requests')}</th></tr></thead><tbody>{actor?.top_agents?.map((entry, index) => <tr key={index} className="border-t border-[var(--line)]"><td className="mono break-all p-2">{entry.agent || tr('artifact.emptyAgent')}</td><td className="p-2">{formatCount(entry.n)}</td></tr>)}</tbody></table>{!actor?.top_agents?.length && <p className="p-3 text-[12px] text-[var(--muted)]">{tr('review.noAgents')}</p>}<p className="p-2 text-[11px] text-[var(--muted)]">{tr('review.agentLimit')}</p></div>}
+              {tab === 'enrichment' && <ArtifactEnrichment key={JSON.stringify([artifactKey, ctx?.ioc_ids])} slug={slug} ids={ctx?.ioc_ids ?? []} />}
+              {kind === 'table' && tab === 'findings' && <TableRecord key={`${artifactKey}:${activeFinding?.id}`} slug={slug} sources={ctx?.table_sources ?? []} finding={activeFinding} tableName={artifact.artifact} />}
+              {kind === 'dump' && tab === 'findings' && <><ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} onExpand={ctx?.dump ? () => setExpanded(true) : undefined} />{sqlQuery.error && <p role="alert">{sqlQuery.error.message}</p>}</>}
+              {kind === 'dump' && tab === 'tables' && <>
+                <label className="flex flex-col gap-1 text-[12px]">{tr('review.tables')}<select aria-label={tr('review.tables')} className="rounded border border-[var(--line)] bg-[var(--panel-2)] p-2" value={selectedTable ?? ''} onChange={event => setSelectedTable(Number(event.target.value) || null)}><option value="">{tr('review.chooseTable')}</option>{ctx?.tables?.map(table => <option key={table.id} value={table.id}>{table.name} · {table.rows} {tr('review.rows')}</option>)}</select></label>
+                {ctx?.tables?.filter(table => table.id === selectedTable).map(table => <TableRecord key={table.id} slug={slug} tableName={table.name} sources={[{ dump_id: table.dump_id, dump_path: artifact.artifact, table_id: table.id, rows: table.rows }]} />)}
+                {!ctx?.tables?.length && <p role="status" className="text-[12px]">{tr('review.noTables')}</p>}
+              </>}
             </div>
-            <div className="flex min-h-[28rem] flex-col gap-4 lg:min-h-0">
-              <div className="shrink-0"><Tabs active={evidenceTab} onChange={setEvidenceTab} tabs={[
-                { id: 'findings' as const, label: `${tr('artifact.findingsTab')} · ${findings.length}` },
-                { id: 'ips' as const, label: `${tr('artifact.ipsTab')} · ${ips.length}` },
-              ]} /></div>
-              {evidenceTab === 'findings' ? <div role="tabpanel" aria-label={tr('artifact.findingsTab')} className="flex min-h-0 flex-1 flex-col gap-3">
-                <FindingList key={artifactKey} findings={findings} selected={selectedFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={preview} loading={needsPreview && previewLoading} />
-                <ContextPreview preview={preview} loading={needsPreview && previewLoading} onExpand={fileAvailable ? () => setExpanded(true) : undefined} />
-                {!fileAvailable && file && <p role="status" className="rounded-lg bg-[var(--panel-2)] p-3 text-[13px] text-[var(--muted)]">
-                  {file.unavailable_reason || tr('artifact.sourceUnavailable')}
-                </p>}
-              </div> : <div data-artifact-scroll="primary" tabIndex={0} role="tabpanel" aria-label={tr('artifact.ipsTab')} className="min-h-0 flex-1 overflow-y-auto">
-                <Clients ips={ips} marks={marks} onTrace={onTrace} />
-              </div>}
-            </div>
+            {kind === 'file' && <>{fileAvailable ? <Block className="flex min-h-[12rem] flex-1 flex-col" title={tr('artifact.fileContent')}
+                right={<Button variant="special" onClick={() => setExpanded(true)}><Expand size={13} />{tr('artifact.expandFile')} <KeyHint>F</KeyHint></Button>}>
+                <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} showPath={false} compact className="flex-1" />
+              </Block> : <ContextPreview path={artifact.artifact} preview={preview} loading={needsPreview && previewLoading} />}{!fileAvailable && file && <p role="status" className="text-[12px] text-[var(--muted)]">{file.unavailable_reason || tr('artifact.sourceUnavailable')}</p>}</>}
           </div>
-        ) : (
-          <div data-artifact-scroll="primary" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="mx-auto flex max-w-4xl flex-col gap-4">
-              <Reasons findings={findings} artifact={artifact.artifact} onView={onView}
-                onRow={contextReady ? setRowFinding : undefined} />
-              {identity}
-              {nonFileContext}
-              <Clients ips={ips} marks={marks} onTrace={onTrace} />
-            </div>
-          </div>
-        )}
+        </div>}
 
-        <div className="shrink-0 border-t border-[var(--line-strong)] bg-[var(--panel)] px-4 py-3 shadow-[0_-12px_30px_rgba(0,0,0,0.24)]">
+        <div className="max-h-[48%] shrink-0 overflow-y-auto border-t border-[var(--line-strong)] bg-[var(--panel)] px-4 py-3 shadow-[0_-12px_30px_rgba(0,0,0,0.24)]">
+          {kind === 'file' && <fieldset data-review-classifications className="mb-3" disabled={controlsDisabled}>
+            <legend className="mb-2 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              {tr('artifact.classifications')} <InfoDot body={tr('artifact.classificationsHint')} />
+            </legend>
+            <div className="flex flex-wrap gap-1.5">
+              {FILE_CLASSES.map(value => <button key={value} type="button" aria-pressed={classifications.includes(value)}
+                onClick={() => {
+                  setClassifications(previous => previous.includes(value) ? previous.filter(item => item !== value) : [...previous, value])
+                  if (state !== 'new') setDraftDecision(previous => previous ?? state)
+                }}
+                className={clsx('ui-press flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50',
+                  classifications.includes(value) ? 'bg-[var(--accent-soft)] text-[var(--accent-text)] ring-1 ring-inset ring-[var(--accent)]/50' : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
+                {classifications.includes(value) && <Check size={11} />}{tr(`artifact.class.${value}`)}
+              </button>)}
+            </div>
+          </fieldset>}
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
@@ -734,13 +682,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
             <div role="radiogroup" aria-label={tr('artifact.decision.title')}
-              className="flex flex-1 flex-wrap gap-2">
+              className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3">
               {decisions.map(({ state: option, label, icon: DecisionIcon, tone, text,
                                 background, selectedBackground }, index) => (
                 <label key={option} className={clsx(
-                  'flex min-w-[9rem] flex-1 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[12.5px] font-semibold transition-[border-color,background-color,color,box-shadow,filter]',
+                  'flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-[12.5px] font-semibold transition-[border-color,background-color,color,box-shadow,filter]',
                   !controlsDisabled && 'hover:brightness-110',
                   controlsDisabled && 'cursor-not-allowed opacity-50')}
                   style={{
@@ -778,28 +726,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </div>
           </div>
 
-          {kind === 'file' ? <fieldset className="mt-3" disabled={controlsDisabled}>
-            <legend className="mb-2 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              {tr('artifact.classifications')} <InfoDot body={tr('artifact.classificationsHint')} />
-            </legend>
-            <div className="flex flex-wrap gap-1.5">
-              {FILE_CLASSES.map(value => <button key={value} type="button" aria-pressed={classifications.includes(value)}
-                onClick={() => {
-                  setClassifications(previous => previous.includes(value) ? previous.filter(item => item !== value) : [...previous, value])
-                  if (state !== 'new') setDraftDecision(previous => previous ?? state)
-                }}
-                className={clsx('ui-press flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50',
-                  classifications.includes(value) ? 'bg-[var(--accent-soft)] text-[var(--accent-text)] ring-1 ring-inset ring-[var(--accent)]/50' : 'bg-[var(--panel-2)] text-[var(--muted)] hover:text-[var(--fg)]')}>
-                {classifications.includes(value) && <Check size={11} />}{tr(`artifact.class.${value}`)}
-              </button>)}
-            </div>
-          </fieldset> : <label className="mt-2 block text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            {tr('artifact.reasoning.optional')}
-            <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={2}
-              disabled={controlsDisabled} aria-busy={!contextReady}
-              placeholder={tr('artifact.note.placeholder')}
-              className="mt-1 w-full resize-y rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-normal normal-case tracking-normal text-[var(--fg)] outline-none focus:border-[var(--accent)]/70 disabled:cursor-wait disabled:opacity-60" />
-          </label>}
+
           <div role={contextError || saveError ? 'alert' : undefined}
             className={clsx('mt-1 text-[11px]',
             contextError || saveError ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]')}>
@@ -810,7 +737,6 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         </div>
       </div>
     </Modal>
-    {rowFinding && <DatabaseRowWindow key={`${slug}:${rowFinding.id}`} slug={slug}
-      finding={rowFinding} sources={ctx?.table_sources ?? []} onClose={() => setRowFinding(null)} />}
+
   </>)
 }

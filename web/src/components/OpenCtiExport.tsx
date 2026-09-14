@@ -6,6 +6,7 @@ import { formatBytes } from '../format'
 import type { OpenCtiOptions, OpenCtiPreview } from '../opencti'
 import { Button, Modal, Tag, Tabs } from './ui'
 import { CaseProfileButton, CtiError } from './CaseProfile'
+import { CaseProfileChanges } from './CaseProfileChanges'
 import { IocTag } from './IocTags'
 import { InfoDot, Tooltip } from './Tooltip'
 import { SelectColumn } from './OpenCtiSelection'
@@ -78,7 +79,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
     </div></div>
     </div>
     <div hidden={wizard && step !== 1} className="shrink-0 space-y-1 [&_[role=tab]]:shrink-0 [&_[role=tab]]:whitespace-nowrap">
-    <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={[...iocCategories.map(id => ({ id, label: tr(`cti.category.${id}`), badge: <span className="ml-1 text-[10px]">{initial.iocs.filter(ioc => inIocCategory(ioc.type, id)).length}</span> })), ...(!wizard ? [{ id: 'samples', label: tr('cti.samples'), badge: <span className="ml-1 text-[10px]">{initial.samples.length}</span> }] : [])]} /></div>
+    <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={[...iocCategories.map(id => ({ id, label: tr(`cti.category.${id}`), badge: <span className="ml-1 text-[10px]">{initial.iocs.filter(ioc => inIocCategory(ioc.type, id)).length}</span> })), ...(!wizard ? [{ id: 'samples', label: tr('cti.samples'), badge: <span className="ml-1 text-[10px]">{initial.samples.length}</span> }, { id: 'profile', label: tr('profileChanges.title') }] : [])]} /></div>
     {!wizard && !!preview.warnings.length && <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={[{ id: 'notices', label: tr('cti.notices'), badge: <span className="ml-2">{preview.warnings.length}</span> }]} /></div>}</div>
     <div className="min-h-0 flex-1 overflow-hidden">
     {wizard && step === 0 && <section className="h-full overflow-y-auto pr-2" aria-label={tr('transferWizard.step.context')}><div className="mb-4 flex items-center justify-between gap-2"><h2 className="text-lg font-semibold">{caseInfo?.name || preview.case_reference}</h2><CaseProfileButton slug={slug} /></div><dl className="grid gap-4 sm:grid-cols-2">
@@ -92,6 +93,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
       {item(tr('cti.vulns'), profile?.vulnerabilities.map(entry => entry.name).join(', ') || '')}
     </dl></section>}
     {wizard && step === 3 && <section aria-label={tr('transferWizard.step.review')} className="h-full space-y-4 overflow-y-auto pr-2">
+      <CaseProfileChanges changes={preview.profile_changes} updating={dirty} />
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {item(tr('cti.caseId'), preview.case_reference)}{item(tr('cti.iocs'), String(selectedCount))}{item(tr('cti.indicator'), String(options.indicator_ids.length))}
         {item(tr('cti.samples'), String(options.sample_ids.length))}{item(tr('cti.previewNotes'), tr(options.include_notes ? 'transferWizard.included' : 'transferWizard.excluded'))}{item(tr('cti.previewEvidence'), tr(options.include_evidence ? 'transferWizard.included' : 'transferWizard.excluded'))}
@@ -102,6 +104,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
       <p className="text-[var(--muted)]">{tr(embedded ? 'closeWizard.transferHelp' : 'transferWizard.finalHelp')}</p>
     </section>}
 
+    {!wizard && <div hidden={tab !== 'profile'} role="tabpanel" aria-label={tr('profileChanges.title')} className="h-full overflow-y-auto"><CaseProfileChanges changes={preview.profile_changes} updating={dirty} /></div>}
     <div hidden={wizard || tab !== 'notices'} role="tabpanel" aria-label={tr('cti.notices')} className="h-full overflow-y-auto [scrollbar-gutter:stable] space-y-2">{preview.warnings.map(warning => <p key={warning} className="rounded border border-[var(--line)] p-3 text-[var(--review-text)]">{warning}</p>)}</div>
     <div hidden={!category} role="tabpanel" aria-label={tr('cti.iocs')} className="h-full overflow-auto [scrollbar-gutter:stable]">
       <table className={selectionTable}>
