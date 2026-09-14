@@ -216,3 +216,18 @@ details[open] > :not(summary) { animation: fadeIn var(--motion-enter) ease backw
 .ioc-relationships th, .ioc-relationships td { padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .ioc-relationships tbody tr:last-child td { border-bottom: 0; }
 .ioc-relationships tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 65%, transparent); }
+
+/* Artifact review keeps evidence visible while giving context a resizable column. */
+.review-split { display: grid; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) {
+  .review-split { grid-template-columns: minmax(13rem, var(--review-left, 28%)) 12px minmax(0, 1fr); overflow: hidden; }
+}
+
+/* The code surface stays dark in both themes; source text remains selectable. */
+.syntax-code .hljs-comment, .syntax-code .hljs-quote { color: #9caabd; }
+.syntax-code .hljs-keyword, .syntax-code .hljs-selector-tag, .syntax-code .hljs-meta { color: #ff9caa; }
+.syntax-code .hljs-string, .syntax-code .hljs-regexp, .syntax-code .hljs-template-tag { color: #a7d9a5; }
+.syntax-code .hljs-number, .syntax-code .hljs-literal, .syntax-code .hljs-variable, .syntax-code .hljs-attr { color: #9ccfff; }
+.syntax-code .hljs-title, .syntax-code .hljs-section, .syntax-code .hljs-selector-class { color: #d8b5ff; }
+.syntax-code .hljs-built_in, .syntax-code .hljs-type, .syntax-code .hljs-symbol { color: #ffd08a; }
+.syntax-code .hljs-tag, .syntax-code .hljs-name, .syntax-code .hljs-selector-id { color: #7eddd6; }

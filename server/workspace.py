@@ -6,11 +6,14 @@ investigations cannot bleed into each other, and closing a case produces one
 archive file to hand over.
 """
 import gc
+import hashlib
 import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
+import tempfile
 import threading
 import time
 import zipfile
@@ -18,7 +21,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-from server import case_profile, db
+from server import case_profile, db, diagnostics
 
 ARCHIVE_DIR = "archive"
 CASE_FILE = "case.json"          # human-readable identity next to case.db
@@ -117,6 +120,16 @@ def create_case(workspace, name, reference="", notes="", profile=None):
     return case_dir
 
 
+class CaseProfileConflict(ValueError):
+    pass
+
+
+def profile_revision(identity):
+    value = {key: identity.get(key, "") for key in ("name", "reference")}
+    value["profile"] = case_profile.defaults(identity.get("profile"))
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def case_info(case_dir):
     case_dir = Path(case_dir)
     identity = {"name": case_dir.name, "reference": "", "notes": "", "created": ""}
@@ -126,6 +139,7 @@ def case_info(case_dir):
         pass
     identity["profile"] = case_profile.defaults(identity.get("profile"))
     info = {"slug": case_dir.name, "dir": str(case_dir), **identity}
+    info["profile_revision"] = profile_revision(identity)
     info["reference_locked"] = False
     if db.case_db_path(case_dir).is_file():
         conn = db.connect(case_dir)
@@ -151,7 +165,7 @@ def case_info(case_dir):
 
 
 @_serialized
-def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None):
+def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None, expected_profile_revision=None):
     """Update the human-owned case identity, atomically on disk and in DB."""
     case_dir = Path(case_dir)
     path = case_dir / CASE_FILE
@@ -161,6 +175,10 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
         identity.update(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    if expected_profile_revision is not None and expected_profile_revision != profile_revision(identity):
+        raise CaseProfileConflict("The case profile changed since this editor was opened. Reopen the editor to load the latest version; your changes were not saved.")
+    if name is not None and not str(name).strip():
+        raise ValueError("Case name must not be empty")
     if reference is not None:
         reference = _reference(reference)
         _check_reference(case_dir.parent, reference, excluding=case_dir,
@@ -267,6 +285,7 @@ def case_summary(case_dir):
     return out
 
 
+@_serialized
 def archive_case(workspace, case_dir):
     """Close a case: pack the folder into archive/<slug>_<ts>.zip and remove
     the working copy, so the case is out of the platform until it is
@@ -278,28 +297,66 @@ def archive_case(workspace, case_dir):
     summary = case_summary(case_dir)
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     zip_path = archive / f"{case_dir.name}_{stamp}.zip"
-    # Checkpoint + close any WAL so the archived case.db is complete on its
-    # own -- a database whose last writes live in a sidecar we do not pack
-    # would come back missing them.
-    try:
-        conn = db.connect(case_dir)
+    n = 2
+    while zip_path.exists():
+        zip_path = archive / f"{case_dir.name}_{stamp}_{n}.zip"
+        n += 1
+    # A checkpoint can return SQLITE_BUSY without raising, leaving committed
+    # decisions only in the WAL. SQLite backup includes those pages even while
+    # another reader holds an older snapshot. Never copy the live database.
+    with tempfile.TemporaryDirectory(prefix=".closing-", dir=archive) as temporary:
+        staging = Path(temporary)
+        source = db.connect(case_dir)
         try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            snapshot = sqlite3.connect(staging / db.CASE_DB)
+            try:
+                deadline = time.monotonic() + 30
+
+                def progress(_status, _remaining, _total):
+                    if time.monotonic() > deadline:
+                        raise OSError("Case database snapshot timed out; the case remains open. Try closing it again.")
+
+                source.backup(snapshot, pages=256, progress=progress, sleep=0.05)
+                snapshot.execute("PRAGMA journal_mode=DELETE")
+                if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                    raise OSError("Case database integrity check failed; the case remains open.")
+            finally:
+                snapshot.close()
         finally:
-            # Close in a finally: a connection left open here would keep
-            # case.db locked on Windows and make the rmtree below fail.
-            conn.close()
-    except Exception:
-        pass
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(SUMMARY_FILE,
-                    json.dumps(summary, indent=2, ensure_ascii=False))
-        for path in sorted(case_dir.rglob("*")):
-            if path.name in _NOT_ARCHIVED or path.name == SUMMARY_FILE:
-                continue
-            if path.is_file():
-                zf.write(path, path.relative_to(case_dir))
-    _remove_case_dir(case_dir)
+            source.close()
+        pending = staging / "case.zip"
+        with zipfile.ZipFile(pending, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(SUMMARY_FILE, json.dumps(summary, indent=2, ensure_ascii=False))
+            zf.write(staging / db.CASE_DB, db.CASE_DB)
+            for path in sorted(case_dir.rglob("*")):
+                if path.name in _NOT_ARCHIVED or path.name == SUMMARY_FILE or path == case_dir / db.CASE_DB:
+                    continue
+                if path.is_file():
+                    zf.write(path, path.relative_to(case_dir))
+        with zipfile.ZipFile(pending) as zf:
+            if zf.testzip() is not None:
+                raise OSError("Case archive verification failed; the case remains open.")
+        # Do not list incomplete ZIPs as closed cases. Publish only the verified
+        # archive, before touching the working copy.
+        pending.replace(zip_path)
+    # Retire the directory atomically before deleting its contents. If Windows
+    # refuses the rename, the open case is intact. If later cleanup fails, the
+    # verified archive is authoritative and no half-deleted case appears open.
+    retired = archive / (".closed-" + zip_path.stem)
+    for attempt in range(10):
+        try:
+            case_dir.rename(retired)
+            break
+        except PermissionError:
+            if attempt == 9:
+                raise
+            gc.collect()
+            time.sleep(0.25)
+    try:
+        _remove_case_dir(retired)
+    except OSError as exc:
+        diagnostics.exception(workspace, "archive", exc, action="retired-case-cleanup",
+                              archive=zip_path.name)
     return zip_path, summary
 
 
@@ -470,6 +527,17 @@ def import_archive(workspace, zip_path):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(name) as src, open(dest, "wb") as out:
                     shutil.copyfileobj(src, out)
+            database = target / db.CASE_DB
+            if database.exists():
+                try:
+                    conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+                    try:
+                        if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                            raise sqlite3.DatabaseError("integrity check failed")
+                    finally:
+                        conn.close()
+                except sqlite3.DatabaseError as exc:
+                    raise ImportError_("The archived case database is damaged; no case was restored.") from exc
             if "profile" in identity:
                 case_profile.restore_organization(workspace, identity["profile"])
         except Exception:

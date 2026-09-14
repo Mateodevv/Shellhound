@@ -136,6 +136,16 @@ class EvidenceFileEndpointTests(unittest.TestCase):
         self.assertIn("sha256", response["hashes"])
         self.assertIn("modified_at", response)
 
+    def test_small_file_line_link_keeps_all_surrounding_source(self):
+        content = b'<?php\n$value = "hello";\necho $value;\n'
+        self.file.write_bytes(content)
+        response = self.call(line=3)
+        self.assertEqual(0, response["offset"])
+        self.assertEqual(1, response["from_line"])
+        self.assertEqual(content.decode(), "\n".join(response["lines"]))
+        self.assertTrue(response["focus_found"])
+        self.assertTrue(response["eof"])
+
     def test_normal_raw_page_has_correct_line_number_without_a_focus(self):
         response = self.call(offset=360002)
         self.assertEqual(40001, response["from_line"])

@@ -10,23 +10,30 @@
 // RANGE is currently visible -- with evidence, "I am looking at part X of Y"
 // is a statement one has to be able to back up.
 import { useT } from '../i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { ChevronLeft, ChevronRight, FileCode2 } from 'lucide-react'
 import { api, reportClientError, type FileContent } from '../api'
 import { formatBytes, formatCount } from '../format'
 import { Button, CopyButton, Modal, Tag } from './ui'
+import { SyntaxText } from './SyntaxCode'
+import { useSyntaxLines } from '../useSyntaxLines'
+import { syntaxLabel } from '../syntax'
 
-export function FileContentPane({ slug, path, focusLine, showPath = true, className }: {
+export function FileContentPane({ slug, path, focusLine, showPath = true, compact = false, className }: {
   slug: string
   path: string
   focusLine?: number | null
+  compact?: boolean
   showPath?: boolean
   className?: string
 }) {
   const tr = useT()
+  const scrollRef = useRef<HTMLPreElement>(null)
+  const hitRef = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<'raw' | 'hex'>('raw')
+  const [highlight, setHighlight] = useState(true)
   const [offset, setOffset] = useState<number | null>(null)
   const requestedLine = mode === 'raw' && offset == null && focusLine != null && focusLine > 0
     ? focusLine : null
@@ -45,6 +52,16 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
     if (isError) reportClientError('file-content-open', error, path)
   }, [error, isError, path])
 
+  useEffect(() => {
+    const area = scrollRef.current
+    if (!area) return
+    const row = hitRef.current
+    area.scrollTop = row && offset == null
+      ? Math.max(0, row.getBoundingClientRect().top - area.getBoundingClientRect().top + area.scrollTop - 48)
+      : 0
+  }, [data, focusLine, offset])
+
+  const syntax = useSyntaxLines(path, data?.mode === 'raw' && !data.binary ? data.lines : undefined, highlight)
   const copyableContent = data?.mode === 'raw'
     ? data.lines?.join('\n')
     : data?.rows?.map((row) =>
@@ -52,7 +69,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
       .join('\n')
 
   return (
-      <div className={clsx('flex h-full min-h-0 flex-col gap-3', className)}>
+      <div className={clsx('flex h-full min-h-0 flex-col', compact ? 'gap-1.5' : 'gap-3', className)}>
         {showPath && <div className="mono break-all rounded-lg bg-[var(--panel-2)] px-3 py-2 text-[11.5px] text-[var(--muted)]">
           {path}
         </div>}
@@ -112,6 +129,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
         {data && (
           <div className="flex flex-wrap items-center gap-2">
             <Tag>{formatBytes(data.size)}</Tag>
+            {data.mode === 'raw' && !data.binary && syntax.language && <label title={tr('viewer.syntaxHint')} className="flex items-center gap-2 text-[12px] text-[var(--muted)]"><input type="checkbox" checked={highlight} onChange={event => setHighlight(event.target.checked)} />{tr('viewer.syntax')} · {syntaxLabel(syntax.language)}</label>}
             {data.binary && <Tag tone="warn" explain={tr('viewer.binary.hint')}>{tr('viewer.binary')}</Tag>}
           </div>
         )}
@@ -127,17 +145,17 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
         )}
 
         {data?.mode === 'raw' && data.lines && (
-          <pre data-file-content-scroll tabIndex={0} aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre ref={scrollRef} data-file-content-scroll tabIndex={0} role="region" aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.lines.map((line, i) => {
               const n = data.from_line != null ? data.from_line + i : null
               const hit = n != null && n === focusLine
               return (
-                <div key={i} className={clsx('flex px-3', hit && 'bg-[rgba(208,59,59,0.18)]')}>
+                <div key={i} ref={hit ? hitRef : undefined} data-focus-line={hit ? n : undefined} className={clsx('flex px-3', hit && 'bg-[rgba(208,59,59,0.18)]')}>
                   <span className={clsx('w-12 shrink-0 select-none pr-3 text-right',
                     hit ? 'text-[#ff8b8b]' : 'text-[#4b5566]')}>
                     {n ?? '·'}
                   </span>
-                  <span className="whitespace-pre-wrap break-all">{line || ' '}</span>
+                  <SyntaxText text={line} tokens={syntax.tokens?.[i]} />
                 </div>
               )
             })}
@@ -145,7 +163,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, classN
         )}
 
         {data?.mode === 'hex' && data.rows && (
-          <pre data-file-content-scroll tabIndex={0} aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
+          <pre ref={scrollRef} data-file-content-scroll tabIndex={0} role="region" aria-label={tr('artifact.fileContent')} className="mono min-h-0 flex-1 overflow-auto rounded-lg bg-[var(--code-bg)] py-2 text-[11.5px] leading-relaxed text-[#e6edf3]">
             {data.rows.map((r) => (
               <div key={r.offset} className="flex gap-4 px-3">
                 <span className="w-20 shrink-0 select-none text-right text-[#4b5566]">

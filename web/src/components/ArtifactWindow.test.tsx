@@ -1,17 +1,4 @@
-// ArtifactWindow.test.tsx -- the note box, which is where a decision is
-// written down.
-//
-// THE DEFECT THIS FILE GUARDS. Seven of the places that open this window
-// build the artifact stub by hand and cannot know the note; they hard-code
-// `triage_note: ''`. A box seeded from the stub therefore showed an empty
-// note next to an artifact that had one -- and because the triage buttons
-// send whatever is in the box, the next click wrote that emptiness over the
-// reasoning somebody had already recorded. Nothing on screen said so.
-//
-// The other half of the same problem is the correction: the box is filled
-// from the server, so a later refetch must NOT re-fill it while the analyst
-// is typing. Both halves are asserted here, because a fix for one that
-// breaks the other is a fix that loses text either way.
+// Artifact review preserves stored notes while exposing only decisions and file classifications.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -25,6 +12,8 @@ import { ArtifactWindow, type ArtifactStub } from './ArtifactWindow'
 // stubs `fetch` is also testing the URL builder, the token header and the
 // error mapping, and a change to any of those breaks tests about the note
 // box for no reason the name of the test would explain.
+vi.mock('./TraceWindow', () => ({ TraceWindow: () => <div>Embedded trace</div> }))
+
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
   api: vi.fn(),
@@ -97,9 +86,6 @@ function mount(artifact: ArtifactStub | null = stub(), queue = false) {
   }
 }
 
-const noteBox = () =>
-  screen.getByPlaceholderText(/Reasoning/i) as HTMLTextAreaElement
-
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(post).mockResolvedValue({})
@@ -160,7 +146,54 @@ describe('case review progress', () => {
   })
 })
 
-describe('the note box', () => {
+describe('artifact context and classification', () => {
+  it.each(['file', 'client', 'table', 'dump'] as const)('removes analyst reasoning for %s and preserves the stored note on save', async kind => {
+    vi.mocked(api).mockResolvedValue(context({ kind, triage_note: 'Historical analyst note', file: kind === 'file' ? { exists: true } : undefined }))
+    const { onSave } = mount(stub({ artifact_kind: kind }))
+    const decision = screen.getByRole('radio', { name: 'Skip for now' })
+    await waitFor(() => expect(decision).toBeEnabled())
+    expect(screen.queryByText('Optional analyst reasoning')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Reasoning/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    await userEvent.click(decision)
+    await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
+    expect(onSave).toHaveBeenCalledWith('reviewed', 'Historical analyst note', ...(kind === 'file' ? [['webshell']] : []))
+  })
+
+  it('preserves the latest stored note after the context is refreshed', async () => {
+    vi.mocked(api).mockResolvedValue(context({ kind: 'client', triage_note: 'Original note' }))
+    const { qc, onSave } = mount(stub({ artifact_kind: 'client' }))
+    const decision = screen.getByRole('radio', { name: 'Skip for now' })
+    await waitFor(() => expect(decision).toBeEnabled())
+    await userEvent.click(decision)
+    await act(async () => {
+      qc.setQueryData(['artifact', 'case', SHELL], context({ kind: 'client', triage_note: 'Updated elsewhere' }))
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
+    expect(onSave).toHaveBeenCalledWith('reviewed', 'Updated elsewhere')
+  })
+
+  it.each([
+    { slug: 'case', artifact: '/evidence/another-item' },
+    { slug: 'other-case', artifact: SHELL },
+  ])('waits for the new context when switching to $slug / $artifact', async next => {
+    vi.mocked(api).mockResolvedValue(context({ kind: 'client', triage_note: 'First note' }))
+    const { rerender, onSave } = mount(stub({ artifact_kind: 'client' }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeEnabled())
+    let release: (value: ArtifactContext) => void = () => {}
+    vi.mocked(api).mockImplementation(() => new Promise<ArtifactContext>(resolve => { release = resolve }))
+    rerender(<ArtifactWindow slug={next.slug} artifact={stub({ artifact_kind: 'client', artifact: next.artifact })}
+      roots={[]} collected={[]} onSave={onSave} onClose={() => {}} onView={() => {}} onTrace={() => {}} />)
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeDisabled()
+    fireEvent.keyDown(window, { key: '1' })
+    fireEvent.keyDown(window, { key: 'Enter' })
+    expect(onSave).not.toHaveBeenCalled()
+    await act(async () => release(context({ kind: 'client', artifact: next.artifact, triage_note: 'Second note' })))
+    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
+    expect(onSave).toHaveBeenCalledWith('reviewed', 'Second note')
+  })
+
   it('keeps reasons compact, focuses the selected code and preserves drafts across the IP tab', async () => {
     const finding: Finding = {
       id: 1, fingerprint: 'first', artifact: SHELL, artifact_kind: 'file' as const,
@@ -175,7 +208,8 @@ describe('the note box', () => {
         first_epoch: 1000, last_epoch: 2000 }],
     })
     vi.mocked(api).mockImplementation(async path => path.includes('/file-preview?')
-      ? { from_line: 90, focus: 90, lines: ['safe distant line'] } : ctx)
+      ? { from_line: 90, focus: 90, lines: ['safe distant line'] }
+      : path.includes('/file?') ? { mode: 'raw', size: 1000, offset: 0, length: 1000, window: 262144, eof: true, from_line: 1, lines: Array.from({length: 90}, (_, i) => i === 89 ? 'safe distant line' : i === 1 ? 'safe second line' : `safe line ${i + 1}`) } : ctx)
     const onTrace = vi.fn()
     renderWithProviders(<ArtifactWindow slug="case" artifact={stub()} roots={[]} collected={[]}
       onSave={async () => SAVED} onClose={() => {}} onView={() => {}} onTrace={onTrace} />)
@@ -203,7 +237,7 @@ describe('the note box', () => {
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
     expect(screen.getByText('safe distant line')).toBeVisible()
     await userEvent.click(screen.getByRole('button', { name: /Synthetic first rule/ }))
-    expect(screen.getAllByText('safe second line').some(el => el.parentElement?.getAttribute('data-focus-line') === '2')).toBe(true)
+    await waitFor(() => expect(screen.getAllByText('safe second line').some(el => el.parentElement?.getAttribute('data-focus-line') === '2')).toBe(true))
     expect(vi.mocked(api).mock.calls.filter(([url]) => url.includes('/file-preview?'))).toHaveLength(1)
   })
 
@@ -217,54 +251,12 @@ describe('the note box', () => {
     expect(screen.getByRole('radio', { name: 'False positive: Discard' })).toBeEnabled()
   })
 
-  it('shows the note the server has, not the empty one the caller passed', async () => {
-    // The bug in one assertion: opened from a view that knows no note, the
-    // box must still end up carrying the reasoning already on record.
-    vi.mocked(api).mockResolvedValue(
-      context({ triage_note: 'dropper, uploaded via the media form' }))
 
-    mount(stub({ artifact_kind: 'client', triage_note: '' }))
-
-    await waitFor(() =>
-      expect(noteBox().value).toBe('dropper, uploaded via the media form'))
-  })
-
-  it('does not write an empty note back over a recorded one', async () => {
-    // The consequence, and the reason this mattered enough to find: the
-    // triage buttons send the contents of the box. A box that never caught
-    // up with the server sent '' and erased the note server-side.
-    vi.mocked(api).mockResolvedValue(context({ triage_note: 'confirmed by hash' }))
-
-    const { onSave } = mount(stub({ artifact_kind: 'client', triage_note: '' }))
-    await waitFor(() => expect(noteBox().value).toBe('confirmed by hash'))
-
-    await userEvent.click(screen.getByRole('radio', { name: /True positive: Collect/i }))
-    expect(onSave).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
-    expect(onSave).toHaveBeenCalledWith('confirmed', 'confirmed by hash')
-  })
-
-  it('keeps what the analyst is typing when the context is refetched', async () => {
-    // Every triage decision invalidates the artifact query, so a refetch
-    // lands in the middle of writing more or less constantly. Re-seeding on
-    // each answer would delete the sentence being written.
-    vi.mocked(api).mockResolvedValue(context({ triage_note: 'first pass' }))
-    const { qc } = mount(stub({ artifact_kind: 'client' }))
-    await waitFor(() => expect(noteBox().value).toBe('first pass'))
-
-    await userEvent.clear(noteBox())
-    await userEvent.type(noteBox(), 'second pass: same hash as the other host')
-
-    await act(async () => { await qc.refetchQueries({ queryKey: ['artifact'] }) })
-
-    expect(noteBox().value).toBe('second pass: same hash as the other host')
-  })
 
   it('keeps the decision and save action after a changed context and stub refresh', async () => {
     vi.mocked(api).mockResolvedValue(context({ worst: 1 }))
     const { qc, rerender } = mount(stub({ artifact_kind: 'client' }))
     await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
-    await userEvent.type(noteBox(), 'unsaved reasoning')
     await act(async () => {
       qc.setQueryData(['artifact', 'case', SHELL], context({ worst: 0 }))
     })
@@ -273,74 +265,18 @@ describe('the note box', () => {
     rerender(window_(stub({ artifact_kind: 'client', worst: 0 })))
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled()
-    expect(noteBox()).toHaveValue('unsaved reasoning')
   })
 
-  it('resets the draft when switching cases even if the artifact path is identical', async () => {
-    vi.mocked(api).mockImplementation(async (path: string) => context({
-      triage_note: path.includes('/other-case/') ? 'other case note' : 'first case note',
-    }))
-    const { rerender } = mount(stub({ artifact_kind: 'client' }))
-    await userEvent.click(await screen.findByRole('radio', { name: 'Skip for now' }))
-    rerender(<ArtifactWindow slug="other-case" artifact={stub({ artifact_kind: 'client' })} roots={[]}
-      collected={[]} onSave={async () => SAVED} onClose={() => {}}
-      onView={() => {}} onTrace={() => {}} />)
-    await waitFor(() => expect(noteBox()).toHaveValue('other case note'))
-    expect(screen.getByRole('radio', { name: 'Skip for now' })).not.toBeChecked()
-    expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled()
-  })
 
-  it('replaces the note when a different artifact is opened', async () => {
-    // The window stays mounted across artifacts. Carrying the previous
-    // one's note over would attach somebody's reasoning to the wrong file --
-    // and the next click would then save it there.
-    const other = '/var/www/uploads/avatar.php'
-    vi.mocked(api).mockImplementation(async (path: string) =>
-      path.includes(encodeURIComponent(other))
-        ? context({ artifact: other, triage_note: 'second file, unrelated' })
-        : context({ triage_note: 'first file' }))
 
-    const { rerender } = mount(stub({ artifact_kind: 'client' }))
-    await waitFor(() => expect(noteBox().value).toBe('first file'))
 
-    rerender(window_(stub({ artifact_kind: 'client', artifact: other })))
-
-    await waitFor(() => expect(noteBox().value).toBe('second file, unrelated'))
-  })
-
-  it("shows no note while the new artifact's context is still in flight", async () => {
-    // Between opening the second artifact and its answer arriving, the only
-    // context the component has is the first artifact's. An empty box for a
-    // moment is honest; the previous file's reasoning under the new file's
-    // name is not, and one triage click would then save it there.
-    const other = '/var/www/uploads/avatar.php'
-    let release: ((c: ArtifactContext) => void) | null = null
-    vi.mocked(api).mockImplementation((path: string) =>
-      path.includes(encodeURIComponent(other))
-        ? new Promise<ArtifactContext>((res) => { release = res })
-        : Promise.resolve(context({ triage_note: 'first file' })))
-
-    const { rerender } = mount(stub({ artifact_kind: 'client' }))
-    await waitFor(() => expect(noteBox().value).toBe('first file'))
-
-    rerender(window_(stub({ artifact_kind: 'client', artifact: other })))
-    expect(noteBox().value).toBe('')
-    expect(noteBox()).toBeDisabled()
-    expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeDisabled()
-
-    await act(async () => {
-      release?.(context({ artifact: other, triage_note: 'its own note' }))
-    })
-    await waitFor(() => expect(noteBox().value).toBe('its own note'))
-    expect(noteBox()).toBeEnabled()
-    expect(screen.getByRole('radio', { name: /True positive: Collect/i })).toBeEnabled()
-  })
 })
 
 describe('deliberate decision submission', () => {
   it('scrolls the active pane with held arrow keys without changing the decision', async () => {
-    vi.mocked(api).mockResolvedValue(context({ file: { exists: true,
-      preview: { lines: ['Safe preview'], from_line: 1 } } }))
+    vi.mocked(api).mockImplementation(async url => url.includes('/file?')
+      ? { mode: 'raw', size: 20, offset: 0, length: 20, window: 262144, eof: true, from_line: 1, lines: ['Safe preview'] }
+      : context({ file: { exists: true, preview: { lines: ['Safe preview'], from_line: 1 } } }))
     mount()
     const code = await screen.findByRole('region', { name: 'File content' })
     Object.defineProperties(code, {
@@ -370,17 +306,6 @@ describe('deliberate decision submission', () => {
     fireEvent.keyDown(window, { key: 'ArrowDown' })
     expect(code.scrollTop).toBe(800)
     expect(metadata.scrollTop).toBe(48)
-  })
-
-  it('keeps Enter and arrows available for editing a note without saving', async () => {
-    vi.mocked(api).mockResolvedValue(context())
-    const { onSave } = mount(stub({ artifact_kind: 'client' }))
-    await waitFor(() => expect(noteBox()).toBeEnabled())
-    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
-    await userEvent.type(noteBox(), 'first{Enter}second')
-    expect(noteBox()).toHaveValue('first\nsecond')
-    expect(fireEvent.keyDown(noteBox(), { key: 'ArrowUp' })).toBe(true)
-    expect(onSave).not.toHaveBeenCalled()
   })
 
   it('defaults files to Webshell, saves multiple tags and keeps historical notes', async () => {
@@ -444,17 +369,15 @@ describe('deliberate decision submission', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
 
-  it('ignores decision shortcuts while editing text, loading context or composing input', async () => {
+  it('ignores decision shortcuts while loading context or composing input', async () => {
     let resolveContext: (value: ArtifactContext) => void = () => {}
     vi.mocked(api).mockImplementation(() => new Promise<ArtifactContext>(resolve => { resolveContext = resolve }))
     const { onSave } = mount(stub({ artifact_kind: 'client' }))
     fireEvent.keyDown(window, { key: '1' })
     expect(screen.getByRole('radio', { name: /True positive: Collect/ })).not.toBeChecked()
     await act(async () => resolveContext(context()))
-    await waitFor(() => expect(noteBox()).toBeEnabled())
-    await userEvent.type(noteBox(), '123f')
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeEnabled())
     expect(screen.getByRole('radio', { name: /True positive: Collect/ })).not.toBeChecked()
-    expect(noteBox()).toHaveValue('123f')
     fireEvent.keyDown(window, { key: '1', isComposing: true })
     expect(onSave).not.toHaveBeenCalled()
   })
@@ -472,12 +395,10 @@ describe('deliberate decision submission', () => {
     expect(reviewed).toBeChecked()
     expect(onSave).not.toHaveBeenCalled()
 
-    await userEvent.clear(noteBox())
-    await userEvent.type(noteBox(), 'checked against the clean package')
     await userEvent.click(screen.getByRole('button', { name: 'Save & next' }))
 
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(
-      'reviewed', 'checked against the clean package'))
+      'reviewed', 'initial note'))
     expect(onSavedNext).toHaveBeenCalledWith(SAVED)
   })
 
@@ -497,26 +418,25 @@ describe('deliberate decision submission', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
 
-  it('retains the selected decision and typed note after a failed save', async () => {
-    vi.mocked(api).mockResolvedValue(context())
+  it('retains the selected decision and stored note after a failed save', async () => {
+    vi.mocked(api).mockResolvedValue(context({ triage_note: 'known maintenance helper' }))
     const { onSave } = mount(stub({ artifact_kind: 'client' }))
     onSave.mockRejectedValueOnce(new Error('local request failed'))
 
     const dismissed = await screen.findByRole('radio', { name: 'False positive: Discard' })
     await userEvent.click(dismissed)
-    await userEvent.type(noteBox(), 'known maintenance helper')
     await userEvent.click(screen.getByRole('button', { name: 'Save decision' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/local request failed/i)
     expect(dismissed).toBeChecked()
-    expect(noteBox().value).toBe('known maintenance helper')
+    expect(onSave).toHaveBeenCalledWith('dismissed', 'known maintenance helper')
   })
 
   it('closes without saving when no draft is submitted', async () => {
     vi.mocked(api).mockResolvedValue(context({ triage_note: 'leave this untouched' }))
     const { onSave, onClose } = mount(stub({ artifact_kind: 'client' }))
 
-    await waitFor(() => expect(noteBox()).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: /Close \(Esc\)/i }))
 
     expect(onClose).toHaveBeenCalledOnce()
@@ -604,6 +524,7 @@ describe('what the window states about the artifact', () => {
     expect(screen.queryByRole('link', { name: 'Open IOC Box' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
 
+    await userEvent.click(screen.getByRole('button', { name: 'Open…' }))
     await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       '/api/cases/case/reveal-file', { path: SHELL }))
@@ -620,7 +541,7 @@ describe('what the window states about the artifact', () => {
     await waitFor(() => expect(screen.getByText('false positive')).toBeInTheDocument())
   })
 
-  it('places evidence before analyst reasoning and decisions', async () => {
+  it('places evidence before classification and decisions', async () => {
     vi.mocked(api).mockResolvedValue(context({
       findings: [{
         id: 1, fingerprint: 'synthetic-finding', artifact: SHELL, artifact_kind: 'file',

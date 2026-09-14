@@ -381,5 +381,23 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(new_hash, referenced_file["hashes"]["SHA-256"])
 
 
+    def test_profile_edit_rejects_stale_revision_without_overwriting_newer_data(self):
+        route = f"/api/cases/{self.slug}"
+        _, initial = self.request("GET", route)
+        code, changed = self.request("PATCH", route, {"name": "Updated name", "profile": {"summary": "First editor"},
+            "expected_profile_revision": initial["profile_revision"]})
+        self.assertEqual(200, code, changed)
+        self.assertNotEqual(initial["profile_revision"], changed["profile_revision"])
+        code, error = self.request("PATCH", route, {"profile": {"summary": "Stale editor"},
+            "expected_profile_revision": initial["profile_revision"]})
+        self.assertEqual(409, code, error)
+        _, saved = self.request("GET", route)
+        self.assertEqual("First editor", saved["profile"]["summary"])
+        self.assertEqual("Updated name", saved["name"])
+        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+            code, changes = self.request("GET", route + "/opencti/profile-changes")
+        self.assertEqual(200, code, changes)
+        self.assertEqual("first_export", changes["status"])
+
 if __name__ == "__main__":
     unittest.main()

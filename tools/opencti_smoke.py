@@ -75,7 +75,7 @@ def _fixture(output_root):
                                "Synthetic mapping test; neither execution nor exploitation is asserted.")
         # A real CVE identifier is used solely to test relationship compatibility.
         # This explicitly synthetic case asserts no activity against a real system.
-        cve_id = db.add_ioc(conn, "CVE-2021-44228", "vulnerability", note="Synthetic mapping test only")
+        cve_id = db.add_ioc(conn, "CVE-2024-3094", "vulnerability", note="Synthetic mapping test only")
         ioc_model.relationship(conn, ids["ip"], cve_id, "cve-context", "Synthetic fixture record 2",
                                "Compatibility test, not evidence of exploitation.")
         conn.execute("UPDATE iocs SET context=?,identity_key=? WHERE id=?", (
