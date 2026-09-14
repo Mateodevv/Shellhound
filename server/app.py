@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 
 from server import case_profile, case_report, correlation, coverage, db, diagnostics, geoip, huntrules, hunt_batches
-from server import opencti_service
+from server import opencti_service, enrich
 from server import ioc_model
 from server import iocs as ioclib
 from server import rules as rulelib, ruleswitch
@@ -552,7 +552,10 @@ def create_app(config: Config) -> FastAPI:
 
     @app.post("/api/settings/key", dependencies=[auth])
     def settings_key(body: KeyBody):
-        raise HTTPException(410, "Direct provider keys are retired. Configure OpenCTI in Settings.")
+        try:
+            return settingslib.set_key(config.workspace, body.service, body.key)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     class AckBody(BaseModel):
         accepted: bool
@@ -561,19 +564,23 @@ def create_app(config: Config) -> FastAPI:
     def settings_ack(body: AckBody):
         """The analyst has read what a lookup sends out. Until this is set,
         `enrich` refuses -- the same gate as the GeoIP confirmation."""
-        raise HTTPException(410, "Direct enrichment is retired. Use the separate OpenCTI actions.")
+        return settingslib.set_ack(config.workspace, body.accepted)
 
     class EnrichBody(BaseModel):
         service: str           # virustotal | abuseipdb
         value: str             # THE one indicator; nothing else is sent
         refresh: bool = False
+        kind: str = ""
 
     @app.post("/api/cases/{slug}/enrich", dependencies=[auth])
     def enrich_one(slug: str, body: EnrichBody):
         """Ask one service about one indicator. Explicit, one at a time --
         there is no sweep and no background refresh."""
-        case_dir_or_404(slug)
-        raise HTTPException(410, "Direct enrichment is retired. Use OpenCTI; historical results remain available.")
+        case = case_dir_or_404(slug)
+        try:
+            return enrich.lookup(config.workspace, case, body.service, body.value, body.refresh, kind=body.kind)
+        except enrich.EnrichError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
 
     @app.get("/api/cases/{slug}/enrichment", dependencies=[auth])
     def enrichment_list(slug: str):

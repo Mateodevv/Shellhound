@@ -1,3 +1,4 @@
+import { DirectEnrichment } from './DirectEnrichment'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, post, type Ioc } from '../api'
@@ -27,7 +28,7 @@ export function ArtifactEnrichment({ slug, ids }: { slug: string; ids: number[] 
   const missing = preview?.entities.some(entity => entity.requires_creation)
   const needsTransfer = preview?.entities.some(entity => entity.requires_transfer)
   const busy = prepare.isPending || run.isPending || check.isPending || poll.isPending
-  if (!cti.configured) return null
+  if (!cti.configured) return <DirectEnrichment slug={slug} ids={ids} />
   if (!ids.length) return <p role="status" className="text-[12px] text-[var(--muted)]">{tr('review.collectForEnrichment')}</p>
   const jobs = cti.data?.enrichments?.filter(item => ids.includes(item.ioc_id)) ?? []
   return <section className="space-y-3 text-[12px]">

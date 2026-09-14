@@ -14,6 +14,7 @@ export interface LogEvent {
   raw_time: string; time_meaning: string; line: number; line_end: number
   ip: string; remote_host: string; account: string; path: string; artifact: string; mapped_artifact?: string
   artifact_available?: boolean; triage?: string; timeline_id?: string
+  bytes?: number | null
   operation: string; outcome: string; signature: string; detection: boolean; raw: string; fresh: boolean
 }
 export interface LogSearch { rows: LogEvent[]; total: number; next_offset: number | null }

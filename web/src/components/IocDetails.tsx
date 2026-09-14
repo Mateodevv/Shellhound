@@ -1,3 +1,5 @@
+import { directSupported, useDirectSettings } from '../directEnrichment'
+import { DirectEnrichment } from './DirectEnrichment'
 import { useT } from '../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -59,11 +61,13 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     queryFn: () => api<Detail>(`/api/cases/${slug}/iocs/${id}/detail`)
   })
   const cti = useOpenCti(slug)
+  const direct = useDirectSettings()
   const [localTab, setLocalTab] = useState('Overview')
   const requestedTab = controlledTab || localTab
-  const canEnrich = cti.configured && !!data?.object && (
+  const canDirect = !cti.configured && !!data?.object && directSupported(direct.data, data.object.type)
+  const canEnrich = canDirect || (cti.configured && !!data?.object && (
     ['ip', 'domain', 'url', 'email', 'hash', 'file', 'vulnerability'].includes(data.object.type)
-    || (data.object.type === 'user' && !!data.object.context))
+    || (data.object.type === 'user' && !!data.object.context)))
   const tab = requestedTab === 'Enrichment' && canEnrich ? 'Enrichment' : 'Overview'
   const setTab = (value: string) => { setLocalTab(value); onTab?.(value) }
   const [editOpen, setEditOpen] = useState(false)
@@ -240,7 +244,8 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       </details>}
     </>}
 
-    {object && tab === 'Enrichment' && <section aria-label={tr('iocWorkspace.tab.Enrichment')} className="space-y-3">
+    {object && tab === 'Enrichment' && canDirect && <DirectEnrichment key={id} slug={slug} ids={[id]} />}
+    {object && tab === 'Enrichment' && cti.configured && <section aria-label={tr('iocWorkspace.tab.Enrichment')} className="space-y-3">
       <h3 className="ioc-section-title">{tr('cti.enrichmentResults')}</h3>
       {cti.isPending && <p>{tr('common.loading')}</p>}
       {cti.error && <p role="alert" className="text-[var(--danger-text)]">{String(cti.error instanceof Error ? cti.error.message : cti.error)}</p>}

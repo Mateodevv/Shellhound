@@ -18,6 +18,7 @@ import {
 } from '../components/ui'
 import { Tooltip } from '../components/Tooltip'
 import { GeoSettings } from '../components/GeoSettings'
+import { DirectEnrichmentSettings } from '../components/DirectEnrichmentSettings'
 import { OpenCtiSettings } from '../components/OpenCtiSettings'
 
 type Tab = 'intel' | 'detection'
@@ -50,6 +51,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
 
       {tab === 'intel' && <>
         <OpenCtiSettings />
+        <DirectEnrichmentSettings />
         <GeoSettings />
       </>}
 

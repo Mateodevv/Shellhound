@@ -177,15 +177,33 @@ class OpenCTIHTTPTests(unittest.TestCase):
         with response:
             return response.status, json.loads(response.read())
 
-    def test_offline_reads_auth_and_retired_external_routes(self):
+    def test_offline_reads_auth_and_unconfigured_providers(self):
         with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("network")):
             for path in ["/api/opencti/settings", "/api/organizations", f"/api/cases/{self.slug}/opencti"]:
                 self.assertEqual(401, self.request("GET", path, token="bad")[0])
                 self.assertEqual(200, self.request("GET", path)[0])
-            self.assertEqual(410, self.request("POST", "/api/settings/key",
+            self.assertEqual(200, self.request("POST", "/api/settings/key",
                 {"service": "virustotal", "key": "not-a-key"})[0])
-            self.assertEqual(410, self.request("POST", f"/api/cases/{self.slug}/enrich",
+            self.assertEqual(400, self.request("POST", f"/api/cases/{self.slug}/enrich",
                 {"service": "abuseipdb", "value": "198.51.100.7"})[0])
+
+    def test_direct_provider_api_auth_cache_and_opencti_precedence(self):
+        path = f"/api/cases/{self.slug}/enrich"
+        body = {"service": "abuseipdb", "value": "1.1.1.1", "kind": "ip"}
+        with patch("server.enrich._get", return_value={"data": {"abuseConfidenceScore": 7}}) as remote:
+            self.assertEqual(401, self.request("POST", "/api/settings/key", {"service":"abuseipdb","key":"test-private-key"}, token="bad")[0])
+            self.assertEqual(401, self.request("POST", path, body, token="bad")[0])
+            self.assertEqual(400, self.request("POST", path, body)[0])
+            self.assertEqual(200, self.request("POST", "/api/settings/key", {"service":"abuseipdb","key":"test-private-key"})[0])
+            self.assertNotIn("test-private-key", json.dumps(self.request("GET", "/api/settings")[1]))
+            self.assertEqual(404, self.request("POST", "/api/cases/missing/enrich", body)[0])
+            remote.assert_not_called()
+            code, result = self.request("POST", path, body)
+            self.assertEqual(200, code); self.assertEqual(7, result["result"]["score"])
+            self.assertEqual(200, self.request("POST", path, body)[0]); self.assertEqual(1, remote.call_count)
+            from server import settings
+            settings.set_opencti(self.root, {"url":"https://cti.example","token":"test-token","ingester_id":"dba5717c-b7d1-474f-8aad-bf9c2d61312c"})
+            self.assertEqual(409, self.request("POST", path, {**body,"refresh":True})[0]); self.assertEqual(1, remote.call_count)
 
     def test_profile_choices_are_authenticated_and_read_only(self):
         for route in ("/api/profile/geography", "/api/opencti/sectors"):

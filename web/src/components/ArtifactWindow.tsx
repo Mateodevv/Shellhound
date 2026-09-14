@@ -1,3 +1,4 @@
+import { directSupported, useDirectSettings } from '../directEnrichment'
 // ArtifactWindow.tsx -- one bounded evidence workspace and an explicit save.
 //
 // Hostile files are only ever rendered as inert JSON text. Intelligence
@@ -30,6 +31,7 @@ import { GroupedActions } from './OpenCti'
 import { ArtifactEnrichment } from './ArtifactEnrichment'
 import { SuccessfulAccesses, TableRecord } from './ReviewEvidence'
 import { LogEntryContext } from './LogEntryContext'
+import { LogFindingReview } from './LogFindingReview'
 import { IocTypeBadge } from './IocTypeBadge'
 import { FileContentPane } from './FileViewer'
 import { SyntaxText } from './SyntaxCode'
@@ -252,6 +254,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const splitRef = useRef<HTMLDivElement>(null)
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
   const conf = useOpenCtiSettings(!!artifact)
+  const direct = useDirectSettings(!!artifact)
   const geo = useGeo(artifact?.artifact_kind === 'client' ? artifact.artifact : null)
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
   const [classifications, setClassifications] = useState<string[]>(['webshell'])
@@ -313,7 +316,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setSelectedFinding(null)
     setClassifications(['webshell'])
     setSelectedTable(null)
-  }, [artifactKey])
+  }, [artifactKey, artifact?.artifact_kind])
   useEffect(() => {
     if (!artifactKey || contextFor.current === artifactKey) return
     if (ctx && ctx.artifact === artifactPath) {
@@ -326,7 +329,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   shortcutRef.current = () => {}
   if (!artifact) return null
   const kind = artifact.artifact_kind
-  const canEnrich = conf.data?.configured === true && (kind === 'file' || kind === 'client')
+  const canEnrich = (kind === 'file' || kind === 'client') && (conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, kind === 'client' ? 'ip' : 'file')))
   const tab = evidenceTab === 'enrichment' && !canEnrich ? (kind === 'client' ? 'trace' : 'findings') : evidenceTab
   const activeFinding = selectedFinding ?? ctx?.findings.find(item => item.retired !== 1) ?? ctx?.findings[0]
   const boxUrl = new URL(location.href)
@@ -339,6 +342,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const fileHashes = file?.hashes ?? (file?.sha256 ? { sha256: file.sha256 } : {})
   const actor = ctx?.actor
   const findings = ctx?.findings ?? artifact.items ?? []
+  const logReview = kind === 'log_observation' || (kind === 'file' && !!ctx?.log_observations?.length && findings.length > 0 && findings.every(finding => finding.source === 'log_observation'))
   const state: TriageState = ctx?.triage ?? artifact.triage
   const worst = ctx?.worst ?? artifact.worst
   const ips = ctx?.related_ips ?? []
@@ -597,7 +601,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {kind === 'file' ? <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} className="min-h-0 flex-1" />
               : <ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} />}
           </div>
-        ) : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
+        ) : logReview ? <LogFindingReview key={artifactKey} slug={slug} events={ctx?.log_observations ?? []} configured={conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'file'))} onFile={onView} /> : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
           <aside data-artifact-scroll tabIndex={0} className="min-w-0 space-y-4 p-3 lg:overflow-y-auto">
             {identity}{kind === 'file' ? fileFacts : nonFileContext}
             {kind === 'dump' && !!ctx?.tables?.length && <Block title={tr('review.tables')}><div className="space-y-1">{ctx.tables.map(table => <button key={table.id} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-[var(--panel-2)]" onClick={() => { setSelectedTable(table.id); setEvidenceTab('tables') }}><Database size={13} /><span className="mono min-w-0 flex-1 truncate">{table.name}</span><ChevronRight size={13} /></button>)}</div></Block>}
@@ -622,7 +626,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               data-artifact-scroll={kind === 'client' ? 'primary' : undefined} tabIndex={0}
               className={clsx('flex min-h-0 flex-col gap-3', kind === 'file' ? 'max-h-[42%] overflow-y-auto' : 'flex-1 overflow-y-auto')}>
               {tab === 'findings' && <FindingList key={artifactKey} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={kind === 'dump' ? sqlQuery.data : preview} loading={kind === 'dump' ? sqlQuery.isFetching : needsPreview && previewLoading} />}
-              {tab === 'findings' && ctx?.log_observations?.map(event => <details key={event.id} open={kind === 'log_observation'} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary><div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onView} /></div></details>)}
+              {tab === 'findings' && ctx?.log_observations?.map(event => <details key={event.id} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary><div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onView} /></div></details>)}
               {tab === 'ips' && <Clients slug={slug} ips={ips} marks={marks} onTrace={onTrace} />}
               {tab === 'accesses' && <SuccessfulAccesses key={artifactKey} slug={slug} ip={artifact.artifact} onView={onView} />}
               {kind === 'client' && tab === 'trace' && <div className="max-h-36 shrink-0 overflow-y-auto"><FindingList key={`trace:${artifactKey}`} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} loading={false} /></div>}

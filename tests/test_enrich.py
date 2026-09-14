@@ -53,15 +53,18 @@ class SettingsTests(unittest.TestCase):
         self.assertIn('test-rule', ruleswitch.disabled_ids(self.ws))
         self.assertIn('test.yar', settings.yara_disabled(self.ws))
 
-    def test_legacy_keys_never_released_and_next_save_drops_them(self):
-        settings.path(self.ws).write_text(json.dumps({'keys': {'virustotal': 'legacy-secret'},
-            'enrichment_ack': True}), encoding='utf-8')
+    def test_provider_keys_preserved_masked_and_gated_by_opencti(self):
+        settings.set_key(self.ws, 'virustotal', 'provider-private-key')
+        self.assertEqual('provider-private-key', settings.for_service(self.ws, 'virustotal'))
+        self.assertNotIn('provider-private-key', json.dumps(settings.public(self.ws)))
+        settings.set_yara_disabled(self.ws, ['demo.yar'])
+        self.assertEqual('provider-private-key', settings.for_service(self.ws, 'virustotal'))
+        settings.set_opencti(self.ws, {'url':'https://cti.example','token':'test-token',
+            'ingester_id':'dba5717c-b7d1-474f-8aad-bf9c2d61312c'})
         self.assertEqual('', settings.for_service(self.ws, 'virustotal'))
-        self.assertEqual({}, settings.public(self.ws)['services'])
-        settings.set_opencti(self.ws, {'url': 'https://cti.example'})
-        self.assertNotIn('legacy-secret', settings.path(self.ws).read_text())
-        with self.assertRaises(ValueError):
-            settings.set_key(self.ws, 'virustotal', 'new-secret')
+        self.assertTrue(settings.public(self.ws)['services']['virustotal']['configured'])
+        settings.set_key(self.ws, 'virustotal', '')
+        self.assertFalse(settings.public(self.ws)['services']['virustotal']['configured'])
 
     def test_corrupt_settings_fail_closed(self):
         settings.path(self.ws).write_text('{bad', encoding='utf-8')
@@ -86,7 +89,7 @@ class HistoricalTests(unittest.TestCase):
         self.assertEqual('2026-01-01T00:00:00', result['a'*64]['virustotal']['fetched'])
         self.assertEqual(0, conn.execute('SELECT count(*) FROM findings').fetchone()[0])
 
-    def test_retired_lookups_fail_before_any_network_request(self):
+    def test_unconfigured_lookups_fail_before_any_network_request(self):
         with patch('urllib.request.urlopen') as network:
             for provider in ['virustotal', 'abuseipdb']:
                 with self.assertRaises(enrich.EnrichError):

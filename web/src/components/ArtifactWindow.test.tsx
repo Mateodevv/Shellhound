@@ -506,6 +506,17 @@ describe('what the window states about the artifact', () => {
     expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?') || url.includes('/file-preview?'))).toBe(false)
   })
 
+  it('offers the same Enrichment tab with direct keys when OpenCTI is absent', async () => {
+    vi.mocked(api).mockImplementation(async path => {
+      if (path === '/api/opencti/settings') return { configured: false } as never
+      if (path === '/api/settings') return { services: { virustotal: { configured: true } } } as never
+      return context({ file: { exists: true, sha256: 'a'.repeat(64) } }) as never
+    })
+    mount()
+    expect(await screen.findByRole('tab', { name: 'Enrichment' })).toBeVisible()
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it('reveals explicitly and never starts enrichment on mount', async () => {
     const artifactContext = context({
       file: { exists: true, size: 42, sha256: 'a'.repeat(64) },

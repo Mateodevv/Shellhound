@@ -14,8 +14,7 @@ owner alone where the platform supports it, and that is the honest extent of
 it -- said plainly here rather than implied by an encrypted-looking blob.
 
 The server adapter receives credentials through `opencti_config()`. Public
-settings expose only the token's last four characters. Legacy direct provider
-keys are ignored on read and discarded on the next settings write.
+settings expose only the token's last four characters. Direct provider keys are kept server-side and used only without configured OpenCTI.
 """
 from __future__ import annotations
 
@@ -32,9 +31,9 @@ _LOCK = threading.RLock()
 _CTI_DEFAULTS = {"url": "", "token": "", "ingester_id": "", "timeout": 30,
                  "sample_uploads": False, "external_file_uploads": False}
 
-# Legacy settings shape, retained as empty slots for older configuration files.
+# Direct reputation providers, used only when OpenCTI is not configured.
 SERVICES = {
-    "virustotal": {"sends": "hash", "url": "https://www.virustotal.com"},
+    "virustotal": {"sends": "hash, ip, domain, url", "url": "https://www.virustotal.com"},
     "abuseipdb": {"sends": "ip", "url": "https://www.abuseipdb.com"},
 }
 
@@ -80,10 +79,13 @@ def load(workspace) -> dict:
             if isinstance(cti.get(key), str):
                 out["opencti"][key] = cti[key].strip()
         out["opencti"]["sample_uploads"] = cti.get("sample_uploads") is True
-    # Direct provider credentials are retired. Existing cache entries live
-    # in case.db and remain readable without retaining or releasing keys.
-    # Anything not understood is dropped on the next write, so every key the
-    # file is allowed to carry has to be read back here.
+    keys = raw.get("keys", {})
+    if isinstance(keys, dict):
+        for name in SERVICES:
+            value = keys.get(name)
+            if isinstance(value, str):
+                out["keys"][name] = value.strip()
+    out["enrichment_ack"] = raw.get("enrichment_ack") is True
     for key in ("yara_disabled", "rules_disabled"):
         raw_list = raw.get(key)
         if isinstance(raw_list, list):
@@ -116,7 +118,10 @@ def public(workspace) -> dict:
     A KEY NEVER LEAVES THIS FUNCTION IN FULL. The last four characters tell
     the analyst which key is configured; they cannot be used to sign a
     request. `configured` is what the UI actually switches on."""
-    return {"services": {}, "enrichment_ack": False,
+    data = load(workspace)
+    return {"services": {name: {**info, "configured": bool(data["keys"][name]),
+            "hint": "…" + data["keys"][name][-4:] if len(data["keys"][name]) > 4 else "…" if data["keys"][name] else ""}
+            for name, info in SERVICES.items()}, "enrichment_ack": data["enrichment_ack"],
             "opencti": opencti_public(workspace), "path": str(path(workspace))}
 
 
@@ -134,20 +139,37 @@ def set_yara_disabled(workspace, names) -> list:
 
 
 def set_key(workspace, service, key) -> dict:
-    """Reject writes from callers using the retired provider configuration."""
-    raise ValueError("Direct provider keys are retired. Configure OpenCTI instead.")
+    if service not in SERVICES:
+        raise ValueError("Unknown enrichment provider")
+    if not isinstance(key, str):
+        raise ValueError("API key must be text")
+    key = key.strip()
+    if len(key) > 4096 or any(not 33 <= ord(c) <= 126 for c in key):
+        raise ValueError("Invalid API key")
+    from server import diagnostics
+    diagnostics.protect_secret(key)
+    with _LOCK:
+        data = load(workspace)
+        data["keys"][service] = key
+        save(workspace, data)
+    return public(workspace)
 
 
 def set_ack(workspace, accepted) -> dict:
-    """Reject the retired global consent flag; OpenCTI actions are explicit."""
-    raise ValueError("Direct enrichment is retired. Use OpenCTI instead.")
+    with _LOCK:
+        data = load(workspace)
+        data["enrichment_ack"] = bool(accepted)
+        save(workspace, data)
+    return public(workspace)
 
 
 def for_service(workspace, service) -> str:
-    """Never release a retired direct-provider credential."""
-    # Legacy keys may remain on disk for backwards compatibility, but are
-    # never released to direct enrichment callers in this version.
-    return ""
+    if service not in SERVICES or opencti_public(workspace)["configured"]:
+        return ""
+    key = load(workspace)["keys"][service]
+    from server import diagnostics
+    diagnostics.protect_secret(key)
+    return key
 
 
 def opencti_config(workspace) -> dict:

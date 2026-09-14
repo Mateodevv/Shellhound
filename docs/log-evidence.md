@@ -18,6 +18,29 @@ filters clears the selection. Searching does not confirm findings. Yellow
 marks detections awaiting review or warnings; red identifies an analyst's
 confirmation. Processing completion is not a verdict that the system is clean.
 
+## Reviewing a log finding
+
+Standalone observations and files whose findings come entirely from additional
+logs open in a log-focused review. Source facts sit beside an **Evidence** tab:
+FTP shows the recorded action and outcome, web errors show their original error
+context, malware reports retain the scanner claim, and other text opens the
+selected source lines. The viewer does not invent missing session events or
+infer a successful exploit from an error. Source details collapse initially on
+small screens.
+
+**Linked file** appears only after the current source context verifies a local
+file. It uses the same raw/hex viewer and syntax highlighting as file review.
+Log line numbers are never passed as file line numbers. With OpenCTI configured,
+**Enrichment** uses that file's existing IOC Box entries; opening a tab never
+collects or submits an object. Unavailable or stale context retains the saved
+excerpt and removes file and enrichment actions. Several saved observations
+can be selected individually without losing the pending artifact decision.
+
+Files with a mixture of file detections and log findings retain the file review;
+their additional log observations use the same typed evidence cards. Existing
+classification controls, decisions, keyboard shortcuts and explicit save still
+apply to the artifact being reviewed.
+
 ## Supported formats
 
 | Family | Automatic interpretation |

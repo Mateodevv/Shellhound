@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useT } from '../i18n'
 import { THEMES, applyTheme, currentTheme } from '../theme'
+import { DirectEnrichmentSettings } from './DirectEnrichmentSettings'
 import { GeoSettings } from './GeoSettings'
 import { OpenCtiSettings } from './OpenCtiSettings'
 import { Modal, Section, Tabs } from './ui'
 
-type SettingsTab = 'themes' | 'opencti' | 'geoip'
+type SettingsTab = 'themes' | 'opencti' | 'geoip' | 'enrichment'
 
 export function WorkspaceSettingsDialog({ onClose, initialTab = 'themes' }: { onClose: () => void; initialTab?: SettingsTab }) {
   const tr = useT()
@@ -14,6 +15,7 @@ export function WorkspaceSettingsDialog({ onClose, initialTab = 'themes' }: { on
   const tabs = [
     { id: 'themes' as const, label: tr('settings.themes') },
     { id: 'opencti' as const, label: tr('cti.title') },
+    { id: 'enrichment' as const, label: tr('direct.settings') },
     { id: 'geoip' as const, label: tr('settings.tab.geoip') },
   ]
   return <Modal open contained onClose={onClose} title={tr('settings.title')} bodyClassName="flex min-h-0 flex-1 flex-col gap-5 p-5">
@@ -23,7 +25,7 @@ export function WorkspaceSettingsDialog({ onClose, initialTab = 'themes' }: { on
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl">
         {tabs.map(item => visited.includes(item.id) && <div key={item.id} role="tabpanel" aria-label={item.label} hidden={tab !== item.id}>
-          {item.id === 'themes' ? <ThemeSettings /> : item.id === 'opencti' ? <OpenCtiSettings /> : <GeoSettings />}
+          {item.id === 'themes' ? <ThemeSettings /> : item.id === 'opencti' ? <OpenCtiSettings /> : item.id === 'enrichment' ? <DirectEnrichmentSettings /> : <GeoSettings />}
         </div>)}
       </div>
     </div>

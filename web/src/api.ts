@@ -469,6 +469,10 @@ export interface Enrichment {
     usage?: string
     tor?: boolean
     last_reported?: string
+    last_analysis?: number
+    reputation?: number
+    tags?: string[]
+    engines?: { name: string; category: string; result: string }[]
     permalink?: string
   }
 }
