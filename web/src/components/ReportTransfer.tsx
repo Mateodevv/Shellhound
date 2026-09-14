@@ -69,7 +69,7 @@ export function ReportTransfer({ slug, caseInfo, onClosed, onExit }: { slug: str
     <CtiError error={prepare.error || retry.error || archive.error} />
     {step === 0 && <>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
-        <div className="flex items-center justify-between gap-2"><h2 className="text-lg font-semibold">{caseInfo.name}</h2>{configured && <CaseProfileButton slug={slug} />}</div>
+        <div className="flex items-center justify-between gap-2"><h2 className="text-lg font-semibold">{caseInfo.name}</h2><CaseProfileButton slug={slug} /></div>
         <dl className="grid gap-4 sm:grid-cols-2">{field(tr('cti.caseId'), caseInfo.reference)}{field(tr('cti.marking'), caseInfo.profile?.marking)}<div className="sm:col-span-2">{field(tr('cti.summary'), caseInfo.profile?.summary || caseInfo.notes)}</div>{field(tr('cti.organizationName'), caseInfo.profile?.organization_name || caseInfo.profile?.pseudonym)}{field(tr('cti.sectors'), caseInfo.profile?.sectors.join(', '))}{field(tr('cti.country'), caseInfo.profile?.countries.join(', '))}{field(tr('cti.city'), caseInfo.profile?.city)}</dl>
         {configured && <label className="flex items-start gap-3 rounded-lg border border-[var(--line)] p-3 text-[13px]"><input type="checkbox" checked={includeTransfer} disabled={busy} onChange={event => setIncludeTransfer(event.target.checked)} /><span><strong>{tr('closeWizard.includeTransfer')}</strong><span className="mt-1 block text-[var(--muted)]">{tr('closeWizard.optional')}</span></span></label>}
         <p className="text-[13px] text-[var(--muted)]">{tr('closeWizard.intro')}</p>

@@ -83,20 +83,21 @@ describe('source file line navigation', () => {
     expect(lastRequest().searchParams.get('offset')).toBe('0')
   })
 
-  it('can inspect earlier context when a targeted line is within a small file', async () => {
-    vi.mocked(api).mockImplementation(async (url) => {
-      const target = new URL(url, 'http://localhost').searchParams.has('line')
-      return page({ size: 1000, offset: target ? 600 : 0, length: target ? 400 : 1000,
-        eof: true, from_line: target ? 12 : 1,
-        lines: [target ? 'Selected small-file marker' : 'Beginning of small file'] })
+  it('shows the complete small file and scrolls to its referenced line', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return { top: this.hasAttribute('data-focus-line') ? 600 : 0 } as DOMRect
     })
-    renderWithProviders(<FileContentPane {...INITIAL} focusLine={12} />)
-    await screen.findByText('Selected small-file marker')
-    expect(screen.getByRole('button', { name: 'Next part of file' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Previous part of file' }))
-    await screen.findByText('Beginning of small file')
-    expect(lastRequest().searchParams.get('offset')).toBe('0')
-    expect(lastRequest().searchParams.has('line')).toBe(false)
+    try {
+      vi.mocked(api).mockResolvedValue(page({ size: 1000, offset: 0, length: 1000,
+        eof: true, from_line: 1, lines: ['Beginning of small file', 'Selected small-file marker', 'End of small file'] }))
+      renderWithProviders(<FileContentPane {...INITIAL} focusLine={2} />)
+      await screen.findByText('Selected small-file marker')
+      expect(screen.getByText('Beginning of small file')).toBeInTheDocument()
+      expect(screen.getByText('End of small file')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Next part of file' })).not.toBeInTheDocument()
+      expect(screen.getByRole('region', { name: 'File content' }).scrollTop).toBe(552)
+      expect(screen.getByText('Selected small-file marker').parentElement).toHaveAttribute('data-focus-line', '2')
+    } finally { rect.mockRestore() }
   })
 
   it('explains an unavailable line while showing the beginning with its actual line numbers', async () => {
@@ -170,4 +171,17 @@ describe('source file line navigation', () => {
     expect(screen.queryByText('Hex source marker')).not.toBeInTheDocument()
     expect(screen.queryByText(oldLabel)).not.toBeInTheDocument()
   })
+})
+
+
+it('offers optional highlighting for source files while preserving raw copy text', async () => {
+  const source = '<?php echo "hello"; ?>'
+  vi.mocked(api).mockResolvedValue(page({ offset:0, eof:true, lines:[source] }))
+  renderWithProviders(<FileContentPane slug="sample" path="/evidence/example.php" />)
+  const toggle=await screen.findByRole('checkbox',{name:/Syntax highlighting/})
+  expect(toggle).toBeChecked()
+  expect(screen.getByRole('button',{name:'Copy file content'})).toBeVisible()
+  fireEvent.click(toggle)
+  expect(toggle).not.toBeChecked()
+  expect(screen.getByText(source)).toBeVisible()
 })

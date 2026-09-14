@@ -6,6 +6,7 @@ investigations cannot bleed into each other, and closing a case produces one
 archive file to hand over.
 """
 import gc
+import hashlib
 import json
 import os
 import re
@@ -119,6 +120,16 @@ def create_case(workspace, name, reference="", notes="", profile=None):
     return case_dir
 
 
+class CaseProfileConflict(ValueError):
+    pass
+
+
+def profile_revision(identity):
+    value = {key: identity.get(key, "") for key in ("name", "reference")}
+    value["profile"] = case_profile.defaults(identity.get("profile"))
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def case_info(case_dir):
     case_dir = Path(case_dir)
     identity = {"name": case_dir.name, "reference": "", "notes": "", "created": ""}
@@ -128,6 +139,7 @@ def case_info(case_dir):
         pass
     identity["profile"] = case_profile.defaults(identity.get("profile"))
     info = {"slug": case_dir.name, "dir": str(case_dir), **identity}
+    info["profile_revision"] = profile_revision(identity)
     info["reference_locked"] = False
     if db.case_db_path(case_dir).is_file():
         conn = db.connect(case_dir)
@@ -153,7 +165,7 @@ def case_info(case_dir):
 
 
 @_serialized
-def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None):
+def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None, expected_profile_revision=None):
     """Update the human-owned case identity, atomically on disk and in DB."""
     case_dir = Path(case_dir)
     path = case_dir / CASE_FILE
@@ -163,6 +175,10 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
         identity.update(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    if expected_profile_revision is not None and expected_profile_revision != profile_revision(identity):
+        raise CaseProfileConflict("The case profile changed since this editor was opened. Reopen the editor to load the latest version; your changes were not saved.")
+    if name is not None and not str(name).strip():
+        raise ValueError("Case name must not be empty")
     if reference is not None:
         reference = _reference(reference)
         _check_reference(case_dir.parent, reference, excluding=case_dir,

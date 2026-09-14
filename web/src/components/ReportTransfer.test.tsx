@@ -144,3 +144,16 @@ it('blocks the final transfer on preview errors and keeps original file uploads 
  expect(within(screen.getByRole('alert')).getByText('Review required')).toBeVisible()
  expect(post).not.toHaveBeenCalled()
 })
+
+it('shows the saved profile comparison in the final wizard review', async () => {
+ const options = { ...initialExportOptions([1, 2, 3]), indicator_ids: [1] }
+ const compared: OpenCtiPreview = { ...preview, profile_changes: { status: 'changed', export_id: 'previous', exported_at: '2026-09-12', entries: [
+   { field: 'summary', before: ['Old incident summary'], after: ['Updated incident summary'], included: true },
+ ] } }
+ renderWithProviders(<OpenCtiExportDialog wizard slug="qa" caseInfo={info} initial={compared} initialOptions={options} onClose={vi.fn()} onQueued={vi.fn()} />)
+ next(); next(); next()
+ const comparison = screen.getByRole('region', { name: 'Case profile changes' })
+ expect(within(comparison).getByText('Old incident summary')).toBeVisible()
+ expect(within(comparison).getByText('Updated incident summary')).toBeVisible()
+ expect(post).not.toHaveBeenCalled()
+})

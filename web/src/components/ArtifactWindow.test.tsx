@@ -12,6 +12,8 @@ import { ArtifactWindow, type ArtifactStub } from './ArtifactWindow'
 // stubs `fetch` is also testing the URL builder, the token header and the
 // error mapping, and a change to any of those breaks tests about the note
 // box for no reason the name of the test would explain.
+vi.mock('./TraceWindow', () => ({ TraceWindow: () => <div>Embedded trace</div> }))
+
 vi.mock('../api', async (orig) => ({
   ...(await orig<typeof import('../api')>()),
   api: vi.fn(),
@@ -206,7 +208,8 @@ describe('artifact context and classification', () => {
         first_epoch: 1000, last_epoch: 2000 }],
     })
     vi.mocked(api).mockImplementation(async path => path.includes('/file-preview?')
-      ? { from_line: 90, focus: 90, lines: ['safe distant line'] } : ctx)
+      ? { from_line: 90, focus: 90, lines: ['safe distant line'] }
+      : path.includes('/file?') ? { mode: 'raw', size: 1000, offset: 0, length: 1000, window: 262144, eof: true, from_line: 1, lines: Array.from({length: 90}, (_, i) => i === 89 ? 'safe distant line' : i === 1 ? 'safe second line' : `safe line ${i + 1}`) } : ctx)
     const onTrace = vi.fn()
     renderWithProviders(<ArtifactWindow slug="case" artifact={stub()} roots={[]} collected={[]}
       onSave={async () => SAVED} onClose={() => {}} onView={() => {}} onTrace={onTrace} />)
@@ -234,7 +237,7 @@ describe('artifact context and classification', () => {
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
     expect(screen.getByText('safe distant line')).toBeVisible()
     await userEvent.click(screen.getByRole('button', { name: /Synthetic first rule/ }))
-    expect(screen.getAllByText('safe second line').some(el => el.parentElement?.getAttribute('data-focus-line') === '2')).toBe(true)
+    await waitFor(() => expect(screen.getAllByText('safe second line').some(el => el.parentElement?.getAttribute('data-focus-line') === '2')).toBe(true))
     expect(vi.mocked(api).mock.calls.filter(([url]) => url.includes('/file-preview?'))).toHaveLength(1)
   })
 
@@ -271,8 +274,9 @@ describe('artifact context and classification', () => {
 
 describe('deliberate decision submission', () => {
   it('scrolls the active pane with held arrow keys without changing the decision', async () => {
-    vi.mocked(api).mockResolvedValue(context({ file: { exists: true,
-      preview: { lines: ['Safe preview'], from_line: 1 } } }))
+    vi.mocked(api).mockImplementation(async url => url.includes('/file?')
+      ? { mode: 'raw', size: 20, offset: 0, length: 20, window: 262144, eof: true, from_line: 1, lines: ['Safe preview'] }
+      : context({ file: { exists: true, preview: { lines: ['Safe preview'], from_line: 1 } } }))
     mount()
     const code = await screen.findByRole('region', { name: 'File content' })
     Object.defineProperties(code, {
@@ -520,6 +524,7 @@ describe('what the window states about the artifact', () => {
     expect(screen.queryByRole('link', { name: 'Open IOC Box' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
 
+    await userEvent.click(screen.getByRole('button', { name: 'Open…' }))
     await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       '/api/cases/case/reveal-file', { path: SHELL }))

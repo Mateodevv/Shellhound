@@ -83,7 +83,8 @@ def read_raw_page(stream: BinaryIO, *, size: int, window: int,
                   offset: int = 0, line: int | None = None) -> RawFilePage:
     """Return at most ``window`` bytes, aligned to complete UTF-8 characters.
 
-    Requested source lines start the page. A missing line returns the first
+    Files fitting in one window are returned in full, including when a line is
+    requested. Larger files start at the requested line. A missing line returns the first
     page with ``focus_found=False`` so callers can explain the missing anchor.
     Byte-based pages retain their real line number and flag partial first
     lines. Prefix scans use fixed-size reads rather than loading the file or
@@ -98,8 +99,8 @@ def read_raw_page(stream: BinaryIO, *, size: int, window: int,
     if line is not None:
         found = _line_offset(stream, line, size)
         focus_found = found is not None
-        offset = found if found is not None else 0
-        from_line = line if focus_found else 1
+        offset = found if found is not None and size > window else 0
+        from_line = line if focus_found and offset else 1
     else:
         # Backward paging can land inside a multi-byte character. Rewind only
         # a valid sequence; malformed bytes must not cause overlapping pages.

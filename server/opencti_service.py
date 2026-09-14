@@ -397,6 +397,14 @@ def _error(exc):
     return "OpenCTI operation failed (" + type(exc).__name__ + ")."
 
 
+def profile_changes(root, case_dir):
+    from server import case_profile_changes
+    config = settings.opencti_config(root)
+    current = case_profile_changes.snapshot(workspace.case_info(case_dir))
+    return case_profile_changes.compare(case_dir, current, _mapping_destination(config), _destination(config))
+
+
+@workspace._serialized
 def preview(root, case_dir, options=None):
     # Bring a legacy case to the current local schema before taking the
     # immutable graph snapshot. Otherwise migration midway through preview
@@ -405,6 +413,7 @@ def preview(root, case_dir, options=None):
     conn.close()
     options = dict(options or {})
     result = graph.build_preview(case_dir, options)
+    from server import case_profile_changes
     result["graph_fingerprint"] = result["fingerprint"]
     config = settings.opencti_config(root)
     if any(s["selected"] for s in result["samples"]) and not config["sample_uploads"]:
@@ -421,6 +430,9 @@ def preview(root, case_dir, options=None):
         result["warnings"].append("This transfer uses an Incident Response case. Earlier Reports remain as export history and are not updated or deleted.")
     result["mapping_revision"] = _digest(sorted([graph._stable(o) for o in previous], key=lambda o: o["id"]))
     result["mapping_destination"] = _mapping_destination(config)
+    result["profile_snapshot"] = case_profile_changes.snapshot(workspace.case_info(case_dir), options)
+    result["profile_changes"] = case_profile_changes.compare(
+        case_dir, result["profile_snapshot"], _mapping_destination(config), _destination(config))
     if previous:
         result["objects"] = graph.reactivate_objects(previous, result["objects"])
         remap = {o["x_shellhound_original_id"]: o["id"] for o in result["objects"] if o.get("x_shellhound_original_id")}

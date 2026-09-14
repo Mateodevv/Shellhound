@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { api, type ArtifactContext, type DatabaseRow, type Finding } from '../api'
 import { renderWithProviders } from '../test/setup'
@@ -43,7 +43,7 @@ it('explains missing indexed exports without making a file request', () => {
   expect(api).not.toHaveBeenCalled()
 })
 
-it('routes table row links through the row viewer and preserves the unsaved analyst note', async () => {
+it('shows the affected table row inline after an explicit export choice', async () => {
   const context: ArtifactContext = { artifact: finding.artifact, kind: 'table', findings: [finding],
     triage: 'new', triage_note: 'Existing note', triaged_at: '', worst: 1, sources: ['sqldb'], related_ips: [], table_sources: sources }
   vi.mocked(api).mockImplementation(async (url) => url.includes('/database/row?') ? row as never : context as never)
@@ -51,15 +51,15 @@ it('routes table row links through the row viewer and preserves the unsaved anal
   renderWithProviders(<ArtifactWindow slug="case" artifact={{ artifact: finding.artifact, artifact_kind: 'table',
     worst: 1, triage: 'new', triage_note: '' }} roots={[]} collected={[]} onClose={() => {}}
     onSave={vi.fn()} onView={onView} onTrace={() => {}} />)
-  const note = await screen.findByPlaceholderText(/Reasoning/)
-  await waitFor(() => expect(note).toHaveValue('Existing note'))
+  expect(await screen.findByRole('combobox', { name: 'Database export' })).toBeVisible()
+  expect(screen.queryByPlaceholderText(/Reasoning/)).not.toBeInTheDocument()
   const user = userEvent.setup()
-  await user.type(note, ' and draft')
-  await user.click(await screen.findByRole('button', { name: 'Row 2' }))
-  expect(screen.getByRole('combobox', { name: 'Database export' })).toBeVisible()
+  await screen.findByRole('option', { name: '/export two/data.sql' })
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Database export' }), '7')
+  expect(await screen.findByText('<b>Harmless marker</b>')).toBeVisible()
   expect(onView).not.toHaveBeenCalled()
-  await user.keyboard('{Escape}')
-  expect(note).toHaveValue('Existing note and draft')
+  expect(document.querySelector('td b')).toBeNull()
+
 })
 
 it('does not offer file actions when existing evidence is no longer registered', async () => {
