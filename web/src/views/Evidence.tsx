@@ -1,6 +1,7 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
 import { useT } from '../i18n'
 import { SkippedFiles } from '../components/SkippedFiles'
+import { LogImport, LogSourceList } from '../components/LogSources'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -23,6 +24,7 @@ import { discovering, evidenceAttempt, jobComplete, jobWarnings, needsAttention,
 const KIND_ICON: Record<string, typeof HardDrive> = {
   webroot: Server,
   access_logs: FileText,
+  logs: FileText,
   sql_dump: HardDrive,
 }
 
@@ -42,7 +44,8 @@ export function Evidence({ slug }: {
     refetchInterval: 4000,
   })
 
-  const [browsing, setBrowsing] = useState<null | 'webroot' | 'access_logs' | 'sql_dump'>(null)
+  const [browsing, setBrowsing] = useState<null | 'webroot' | 'logs' | 'access_logs' | 'sql_dump'>(null)
+  const [logImport, setLogImport] = useState('')
   const [preferredPath, setPreferredPath] = useState('')
   const [pathSeededFor, setPathSeededFor] = useState('')
   const [detectFolder, setDetectFolder] = useState('')
@@ -115,7 +118,7 @@ export function Evidence({ slug }: {
   const runs = useMemo(() => groupJobs(jobs ?? []), [jobs])
   const evidenceSources = EVIDENCE_KINDS.map((kind) => ({
     kind,
-    item: evidence.find((item) => item.kind === kind),
+    item: evidence.find((item) => item.kind === kind || (kind === 'logs' && item.kind === 'access_logs')),
   }))
   const evidenceReady = evidenceSources.some(({ item }) => Boolean(item))
   const pendingEvidence = useMemo(() => evidence
@@ -129,7 +132,7 @@ export function Evidence({ slug }: {
   const analysisActive = runs.some((run) => run.jobs.some((job) =>
     job.state === 'queued' || job.state === 'running'))
   const [acceptedOpen, setAcceptedOpen] = useState(false)
-  const currentScanJobs = (jobs ?? []).filter((job) => job.warnings_current !== false && job.scan_context?.mode !== 'retry')
+  const currentScanJobs = (jobs ?? []).filter((job) => job.kind !== 'log_events' && job.warnings_current !== false && job.scan_context?.mode !== 'retry')
   const warningJobs = currentScanJobs.filter((job) => (job.current_warning_count ?? jobWarnings(job)) > 0)
   const acceptedJobs = currentScanJobs.filter((job) => (job.current_accepted_count ?? 0) > 0)
   const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
@@ -343,7 +346,7 @@ export function Evidence({ slug }: {
               <Tooltip key={kind} title={explain(tr, `evidence.${kind}`)?.what}
                 hint={explain(tr, `evidence.${kind}`)?.why} wide>
                 <Button onClick={() => setBrowsing(kind)}>
-                  <FolderOpen size={14} /> {tr('evidence.addAnother', { what: tr(`evidence.${kind}`) })}
+                  <FolderOpen size={14} /> {kind === 'logs' ? tr('evidence.addAnotherLogs') : tr('evidence.addAnother', { what: tr(`evidence.${kind}`) })}
                 </Button>
               </Tooltip>
             ))}
@@ -392,13 +395,13 @@ export function Evidence({ slug }: {
         {detected && (
           <div className="mt-3 flex flex-col gap-2 animate-fade-up">
             {detected.error && <div className="text-[13px] text-[var(--danger-text)]">{detected.error}</div>}
-            {availableCandidates.length > 1 && (
+            {availableCandidates.length > 1 && !availableCandidates.some(c => c.evidenceKind === 'access_logs') && (
               <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--panel-2)] px-3 py-2">
                 <span className="text-[12px] text-[var(--muted)]">
                   {tr('evidence.candidates', { n: formatCount(availableCandidates.length) })}
                 </span>
                 <Button onClick={() => availableCandidates.forEach((candidate) =>
-                  addEvidence.mutate({ kind: candidate.evidenceKind, path: candidate.path }))}>
+                  candidate.evidenceKind === 'access_logs' ? setLogImport(candidate.path) : addEvidence.mutate({ kind: candidate.evidenceKind, path: candidate.path }))}>
                   {tr('evidence.applyAll')}
                 </Button>
               </div>
@@ -414,7 +417,7 @@ export function Evidence({ slug }: {
                     <div className="mono truncate text-[12px]">{c.path}</div>
                     <div className="truncate text-[11px] text-[var(--muted)]">{c.why}</div>
                   </div>
-                  <Button onClick={() => addEvidence.mutate({ kind, path: c.path })}>
+                  <Button onClick={() => kind === 'access_logs' ? setLogImport(c.path) : addEvidence.mutate({ kind, path: c.path })}>
                     {tr('common.apply')}
                   </Button>
                 </Card>
@@ -444,13 +447,16 @@ export function Evidence({ slug }: {
         </div>
       </Section>
 
+      {evidence.some(e => e.kind === 'logs') && <Section title={tr('logEvidence.sources')} sub={tr('logEvidence.sourcesHelp')}><LogSourceList slug={slug} /></Section>}
+      {logImport && <LogImport key={logImport} slug={slug} path={logImport} onClose={() => setLogImport('')} onDone={() => { setLogImport(''); invalidate() }} />}
       {browsing && (
         <PathBrowser
           kind={browsing}
           initialPath={preferredPath}
           onClose={() => setBrowsing(null)}
           onPick={(path, browsedPath) => {
-            addEvidence.mutate({ kind: browsing, path })
+            if (browsing === 'logs' || browsing === 'access_logs') setLogImport(path)
+            else addEvidence.mutate({ kind: browsing, path })
             setPreferredPath(browsedPath)
             setBrowsing(null)
           }}
@@ -671,7 +677,7 @@ export function CloseCase({ slug, caseName, onClosed }: {
 // Every kind the analysis can start. A kind without an entry here would fall
 // back to its raw identifier, which is how `errorlog` and `yara` ended up in
 // the job list under their internal names.
-const JOB_KINDS = ['index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
+const JOB_KINDS = ['log_events', 'index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
                    'yara', 'sigma']
 
 interface RunGroup { id: string; created: string; jobs: Job[] }

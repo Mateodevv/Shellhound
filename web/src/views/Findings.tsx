@@ -1023,7 +1023,7 @@ export function Findings({ slug, gotoView }: {
                   <span className="hidden shrink-0 sm:block" style={{ width: `${Math.min(item.depth, 3) * 18}px` }} />
                   <input type="checkbox" className="ml-1 cursor-pointer accent-[var(--accent)] sm:ml-4"
                     checked={checked.has(a.artifact)}
-                    aria-label={tr('findings.file.select', { path: a.artifact })}
+                    aria-label={tr(a.artifact_kind === 'log_observation' ? 'logEvidence.selectObservation' : 'findings.file.select', { path: a.display_name || a.artifact })}
                     onChange={(e) => {
                       const next = new Set(checked)
                       if (e.target.checked) next.add(a.artifact)
@@ -1056,7 +1056,7 @@ export function Findings({ slug, gotoView }: {
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
-                        <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} />
+                        <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} label={a.display_name} />
                         <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                         {/* A decided thing that was then not seen again must
                             say so right here -- a confirmed shell that is no
@@ -1297,13 +1297,13 @@ function RuleName({ rule, className }: { rule: string; className?: string }) {
  *  below the evidence (`images/shell.php`) -- that is the fact that goes into
  *  the report and that one finds again on the server. The full path and the
  *  evidence the file sits under stand in the tooltip. */
-function ArtifactName({ artifact, kind, roots }: {
-  artifact: string; kind: string; roots: EvidenceRoot[]
+function ArtifactName({ artifact, kind, roots, label }: {
+  artifact: string; kind: string; roots: EvidenceRoot[]; label?: string
 }) {
   const tr = useT()
   if (kind !== 'file') {
     return (
-      <span className="mono min-w-0 truncate text-[13px] font-semibold">{artifact}</span>
+      <span className="mono min-w-0 truncate text-[13px] font-semibold">{kind === 'log_observation' ? label || tr('logEvidence.entry') : artifact}</span>
     )
   }
   const { root, rel } = relativeToRoot(artifact, roots)

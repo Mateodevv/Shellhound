@@ -345,6 +345,8 @@ GET_ROUTES = {
     "/api/cases/{slug}": "",
     "/api/cases/{slug}/summary": "",
     "/api/cases/{slug}/coverage": "",
+    "/api/cases/{slug}/log-sources": "",
+    "/api/cases/{slug}/log-events/{event_id}/context": None,  # exercised with registered sources in test_log_evidence
     "/api/cases/{slug}/enrichment": "",
     "/api/cases/{slug}/jobs": "",
     "/api/cases/{slug}/jobs/{job_id}/skipped": "",

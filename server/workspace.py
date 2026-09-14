@@ -241,7 +241,8 @@ SUMMARY_FILE = "case_summary.json"
 # Files the archive never carries. The log index is DERIVED: it is rebuilt
 # from the evidence in minutes and can be larger than everything else in the
 # case put together. WAL/SHM are transient SQLite sidecars.
-_NOT_ARCHIVED = {db.LOG_DB, db.LOG_DB + "-wal", db.LOG_DB + "-shm",
+_NOT_ARCHIVED = {"logevents.db", "logevents.db-wal", "logevents.db-shm",
+                 db.LOG_DB, db.LOG_DB + "-wal", db.LOG_DB + "-shm",
                  db.CASE_DB + "-wal", db.CASE_DB + "-shm"}
 
 

@@ -9,6 +9,10 @@ LANGUAGES = ("en",)
 DEFAULT = "en"
 
 CATALOGUE: dict[str, str] = {
+    "chain.logObservation.upload": "FTP upload recorded",
+    "chain.logObservation.web_error": "Web error recorded",
+    "chain.logObservation.malware_detection": "Scanner detection reported",
+    "chain.logObservation.selected": "Selected log observation",
     "chain.file.firstOk": "First request for {name} answered 2xx",
     "chain.file.wasThere": "The access log records a 2xx response for this path; this alone does not establish successful exploitation.",
     "chain.file.probeBefore": " An earlier request for it{by} was recorded at {at}.",

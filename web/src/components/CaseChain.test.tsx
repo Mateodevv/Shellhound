@@ -30,6 +30,17 @@ function page(offset: number, count: number, total = count, over: Partial<ChainD
 beforeEach(() => { vi.mocked(api).mockReset() })
 
 describe('timeline first sign links', () => {
+  it('renders and opens a confirmed dated log observation', async () => {
+    const observation = event(0, { kind: 'log-observation', title: 'FTP upload recorded',
+      artifact: 'log-observation:sample', artifact_kind: 'log_observation',
+      first_sign_basis: 'log_observation' })
+    vi.mocked(api).mockResolvedValue(page(0, 1, 1, { events: [observation] }))
+    const open = vi.fn()
+    renderWithProviders(<CaseChain slug="sample" onOpen={open} onTrace={() => {}} />)
+    expect(await screen.findByText('FTP upload recorded')).toBeVisible()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Artifact' }))
+    expect(open).toHaveBeenCalledWith('log-observation:sample', 'log_observation')
+  })
   it('jumps beyond the first 80 events, focuses the exact event, and pages backward without repeating the jump', async () => {
     const focusId = 'request:sample-125'
     vi.mocked(api).mockImplementation(async (path) => {

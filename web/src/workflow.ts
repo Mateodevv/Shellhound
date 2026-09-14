@@ -1,7 +1,7 @@
 import type { CaseDetail, Dashboard, Job } from './api'
 import { evidenceAttempt, needsAttention, jobComplete } from './analysis'
 
-export const EVIDENCE_KINDS = ['webroot', 'access_logs', 'sql_dump'] as const
+export const EVIDENCE_KINDS = ['webroot', 'logs', 'sql_dump'] as const
 
 export interface WorkflowAction {
   id: 'evidence' | 'analysis' | 'running' | 'issue' | 'pending' | 'triage' | 'warnings' | 'hunt' | 'report'
@@ -11,7 +11,7 @@ export interface WorkflowAction {
   params?: { triage: string; severity: string }
 }
 
-const ANALYSIS_ENGINES = new Set(['webshell', 'cms', 'yara', 'index_logs', 'errorlog', 'sigma', 'sqldb'])
+const ANALYSIS_ENGINES = new Set(['webshell', 'cms', 'yara', 'index_logs', 'errorlog', 'sigma', 'sqldb', 'log_events'])
 
 export function isBaseAnalysisJob(job: Job): boolean {
   return ANALYSIS_ENGINES.has(job.kind) && job.scan_context?.mode !== 'retry'
@@ -26,6 +26,7 @@ function requiredEngines(present: Set<string>): Set<string> {
     if (present.has('webroot')) engines.add('errorlog')
   }
   if (present.has('sql_dump')) engines.add('sqldb')
+  if (present.has('logs')) engines.add('log_events')
   return engines
 }
 
@@ -44,7 +45,8 @@ export function deriveWorkflowAction(
   // Missing queries are loading/error states, never an empty review queue.
   if (!caseInfo || !jobs || !dashboard) return null
   const present = new Set(caseInfo.evidence_items.map((item) => item.kind))
-  if (!EVIDENCE_KINDS.some((kind) => present.has(kind))) {
+  if (caseInfo.has_access_logs) present.add('access_logs')
+  if (!present.has('access_logs') && !EVIDENCE_KINDS.some((kind) => present.has(kind))) {
     return { id: 'evidence', view: 'evidence', label: 'case.action.completeEvidence' }
   }
 

@@ -29,6 +29,7 @@ import { useGeo } from '../geo'
 import { GroupedActions } from './OpenCti'
 import { ArtifactEnrichment } from './ArtifactEnrichment'
 import { SuccessfulAccesses, TableRecord } from './ReviewEvidence'
+import { LogEntryContext } from './LogEntryContext'
 import { IocTypeBadge } from './IocTypeBadge'
 import { FileContentPane } from './FileViewer'
 import { SyntaxText } from './SyntaxCode'
@@ -36,7 +37,7 @@ import { useSyntaxLines } from '../useSyntaxLines'
 
 const KIND_THIS: Record<string, string> = {
   file: 'artifact.this.file', table: 'artifact.this.table',
-  client: 'artifact.this.client', dump: 'artifact.this.dump',
+  client: 'artifact.this.client', dump: 'artifact.this.dump', log_observation: 'artifact.this.log_observation',
 }
 
 type Decision = Exclude<TriageState, 'new'>
@@ -50,7 +51,7 @@ function KeyHint({ children }: { children: React.ReactNode }) {
  * note are always fetched before any decision control becomes usable. */
 export interface ArtifactStub {
   artifact: string
-  artifact_kind: 'file' | 'table' | 'client' | 'dump'
+  artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
   worst: number
   triage: TriageState
   triage_note: string
@@ -344,7 +345,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const rootName = root && (root.label?.trim() ||
     root.path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop())
-  const displayedIdentity = ['file', 'dump'].includes(kind) && root
+  const displayedIdentity = kind === 'log_observation' ? (ctx?.log_observations?.[0] ? `${ctx.log_observations[0].source_name}:${ctx.log_observations[0].line}` : tr('logEvidence.entry')) : ['file', 'dump'].includes(kind) && root
     ? `${rootName} · ${rel}`
     : kind === 'dump' ? artifact.artifact.replace(/\\/g, '/').split('/').pop() || artifact.artifact : artifact.artifact
   const contextReady = ctx?.artifact === artifact.artifact && contextLoadedFor === artifactKey
@@ -433,15 +434,15 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     <div className="flex items-start gap-2 py-2 text-[12px]">
       {kind === 'file' || kind === 'client' ? <IocTypeBadge type={kind === 'client' ? 'ip' : 'file'} value={artifact.artifact} /> : <Tag>{tr(`kind.${kind}`)}</Tag>}
       {kind === 'client' ? <><IpFlag ip={artifact.artifact} /><span>{geo?.name || artifact.artifact}</span></> : <span className="mono min-w-0 flex-1 break-all" title={artifact.artifact}>{displayedIdentity}</span>}
-      <CopyButton value={artifact.artifact} label={tr('copy.path')} className="shrink-0" />
+      <CopyButton value={kind === 'log_observation' ? displayedIdentity : artifact.artifact} label={tr(kind === 'log_observation' ? 'logEvidence.copyReference' : 'copy.path')} className="shrink-0" />
     </div>
-    <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
+    {kind !== 'log_observation' && <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
       {kind === 'client' ? <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
         : <GroupedActions label={tr('review.open')} icon={<ExternalLink size={13} />}>
           <Button variant="ghost" disabled={reveal.isPending || (kind === 'table' && (ctx?.table_sources?.length ?? 0) !== 1) || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(kind === 'table' ? ctx!.table_sources![0].dump_path : artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
           <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
         </GroupedActions>}
-    </div>
+    </div>}
     {revealError && <p role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">{tr('artifact.revealError')}: {revealError}</p>}
   </Block>
 
@@ -529,7 +530,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     background: string
     selectedBackground: string
   }> = [
-    { state: 'confirmed', label: tr('artifact.truePositiveCollect'), icon: Check,
+    { state: 'confirmed', label: tr(kind === 'log_observation' ? 'logEvidence.confirm' : 'artifact.truePositiveCollect'), icon: Check,
       tone: 'var(--incident)', text: 'var(--danger-text)',
       background: 'var(--danger-soft)', selectedBackground: 'var(--danger-soft-hover)' },
     { state: 'reviewed', label: tr('artifact.reviewedAction'), icon: Clock3,
@@ -564,7 +565,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       title={<span className="flex min-w-0 items-center gap-2">
         <SeverityBadge severity={worst} />
         <Icon size={15} className="shrink-0 text-[var(--muted)]" />
-        <span className="mono truncate" title={artifact.artifact}>{kind === 'file' && root ? rel : kind === 'dump' ? displayedIdentity : artifact.artifact}</span>
+        <span className="mono truncate" title={artifact.artifact}>{kind === 'file' && root ? rel : ['dump', 'log_observation'].includes(kind) ? displayedIdentity : artifact.artifact}</span>
         <TriageBadge state={state} label={tr(`triage.${state}`)} />
       </span>}>
       <div ref={workspaceRef} className="flex h-full min-h-0 flex-col"
@@ -621,6 +622,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               data-artifact-scroll={kind === 'client' ? 'primary' : undefined} tabIndex={0}
               className={clsx('flex min-h-0 flex-col gap-3', kind === 'file' ? 'max-h-[42%] overflow-y-auto' : 'flex-1 overflow-y-auto')}>
               {tab === 'findings' && <FindingList key={artifactKey} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={kind === 'dump' ? sqlQuery.data : preview} loading={kind === 'dump' ? sqlQuery.isFetching : needsPreview && previewLoading} />}
+              {tab === 'findings' && ctx?.log_observations?.map(event => <details key={event.id} open={kind === 'log_observation'} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary><div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onView} /></div></details>)}
               {tab === 'ips' && <Clients slug={slug} ips={ips} marks={marks} onTrace={onTrace} />}
               {tab === 'accesses' && <SuccessfulAccesses key={artifactKey} slug={slug} ip={artifact.artifact} onView={onView} />}
               {kind === 'client' && tab === 'trace' && <div className="max-h-36 shrink-0 overflow-y-auto"><FindingList key={`trace:${artifactKey}`} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} loading={false} /></div>}
@@ -732,7 +734,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             contextError || saveError ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]')}>
             {saveError ? `${tr('artifact.saveError')}: ${saveError}`
               : contextError ? tr('artifact.contextError')
-                : contextReady ? tr('artifact.triage.explain') : tr('artifact.contextLoading')}
+                : contextReady ? tr(kind === 'log_observation' ? 'logEvidence.triageExplain' : 'artifact.triage.explain') : tr('artifact.contextLoading')}
           </div>
         </div>
       </div>

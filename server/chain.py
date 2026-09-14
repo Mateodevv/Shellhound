@@ -194,6 +194,9 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                   f"WHERE triage = 'confirmed'")
         files = {r["artifact"]: web_path(conn, r["artifact"])
                  for r in confirmed if r["artifact_kind"] == "file"}
+        from server.log_evidence import artifact_label
+        observation_labels = {r["artifact"]: artifact_label(conn, r["artifact"])
+                              for r in confirmed if r["artifact_kind"] == "log_observation"}
         clients = [r["artifact"] for r in confirmed
                    if r["artifact_kind"] == "client"]
         by_artifact = {r["artifact"]: r for r in confirmed}
@@ -239,7 +242,8 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
 
     off_logs, off_dump = offsets["logs"], offsets["dump"]
     overview = logindex.overview(case_dir) or {}
-    log_targets = [r["path"] for r in evidence if r["kind"] == "access_logs"]
+    from server import log_evidence
+    log_targets = log_evidence.access_targets(case_dir)
     log_fresh = bool(log_targets and not indexing and not overview.get("partial")
                      and logindex.status(case_dir, log_targets)["fresh"])
     index_fingerprint = logindex.index_fingerprint(case_dir) if log_fresh else ""
@@ -329,7 +333,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                        # LEAVES the machine has to use this one instead, or
                        # the report carries the analyst's directory layout.
                        # For clients and tables the two are identical.
-                       "artifact_rel": files.get(artifact, artifact),
+                       "artifact_rel": files.get(artifact, observation_labels.get(artifact, artifact)),
                        "ip": ip, "severity": severity,
                        "first_sign_basis": basis,
                        "first_sign_eligible": bool(eligible and epoch is not None),
@@ -515,6 +519,20 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                 event["first_sign_eligible"] = False
                 event["first_sign_selectable"] = False
 
+    for event in log_evidence.timeline_events(case_dir):
+        epoch = event.get("epoch")
+        if epoch is None:
+            continue
+        artifact = event["artifact"] or "log-observation:" + event["id"]
+        title = t(lang, "chain.logObservation." + (event["operation"] if event["operation"] in
+                  ("upload", "web_error", "malware_detection") else "selected"))
+        eligible = event["fresh"] and (event["operation"] in ("web_error", "malware_detection")
+                    or (event["operation"] == "upload" and event["outcome"] == "success"))
+        add(log_at(epoch), "log-observation", title,
+            f"{event['source_name']}:{event['line']} · {event['raw'][:300]}", "log",
+            artifact, event.get("artifact_kind", "file"), event["ip"],
+            raw_time=event["raw_time"], epoch=epoch + off_logs, identity=event["id"],
+            basis="log_observation", eligible=eligible, selectable=event["fresh"])
     events.sort(key=lambda e: e["at"])
     total_events = len(events)
     event_span = {
@@ -560,7 +578,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                    else "chain.undated.other")
         undated.append({
             "artifact": row["artifact"], "artifact_kind": kind,
-            "artifact_rel": files.get(row["artifact"], row["artifact"]),
+            "artifact_rel": files.get(row["artifact"], observation_labels.get(row["artifact"], row["artifact"])),
             "why": t(lang, key, n=event_cap)})
 
     # --- what the case does NOT prove ----------------------------------

@@ -12,14 +12,14 @@
 
 **Local DFIR workbench for compromised web servers.**
 
-SHELLHOUND indexes a copy of the webroot, the access logs and a database
+SHELLHOUND indexes a copy of the webroot, supplied logs and a database
 export once. Every question after that is a query against the index instead of
 another pass over gigabytes: which files are suspect, which clients requested
 them, when a file was first present, what those clients did next.
 
 | | |
 |---|---|
-| **Input** | Copy of the webroot, access logs, database export of the CMS |
+| **Input** | Copy of the webroot, access/error/FTP logs, ClamAV text reports, other text logs, database export of the CMS |
 | **Output** | Findings and triage state, chronology, a portable HTML case report, IOC export as CSV, JSON or STIX 2.1 |
 | **Operation** | Entirely on the analysis machine, on `127.0.0.1`. No service, no account, no telemetry |
 | **Interface** | English |
@@ -192,6 +192,16 @@ the interface or creates a source environment.
 
 </details>
 
+## Log evidence
+
+Open **Evidence → Add logs**, select a file or folder, check the detected formats,
+and choose **Run analysis**. Investigate the results under **Logs**, then add
+selected observations to Findings when they matter to the case.
+
+See [Log evidence](docs/log-evidence.md) for supported formats, source timezones,
+path mapping, warnings, and the manual-review fallback. Existing access-log
+cases and Pattern Hunt keep their request index and investigation tools.
+
 ## Workflow
 
 The case sidebar keeps **Dashboard** in Overview, the four numbered case stages
@@ -279,13 +289,13 @@ local; Pattern Hunt does not download patterns or contact a shared catalogue.
 
 ### 1 · Evidence & analysis
 
-Work on copies. Register any available webroot, access logs, or SQL dump to
+Work on copies. Register any available webroot, logs, or SQL dump to
 start; each can be analyzed independently.
 
 | Kind | What it is | Needed to start |
 |---|---|---|
 | Webroot | Copy of the web directory | one of these three |
-| Access logs | Apache/Nginx Combined or Common and IIS W3C Extended, `.gz` included | one of these three |
+| Logs | Access logs, Apache/Nginx errors, FTP logs, ClamAV text reports, or other text; see [supported formats](docs/log-evidence.md) | one of these three |
 | SQL dump | Database export of the CMS | one of these three |
 | Reference copy | Clean CMS release of the same version | no, enables the webroot diff |
 
@@ -527,7 +537,7 @@ are recognised, and their accounts read generically.
 | **Clients & actors** | Every client from the logs with its behaviour, country and duration of activity. Several can be selected for one combined trace |
 | **Database** | Accounts with named observations (created on the day of the export, never signed in, blocked), code injected into data fields, table inventory |
 | **Files** | Browse from evidence-root breadcrumbs, retain copyable absolute paths, take files into the IOC box by hand, compare against the reference copy |
-| **Access logs** | Search the original request stream first; field distributions and the traffic overview expand only when needed |
+| **Logs** | Search Access, Web errors, FTP, Malware reports or Other text; inspect context and select relevant observations for Findings |
 | **IOC box** | The collected indicators with their relationships and exact matches from other open cases, exportable as CSV, JSON or STIX 2.1 |
 
 ![Access Log Explorer](assets/docs/access-logs.png)

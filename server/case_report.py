@@ -146,6 +146,12 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
                 item["notes"].append(finding["triage_note"])
         decisions = []
         for item in grouped.values():
+            if item["kind"] == "log_observation":
+                from server.log_evidence import saved_for_artifact
+                observations = saved_for_artifact(conn, item["artifact"])
+                if observations:
+                    item["artifact"] = f"{observations[0]['source_name']}:{observations[0]['line']}"
+                    item["notes"].extend(e["raw"][:1000] for e in observations)
             if item["kind"] == "file":
                 item["artifact"] = web_path(conn, item["artifact"])
             item["artifact"] = redact(item["artifact"])
@@ -188,6 +194,18 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
     chain["gaps"] = [redact(gap) for gap in chain.get("gaps") or []]
     cov = coverage.report(case_dir, lang, tz_mode)
     cov["notes"] = [redact(note) for note in cov.get("notes") or []]
+    from server import log_evidence
+    log_sources = [s for s in log_evidence.source_status(case_dir) if s["format"] != "access"]
+    if log_sources:
+        manual = sum(s["format"] == "text" for s in log_sources)
+        unresolved = sum(bool(s["warning"] and not s["accepted"]) for s in log_sources)
+        accepted = sum(s["accepted"] for s in log_sources)
+        stale = sum(not s["fresh"] for s in log_sources)
+        cov["notes"].append(
+            f"Additional log evidence: {len(log_sources)} sources; {manual} are not automatically analyzed. "
+            f"{unresolved} processing limitations await review; {accepted} were accepted by the analyst. "
+            f"{stale} sources need reanalysis before their current context can be used. "
+            "Reported scanner detections and actions remain source claims, with analyst decisions recorded separately.")
     if skipped_files:
         cov["notes"].append(
             f"{skipped_files} evidence files remain unexamined by one or more file scanners. "
