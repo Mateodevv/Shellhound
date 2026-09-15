@@ -1,9 +1,9 @@
 # Shellhound licensing
 
-Shellhound uses the custom [Shellhound Source Available License 1.0](../LICENSE)
+Shellhound uses the custom [Shellhound Source Available License 1.0](legal/LICENSE)
 for material expressly offered under those terms, alongside the continuing
 [Apache-2.0 license](../LICENSES/Apache-2.0.txt) for previously licensed material.
-Third-party components retain their own licenses; see [NOTICE](../NOTICE).
+Third-party components retain their own licenses; see [NOTICE](legal/NOTICE).
 
 ## What the new license permits
 

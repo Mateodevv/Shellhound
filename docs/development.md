@@ -1,6 +1,6 @@
 # Development
 
-See [installation](../README.md#installation) for prerequisites and the
+See [installation](user-guide.md#installation) for prerequisites and the
 [repository map](repository-structure.md) to locate a feature.
 
 ## Run from source
@@ -72,9 +72,13 @@ uses only a synthetic workspace.
 ## Build a package
 
 ```bash
-python -m pip install build
+python -m pip install --upgrade build "pyproject-hooks>=1.3"
 python -m build
 ```
+
+Use a current build frontend: pyproject-hooks 1.3 fixes metadata lookup for
+in-tree backends when building from an sdist. Older versions can omit declared
+license files.
 
 The build backend bundles the interface into the wheel. Follow the
 [publishing guide](PUBLISHING.md) for privacy checks and verification before
@@ -100,4 +104,4 @@ build artifacts and runtime workspaces are ignored. Do not add case data to Git.
 - Source launches use the shared startup coordinator and freshness checks.
 
 For contribution terms and handling sensitive reports, see
-[Contributing](../README.md#contributing) and [Security](../SECURITY.md).
+[Contributing](user-guide.md#contributing) and [Security](../.github/SECURITY.md).

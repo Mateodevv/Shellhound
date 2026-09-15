@@ -8,13 +8,8 @@
 # behaviour that nothing defends. Fifty-five real bugs got past a green suite
 # of 303 tests; survivors are where the next fifty-five are hiding.
 #
-# NIGHTLY, AND DELIBERATELY NOT ON PUSH. Every mutant costs a full run of the
-# suite. Ten and a half thousand mutants over server/ is somewhere north of
-# eleven hours of test runs — sharded here so the wall clock is bearable, but
-# still nothing a human waits for. A check nobody can wait for gets marked
-# "required", then blocks a release at four in the afternoon, and is then
-# switched off for good. Running it while everyone is asleep is what keeps it
-# alive.
+# MANUAL ONLY. Run this expensive check only when explicitly requested.
+# Every mutant costs a test run; sharding keeps the wall clock manageable.
 #
 # It gates no merge and blocks no release: nothing waits on it. Surviving
 # mutants do not turn it red either -- they are a report, and reading a report
@@ -24,17 +19,12 @@
 name: Mutation
 
 on:
-  schedule:
-    # 03:17 UTC. Not on the hour: every scheduled workflow on GitHub asks for
-    # the hour, and the queue at :00 is where scheduled runs go to be an hour
-    # late.
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A second night's run while the first is still going would be two full
+# A second manual run while the first is still going would be two full
 # mutation passes competing for runners to say the same thing.
 concurrency:
   group: mutation

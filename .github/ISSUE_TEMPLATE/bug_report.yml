@@ -15,7 +15,7 @@ body:
 
         A rule that judged wrongly belongs in the **detection rule** form.
         A vulnerability in SHELLHOUND itself goes to
-        [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md),
+        [SECURITY.md](https://github.com/Mateodevv/shellhound/blob/main/.github/SECURITY.md),
         never here.
 
   - type: input

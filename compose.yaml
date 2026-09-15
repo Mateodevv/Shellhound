@@ -1,0 +1,26 @@
+services:
+  shellhound:
+    build: .
+    image: shellhound:local
+    ports:
+      - "127.0.0.1:${SHELLHOUND_PUBLISHED_PORT:-8710}:8710"
+    environment:
+      SHELLHOUND_TOKEN: ${SHELLHOUND_TOKEN:?Set SHELLHOUND_TOKEN in .env}
+    volumes:
+      - workspace:/workspace
+      - type: bind
+        source: ${SHELLHOUND_EVIDENCE_DIR:?Set SHELLHOUND_EVIDENCE_DIR to an existing evidence directory}
+        target: /evidence
+        read_only: true
+        bind:
+          create_host_path: false
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  workspace:

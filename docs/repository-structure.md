@@ -30,6 +30,7 @@ web/src/
   i18n/                       Shared interface text
   test/                       Shared frontend test setup
 tests/                        Backend tests and synthetic fixtures
+docker/                       Container entrypoint and health check
 tools/                        Development, verification and release scripts
 docs/                         User and developer guides
   releases/                   Historical release notes
@@ -48,9 +49,16 @@ assets/                       Reviewed documentation assets
 | Artifact review and file contents | `web/src/components/review/`, `server/app.py`, `server/engines/` |
 | Log evidence and traces | `server/engines/`, `web/src/components/logview/`, `web/src/views/` |
 | Shared interface controls | `web/src/components/ui/` |
-| Startup, installation or package output | Root launchers, `server/startup.py`, `build_backend.py`, `pyproject.toml` |
+| Startup, installation or package output | Root launchers, `server/startup.py`, `build_backend.py`, `pyproject.toml`, `Dockerfile` |
 
 ## Placement conventions
+
+The root keeps short `README.md` and `AGENTS.md` entry points alongside launch
+and build files. Full instructions live in [the user guide](user-guide.md) and
+[project guidance](project-guidance.md); changes are in [the changelog](CHANGELOG.md).
+The security policy lives under `.github/`, and license texts and notices live
+under `docs/legal/`.
+
 
 Keep a component's test beside it. Feature-specific helpers stay with their
 feature; controls used across features belong in `components/ui/`. Page views,

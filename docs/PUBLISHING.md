@@ -61,6 +61,7 @@ as the packaged copy of the corresponding `web/public` asset.
 Use the package CI job or a fresh isolated checkout with its own dependencies:
 
 ```bash
+python -m pip install --upgrade build "pyproject-hooks>=1.3"
 python -m build
 python -m tools.check_release_privacy archives dist/*.whl dist/*.tar.gz
 gitleaks dir dist --max-archive-depth=4 --redact=100 --ignore-gitleaks-allow

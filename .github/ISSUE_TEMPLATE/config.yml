@@ -9,7 +9,7 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Vulnerability in SHELLHOUND itself
-    url: https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md
+    url: https://github.com/Mateodevv/shellhound/blob/main/.github/SECURITY.md
     about: >-
       Never a public issue. The server has no authentication beyond a loopback
       token and the material under analysis is live attack code. SECURITY.md

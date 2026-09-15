@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "build_backend"
 backend-path = ["."]
 
@@ -7,9 +7,9 @@ backend-path = ["."]
 name = "shellhound"
 version = "0.2.0"
 description = "Web-native DFIR workbench for webserver compromises (WordPress/Joomla)"
-readme = "README.md"
+readme = "docs/user-guide.md"
 license = "Apache-2.0 AND LicenseRef-Shellhound-Source-Available-1.0"
-license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "LICENSES/pycountry-LGPL-2.1.txt", "NOTICE", "docs/LICENSING.md"]
+license-files = ["docs/legal/LICENSE", "LICENSES/Apache-2.0.txt", "LICENSES/pycountry-LGPL-2.1.txt", "docs/legal/NOTICE", "docs/LICENSING.md"]
 # 3.10 is the floor, not a matter of taste: the code uses `X | None` as a
 # type annotation throughout (PEP 604), and that is valid at runtime from
 # 3.10 on.
@@ -48,8 +48,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/Mateodevv/shellhound"
-Changelog = "https://github.com/Mateodevv/shellhound/blob/main/CHANGELOG.md"
-Security = "https://github.com/Mateodevv/shellhound/blob/main/SECURITY.md"
+Changelog = "https://github.com/Mateodevv/shellhound/blob/main/docs/CHANGELOG.md"
+Security = "https://github.com/Mateodevv/shellhound/blob/main/.github/SECURITY.md"
 
 [project.scripts]
 shellhound = "server.main:main"

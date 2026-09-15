@@ -274,11 +274,11 @@ working tree.
 
 The whole of `server/` is about ten and a half thousand mutants, each costing a
 full run of the suite: hours, not minutes. `.github/workflows/mutation.yml`
-runs it **nightly**, sharded across eight parallel jobs, and uploads the
-survivors as an artifact. It runs on a schedule and not on push on purpose: a
-check nobody can wait for gets marked required, blocks a release at four in the
-afternoon, and is switched off for good by Friday. It gates nothing. Reading
-the report is a person's job.
+runs it **manually**, sharded across eight parallel jobs, and uploads the
+survivors as an artifact. Both GitHub workflows use only `workflow_dispatch`:
+start them only when explicitly requested. Pushes, pull requests and scheduled
+timers do not start Actions. Mutation testing gates nothing; reading the
+report is a person's job.
 
 One job in that workflow *does* fail the run: the one that checks every `.py`
 file under `server/` appears in some shard. A hand-written shard list rots into

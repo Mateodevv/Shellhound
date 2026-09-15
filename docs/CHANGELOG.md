@@ -1522,7 +1522,7 @@ was ("119 findings" were 14 files).
   end. All addresses come from the documentation ranges (RFC 5737), domains
   end in `.test`, and the "web shells" are the shortest possible test
   patterns — not a working tool.
-- Documented in [`docs/rules.md`](docs/rules.md) that "could not be read" is
+- Documented in [`docs/rules.md`](rules.md) that "could not be read" is
   in practice usually the **antivirus scanner of the analysis machine**: it
   blocks access to exactly the clearest finds. The generator checks its own
   files after writing them and says so, instead of quietly building half a
