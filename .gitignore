@@ -100,3 +100,12 @@ CLAUDE.md
 # repository until they are redacted (see README section on assets).
 assets/docs/database.png
 assets/docs/ioc-box.png
+
+# Runtime settings at any configured workspace location.
+settings.json
+settings.json.*
+
+# Private audit findings and remediation work must stay local.
+privacy-audit*/
+private-audit*/
+remediation/

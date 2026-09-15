@@ -11,6 +11,30 @@ permissions:
   contents: read
 
 jobs:
+  privacy:
+    name: Source and history privacy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Structural privacy checks
+        run: python -m tools.check_release_privacy source --history
+      - name: Privacy guard regressions
+        run: python -m unittest tests.test_release_privacy -v
+      - uses: ./.github/actions/setup-gitleaks
+      - name: Redacted history secret scan
+        shell: bash
+        run: |
+          if ! gitleaks git . --log-opts=--all --redact=100 --ignore-gitleaks-allow \
+            --no-banner --log-level=error > "$RUNNER_TEMP/gitleaks-history.log" 2>&1; then
+            echo "::error::History secret scan failed. Reproduce locally with redacted output."
+            exit 1
+          fi
+
   frontend:
     name: Frontend (build + lint)
     runs-on: ubuntu-latest
@@ -97,6 +121,7 @@ jobs:
 
   package:
     name: Package builds and installs
+    needs: privacy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +139,17 @@ jobs:
       # while producing a wheel whose entire interface was missing.
       - name: Build sdist and wheel
         run: python -m build
+      - name: Inspect built archive contents
+        run: python -m tools.check_release_privacy archives dist/*.whl dist/*.tar.gz
+      - uses: ./.github/actions/setup-gitleaks
+      - name: Redacted package secret scan
+        shell: bash
+        run: |
+          if ! gitleaks dir dist --max-archive-depth=4 --redact=100 --ignore-gitleaks-allow \
+            --no-banner --log-level=error > "$RUNNER_TEMP/gitleaks-packages.log" 2>&1; then
+            echo "::error::Package secret scan failed. Reproduce locally with redacted output."
+            exit 1
+          fi
       - name: Install and smoke-test the wheel
         run: |
           python -m venv .package-smoke

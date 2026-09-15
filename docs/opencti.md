@@ -117,9 +117,13 @@ work, but cannot be exported. The first queued transfer locks the ID to prevent
 later updates becoming a different OpenCTI incident. Active and archived IDs
 are reserved in the workspace.
 
-Choose or generate a random organization pseudonym. The registry stores the
-pseudonym and its UUID only; there is no customer-name field or reverse mapping.
-Select the same pseudonym for later cases involving the same organization.
+Enter the affected organization name. Shellhound stores the chosen name and its
+UUID in the local organization registry and uses that name for the organization
+object transferred to OpenCTI. Select an existing organization to reuse its
+identity across cases. The name is not automatically anonymized: if the real
+organization name should not be shared, enter a pseudonym yourself and review
+the case profile before transfer. Previously generated pseudonyms remain
+unchanged unless you explicitly choose a different organization name.
 
 Optional profile fields include summary, sectors, ISO alpha-2 country codes,
 incident dates, software versions and vulnerabilities. Vulnerabilities carry

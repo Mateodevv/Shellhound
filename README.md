@@ -750,3 +750,5 @@ Previously Apache-licensed material retains its [Apache-2.0 rights](LICENSES/Apa
 including commercial redistribution. This change does not retroactively
 restrict earlier code. See [licensing and transition details](docs/LICENSING.md).
 Third-party components: [NOTICE](NOTICE).
+
+Release preparation and privacy gates: [Publishing Shellhound](docs/PUBLISHING.md).

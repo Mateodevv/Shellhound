@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "assets": [
+    {
+      "path": "assets/docs/access-logs.png",
+      "sha256": "5ab9f724aafe648070023413d135cffdfa69d5cd19563ca88d14fa5dbabb1a29",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/artifact-detail.png",
+      "sha256": "82ae47d0a1754324eb0346392b1fbba61a88b71fb6669ac1a248d43db95e7771",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/chronology.png",
+      "sha256": "fa0742b3e31b4d2736a1b734a16617f7b41fca30da3bc3c081adba7e989f7c0c",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/cms-inventory.png",
+      "sha256": "144eb28b0e2b31695067082b045b523d4d44f9e5766a3adbff41cb9bbd96101f",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/dashboard.png",
+      "sha256": "c8c682d339ed74dbdeb5aaa7ccd1e7b6d38f56cd8e8dd7d92c070a6011b4bc7e",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/evidence.png",
+      "sha256": "e1ca1dace6539755b3994dff577d9b54e76c22eddc8e97daa35e21bebb871faf",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/findings.png",
+      "sha256": "589f9dc52b671cd796c317d11d0c1efce05694c14735675694a37b5ac73eebb0",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/pattern-hunt.png",
+      "sha256": "3282d4a20490607ea89b2c7ffeafbff9b361b03ccf0ad419a92f18722cab803c",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/settings.png",
+      "sha256": "b4a8d12c7d2caaf88dcdabe0731bcaae8995ae4a12dd6fc5fe694373ad8387a3",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "assets/docs/trace.png",
+      "sha256": "d7c446e0ab0a762bd0a5c40d25e6e6427348052366440e9a3d326f2ce81db2d3",
+      "review": "Synthetic documentation case; image and metadata reviewed."
+    },
+    {
+      "path": "web/public/assets/fonts/geist/Geist-Italic-Variable.woff2",
+      "sha256": "eb18db540bc7229f801861f02bc625a8a66a20f401a414a058431f6606edec82",
+      "review": "Unmodified Geist 1.7.2 font; upstream license included."
+    },
+    {
+      "path": "web/public/assets/fonts/geist/Geist-Variable.woff2",
+      "sha256": "2ffebe993e969069a9789d15164b7715d42491b5835516c5e3b935d5f81b05f1",
+      "review": "Unmodified Geist 1.7.2 font; upstream license included."
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""Access-log formats whose field boundaries have caused silent data loss."""
+"""Access-log format regressions using RFC 5737 addresses and .test hosts."""
 import tempfile
 import unittest
 from pathlib import Path
