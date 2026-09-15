@@ -1,15 +1,5 @@
-# SHELLHOUND -- was NIEMALS in dieses Repository darf
-#
-# Dieses Werkzeug arbeitet mit Beweismitteln aus echten Vorfällen: Webroots
-# mit funktionsfähigen Webshells, Access-Logs mit Kunden- und Besucher-IPs,
-# Datenbank-Exporte mit Konten und E-Mail-Adressen. Nichts davon gehört in
-# eine Versionsverwaltung, schon gar nicht in eine öffentliche.
-#
-# Die Regeln unten sind bewusst breit gefasst: ein zu viel ignoriertes
-# Testfile kostet nichts, eine versehentlich veröffentlichte Kundendatei
-# lässt sich nicht zurücknehmen.
 
-# --- Beweismittel und Fall-Daten (niemals committen) -------------------------
+
 # Arbeitsverzeichnisse des Analysten
 ShellhoundCases/
 cases/
