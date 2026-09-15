@@ -1,4 +1,4 @@
-// Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
+// Evidence.tsx — register evidence paths, analyze, watch jobs.
 import { useT } from '../i18n'
 import { SkippedFiles } from '../components/review/SkippedFiles'
 import { LogImport, LogSourceList } from '../components/logview/LogSources'
@@ -6,11 +6,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Archive, CheckCircle2, ChevronDown, ChevronRight, FileText, FolderOpen, FolderSearch,
+  Archive, CheckCircle2, ChevronDown, ChevronRight, FileText, FolderOpen,
   HardDrive, Pencil, Play, Server, Trash2, TriangleAlert, XCircle,
 } from 'lucide-react'
 import {
-  api, del, patch, post, type CaseDetail, type CaseSummary, type DetectResult,
+  api, del, patch, post, type CaseDetail, type CaseSummary,
   type EvidenceItem, type Job, type PickPath,
 } from '../api'
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
@@ -48,8 +48,6 @@ export function Evidence({ slug }: {
   const [logImport, setLogImport] = useState('')
   const [preferredPath, setPreferredPath] = useState('')
   const [pathSeededFor, setPathSeededFor] = useState('')
-  const [detectFolder, setDetectFolder] = useState('')
-  const [detected, setDetected] = useState<DetectResult | null>(null)
   const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false)
   const [confirmReanalyze, setConfirmReanalyze] = useState(false)
 
@@ -61,23 +59,7 @@ export function Evidence({ slug }: {
   const addEvidence = useMutation({
     mutationFn: (v: { kind: string; path: string }) =>
       post(`/api/cases/${slug}/evidence`, v),
-    onSuccess: (_result, added) => {
-      invalidate()
-      // Applied suggestions are a checklist, not a repeating offer. The
-      // evidence card above is the durable receipt.
-      setDetected((current) => {
-        if (!current || !(added.kind in current.candidates)) return current
-        const kind = added.kind as keyof DetectResult['candidates']
-        return {
-          ...current,
-          candidates: {
-            ...current.candidates,
-            [kind]: current.candidates[kind]
-              .filter((candidate) => candidate.path !== added.path),
-          },
-        }
-      })
-    },
+    onSuccess: invalidate,
   })
   const removeEvidence = useMutation({
     mutationFn: (id: number) => del(`/api/cases/${slug}/evidence/${id}`),
@@ -96,10 +78,7 @@ export function Evidence({ slug }: {
       invalidate()
     },
   })
-  const detect = useMutation({
-    mutationFn: () => post<DetectResult>('/api/detect', { folder: detectFolder }),
-    onSuccess: setDetected,
-  })
+
 
   // Reference copies belonged to the retired webroot-comparison workflow.
   // Keep old records readable by the backend, but do not expose them as
@@ -138,19 +117,11 @@ export function Evidence({ slug }: {
   const primaryMode: 'new' | 'all' = hasAnalysisHistory ? 'new' : 'all'
   const primaryDisabled = !evidence.length || analyze.isPending || analysisActive
     || (hasAnalysisHistory && pendingEvidence.length === 0 && !retryFull)
-  const registered = new Set(evidence.map((item) =>
-    `${item.kind}\u0000${item.path.replace(/\\/g, '/').toLowerCase()}`))
-  const availableCandidates = detected ? (['webroot', 'access_logs', 'sql_dump'] as const)
-    .flatMap((kind) => detected.candidates[kind]
-      .filter((candidate) => !registered.has(
-        `${kind}\u0000${candidate.path.replace(/\\/g, '/').toLowerCase()}`))
-      .map((candidate) => ({ ...candidate, evidenceKind: kind }))) : []
 
   return (
     <div className="flex flex-col gap-6">
       <Section
         title={tr('evidence.title')}
-        sub={tr('evidence.sub')}
         right={
           <div className="relative flex">
             <Button variant="primary" disabled={primaryDisabled}
@@ -192,9 +163,7 @@ export function Evidence({ slug }: {
               <div className="text-[13px] font-semibold">
                 {tr(evidenceReady ? 'evidence.ready.title' : 'evidence.checklist.title')}
               </div>
-              <div className="mt-0.5 text-[11.5px] text-[var(--muted)]">
-                {tr(evidenceReady ? 'evidence.ready.sub' : 'evidence.checklist.sub')}
-              </div>
+
             </div>
             <Tag tone={evidenceReady ? 'ok' : 'warn'}>
               {tr(evidenceReady ? 'evidence.ready' : 'evidence.noneRegistered')}
@@ -273,7 +242,6 @@ export function Evidence({ slug }: {
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold marker:content-none">
           <ChevronRight size={15} className="transition-transform group-open:rotate-90" />
           {tr('evidence.manage')}
-          <span className="font-normal text-[var(--muted)]">{tr('evidence.manage.sub')}</span>
         </summary>
           <div className="flex flex-col gap-5 border-t border-[var(--line-soft)] p-4">
             <div className="flex flex-col gap-2">
@@ -334,11 +302,7 @@ export function Evidence({ slug }: {
                 sub={tr('evidence.empty.sub')}
               />
             )}
-            {evidence.length > 0 && (
-              <p className="pt-1 text-[11px] leading-relaxed text-[var(--muted)]">
-                {tr('evidence.incrementalHint')}
-              </p>
-            )}
+
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -375,68 +339,11 @@ export function Evidence({ slug }: {
             </Card>
           )}
 
-          <div>
-            <h3 className="text-[13px] font-semibold">{tr('evidence.detect')}</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-[var(--muted)]">{tr('evidence.detect.hint')}</p>
-        <div className="flex gap-2">
-          <input
-            value={detectFolder}
-            onChange={(e) => {
-              setDetectFolder(e.target.value)
-              setPreferredPath(e.target.value)
-            }}
-            placeholder={tr('evidence.detect.placeholder')}
-            className="mono flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] outline-none focus:border-[var(--accent)]/70"
-          />
-          <Button onClick={() => detect.mutate()} disabled={!detectFolder.trim() || detect.isPending}>
-            <FolderSearch size={14} /> {tr('evidence.scan')}
-          </Button>
-        </div>
-        {detected && (
-          <div className="mt-3 flex flex-col gap-2 animate-fade-up">
-            {detected.error && <div className="text-[13px] text-[var(--danger-text)]">{detected.error}</div>}
-            {availableCandidates.length > 1 && !availableCandidates.some(c => c.evidenceKind === 'access_logs') && (
-              <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--panel-2)] px-3 py-2">
-                <span className="text-[12px] text-[var(--muted)]">
-                  {tr('evidence.candidates', { n: formatCount(availableCandidates.length) })}
-                </span>
-                <Button onClick={() => availableCandidates.forEach((candidate) =>
-                  candidate.evidenceKind === 'access_logs' ? setLogImport(candidate.path) : addEvidence.mutate({ kind: candidate.evidenceKind, path: candidate.path }))}>
-                  {tr('evidence.applyAll')}
-                </Button>
-              </div>
-            )}
-            {(['webroot', 'access_logs', 'sql_dump'] as const).map((kind) =>
-              detected.candidates[kind]
-                ?.filter((candidate) => !registered.has(
-                  `${kind}\u0000${candidate.path.replace(/\\/g, '/').toLowerCase()}`))
-                .slice(0, 4).map((c) => (
-                <Card key={kind + c.path} className="flex items-center gap-3 px-4 py-2.5">
-                  <Tag tone="accent">{tr(`evidence.${kind}`)}</Tag>
-                  <div className="min-w-0 flex-1">
-                    <div className="mono truncate text-[12px]">{c.path}</div>
-                    <div className="truncate text-[11px] text-[var(--muted)]">{c.why}</div>
-                  </div>
-                  <Button onClick={() => kind === 'access_logs' ? setLogImport(c.path) : addEvidence.mutate({ kind, path: c.path })}>
-                    {tr('common.apply')}
-                  </Button>
-                </Card>
-              )))}
-            {!detected.error &&
-              availableCandidates.length === 0 && (
-                <div className="text-[13px] text-[var(--muted)]">
-                  {evidence.length
-                    ? tr('evidence.allCandidatesApplied')
-                    : tr('evidence.noCandidates', { n: detected.scanned })}
-                </div>
-              )}
-          </div>
-        )}
-          </div>
+
         </div>
       </details>
 
-      <Section title={tr('evidence.runs')} sub={tr('evidence.jobs.sub')}>
+      <Section title={tr('evidence.runs')}>
         <div className="flex flex-col gap-2">
           {runs.map((run, index) => (
             <AnalysisRun key={run.id} run={run} slug={slug} initiallyOpen={index === 0} />

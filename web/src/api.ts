@@ -1120,7 +1120,7 @@ export interface BrowseFile {
   review: FileReview | null
 }
 
-export type FileClassification = 'webshell' | 'malware'
+export type FileClassification = 'webshell' | 'malware' | 'dropper' | 'backdoor' | 'seo-spam' | 'phishing' | 'injected-code' | 'modified-file'
 
 export interface FileReview {
   state: Exclude<TriageState, 'new'>

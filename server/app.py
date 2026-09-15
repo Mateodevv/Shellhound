@@ -3233,6 +3233,44 @@ def create_app(config: Config) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    class HuntIocBody(BaseModel):
+        clients: list[str] = Field(default_factory=list)
+        all_clients: bool = False
+        excluded_clients: list[str] = Field(default_factory=list)
+
+    @app.post("/api/cases/{slug}/hunt/tests/{test_id}/iocs", dependencies=[auth])
+    def hunt_test_iocs(slug: str, test_id: int, body: HuntIocBody):
+        case_dir = case_dir_or_404(slug)
+        if (body.all_clients and body.clients) or (not body.all_clients and body.excluded_clients):
+            raise HTTPException(400, "invalid client selection")
+        if not body.all_clients and not body.clients:
+            raise HTTPException(400, "select at least one client")
+        try:
+            with manager.case_operation(case_dir, allow_hunt=True):
+                test = hunt_test_or_404(case_dir, test_id)
+                require_fresh_hunt_test(case_dir, test)
+                entry = patternlib.find(config.workspace, test['pattern_id'])
+                if not entry or entry['rule_hash'] != test['rule_hash'] or entry['version'] != test['pattern_version']:
+                    raise HTTPException(409, "the pattern changed; run it again before collecting IOCs")
+                wanted, excluded = set(body.clients), set(body.excluded_clients)
+                matched = list(logindex.iter_rule_clients(case_dir, test['rule'], expected_fingerprint=test['index_fingerprint']))
+                available = {row['ip'] for row in matched}
+                if not wanted.issubset(available) or not excluded.issubset(available):
+                    raise HTTPException(400, "selection contains a client that did not match this test")
+                selected = [row for row in matched if (body.all_clients and row['ip'] not in excluded) or row['ip'] in wanted]
+                conn = db.connect(case_dir)
+                try:
+                    for row in selected:
+                        ioc_model.collect_hunt_cves(conn, entry, test_id, row, test['rule_hash'], test['index_fingerprint'], explicit=True)
+                    require_fresh_hunt_test(case_dir, test)
+                    conn.commit()
+                finally:
+                    conn.close()
+        except (CaseBusy, logindex.StaleHuntIndex) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"count": len(selected)}
+
     class HuntApplyBody(BaseModel):
         cluster_keys: list[str] = Field(default_factory=list)
         pattern_id: str = ""
@@ -3594,6 +3632,8 @@ def create_app(config: Config) -> FastAPI:
                                   "CASE WHEN triage != 'confirmed' THEN NULL "
                                   "WHEN evidence = 'Analyst classified the file as a malware sample.' THEN 'malware' "
                                   "WHEN evidence = 'Analyst classified the file as a webshell.' THEN 'webshell' "
+                                  "WHEN evidence LIKE 'Analyst classified the file as %.' "
+                                  "THEN substr(evidence, 32, length(evidence) - 32) "
                                   "ELSE NULL END AS classification "
                                   "FROM findings WHERE artifact_kind = 'file' "
                                   "AND source = 'analyst' "
@@ -3658,11 +3698,10 @@ def create_app(config: Config) -> FastAPI:
         """
         if body.state not in ("reviewed", "confirmed", "dismissed"):
             raise HTTPException(400, "state must be reviewed, confirmed or dismissed")
-        if body.classification not in ("webshell", "malware"):
-            raise HTTPException(400, "classification must be webshell or malware")
+        from server import file_classifications
+        if body.classification not in file_classifications.LABELS:
+            raise HTTPException(400, "Unknown file classification")
         note = body.note.strip()
-        if body.state in ("confirmed", "dismissed") and not note:
-            raise HTTPException(400, "a reason is required for a final file decision")
 
         case_dir = case_dir_or_404(slug)
         target = _within_evidence(case_dir, body.path, lang)
@@ -3673,7 +3712,8 @@ def create_app(config: Config) -> FastAPI:
             "reviewed": "Analyst reviewed the file; the decision remains open.",
             "confirmed": ("Analyst classified the file as a malware sample."
                           if body.classification == "malware" else
-                          "Analyst classified the file as a webshell."),
+                          "Analyst classified the file as a webshell." if body.classification == "webshell" else
+                          f"Analyst classified the file as {body.classification}."),
             "dismissed": "Analyst reviewed the file and dismissed the malicious classification.",
         }
         conn = db.connect(case_dir)

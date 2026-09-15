@@ -1688,9 +1688,9 @@ class FileReviewEndpointTests(unittest.TestCase):
         }, detail["hashes"])
         self.assertFalse(detail["hashes_limited"])
 
-    def test_a_final_verdict_requires_a_reason_and_evidence_scope(self):
+    def test_a_final_verdict_allows_no_reason_but_requires_evidence_scope(self):
         status, body = self.review("confirmed")
-        self.assertEqual(400, status, body)
+        self.assertEqual(200, status, body)
 
         outside = WORKSPACE / "not-registered-evidence.txt"
         outside.write_text("synthetic", encoding="utf-8")
@@ -1698,6 +1698,15 @@ class FileReviewEndpointTests(unittest.TestCase):
             "path": str(outside), "state": "confirmed", "note": "test",
         })
         self.assertEqual(403, status, body)
+
+    def test_additional_classifications_survive_browse_reload(self):
+        for classification in ('dropper', 'backdoor', 'seo-spam', 'phishing', 'injected-code', 'modified-file'):
+            with self.subTest(classification=classification):
+                status, body = post_json(f"/api/cases/{self.slug}/files/review", {
+                    "path": str(self.file), "state": "confirmed", "classification": classification,
+                })
+                self.assertEqual(200, status, body)
+                self.assertEqual(classification, self.browse_file()['review']['classification'])
 
     def test_manual_webshell_verdict_is_audited_filterable_and_collects_iocs(self):
         note = "Manual review: unexpected executable in a core directory."

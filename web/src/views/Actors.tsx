@@ -7,8 +7,8 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Activity, Box, ChevronLeft, ChevronRight, Crosshair, Download, FileSearch,
-  GitCompareArrows, Link2, ListFilter, Rows3, ShieldCheck,
+  Box, ChevronLeft, ChevronRight, Crosshair, Download, FileSearch,
+  GitCompareArrows, Link2, Rows3, ShieldCheck,
   SlidersHorizontal, Users, X,
 } from 'lucide-react'
 import { useT, type Translate } from '../i18n'
@@ -17,11 +17,11 @@ import {
   type ActorsResponse, type CaseDetail,
 } from '../api'
 import {
-  formatCount, formatDay, formatLogTime, formatSpan, relativeTime,
+  formatCount, formatDay, formatLogTime, formatSpan,
   type EvidenceRoot,
 } from '../format'
 import {
-  Button, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge,
+  Button, EmptyState, SearchInput, Tag, TriageBadge,
 } from '../components/ui/ui'
 import { InfoDot, Tooltip } from '../components/ui/Tooltip'
 import { Sparkline } from '../components/ui/Sparkline'
@@ -41,7 +41,7 @@ type ActorView = 'relevant' | 'confirmed' | 'all'
 type FocusFilter = 'any' | 'notable' | 'scanner' | 'bruteforce' | 'probes'
 type DecisionFilter = 'any' | 'new' | 'review' | 'dismissed'
 type Density = 'comfortable' | 'compact'
-export type ActorInspectorTab = 'overview' | 'evidence' | 'activity' | 'relations'
+export type ActorInspectorTab = 'overview' | 'activity' | 'relations'
 
 function actorDeepLink() {
   const params = new URLSearchParams(location.search)
@@ -49,7 +49,7 @@ function actorDeepLink() {
   return {
     ip: params.get('actor'),
     search: params.get('search') ?? '',
-    section: section === 'evidence' || section === 'activity' || section === 'relations'
+    section: section === 'activity' || section === 'relations'
       ? section : 'overview',
   } as const
 }
@@ -253,14 +253,9 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
             <InfoDot body={tr('actors.workspace.info')}
               hint={tr('actors.workspace.infoHint')} />
           </div>
-          <p className="mt-0.5 max-w-3xl text-[13px] text-[var(--muted)]">
-            {tr('actors.workspace.sub')}
-          </p>
+
         </div>
-        <div className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
-          <ListFilter size={14} />
-          {tr('actors.casePopulation', { n: formatCount(data?.facets?.all ?? total) })}
-        </div>
+
       </header>
 
       <nav className="inline-flex w-fit max-w-full overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel)] p-1"
@@ -504,10 +499,7 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
                         <span className={errors ? 'text-[var(--sev-medium)]' : undefined}>
                           {tr('actors.metric.errors', { n: formatCount(errors) })}
                         </span>
-                        <span>{tr('actors.lastSeen', {
-                          when: relativeTime(actor.last_epoch
-                            ? new Date(actor.last_epoch * 1000).toISOString() : null),
-                        })}</span>
+
                         <Button className="ml-auto" variant="ghost"
                           onClick={() => openTrace([actor.ip], actor.alerts.map((alert) => alert.example))}>
                           <Crosshair size={13} /> Trace
@@ -654,10 +646,7 @@ export function ActorInspector({
           {primary?.title ?? (analystOnly
             ? tr('actors.signal.analystConfirmed') : tr('actors.signal.none'))}
         </div>
-        <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
-          {primary?.detail ?? (analystOnly
-            ? tr('actors.signal.noAutomatic') : tr('actors.signal.noneDetail'))}
-        </p>
+
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="primary" onClick={() => onTrace()}>
             <Crosshair size={14} /> {detail.alerts.some((alert) => alert.example)
@@ -680,7 +669,7 @@ export function ActorInspector({
 
       <nav className="flex overflow-x-auto border-b border-[var(--line)] px-2"
         aria-label={tr('actors.inspector.sections')}>
-        {(['overview', 'evidence', 'activity', 'relations'] as const).map((id) => (
+        {(['overview', 'activity', 'relations'] as const).map((id) => (
           <button key={id} type="button" aria-pressed={tab === id}
             onClick={() => setTab(id)}
             className={clsx('shrink-0 border-b-2 px-2.5 py-2 text-[11px] font-semibold transition-colors',
@@ -708,56 +697,9 @@ export function ActorInspector({
               </p>
             </div>
           </InspectorSection>
-          <InspectorSection title={tr('actors.inspector.sources')}>
-            <SourceRow icon={<Activity size={14} />} label={tr('actors.source.measured')}
-              value={tr('actors.source.measuredValue', { n: signals.length })} />
-            <SourceRow icon={<FileSearch size={14} />} label={tr('actors.source.automatic')}
-              value={tr('actors.source.automaticValue', { n: detail.findings.length })} />
-            <SourceRow icon={<ShieldCheck size={14} />} label={tr('actors.source.analyst')}
-              value={detail.triage ? tr(`triage.${detail.triage}`) : tr('actors.source.open')} />
-          </InspectorSection>
+
           <InspectorSection title={tr('actors.inspector.assessment')}>
             <Assessment detail={detail} tr={tr} />
-          </InspectorSection>
-        </>}
-
-        {tab === 'evidence' && <>
-          <InspectorSection title={tr('actors.inspector.triggers')} count={detail.alerts.length}>
-            {detail.alerts.length ? detail.alerts.map((alert, index) => (
-              <div key={`${alert.kind}-${index}`} className="rounded-lg border border-[var(--line-soft)] p-2.5">
-                <div className="flex items-center gap-2">
-                  <SeverityBadge severity={alert.severity} />
-                  <span className="text-[12px] font-semibold">{tr('actors.source.measured')}</span>
-                </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--muted)]">{alert.detail}</p>
-                {alert.example && <button type="button" onClick={() => onTrace([alert.example])}
-                  className="mono mt-2 block max-w-full cursor-pointer break-all text-left text-[11px] text-[var(--accent-text)] hover:underline">
-                  {alert.example} →
-                </button>}
-              </div>
-            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noTriggers')}</p>}
-          </InspectorSection>
-          <InspectorSection title={tr('actors.inspector.findings')} count={detail.findings.length}>
-            {detail.findings.length ? detail.findings.map((finding) => (
-              <div key={finding.id} className="rounded-lg border border-[var(--line-soft)] p-2.5">
-                <div className="flex items-center gap-2">
-                  <SeverityBadge severity={finding.severity} />
-                  <span className="min-w-0 truncate text-[12px] font-semibold">{finding.rule}</span>
-                </div>
-                <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--muted)]">{finding.evidence}</p>
-              </div>
-            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noFindings')}</p>}
-          </InspectorSection>
-          <InspectorSection title={tr('actors.inspector.signals')} count={signals.length}>
-            {signals.length ? signals.map((signal) => (
-              <div key={signal.key} className="flex items-start gap-2 text-[12px]">
-                <span className={clsx('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
-                  signal.tone === 'danger' ? 'bg-[var(--sev-high)]'
-                    : signal.tone === 'warn' ? 'bg-[var(--sev-low)]' : 'bg-[var(--muted)]')} />
-                <div><span className="font-semibold">{signal.title}</span>
-                  <span className="text-[var(--muted)]"> · {signal.detail}</span></div>
-              </div>
-            )) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.signal.noneDetail')}</p>}
           </InspectorSection>
         </>}
 
@@ -835,16 +777,6 @@ function Assessment({ detail, tr }: { detail: ActorDetail; tr: Translate }) {
       {detail.triage_note && <p className="mt-2 text-[12px] leading-relaxed">{detail.triage_note}</p>}
     </div>
   ) : <p className="text-[12px] text-[var(--muted)]">{tr('actors.inspector.noDecision')}</p>
-}
-
-function SourceRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-[var(--line-soft)] px-2.5 py-2 text-[11px]">
-      <span className="text-[var(--accent)]">{icon}</span>
-      <span className="font-semibold">{label}</span>
-      <span className="ml-auto text-right text-[var(--muted)]">{value}</span>
-    </div>
-  )
 }
 
 function FilterGroup({ title, children }: { title: string; children: ReactNode }) {

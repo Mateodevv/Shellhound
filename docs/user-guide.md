@@ -231,21 +231,11 @@ The request chart, confirmed chronology and log-coverage details follow below.
 The former separate Timeline link remains supported for saved URLs.
 
 On the start screen, **Generate Testcase** creates an independent local training
-case with inert sample files, synthetic access logs and sample findings. Some
-items are already confirmed; others are available to review. All IPs use
+case with inert sample files, three days of synthetic access logs and a WordPress
+SQL dump, with synthetic WordPress core, plugin and theme metadata. Analysis runs
+automatically; findings are unreviewed, with no analyst decisions or collected IOCs. All IPs use
 reserved documentation ranges. Generation does not contact enrichment services.
 Repeated generation creates separate cases and never replaces an existing case.
-
-The collapsible **First known sign of compromise** section retains the optional
-analyst-selected incident anchor. It does not override the five measured values.
-It suggests the earliest dated activity tied to a confirmed finding: requests to
-a confirmed webshell, the requests behind a confirmed log alert, or selected
-Pattern Hunt evidence that was added to Findings and confirmed. Ordinary earlier
-traffic from a confirmed IP does not become the automatic starting point.
-Recorded activity takes precedence over file creation/modification timestamps
-from an evidence copy; those are a yellow **needs review** fallback. A request
-or HTTP response does not establish successful exploitation, and this marker
-does not establish when the incident actually began. Dates are shown in UTC.
 
 Click the marker or **View in timeline** to jump to its exact observation.
 In Timeline, use **Choose another event**, select **Use this event**, and add

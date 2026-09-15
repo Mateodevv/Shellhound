@@ -46,11 +46,11 @@ describe('timeline dashboard', () => {
     expect(within(summary).getAllByText('0')).toHaveLength(2)
     expect(within(summary).queryByRole('button', { name: 'Copy First observed action' })).toBeNull()
   })
-  it('links directly to evidence and analysis', async () => {
-    const gotoView = vi.fn()
-    renderWithProviders(<Dashboard slug="case-1" gotoView={gotoView} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Evidence & analysis' }))
-    expect(gotoView).toHaveBeenCalledWith('evidence')
+  it('keeps case profile without the removed dashboard controls', async () => {
+    renderWithProviders(<Dashboard slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'Case profile' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Evidence & analysis' })).not.toBeInTheDocument()
+    expect(screen.queryByText('First known sign of compromise')).not.toBeInTheDocument()
   })
   it('offers retry after a dashboard request fails', async () => {
     vi.mocked(api).mockRejectedValue(new Error('Unavailable'))

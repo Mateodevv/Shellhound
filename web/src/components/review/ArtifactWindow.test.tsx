@@ -229,7 +229,8 @@ describe('artifact context and classification', () => {
     const ips = screen.getByRole('tabpanel', { name: 'Linked IPs' })
     expect(within(ips).getByText('192.0.2.1')).toBeVisible()
     expect(within(ips).getByText('3 matching requests')).toBeVisible()
-    expect(within(ips).getByText(/First request/)).toBeVisible()
+    expect(within(ips).queryByText(/First request/)).not.toBeInTheDocument()
+    expect(within(ips).getByRole('table')).toBeVisible()
     await userEvent.click(within(ips).getByRole('button', { name: 'Trace' }))
     expect(onTrace).toHaveBeenCalledWith(['192.0.2.1'], expect.objectContaining({ contains: [SHELL] }))
     await userEvent.click(screen.getByRole('tab', { name: 'Findings · 2' }))
@@ -486,6 +487,9 @@ describe('what the window states about the artifact', () => {
 
     expect(await screen.findByRole('button', { name: 'Back to evidence' })).toBeVisible()
     expect(await screen.findByText('safe text')).toBeVisible()
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByText('safe text').closest('[data-expanded-file-viewer]')).not.toBeNull()
+    expect(screen.getByText('File classification')).toBeVisible()
     expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeVisible()
     await act(async () => {
       qc.setQueryData(['artifact', 'case', SHELL], { ...artifactContext, worst: 1 })

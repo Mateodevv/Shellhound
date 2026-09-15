@@ -76,7 +76,7 @@ function TraceFrame({ embedded, title, children, onClose, layer }: {
     : <Modal open onClose={onClose} layer={layer} title={title}>{children}</Modal>
 }
 
-export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embedded = false }: {
+export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, indexFingerprint, embedded = false }: {
   slug: string
   ips: string[] | null
   onClose: () => void
@@ -86,6 +86,7 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
    *  by hand. */
   marks?: TraceMarks
   /** Keep follow-up activity tied to the exact request and saved log index. */
+  indexFingerprint?: string
   anchor?: TraceAnchor
 }) {
   const tr = useT()
@@ -117,10 +118,11 @@ export function TraceWindow({ slug, ips, onClose, layer = 0, marks, anchor, embe
   const { data: response, isFetching, error, refetch } = useQuery({
     queryKey: ['trace', slug, ips, page, search, status, method, sort,
       evidenceOnly, marks?.exact, marks?.contains, marks?.findingIds, anchor?.requestId,
-      anchor?.indexFingerprint, afterAnchor],
+      anchor?.indexFingerprint, indexFingerprint, afterAnchor],
     queryFn: () => post<{ total: number; rows: TraceRow[]; methods: string[] }>(
       `/api/cases/${slug}/trace`,
       {
+        index_fingerprint: indexFingerprint,
         ips, limit: pageSize, offset: page * pageSize, search, status, method, sort,
         mark_exact: marks?.exact ?? [], mark_contains: marks?.contains ?? [],
         evidence_only: anchor ? false : evidenceOnly,

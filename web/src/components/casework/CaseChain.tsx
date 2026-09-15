@@ -139,7 +139,8 @@ function ClockEditor({ slug, offsets, onClose }: {
   )
 }
 
-export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 0, onSelectFirstSign }: {
+export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 0, onSelectFirstSign, showSummary = true }: {
+  showSummary?: boolean
   slug: string
   /** Open an artifact -- the same view as from Findings. */
   onOpen: (artifact: string, kind: string) => void
@@ -204,7 +205,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
             hint={tr('chain.title.hint')} />
         </>
       }
-      sub={events.length
+      sub={!showSummary ? undefined : events.length
         ? tr('chain.sub', { n: total, confirmed: data.confirmed, span: formatSpan(first, last) })
         : tr('chain.empty')}
       right={

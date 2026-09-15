@@ -70,7 +70,7 @@ beforeEach(() => {
 })
 
 describe('manual file review workspace', () => {
-  it('shows forensic facts and keeps classifications explicit and reason-gated', async () => {
+  it('shows forensic facts and keeps classifications explicit without a reason field', async () => {
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />)
 
     await screen.findByText('Manual file review')
@@ -95,45 +95,39 @@ describe('manual file review workspace', () => {
     expect(screen.getByRole('button', { name: 'Copy file content' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy Created' })).toBeInTheDocument()
     expect(screen.queryByText('Analyst decision')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Mark as webshell' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Mark as malware' })).toBeDisabled()
-    fireEvent.change(screen.getByRole('textbox', { name: /Reason and supporting evidence/ }), { target: { value: '   ' } })
-    expect(screen.getByRole('button', { name: 'Mark as malware' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Webshell' })).toBeEnabled()
+    expect(screen.queryByRole('textbox', { name: /Reason and supporting evidence/ })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
 
-  it.each(['webshell', 'malware'] as const)('records only the explicitly chosen %s classification through the audit endpoint', async (classification) => {
+  it.each(['webshell', 'malware', 'dropper'] as const)('records only the explicitly chosen %s classification through the audit endpoint', async (classification) => {
     vi.mocked(post).mockResolvedValue({ ...REVIEW_RESULT, review: { ...REVIEW_RESULT.review, classification } })
     const qc = testQueryClient()
     qc.setQueryData(['opencti', 'case-1'], { cached: true })
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />, qc)
     fireEvent.click(await screen.findByRole('button', { name: /Review index\.php/ }))
     await screen.findByText('3'.repeat(64))
-    fireEvent.change(screen.getByRole('textbox', { name: /Reason and supporting evidence/ }),
-      { target: { value: '  Explicit evidence from the inspected content  ' } })
     expect(post).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: `Mark as ${classification}` }))
+    fireEvent.click(screen.getByRole('button', { name: classification === 'malware' ? 'Malware' : classification === 'dropper' ? 'Dropper' : 'Webshell' }))
     await screen.findByText('Classification saved in the case.')
     expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases/case-1/files/review', {
-      path: FIRST_PATH, state: 'confirmed', classification, note: 'Explicit evidence from the inspected content',
+      path: FIRST_PATH, state: 'confirmed', classification, note: '',
     })
-    expect(screen.getByText(classification === 'malware' ? 'Malware' : 'Webshell')).toBeInTheDocument()
+    expect(screen.getByText(classification === 'malware' ? 'Malware' : classification === 'dropper' ? 'Dropper' : 'Webshell')).toBeInTheDocument()
     expect(qc.getQueryState(['opencti', 'case-1'])?.isInvalidated).toBe(true)
   })
 
-  it('retains the reason after a save failure and clears it when selecting a different file', async () => {
+  it('shows save errors and clears them when selecting a different file', async () => {
     vi.mocked(post).mockRejectedValue(new Error('The file has changed; review it again.'))
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Review index\.php/ }))
     await screen.findByText('3'.repeat(64))
-    fireEvent.change(screen.getByRole('textbox', { name: /Reason and supporting evidence/ }),
-      { target: { value: 'Do not lose this reasoning' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as malware' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Malware' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('The file has changed; review it again.')
-    expect(screen.getByRole('textbox', { name: /Reason and supporting evidence/ })).toHaveValue('Do not lose this reasoning')
+    expect(screen.queryByRole('textbox', { name: /Reason and supporting evidence/ })).not.toBeInTheDocument()
     expect(screen.queryByText('Classification saved in the case.')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Review readme\.txt/ }))
-    expect(screen.getByRole('textbox', { name: /Reason and supporting evidence/ })).toHaveValue('')
+    expect(screen.queryByRole('textbox', { name: /Reason and supporting evidence/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -143,14 +137,13 @@ describe('manual file review workspace', () => {
     renderWithProviders(<Files slug="case-1" gotoView={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Review index\.php/ }))
     await screen.findByText('3'.repeat(64))
-    fireEvent.change(screen.getByRole('textbox', { name: /Reason and supporting evidence/ }), { target: { value: 'Inspected content' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as malware' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Malware' }))
     await screen.findByText('Saving classification…')
-    expect(screen.getByRole('button', { name: 'Mark as malware' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Mark as webshell' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as webshell' }))
+    expect(screen.getByRole('button', { name: 'Malware' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Webshell' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Webshell' }))
     expect(post).toHaveBeenCalledTimes(1)
     resolve(REVIEW_RESULT)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Mark as webshell' })).toBeEnabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Webshell' })).toBeEnabled())
   })
 })

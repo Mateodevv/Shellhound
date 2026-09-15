@@ -384,11 +384,11 @@ def pattern_cves(entry):
         r"\bCVE-\d{4}-\d{4,}\b", str((entry or {}).get("cve") or ""), re.I)})
 
 
-def collect_hunt_cves(conn, entry, test_id, client, rule_hash, index_fingerprint):
+def collect_hunt_cves(conn, entry, test_id, client, rule_hash, index_fingerprint, *, explicit=False):
     """A tested pattern's explicit CVEs are context, never a malicious verdict."""
     from server import db
     names = pattern_cves(entry)
-    if not names or not client.get("hits"):
+    if (not names and not explicit) or not client.get("hits"):
         return
     try:
         address = str(ipaddress.ip_address(client["ip"]))
@@ -413,6 +413,8 @@ def collect_hunt_cves(conn, entry, test_id, client, rule_hash, index_fingerprint
         db.link_iocs(conn, ip_id, cve, "cve-context", "IP matched a pattern associated with this CVE; exploitation is not asserted.")
         link = db.one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind='cve-context'", (ip_id, cve))
         add_support(conn, link["id"], reference, detail, observation_id=observation, first_seen=first, last_seen=last)
+
+    return ip_id
 
 
 def verify_file(conn, ioc_id):

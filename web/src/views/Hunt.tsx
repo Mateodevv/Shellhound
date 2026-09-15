@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft } from 'lucide-react'
-import { api, del, patch, post, type AccessRequestContext, type CaseDetail, type Dashboard,
+import { api, del, patch, post, type AccessRequestContext, type CaseDetail,
   type HuntBatch, type HuntPattern, type HuntRuleV2, type HuntTest, type HuntTestResponse, type Job } from '../api'
 import type { Navigate } from '../App'
 import { useT } from '../i18n'
-import { formatCount, formatLogTime } from '../format'
 import { Button, Card, Modal, Toast } from '../components/ui/ui'
 import { HuntResults } from './hunt/HuntResults'
-import { HuntRunOverview, HuntRunCounts, ErrorMessage } from './hunt/HuntRunOverview'
+import { HuntRunOverview, ErrorMessage } from './hunt/HuntRunOverview'
+import { huntRunState } from './hunt/run-state'
 import { PatternPicker } from './hunt/PatternPicker'
 import { RuleEditor } from './hunt/RuleEditor'
 import { draftHash, emptyDraft, joinDescription, loadSession, patternDraft, saveSession, splitDescription, toDsl,
@@ -42,7 +42,6 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const linkedTest = linkedRecord.data?.tests[0] ?? null
   const showingEvidence = session.page === 'evidence'
   const caseInfo = useQuery({ queryKey: ['case', slug], queryFn: () => api<CaseDetail>(`/api/cases/${slug}`) })
-  const dashboard = useQuery({ queryKey: ['dashboard', slug], queryFn: () => api<Dashboard>(`/api/cases/${slug}/dashboard`) })
   const jobs = useQuery({ queryKey: ['jobs', slug], queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`),
     refetchInterval: (q) => q.state.data?.some((j) => ['queued', 'running'].includes(j.state)) ? 1500 : false })
   const runs = useQuery({ queryKey: ['hunt-batches', slug], queryFn: () => api<{ runs: HuntBatch[] }>(`/api/cases/${slug}/hunt/batch-tests`),
@@ -216,49 +215,47 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         : !hasLogs || !indexReady ? <div className="flex flex-wrap items-center justify-center gap-3 text-[var(--review-text)]">
           <span>{!hasLogs ? tr('hunt.flow.logsRequired') : tr('hunt.flow.indexRequired')}</span>
           <Button onClick={() => gotoView('evidence')}>{!hasLogs ? tr('hunt.flow.addAccessLogs') : tr('case.action.viewAnalysis')}</Button>
-        </div> : <>
-          <p>{tr('hunt.flow.indexScope', { requests: formatCount(caseInfo.data?.log_index.lines), patterns: enabledPatterns.length })}</p>
-          {dashboard.data?.logs && <p>{formatLogTime(dashboard.data.logs.first_epoch, 0, { withZone: true, mode: 'utc' })} → {formatLogTime(dashboard.data.logs.last_epoch, 0, { withZone: true, mode: 'utc' })}</p>}
-        </>}
+        </div> : null}
     {!library.isPending && !library.isError && !enabledPatterns.length && <p className="text-[var(--review-text)]">{tr('hunt.overview.enableBelow')}</p>}
     {busyJob && <p role="status" className="text-[var(--review-text)]">{busyJob.kind === 'hunt' ? tr('hunt.flow.runningNotice') : tr('hunt.flow.analysisRunning')}</p>}
   </div>
 
   return <div className="space-y-3 pb-4">
     {session.page !== 'overview' && <Button variant="ghost" onClick={openOverview}><ArrowLeft size={16} />{tr('hunt.overview.back')}</Button>}
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="max-w-2xl"><h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold outline-none">{tr('hunt.workbench.notice')}</h1>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">{tr('hunt.flow.purpose')}</p></div>
-      <div className="flex flex-wrap gap-2"><Button onClick={() => gotoView('logs')}>{tr('hunt.flow.startFromAccessLogs')}</Button><Button variant="primary" disabled={!canRun || !enabledPatterns.length} onClick={() => batch.mutate(undefined)}>{tr('hunt.flow.checkAllCount', { n: enabledPatterns.length })}</Button><Button onClick={() => mutateSession({ page: 'runs', runPatternId: '' })}>{tr('hunt.workspace.history')}</Button></div>
-    </header>
     <div className="text-xs text-[var(--muted)]">{scope}</div>
     {error && <ErrorMessage message={error} />}
     {[library, caseInfo, jobs, runs].map((q, i) => q.isError && <ErrorMessage key={i} message={q.error.message} onRetry={() => void q.refetch()} />)}
-    <div className="grid items-start gap-3 lg:grid-cols-[minmax(270px,320px)_minmax(0,1fr)]">
-    <PatternPicker patterns={patterns} tests={audits} selectedId={chosen?.id ?? ''} search={session.search} filter={session.filter}
+    <div className="grid items-start gap-5 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)]">
+    <PatternPicker onRun={() => batch.mutate(enabledPatterns.map(p => p.id))} canRun={canRun && !!enabledPatterns.length && !toggle.isPending}
+      footer={<><Button variant="ghost" onClick={() => mutateSession({ page: 'runs', runPatternId: '' })}>{tr('hunt.workspace.history')}</Button>{draft && <Button variant="ghost" onClick={() => mutateSession({ page: 'editor' })}>{tr('hunt.flow.resumeDraft')}</Button>}</>}
+      patterns={patterns} tests={audits} selectedId={chosen?.id ?? ''} search={session.search} filter={session.filter}
       busy={toggle.isPending} onSearch={search => mutateSession({ search })} onFilter={filter => mutateSession({ filter })}
       onSelect={p => { setDetailTab('results'); mutateSession({ selectedId: p.id, runPatternId: p.id, page: 'overview', selectedClusters: [] }) }}
       onToggle={p => toggle.mutate(p)} onNew={() => chooseDraft(emptyDraft())} />
     <div className="min-w-0 space-y-3">
-    {browsing && run && <Card className="space-y-2 p-3">
-      <div className="flex items-center justify-between gap-2"><span className="text-xs text-[var(--muted)]">{run.created.replace('T', ' ')} · {run.state}</span>{['running', 'queued'].includes(run.state) && <Button disabled={cancelBatch.isPending} onClick={() => cancelBatch.mutate()}>{tr('hunt.flow.stopCheck')}</Button>}</div>
-      <HuntRunCounts run={run} />
-      {['running', 'queued'].includes(run.state) && <progress aria-label={tr('hunt.flow.patternsChecked')} className="h-1 w-full" max={1} value={run.progress || 0} />}
+    {browsing && run && (huntRunState(run, tr).running || run.state === 'failed' || run.state === 'cancelled' || Boolean(run.error)) && <div className="space-y-2 border-b border-[var(--line)] pb-3">
+      <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--muted)]">
+        <span>{huntRunState(run, tr).label} · {run.created.replace('T', ' ')}</span>
+        <span>{tr('hunt.flow.checked')} {run.counts.checked} / {run.counts.total ?? '?'}</span>
+        <span>{tr('hunt.flow.matched')} {run.counts.matched}</span>
+        <span className={run.counts.failed ? 'text-[var(--review-text)]' : ''}>{tr('activity.job.failed')} {run.counts.failed}</span>
+        {Boolean(run.counts.remaining) && <span><span>{tr(huntRunState(run, tr).running ? 'hunt.flow.remaining' : 'hunt.flow.notChecked')}</span> {run.counts.remaining}</span>}
+        {huntRunState(run, tr).running && <Button disabled={cancelBatch.isPending} onClick={() => cancelBatch.mutate()}>{tr('hunt.flow.stopCheck')}</Button>}
+      </div>
+      {huntRunState(run, tr).running && <progress aria-label={tr('hunt.flow.patternsChecked')} className="h-1 w-full" max={1} value={run.progress || 0} />}
       {run.error && <ErrorMessage message={run.error} />}
-    </Card>}
+    </div>}
     {browsing ? <>
       {chosen ? <>
-        <Card className="p-4"><div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h2 className="text-lg font-semibold">{chosen.name}</h2><p className="mt-1 text-sm text-[var(--muted)]">{splitDescription(chosen.description).means}</p></div>
-          <div className="flex flex-wrap gap-2"><Button onClick={() => beginEdit(chosen)}>{tr('hunt.flow.editPattern')}</Button>
-            <Button variant="primary" disabled={!canRun || !chosen.enabled || chosen.archived} onClick={() => batch.mutate([chosen.id])}>{tr('hunt.flow.checkThisPattern')}</Button>
-            <details className="relative"><summary className="cursor-pointer rounded-lg border border-[var(--line)] px-3 py-2 text-sm">{tr('hunt.workspace.actions')}</summary><div className="absolute right-0 z-20 flex min-w-44 flex-col gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-2"><Button disabled={clone.isPending} onClick={() => clone.mutate(chosen)}>{tr('hunt.workbench.duplicate')}</Button>{chosen.source === 'own' && !chosen.archived && <Button disabled={archive.isPending} onClick={() => archive.mutate(chosen)}>{tr('hunt.workbench.archive')}</Button>}</div></details>
-          </div></div>
-          <div className="mt-3 flex gap-2 border-t border-[var(--line)] pt-2">{(['results', 'rule'] as const).map(tab => <Button key={tab} onClick={() => setDetailTab(tab)} variant={detailTab === tab ? 'primary' : 'ghost'}>{tr(`hunt.workspace.${tab}`)}</Button>)}{draft && <Button onClick={() => mutateSession({ page: 'editor' })}>{tr('hunt.flow.resumeDraft')}</Button>}</div>
-        </Card>
-        {detailTab === 'rule' ? <Card className="p-4"><p className="mb-3 text-sm text-[var(--muted)]">{splitDescription(chosen.description).notMeans || tr('hunt.flow.matchLimits')}</p><pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs">{chosen.dsl}</pre></Card>
+        <section><div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1"><h2 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold outline-none">{runPattern?.name || chosen.name}</h2>
+            <details className="group mt-1 text-sm text-[var(--muted)]"><summary aria-label={tr('hunt.workspace.about')} className="cursor-pointer list-none"><span className="line-clamp-1 group-open:hidden">{splitDescription(runPattern?.description ?? chosen.description).means}</span><span className="mt-2 block text-xs group-open:hidden">{tr('hunt.workspace.about')} ▾</span><span className="hidden text-xs group-open:block">{tr('hunt.workspace.collapseDescription')} ▴</span></summary><p className="mt-2 leading-relaxed">{splitDescription(runPattern?.description ?? chosen.description).means}</p><p className="mt-2 leading-relaxed">{splitDescription(runPattern?.description ?? chosen.description).notMeans || tr('hunt.flow.matchLimits')}</p></details></div>
+          </div>
+          <div className="mt-4 flex gap-5 border-b border-[var(--line)]">{(['results', 'rule'] as const).map(tab => <button type="button" key={tab} aria-pressed={detailTab === tab} onClick={() => setDetailTab(tab)} className={`cursor-pointer border-b-2 pb-2 text-sm ${detailTab === tab ? 'border-[var(--accent)] font-semibold' : 'border-transparent text-[var(--muted)]'}`}>{tr(`hunt.workspace.${tab}`)}</button>)}</div>
+        </section>
+        {detailTab === 'rule' ? <Card className="p-4"><div className="mb-3 flex flex-wrap gap-2"><Button onClick={() => beginEdit(chosen)}>{tr('hunt.flow.editPattern')}</Button><Button disabled={clone.isPending} onClick={() => clone.mutate(chosen)}>{tr('hunt.workbench.duplicate')}</Button>{chosen.source === 'own' && !chosen.archived && <Button disabled={archive.isPending} onClick={() => archive.mutate(chosen)}>{tr('hunt.workbench.archive')}</Button>}</div><p className="mb-3 text-sm text-[var(--muted)]">{splitDescription(chosen.description).notMeans || tr('hunt.flow.matchLimits')}</p><pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs">{chosen.dsl}</pre></Card>
           : runQuery.isError ? <ErrorMessage message={runQuery.error.message} onRetry={() => void runQuery.refetch()} />
-          : activeTest ? <HuntResults key={`${chosen.id}:${activeTest.id}`} slug={slug} test={activeTest} ruleName={runPattern?.name ?? chosen.name} ruleMeaning={splitDescription(runPattern?.description ?? '').means} ruleNotMeaning={splitDescription(runPattern?.description ?? '').notMeans}
+          : activeTest ? <HuntResults compact key={`${chosen.id}:${activeTest.id}`} slug={slug} test={activeTest} ruleName={runPattern?.name ?? chosen.name} ruleMeaning={splitDescription(runPattern?.description ?? '').means} ruleNotMeaning={splitDescription(runPattern?.description ?? '').notMeans}
               selected={selected} onSelected={value => mutateSession({ selectedClusters: [...value] })} fresh={Boolean(run?.fresh)} applyHint={applyHint} applying={applyRule.isPending} onApply={() => applyRule.mutate()} />
           : <Card className="p-4 text-sm"><p role="status">{run?.state === 'running' || run?.state === 'queued' ? tr('hunt.flow.waitingResult') : tr('hunt.workspace.noResult')}</p></Card>}
       </> : <Card className="p-4">{tr('hunt.workspace.select')}</Card>}

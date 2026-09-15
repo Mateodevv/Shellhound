@@ -92,11 +92,8 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
           <FileSearch size={18} className="text-[var(--accent-text)]" />
           <h1 className="text-lg font-bold">{tr('files.review.title')}</h1>
         </div>
-        <p className="mt-0.5 max-w-3xl text-[12.5px] text-[var(--muted)]">
-          {tr('files.review.sub')}
-        </p>
+
       </div>
-      {!atRoot && <Metric value={(browse.data?.files ?? []).length} label={tr('files.metric.files')} />}
     </header>
 
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2.5">
@@ -203,15 +200,6 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
 
 type Tr = ReturnType<typeof useT>
 
-function Metric({ value, label, danger = false }: { value: number; label: string; danger?: boolean }) {
-  return <div className="text-right">
-    <div className={clsx('text-base font-bold tabular', danger ? 'text-[var(--danger-text)]' : 'text-[var(--fg)]')}>
-      {formatCount(value)}
-    </div>
-    <div className="text-[9px] uppercase tracking-wider text-[var(--muted)]">{label}</div>
-  </div>
-}
-
 function pathWithinRoot(path: string, root: string) {
   const normalizedPath = path.replace(/\\/g, '/').toLowerCase()
   const normalizedRoot = root.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
@@ -286,11 +274,10 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
   onRecorded: (result: FileReviewResult) => void
 }) {
   const tr = useT()
-  const [reason, setReason] = useState(file?.review?.note ?? '')
   const classify = useMutation({
     mutationFn: (classification: FileClassification) => post<FileReviewResult>(
       `/api/cases/${slug}/files/review`, {
-        path: file!.path, state: 'confirmed', classification, note: reason.trim(),
+        path: file!.path, state: 'confirmed', classification, note: file?.review?.note ?? '',
       }),
     onSuccess: onRecorded,
   })
@@ -347,7 +334,7 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
           <Fact label={tr('files.time.accessed')} value={forensicTime(facts.accessed_at)} tr={tr} />
           <Fact label={tr('files.time.changed')} value={forensicTime(facts.changed_at)} tr={tr} />
         </div>
-        <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.metadata.caution')}</p>
+
       </section>
 
       <section>
@@ -359,11 +346,7 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
           <HashFact label="SHA-1" value={preview.data?.hashes.sha1} tr={tr} />
           <HashFact label="SHA-256" value={preview.data?.hashes.sha256} tr={tr} />
         </div>
-        <p className="mt-2 text-[9.5px] text-[var(--muted)]">
-          {preview.data?.hashes_limited
-            ? tr('files.hashes.tooLarge')
-            : tr('files.hashes.caution')}
-        </p>
+        {preview.data?.hashes_limited && <p className="mt-2 text-[9.5px] text-[var(--muted)]">{tr('files.hashes.tooLarge')}</p>}
       </section>
 
       <section>
@@ -404,24 +387,11 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
 
       <section aria-label={tr('files.classification.title')} className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-[11px] font-semibold">{tr('files.classification.title')}</h2>
-          {review?.state === 'confirmed' && review.classification && <Tag tone="warn">
-            {tr(review.classification === 'malware' ? 'files.review.malware' : 'files.review.webshell')}
-          </Tag>}
-        </div>
-        <p className="mt-1 text-[11px] text-[var(--muted)]">{tr('files.classification.sub')}</p>
-        <label className="mt-3 block text-[11px]">
-          {tr('files.classification.reason')}
-          <textarea value={reason} onChange={(event) => setReason(event.target.value)}
-            maxLength={4000} disabled={classify.isPending} rows={3}
-            placeholder={tr('files.decision.note')}
-            className="mt-1 block w-full rounded-lg border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[12px] outline-none focus:border-[var(--accent)]" />
-        </label>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button disabled={!reason.trim() || !preview.isSuccess || classify.isPending}
-            onClick={() => classify.mutate('webshell')}>{tr('files.decision.webshell')}</Button>
-          <Button disabled={!reason.trim() || !preview.isSuccess || classify.isPending}
-            onClick={() => classify.mutate('malware')}>{tr('files.decision.malware')}</Button>
+          {(['webshell', 'dropper', 'backdoor', 'seo-spam', 'malware', 'phishing', 'injected-code', 'modified-file'] as const).map(value =>
+            <Button key={value} aria-pressed={review?.state === 'confirmed' && review.classification === value}
+              variant={review?.state === 'confirmed' && review.classification === value ? 'primary' : 'default'}
+              disabled={!preview.isSuccess || classify.isPending}
+              onClick={() => classify.mutate(value)}>{tr(`artifact.class.${value}`)}</Button>)}
           {classify.isPending && <span role="status" className="text-[11px] text-[var(--muted)]">{tr('files.classification.saving')}</span>}
           {classify.isSuccess && <span role="status" className="text-[11px] text-[var(--accent-text)]">
             {tr('files.classification.saved')}

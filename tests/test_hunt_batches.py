@@ -225,6 +225,26 @@ class HuntBatchTests(unittest.TestCase):
         self.assertEqual(2, run["counts"]["remaining"])
         self.assertTrue(all(item["status"] == "not_run" for item in run["patterns"]))
 
+    def test_explicit_ioc_collection_validates_selection_and_collects_all_pages(self):
+        run = self.finish(self.start())
+        test = run['patterns'][0]['test']
+        endpoint = self.url + f"/hunt/tests/{test['id']}/iocs"
+        self.assertEqual(400, self.client.post(endpoint, json={'clients': ['203.0.113.99']}).status_code)
+        response = self.client.post(endpoint, json={'clients': ['192.0.2.1']})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(1, response.json()['count'])
+        response = self.client.post(endpoint, json={'all_clients': True, 'excluded_clients': ['198.51.100.205']})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertEqual(205, response.json()['count'])
+        conn = db.connect(self.case)
+        self.assertEqual(205, conn.execute("SELECT count(*) FROM iocs WHERE type='ip'").fetchone()[0])
+        self.assertEqual(0, conn.execute('SELECT count(*) FROM findings').fetchone()[0])
+        self.assertGreater(conn.execute('SELECT count(*) FROM ioc_observations').fetchone()[0], 0)
+        conn.close()
+        self.assertEqual(1, self.client.post(endpoint, json={'clients': ['192.0.2.1']}).json()['count'])
+        self.log.write_text(self.log.read_text(encoding='utf-8') + line('203.0.113.99'), encoding='utf-8')
+        self.assertEqual(409, self.client.post(endpoint, json={'all_clients': True}).status_code)
+
     def test_stale_history_is_retained_and_all_drilldowns_and_apply_refuse(self):
         run = self.finish(self.start())
         test = run["patterns"][0]["test"]

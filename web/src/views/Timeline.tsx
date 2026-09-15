@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarClock } from 'lucide-react'
-import { api, type CaseDetail, type Dashboard as DashboardData, type FirstSign as FirstSignData, type ChainEvent } from '../api'
+import { api, type CaseDetail, type Dashboard as DashboardData } from '../api'
 import { useT } from '../i18n'
-import { formatCount, formatDay, type EvidenceRoot } from '../format'
+import { type EvidenceRoot } from '../format'
 import { Button, Card, EmptyState, Section, CopyButton } from '../components/ui/ui'
 import { TimelineChart } from '../components/ui/TimelineChart'
 import { LogCoverage } from '../components/logview/LogCoverage'
@@ -13,7 +13,6 @@ import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
 import { FileViewer } from '../components/review/FileViewer'
 import { TriageFollowUp } from '../components/review/triage'
 import { useTriage } from '../components/review/useTriage'
-import { FirstSign, FirstSignEditor } from '../components/casework/FirstSign'
 import { CaseProfileButton } from '../components/casework/CaseProfile'
 import type { Navigate } from '../App'
 
@@ -23,29 +22,13 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
-  const [choosing, setChoosing] = useState(false)
-  const [draftEvent, setDraftEvent] = useState<ChainEvent | null>(null)
-  const [focusRequest, setFocusRequest] = useState(0)
-  const chainRef = useRef<HTMLDivElement>(null)
   const [focusId, setFocusId] = useState(() => new URLSearchParams(location.search).get('event') ?? '')
   useEffect(() => {
     const restore = () => setFocusId(new URLSearchParams(location.search).get('event') ?? '')
     restore()
-    setChoosing(false)
-    setDraftEvent(null)
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)
   }, [slug])
-  const jumpTo = (id?: string) => {
-    setFocusId(id ?? '')
-    setFocusRequest(value => value + 1)
-    const url = new URL(location.href)
-    if (id) url.searchParams.set('event', id)
-    else url.searchParams.delete('event')
-    history.replaceState(null, '', url)
-    chainRef.current?.scrollIntoView({ block: 'start' })
-  }
-  const marker = useQuery({ queryKey: ['first-sign', slug], queryFn: () => api<FirstSignData>(`/api/cases/${slug}/first-sign`), refetchInterval: 10000 })
   const triage = useTriage(slug)
   const { data, isError, refetch } = useQuery({
     queryKey: ['dashboard', slug],
@@ -76,7 +59,7 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">{tr('incident.title')}</h1>
-        <div className="flex gap-2"><Button onClick={() => gotoView('evidence')}>{tr('nav.evidence')}</Button><CaseProfileButton slug={slug} /></div>
+        <CaseProfileButton slug={slug} />
       </div>
       <section aria-label={tr('incident.metrics')} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
         {metrics.map(([label, value]) => <Card key={label} className="min-w-0 p-3">
@@ -85,14 +68,8 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
             {value != null && <CopyButton value={value} label={`${tr('common.copy')} ${label}`} />}</div>
         </Card>)}
       </section>
-      <p className="text-xs text-[var(--muted)]">{tr('incident.metricsHelp')}</p>
       {data.logs ? <>
-        <Section title={tr('timeline.title')}
-          sub={tr('timeline.sub', {
-            lines: formatCount(data.logs.lines),
-            from: formatDay(data.logs.first_epoch),
-            to: formatDay(data.logs.last_epoch),
-          })}>
+        <Section title={tr('timeline.title')}>
           <Card className={'p-3'}>
             <TimelineChart data={data.timeline} height={sparseTimeline ? 140 : 220} />
           </Card>
@@ -101,14 +78,8 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
         <EmptyState icon={<CalendarClock size={36} />} title={tr('timeline.empty.title')}
           sub={tr('timeline.empty.sub')} />
       )}
-      <details className="rounded-lg border border-[var(--line)] p-3">
-        <summary className="cursor-pointer text-sm text-[var(--muted)]">{tr('firstSign.title')}</summary>
-        <div className="mt-3"><FirstSign slug={slug} data={marker.isError ? undefined : marker.data} editing onTimeline={jumpTo}
-          onChoose={() => { setChoosing(true); chainRef.current?.scrollIntoView({ block: 'start' }) }} /></div>
-      </details>
-      <div ref={chainRef} className="scroll-mt-4">
-      {choosing && <div role="status" className="mb-3 flex items-center justify-between gap-2 text-sm"><span>{tr('firstSign.chooseHelp')}</span><Button onClick={() => setChoosing(false)}>{tr('common.cancel')}</Button></div>}
-      <CaseChain slug={slug} focusId={focusId} focusRequest={focusRequest} onSelectFirstSign={choosing ? setDraftEvent : undefined}
+      <div className="scroll-mt-4">
+      <CaseChain slug={slug} focusId={focusId} showSummary={false}
         onOpen={(artifact, kind) => setSelected({
           artifact,
           artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],
@@ -118,9 +89,6 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
         })}
         onTrace={(ip) => { setTraceMarks(undefined); setTraceIps([ip]) }} />
       </div>
-      {draftEvent && <FirstSignEditor key={`${slug}:${draftEvent.id}`} slug={slug} event={draftEvent}
-        initialNote={marker.data?.event?.id === draftEvent.id ? marker.data?.note ?? '' : ''}
-        onClose={() => setDraftEvent(null)} onSaved={() => { setDraftEvent(null); setChoosing(false); jumpTo(draftEvent.id) }} />}
       {data.logs && <LogCoverage slug={slug} />}
       <ArtifactWindow slug={slug} artifact={selected} roots={roots}
         collected={triage.collected}

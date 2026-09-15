@@ -132,7 +132,7 @@ function FindingList({ findings, selected, onSelect, preview, loading, kind = 'f
   </div>
 }
 
-function Clients({ ips, marks, onTrace, slug }: {
+function Clients({ ips, marks, onTrace }: {
   ips: ArtifactContext['related_ips']
   slug: string
   marks: TraceMarks
@@ -149,31 +149,14 @@ function Clients({ ips, marks, onTrace, slug }: {
       </Button>
     )}>
       {ips.length ? (
-        <div className="flex flex-col divide-y divide-[var(--line-soft)] rounded-lg border border-[var(--line)]">
-          {ips.map((entry) => (
-            <div key={entry.ip}
-              className="flex flex-wrap items-center gap-2 px-3 py-2 text-[12px]">
-              <IpFlag ip={entry.ip} />
-              <a className="mono font-medium text-[var(--accent-text)] hover:underline" href={`?case=${encodeURIComponent(slug)}&view=actors&actor=${encodeURIComponent(entry.ip)}`} target="_blank" rel="noreferrer">{entry.ip}</a>
-              {entry.in_box && <Tag tone="accent" explain={tr('artifact.ipInBox')}>IOC</Tag>}
-              <InfoDot body={entry.why} />
-              {entry.hits != null && (
-                <span className="ml-auto text-[var(--muted)] tabular">
-                  {tr('artifact.matchingRequests', { n: formatCount(entry.hits) })}
-                </span>
-              )}
-              <Button variant="special" className="ml-auto shrink-0"
-                onClick={() => onTrace([entry.ip], marks)}>
-                <Crosshair size={12} /> Trace
-              </Button>
-              {entry.ok_hits != null && <Tag tone={entry.ok_hits > 0 ? 'ok' : undefined}>{tr('review.successes', { n: entry.ok_hits })}</Tag>}
-              {(entry.first_epoch != null || entry.last_epoch != null) && <div className="w-full text-[11px] text-[var(--muted)]">
-                {tr('artifact.firstRequest')}: {entry.first_epoch != null ? `${absoluteTime(new Date(entry.first_epoch * 1000).toISOString())} UTC` : '—'}
-                {' · '}{tr('artifact.lastRequest')}: {entry.last_epoch != null ? `${absoluteTime(new Date(entry.last_epoch * 1000).toISOString())} UTC` : '—'}
-              </div>}
-            </div>
-          ))}
-        </div>
+        <div className="overflow-x-auto rounded-lg border border-[var(--line)]"><table className="w-full text-left text-[12px]"><tbody>
+          {ips.map(entry => <tr key={entry.ip} className="border-b border-[var(--line-soft)] last:border-0">
+            <td className="px-2 py-1.5"><span className="flex items-center gap-2 whitespace-nowrap"><IpFlag ip={entry.ip} /><span className="mono font-medium">{entry.ip}</span>{entry.in_box && <Tag tone="accent" explain={tr('artifact.ipInBox')}>IOC</Tag>}<InfoDot body={entry.why} /></span></td>
+            <td className="whitespace-nowrap px-2 py-1.5 text-[var(--muted)]">{entry.hits != null && tr('artifact.matchingRequests', { n: formatCount(entry.hits) })}</td>
+            <td className="whitespace-nowrap px-2 py-1.5">{entry.ok_hits != null && <span className={entry.ok_hits > 0 ? 'text-[var(--ok)]' : 'text-[var(--muted)]'}>{tr('review.successes', { n: entry.ok_hits })}</span>}</td>
+            <td className="px-2 py-1.5 text-right"><Button variant="special" onClick={() => onTrace([entry.ip], marks)}><Crosshair size={12} /> Trace</Button></td>
+          </tr>)}
+        </tbody></table></div>
       ) : <div className="text-[12px] text-[var(--muted)]">{tr('artifact.noClients')}</div>}
     </Block>
   )
@@ -581,7 +564,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           const area = event.target.closest<HTMLElement>(SCROLL_AREA)
           if (area) activeScrollRef.current = area
         }}>
-        {collected.length > 0 && (
+        {!expanded && collected.length > 0 && (
           <div className="m-4 mb-0 shrink-0 rounded-lg border border-[var(--ok)]/40 bg-[rgba(12,163,12,0.08)] px-3 py-2 animate-fade-up">
             <div className="mb-1 text-[12px] font-semibold text-[var(--ok)]">{tr('artifact.collected')}</div>
             <div className="flex flex-wrap gap-1.5">
@@ -596,9 +579,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         )}
 
         {expanded && (kind === 'file' || kind === 'dump') ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <div className="shrink-0"><Button onClick={() => setExpanded(false)}><ArrowLeft size={14} />{tr('artifact.backToEvidence')} <KeyHint>F</KeyHint></Button></div>
-            {kind === 'file' ? <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} className="min-h-0 flex-1" />
+          <div data-expanded-file-viewer className="flex min-h-0 w-full flex-1 flex-col overflow-hidden p-2">
+            <div className="shrink-0 pb-2"><Button onClick={() => setExpanded(false)}><ArrowLeft size={14} />{tr('artifact.backToEvidence')} <KeyHint>F</KeyHint></Button></div>
+            {kind === 'file' ? <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} showPath={false} className="min-h-0 w-full flex-1" />
               : <ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} />}
           </div>
         ) : logReview ? <LogFindingReview key={artifactKey} slug={slug} events={ctx?.log_observations ?? []} configured={conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'file'))} onFile={onView} /> : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>

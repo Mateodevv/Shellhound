@@ -1,7 +1,7 @@
 import { useT } from '../../i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Check, PencilLine } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft, ArrowRight, Check, PencilLine, FileText, Users, CalendarDays } from 'lucide-react'
 import { api, post, type AccessLogRow, type AccessRequestContext, type HuntClusterPage, type HuntIpPage, type HuntTest } from '../../api'
 import { formatCount, formatLogTime } from '../../format'
 import { Button, Card, Tag } from '../../components/ui/ui'
@@ -13,48 +13,68 @@ const SELECTION_LIMIT = 200
 const timestamp = (epoch?: number | null, tz?: number) => formatLogTime(epoch, tz, { withZone: true })
 
 export function HuntResults({ slug, test, selected, ruleName, ruleMeaning, ruleNotMeaning,
-  fresh, applyHint, applying, onSelected, onApply, onEdit }: {
-  slug: string; test: HuntTest | null; selected: Set<string>
+  fresh, applyHint, applying, onSelected, onApply, onEdit, compact = false }: {
+  compact?: boolean; slug: string; test: HuntTest | null; selected: Set<string>
   ruleName?: string; ruleMeaning?: string; ruleNotMeaning?: string
   fresh: boolean; applyHint: string; applying: boolean
   onSelected: (value: Set<string>) => void; onApply: () => void; onEdit?: () => void
 }) {
   const tr = useT()
+  const qc = useQueryClient()
+  const [iocSelection, setIocSelection] = useState(new Set<string>())
+  const [allIocs, setAllIocs] = useState(false)
+  const [iocNotice, setIocNotice] = useState('')
+  const [traceIp, setTraceIp] = useState<string[] | null>(null)
+  const collect = useMutation({ mutationFn: (ips?: string[]) => post<{ count: number }>(`/api/cases/${slug}/hunt/tests/${test!.id}/iocs`, {
+    clients: ips ?? (allIocs ? [] : [...iocSelection]), all_clients: !ips && allIocs,
+    excluded_clients: !ips && allIocs ? [...iocSelection] : [],
+  }), onSuccess: result => {
+    setIocNotice(tr(result.count === 1 ? 'hunt.workspace.iocAdded' : 'hunt.workspace.iocsAdded', { n: result.count })); setIocSelection(new Set()); setAllIocs(false)
+    void qc.invalidateQueries({ queryKey: ['iocs', slug] })
+  } })
+  const toggleIoc = (ip: string) => { setIocSelection(previous => { const next = new Set(previous); if (next.has(ip)) next.delete(ip); else next.add(ip); return next }); setIocNotice('') }
   const [client, setClient] = useState('')
   const [cursors, setCursors] = useState([''])
   const [sort, setSort] = useState<'requests' | 'first_hit' | 'last_hit' | 'client'>('requests')
   const cursor = cursors[cursors.length - 1]
-  const clients = useQuery({ queryKey: ['hunt-clients', slug, test?.id, sort, cursor], enabled: Boolean(test && fresh),
+  const clients = useQuery({ queryKey: ['hunt-clients', slug, test?.id, sort, cursor], enabled: Boolean(test && fresh && (test.hits ?? 0) > 0),
     queryFn: () => post<HuntIpPage>(`/api/cases/${slug}/hunt/tests/${test!.id}/clients`, {
       cursor, limit: PAGE_SIZE, sort, direction: sort === 'client' || sort === 'first_hit' ? 'asc' : 'desc',
     }) })
+  const selectedIocs = allIocs ? (test?.clients ?? 0) - iocSelection.size : iocSelection.size
   const chooseClient = (ip: string) => { onSelected(new Set()); setClient(ip) }
   if (!test) return <Card className="p-6 text-sm">{tr('hunt.flow.missingResult')}</Card>
   const gaps = Object.entries(test.coverage?.fields ?? {}).filter(([, value]) => (value?.ratio ?? 1) < 1)
   return <div className="space-y-4">
-    <Card className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    {collect.isError && <ErrorMessage message={collect.error.message} />}
+    {iocNotice && <p role="status" className="text-sm">{iocNotice}</p>}
+    <TraceWindow slug={slug} ips={fresh && !clients.isError ? traceIp : null} onClose={() => setTraceIp(null)} indexFingerprint={test.index_fingerprint} />
+    <div className={compact ? "py-1" : "rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5"}>
+      {!compact && <><div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="text-xl font-semibold">{ruleName || tr('hunt.flow.patternResults')}</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">{tr('hunt.flow.resultVersion', { time: test.tested_at.replace('T', ' ').slice(0, 19), version: test.pattern_version || tr('hunt.flow.draft') })}</p></div>
         {onEdit && <Button onClick={onEdit}><PencilLine size={15} /> {tr('hunt.flow.editPattern')}</Button>}
       </div>
       <p className="mt-4 text-sm leading-relaxed">{ruleMeaning || tr('hunt.flow.matchMeaning')}</p>
-      <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">{ruleNotMeaning || tr('hunt.flow.matchLimits')}</p>
-      <dl className="mt-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">{ruleNotMeaning || tr('hunt.flow.matchLimits')}</p></>}
+      {(!compact || (test.hits ?? 0) > 0) && <dl className={compact ? "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" : "mt-5 grid grid-cols-2 gap-4 lg:grid-cols-4"}>
         {[[tr('hunt.flow.matchingRequests'), formatCount(test.hits)], [tr('hunt.flow.ipAddresses'), formatCount(test.clients)],
-          [tr('hunt.flow.firstMatch'), timestamp(test.first_epoch, test.tz)], [tr('hunt.flow.lastMatch'), timestamp(test.last_epoch, test.tz)]].map(([label, value]) =>
-          <div key={label}><dt className="text-sm text-[var(--muted)]">{label}</dt><dd className="mt-1 font-semibold">{value}</dd></div>)}
-      </dl>
+          [tr('hunt.flow.firstMatch'), timestamp(test.first_epoch, test.tz)], [tr('hunt.flow.lastMatch'), timestamp(test.last_epoch, test.tz)]].map(([label, value], index) => {
+          const Icon = [FileText, Users, CalendarDays, CalendarDays][index]
+          return <div key={label} className={compact ? "flex min-w-0 items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-4" : ""}>{compact && <Icon size={24} className="shrink-0 text-[var(--accent-text)]" />}<div className="min-w-0"><dt className="text-sm font-medium text-[var(--muted)]">{label}</dt><dd className="mt-1 break-words text-base font-semibold text-[var(--fg)]">{value}</dd></div></div>
+        })}
+      </dl>}
       {gaps.length > 0 && <div className="mt-4 rounded-lg bg-[var(--panel-2)] p-3 text-sm text-[var(--sev-medium)]">{tr('hunt.flow.someLogFieldsAreMissing')} {gaps.map(([field, value]) => tr('hunt.flow.fieldCoverage', { field: field.replaceAll('_', ' '), percent: Math.round((value?.ratio ?? 0) * 100) })).join(' · ')}{tr('hunt.flow.resultsCoverTheIndexedInformationAvailable')}</div>}
-    </Card>
+    </div>
     {!fresh ? <ErrorMessage message={tr('hunt.flow.staleResult')} />
+      : test.hits === 0 ? <p role="status" className="py-10 text-center text-sm text-[var(--muted)]">{tr('hunt.workspace.noMatches')}</p>
       : client ? <>
         <Button variant="ghost" onClick={() => chooseClient('')}><ArrowLeft size={15} /> {tr('hunt.flow.allMatchingIps')}</Button>
         <ClientMatches key={`${test.id}:${client}`} slug={slug} test={test} client={client} selected={selected}
           onSelected={onSelected} onApply={onApply} applyHint={applyHint} applying={applying} />
       </> : <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] p-4">
-          <h3 className="font-semibold">{tr('hunt.flow.matchingIpAddresses')}</h3>
+          <div className="flex items-center gap-3"><h3 className="font-semibold">{tr('hunt.flow.matchingIpAddresses')}</h3>{compact && <Button disabled={!selectedIocs || collect.isPending || Boolean(applyHint) || clients.isError} onClick={() => collect.mutate(undefined)}>{tr('hunt.workspace.addIoc')} ({selectedIocs})</Button>}</div>
           <label className="text-sm">{tr('hunt.flow.sortBy')} <select value={sort} onChange={(e) => { setCursors(['']); setSort(e.target.value as typeof sort) }}
             className="ml-2 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2">
             <option value="requests">{tr('hunt.flow.mostMatchingRequests')}</option><option value="first_hit">{tr('hunt.flow.firstMatch')}</option>
@@ -65,14 +85,18 @@ export function HuntResults({ slug, test, selected, ruleName, ruleMeaning, ruleN
             : !clients.data?.clients.length ? <p className="p-6 text-sm text-[var(--muted)]">{tr('hunt.flow.noIpAddressesMatchedThisPattern')}</p>
               : <div className="overflow-x-auto"><table className="w-full text-left text-sm">
                 <thead className="bg-[var(--panel-2)] text-[var(--muted)]"><tr>
+                  {compact && <th className="px-3"><input type="checkbox" aria-label={tr('hunt.workspace.selectAllIps')} checked={allIocs && !iocSelection.size} ref={node => { if (node) node.indeterminate = selectedIocs > 0 && !(allIocs && !iocSelection.size) }} disabled={collect.isPending} onChange={e => { setAllIocs(e.target.checked); setIocSelection(new Set()); setIocNotice('') }} /></th>}
                   {[tr('hunt.flow.ipAddress'), tr('hunt.flow.matches'), tr('hunt.flow.response2xx'), tr('hunt.flow.firstMatch'), tr('hunt.flow.lastMatch')].map((label) => <th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}
+                  {compact && <th className="px-3">{tr('hunt.workspace.ipActions')}</th>}
                 </tr></thead><tbody>
                   {clients.data.clients.map((row) => <tr key={row.client} className="border-t border-[var(--line)] hover:bg-[var(--panel-2)]">
-                    <td className="px-4 py-3"><button type="button" onClick={() => chooseClient(row.client)}
-                      className="mono cursor-pointer text-left font-semibold text-[var(--accent-text)] underline-offset-4 hover:underline">{row.client}</button></td>
+                    {compact && <td className="px-3"><input type="checkbox" aria-label={tr('hunt.workspace.selectIp', { ip: row.client })} checked={allIocs ? !iocSelection.has(row.client) : iocSelection.has(row.client)} disabled={collect.isPending} onChange={() => toggleIoc(row.client)} /></td>}
+                    <td className="px-4 py-3">{compact ? <span className="mono font-semibold">{row.client}</span> : <button type="button" onClick={() => chooseClient(row.client)}
+                      className="mono cursor-pointer text-left font-semibold text-[var(--accent-text)] underline-offset-4 hover:underline">{row.client}</button>}</td>
                     <td className="px-4 py-3 tabular-nums">{formatCount(row.requests)}</td><td className="px-4 py-3 tabular-nums">{formatCount(row.ok_hits)}</td>
                     <td className="whitespace-nowrap px-4 py-3">{timestamp(row.first_epoch, row.tz)}</td>
                     <td className="whitespace-nowrap px-4 py-3">{timestamp(row.last_epoch, row.tz)}</td>
+                    {compact && <td className="px-3 py-2"><div className="flex gap-2 whitespace-nowrap"><Button variant="primary" onClick={() => setTraceIp([row.client])}>{tr('hunt.workspace.openTrace')}</Button><Button disabled={collect.isPending || Boolean(applyHint)} onClick={() => collect.mutate([row.client])}>{tr('hunt.workspace.addIoc')}</Button></div></td>}
                   </tr>)}
                 </tbody></table></div>}
         <Pager page={cursors.length} total={clients.data?.total ?? 0} hasNext={Boolean(clients.data?.next_cursor)} loading={clients.isFetching}
