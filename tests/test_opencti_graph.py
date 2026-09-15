@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from server import db, opencti_graph as graph, workspace
+from server import db
+from server.integrations.opencti import graph
+from server import workspace
 from server.paths import display_path, io_path
 
 
@@ -75,7 +77,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertNotIn("communicates-with", json.dumps(preview))
 
     def test_tags_export_with_stable_identity_and_private_text_sanitized(self):
-        from server import ioc_model
+        from server.ioc import model as ioc_model
         before = self.preview()
         original = next(o for o in before["objects"] if o["type"] == "ipv4-addr")
         ioc_model.edit_tags(self.conn, self.ip_id, ["IOC", "scanner", "password=synthetic-secret", "C:/Users/Private/tag"])

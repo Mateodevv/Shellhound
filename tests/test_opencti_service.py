@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from server import db, opencti_graph as graph, opencti_service as service, workspace
-from server.opencti_client import OpenCTIClient, OpenCTIError
+from server import db
+from server.integrations.opencti import graph, service
+from server import workspace
+from server.integrations.opencti.client import OpenCTIClient, OpenCTIError
 
 
 class _Context:
@@ -56,10 +58,10 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.upload_sample.return_value = {"id": "artifact-remote"}
         for target, value in (("settings.opencti_config", lambda _root: dict(self.config)),
                               ("manager", self.jobs), ("POLL_LIMIT", 1), ("POLL_SECONDS", 0)):
-            patcher = patch("server.opencti_service." + target, value)
+            patcher = patch("server.integrations.opencti.service." + target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        self.client_factory = patch("server.opencti_service.OpenCTIClient", return_value=self.client).start()
+        self.client_factory = patch("server.integrations.opencti.service.OpenCTIClient", return_value=self.client).start()
         self.addCleanup(patch.stopall)
         self.addCleanup(service._ACTIVE.clear)
 
@@ -698,7 +700,7 @@ class OpenCTIServiceTests(unittest.TestCase):
         workspace.update_case(self.case, profile={"sectors": ["Technology", "Retail"]})
         self.export()
         workspace.update_case(self.case, profile={"sectors": ["Retail", "Technology"]})
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             self.assertEqual("unchanged", service.profile_changes(self.root, self.case)["status"])
 
 if __name__ == "__main__":

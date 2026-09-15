@@ -649,78 +649,20 @@ contact GitHub or package registries.
 Full threat model and how to report vulnerabilities:
 [SECURITY.md](SECURITY.md).
 
-## Development
+## Documentation and development
 
-The normal source command remains `python -m server.main`; it uses the same
-preparation as the launchers and runs the server in the project's `.venv`.
-`--help` works before dependencies are installed. Application imports and
-`create_app` do not trigger installation, builds, or Git operations.
+The [documentation index](docs/README.md) groups user guides, development
+instructions and release checks.
 
-Interface with hot reload:
+- [Development setup and commands](docs/development.md)
+- [Repository structure and feature map](docs/repository-structure.md)
+- [Testing strategy and acceptance checks](docs/TESTING.md)
+- [Publishing and privacy checks](docs/PUBLISHING.md)
 
-```bash
-cd web && npm run dev
-```
-
-Server:
-
-```bash
-python -m server.main --no-browser --token dev
-```
-
-The interface is then at `http://localhost:5173/?token=dev`.
-
-Manual `npm ci` / `npm run build` and wheel builds remain available. A build
-without a startup receipt is verified by rebuilding once on the next managed
-source start. Generated setup state lives in ignored `.shellhound/`; interface
-builds remain in ignored `web/dist/`. Do not commit either folder.
-
-Tests run without additional dependencies:
-
-```bash
-python -m unittest discover -s tests -t .
-```
-
-Use the project's environment (`.venv\Scripts\python.exe` on Windows,
-`.venv/bin/python` on Linux/macOS). The focused startup tests are
-`python -m unittest tests.test_startup`; `python -m tools.startup_smoke` also
-checks real installation/builds and both launch paths in an isolated source
-copy. That smoke test may download dependencies and uses only a synthetic
-workspace.
-
-They build their own evidence: tiny, invented files, each triggering exactly
-one rule. A failure names the broken rule instead of pointing at a large lump
-of data.
-
-On Windows, Defender may quarantine those intentionally suspicious test probes
-when Python writes them below `%TEMP%`. Do not exclude the whole AppData temp
-folder. Instead, create an ignored folder below `workspace/` and point `TEMP`
-and `TMP` there for that test process.
-
-### Layout
-
-```
-<workspace>/       settings.json, hunt_patterns.json, yara/, *.mmdb
-  <case>/          case.db, logindex.db (derived), evidence/
-server/            FastAPI, SQLite from the standard library
-  engines/         accesslog, logindex, webshell, cmsinventory, sqldump,
-                   errorlog, yarascan, webrootdiff, detect
-  patterns_bundled.json   Hunt patterns shipped with this version
-web/               Vite, React, TypeScript, Tailwind
-docs/rules.md      Every rule with trigger, statement and limits
-```
-
-### Principles
-
-- Triage states survive re-scans; fingerprints are stable.
-- Dismissed findings are not deleted, only filtered out.
-- Log alerts are outcome-gated: an attack attempt answered with 404 weighs
-  differently from one answered with 200.
-- Evidence is never served. Findings carry text excerpts; file contents are
-  transferred as JSON data.
-- Filtered artifacts are always delivered in full.
-- Interface text, reports, and tool-generated case descriptions use English.
-  Analyst notes and evidence retain their original content.
+The source entry point remains `python -m server.main`. The backend is organized
+under `server/casework/`, `server/ioc/`, `server/integrations/` and
+`server/engines/`. Frontend components are grouped by feature under
+`web/src/components/`; page views remain in `web/src/views/`.
 
 ## Contributing
 

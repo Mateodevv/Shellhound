@@ -7,7 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from server import db, ioc_model as model, opencti_graph as graph, workspace
+from server import db
+from server.ioc import model
+from server.integrations.opencti import graph
+from server import workspace
 
 
 class StructuredIocTests(unittest.TestCase):
@@ -98,7 +101,7 @@ class StructuredIocTests(unittest.TestCase):
                 preview = graph.build_preview(self.case, {'ioc_ids': [file_id]})
                 exported = next(o for o in preview['objects'] if o['type'] == 'file')
                 self.assertCountEqual([label, 'Reviewed'], exported['labels'])
-                from server.opencti_service import _revisions
+                from server.integrations.opencti.service import _revisions
                 before = _revisions(self.case)[file_id]
                 model.edit_tags(self.conn, file_id, remove=[label])
                 self.assertEqual(['Reviewed'], model.detail(self.conn, file_id)['object']['tags'])
@@ -108,7 +111,7 @@ class StructuredIocTests(unittest.TestCase):
                 self.assertIn(label, model.detail(self.conn, file_id)['object']['tags'])
 
     def test_technical_labels_keep_explicit_manual_and_imported_names(self):
-        from server.ioc_tags import record_choices
+        from server.ioc.tags import record_choices
         ioc_id = db.add_ioc(self.conn, '198.51.100.20', 'ip', ['hunt', 'finding', 'confirmed', 'derived', 'Local'])
         self.assertEqual(['Local'], model.detail(self.conn, ioc_id)['object']['tags'])
         model.edit_tags(self.conn, ioc_id, ['hunt'])
@@ -120,7 +123,7 @@ class StructuredIocTests(unittest.TestCase):
         self.assertEqual(['hunt', 'Local'], model.detail(self.conn, ioc_id)['object']['tags'])
 
     def test_seo_classification_uses_explicit_finding_category(self):
-        from server.ioc_tags import finding_classification
+        from server.ioc.tags import finding_classification
         self.assertEqual('seo-spam', finding_classification([{'source': 'webshell', 'rule': 'SEO spam page'}]))
         self.assertEqual('', finding_classification([{'source': 'custom', 'rule': 'Unusual content', 'evidence': 'SEO spam'}]))
 

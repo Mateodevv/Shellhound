@@ -12,7 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server import db, iocs as ioclib, workspace
+from server import db
+from server.ioc import formats as ioclib
+from server import workspace
 from server.artifacts import MUTED_CLAUSE, art_sql
 
 

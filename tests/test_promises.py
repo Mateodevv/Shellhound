@@ -39,13 +39,15 @@ from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
-from server import db, i18n, opencti_service, rules as rulelib, ruleswitch, settings
+from server import db, i18n
+from server.integrations.opencti import service as opencti_service
+from server import rules as rulelib, ruleswitch, settings
 from server.app import create_app
 from server.artifacts import counts as artifact_counts
 from server.chain import EVENT_CAP, case_chain
 from server.config import Config
 from server.engines import logindex, sqldump, webshell
-from server.opencti_client import OpenCTIClient
+from server.integrations.opencti.client import OpenCTIClient
 from tests.fixtures_hostile import ATTACKER, HostileEvidence, hostile_shapes
 
 

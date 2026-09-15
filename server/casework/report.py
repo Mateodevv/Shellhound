@@ -1,0 +1,370 @@
+"""Self-contained, printable HTML report assembled only from case facts."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections import OrderedDict
+from datetime import datetime, timezone
+from html import escape
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+from server import coverage, db
+from server.ioc import formats as ioclib
+from server import workspace
+from server.analysis import current_warning_count
+from server.artifacts import web_path
+from server.chain import case_chain
+
+
+WORDS = {
+    "report": "Case report",
+    "generated": "Generated",
+    "reference": "Case ID",
+    "notes": "Case notes",
+    "findings": "Findings",
+    "artifacts": "Artifacts",
+    "confirmed": "Confirmed",
+    "iocs": "Indicators",
+    "evidence": "Evidence inventory",
+    "source": "Source",
+    "kind": "Kind",
+    "files": "Files",
+    "bytes": "Bytes",
+    "scanned": "Last analysed",
+    "partial": "partial count",
+    "no_hash": "Source paths are omitted. This version does not record evidence-source hashes.",
+    "decisions": "Confirmed artifacts",
+    "artifact": "Artifact",
+    "severity": "Severity",
+    "rules": "Rules",
+    "decision_note": "Decision note",
+    "chronology": "Chronology",
+    "time": "Time",
+    "event": "Event",
+    "detail": "Detail",
+    "limitations": "Limits and gaps",
+    "indicators": "IOC box",
+    "type": "Type",
+    "value": "Value",
+    "tags": "Tags",
+    "origin": "Origin",
+    "related": "Related",
+    "hunts": "Pattern hunts",
+    "pattern": "Pattern",
+    "ran": "Run at",
+    "hits": "Hits",
+    "clients": "Clients",
+    "cross": "Matches in other open cases",
+    "case": "Case",
+    "none": "None",
+    "zone": "Time reading",
+    "tool": "SHELLHOUND version",
+    "high": "HIGH",
+    "medium": "MEDIUM",
+    "low": "LOW",
+    "info": "INFO"
+}
+
+
+def _tool_version() -> str:
+    try:
+        return version("shellhound")
+    except PackageNotFoundError:
+        return "development"
+
+
+def _e(value) -> str:
+    return escape("" if value is None else str(value), quote=True)
+
+
+def _fmt_bytes(value) -> str:
+    size = float(value or 0)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return "0 B"
+
+
+def _fmt_event_time(value, zone) -> str:
+    if not value:
+        return "—"
+    stamp = datetime.fromtimestamp(int(value), timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S")
+    return f"{stamp} {zone}".strip()
+
+
+def _redactor(roots):
+    variants = []
+    for root in roots:
+        text = str(root or "").rstrip("/\\")
+        if text:
+            variants.extend((text, text.replace("\\", "/"), text.replace("/", "\\")))
+    variants = sorted(set(variants), key=len, reverse=True)
+
+    def redact(value):
+        text = "" if value is None else str(value)
+        for root in variants:
+            text = text.replace(root, "[evidence]")
+        return text
+    return redact
+
+
+def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
+    """Collect report data without evidence content or analyst host paths."""
+    lang = "en"
+    case_dir = Path(case_dir)
+    info = workspace.case_info(case_dir)
+    summary = workspace.case_summary(case_dir)
+    conn = db.connect(case_dir)
+    try:
+        skipped_files = current_warning_count(conn)
+        accepted_skips = current_warning_count(conn, accepted=True)
+        evidence = db.rows(
+            conn, "SELECT id, kind, label, files, bytes, scanned_at, meta_partial "
+                  "FROM evidence ORDER BY kind, id")
+        redact = _redactor(db.evidence_roots(conn))
+        findings = db.rows(
+            conn, "SELECT artifact, artifact_kind, severity, rule, rule_id, "
+                  "triage_note, triaged_at FROM findings WHERE triage = 'confirmed' "
+                  "ORDER BY severity, artifact, id")
+        grouped = OrderedDict()
+        for finding in findings:
+            key = (finding["artifact_kind"], finding["artifact"])
+            item = grouped.setdefault(key, {
+                "artifact": finding["artifact"], "kind": finding["artifact_kind"],
+                "severity": finding["severity"], "rules": [], "notes": [],
+                "triaged_at": finding["triaged_at"] or "",
+            })
+            item["severity"] = min(item["severity"], finding["severity"])
+            rule = finding["rule"]
+            if finding["rule_id"]:
+                rule += f" [{finding['rule_id']}]"
+            if rule not in item["rules"]:
+                item["rules"].append(rule)
+            if finding["triage_note"] and finding["triage_note"] not in item["notes"]:
+                item["notes"].append(finding["triage_note"])
+        decisions = []
+        for item in grouped.values():
+            if item["kind"] == "log_observation":
+                from server.log_evidence import saved_for_artifact
+                observations = saved_for_artifact(conn, item["artifact"])
+                if observations:
+                    item["artifact"] = f"{observations[0]['source_name']}:{observations[0]['line']}"
+                    item["notes"].extend(e["raw"][:1000] for e in observations)
+            if item["kind"] == "file":
+                item["artifact"] = web_path(conn, item["artifact"])
+            item["artifact"] = redact(item["artifact"])
+            item["rules"] = [redact(rule) for rule in item["rules"]]
+            item["notes"] = [redact(note) for note in item["notes"]]
+            decisions.append(item)
+
+        iocs = db.rows(conn, "SELECT * FROM iocs ORDER BY type, value")
+        by_ioc = {}
+        for link in db.ioc_links(conn):
+            forward, back = ioclib.LINK_LABELS.get(
+                link["kind"], (link["kind"], link["kind"]))
+            by_ioc.setdefault(link["src_id"], []).append(
+                f"{forward} {redact(link['dst_value'])}")
+            by_ioc.setdefault(link["dst_id"], []).append(
+                f"{back} {redact(link['src_value'])}")
+        for ioc in iocs:
+            if ioc["type"] == "path":
+                ioc["value"] = db.case_relative_path(conn, ioc["value"])
+            ioc["value"] = redact(ioc["value"])
+            ioc["note"] = redact(ioc["note"])
+            ioc["origin"] = redact(ioc["origin"])
+            try:
+                ioc["tags"] = json.loads(ioc["tags"] or "[]")
+            except (TypeError, ValueError):
+                ioc["tags"] = []
+            ioc["related"] = by_ioc.get(ioc["id"], [])
+        hunts = db.rows(conn, "SELECT * FROM hunt_runs ORDER BY ran_at, pattern")
+    finally:
+        conn.close()
+
+    chain = case_chain(case_dir, lang, tz_mode)
+    for event in chain.get("events") or []:
+        for field in ("artifact", "title", "detail"):
+            event[field] = redact(event.get(field))
+    for item in chain.get("undated") or []:
+        item["artifact"] = redact(item.get("artifact"))
+        item["artifact_rel"] = redact(item.get("artifact_rel"))
+        item["why"] = redact(item.get("why"))
+    chain["gaps"] = [redact(gap) for gap in chain.get("gaps") or []]
+    cov = coverage.report(case_dir, lang, tz_mode)
+    cov["notes"] = [redact(note) for note in cov.get("notes") or []]
+    from server import log_evidence
+    log_sources = [s for s in log_evidence.source_status(case_dir) if s["format"] != "access"]
+    if log_sources:
+        manual = sum(s["format"] == "text" for s in log_sources)
+        unresolved = sum(bool(s["warning"] and not s["accepted"]) for s in log_sources)
+        accepted = sum(s["accepted"] for s in log_sources)
+        stale = sum(not s["fresh"] for s in log_sources)
+        cov["notes"].append(
+            f"Additional log evidence: {len(log_sources)} sources; {manual} are not automatically analyzed. "
+            f"{unresolved} processing limitations await review; {accepted} were accepted by the analyst. "
+            f"{stale} sources need reanalysis before their current context can be used. "
+            "Reported scanner detections and actions remain source claims, with analyst decisions recorded separately.")
+    if skipped_files:
+        cov["notes"].append(
+            f"{skipped_files} evidence files remain unexamined by one or more file scanners. "
+            "Analysis completed with warnings where these were the only limitations; "
+            "review the skipped-files lists in analysis history. These files are not cleared.")
+    if accepted_skips:
+        cov["notes"].append(
+            f"{accepted_skips} evidence files have analyst-accepted size skips in one or more file scanners. "
+            "These files remain unexamined by those scanners, not cleared. "
+            "The acceptance and original skip reasons are retained in analysis history.")
+
+    return {
+        "info": info, "summary": summary, "evidence": evidence,
+        "decisions": decisions, "iocs": iocs, "hunts": hunts,
+        "chain": chain, "coverage": cov,
+        "cross_case": cross_case or {}, "version": _tool_version(),
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "lang": lang,
+    }
+
+
+def _table(headers, rows, empty):
+    if not rows:
+        return f'<p class="quiet">{_e(empty)}</p>'
+    head = "".join(f"<th>{_e(value)}</th>" for value in headers)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
+        for row in rows)
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+REPORT_SECTIONS = {
+    "notes", "evidence", "decisions", "chronology", "limitations",
+    "indicators", "hunts", "cross",
+}
+
+
+def render(case_dir: Path, lang="en", tz_mode="log", cross_case=None,
+           sections=None) -> str:
+    data = collect(case_dir, lang, tz_mode, cross_case)
+    w = WORDS
+    info, summary = data["info"], data["summary"]
+    severity = (w["high"], w["medium"], w["low"], w["info"])
+    chain = data["chain"]
+    zone = (chain.get("zone") or ", ".join(chain.get("tz_offsets") or [])
+            or "source local time")
+
+    evidence_rows = []
+    for index, item in enumerate(data["evidence"], 1):
+        label = item.get("label") or f"{item['kind']} {index}"
+        scanned = item.get("scanned_at") or "—"
+        if item.get("meta_partial"):
+            scanned += f" ({w['partial']})"
+        evidence_rows.append((_e(label), _e(item["kind"]),
+                              _e(item.get("files") or 0),
+                              _e(_fmt_bytes(item.get("bytes"))), _e(scanned)))
+    decision_rows = [(
+        _e(item["artifact"]), _e(item["kind"]),
+        _e(severity[min(max(int(item["severity"]), 0), 3)]),
+        _e("; ".join(item["rules"])), _e("; ".join(item["notes"]) or "—"),
+    ) for item in data["decisions"]]
+    event_rows = [(
+        _e(_fmt_event_time(event["at"], zone)), _e(event["title"]),
+        _e(event.get("detail") or "—"), _e(event.get("source") or ""),
+    ) for event in chain["events"]]
+    ioc_rows = [(
+        _e(ioc["value"]), _e(ioc["type"]), _e(" ".join(ioc["tags"])),
+        _e(ioc["note"] or "—"), _e(ioc["origin"] or "—"),
+        _e("; ".join(ioc["related"]) or "—"),
+    ) for ioc in data["iocs"]]
+    hunt_rows = [(
+        _e(hunt["label"] or hunt["pattern"]), _e(hunt["ran_at"]),
+        _e(hunt["hits"]), _e(hunt["clients"]),
+    ) for hunt in data["hunts"]]
+
+    limitations = list(data["coverage"].get("notes") or []) + list(chain.get("gaps") or [])
+    limitations.extend(
+        f"{item['artifact']}: {item['why']}" for item in chain.get("undated") or [])
+    if limitations:
+        limitations_html = "<ul>" + "".join(
+            f"<li>{_e(item)}</li>" for item in limitations) + "</ul>"
+    else:
+        limitations_html = f'<p class="quiet">{_e(w["none"])}</p>'
+
+    cross_rows = []
+    for entry in (data["cross_case"].get("entries") or []):
+        for match in entry["matches"]:
+            cross_rows.append((_e(entry["value"]), _e(entry["type"]),
+                               _e(match["name"]),
+                               _e(match.get("reference") or "—")))
+
+    cards = ((w["findings"], summary["findings"]),
+             (w["artifacts"], summary["artifacts"]),
+             (w["confirmed"], summary["confirmed"]),
+             (w["iocs"], summary["iocs"]))
+    card_html = "".join(
+        f'<div class="card"><strong>{_e(value)}</strong><span>{_e(label)}</span></div>'
+        for label, value in cards)
+    case_notes = _e(info.get("notes") or "—").replace("\n", "<br>")
+    enabled = REPORT_SECTIONS if sections is None else (
+        {str(item) for item in sections} & REPORT_SECTIONS)
+    blocks = []
+    if "notes" in enabled:
+        blocks.append(f'<h2>{_e(w["notes"])}</h2><p>{case_notes}</p>')
+    if "evidence" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["evidence"])}</h2><p class="quiet">'
+            f'{_e(w["no_hash"])}</p>'
+            f'{_table((w["source"],w["kind"],w["files"],w["bytes"],w["scanned"]), evidence_rows, w["none"])}')
+    if "decisions" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["decisions"])}</h2>'
+            f'{_table((w["artifact"],w["kind"],w["severity"],w["rules"],w["decision_note"]), decision_rows, w["none"])}')
+    if "chronology" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["chronology"])}</h2><p class="quiet">'
+            f'{_e(w["zone"])}: {_e(zone)}</p>'
+            f'{_table((w["time"],w["event"],w["detail"],w["source"]), event_rows, w["none"])}')
+    if "limitations" in enabled:
+        blocks.append(f'<h2>{_e(w["limitations"])}</h2>{limitations_html}')
+    if "indicators" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["indicators"])}</h2>'
+            f'{_table((w["value"],w["type"],w["tags"],w["notes"],w["origin"],w["related"]), ioc_rows, w["none"])}')
+    if "hunts" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["hunts"])}</h2>'
+            f'{_table((w["pattern"],w["ran"],w["hits"],w["clients"]), hunt_rows, w["none"])}')
+    if "cross" in enabled:
+        blocks.append(
+            f'<h2>{_e(w["cross"])}</h2>'
+            f'{_table((w["value"],w["type"],w["case"],w["reference"]), cross_rows, w["none"])}')
+    sections_html = "\n".join(blocks)
+
+    return f'''<!doctype html>
+<html lang="{data["lang"]}"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_e(info["name"])} — SHELLHOUND</title><style>
+:root{{--ink:#17202a;--muted:#64748b;--line:#d8dee7;--soft:#f4f7fa;--accent:#275d92}}
+*{{box-sizing:border-box}} body{{margin:0 auto;max-width:1180px;padding:42px;color:var(--ink);font:14px/1.5 system-ui,sans-serif}}
+h1{{margin:0;font-size:30px}} h2{{margin:32px 0 10px;border-bottom:2px solid var(--accent);padding-bottom:5px;font-size:18px}}
+.meta,.quiet{{color:var(--muted)}} .cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0}}
+.card{{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--soft)}} .card strong{{display:block;font-size:22px}} .card span{{color:var(--muted)}}
+table{{width:100%;border-collapse:collapse;font-size:12px}} th,td{{border:1px solid var(--line);padding:7px;vertical-align:top;text-align:left;overflow-wrap:anywhere}} th{{background:var(--soft)}}
+ul{{padding-left:22px}} code{{font-family:ui-monospace,monospace}} footer{{margin-top:38px;border-top:1px solid var(--line);padding-top:12px;color:var(--muted);font-size:11px}}
+@media print{{body{{max-width:none;padding:12mm}} h2{{break-after:avoid}} tr{{break-inside:avoid}}}}
+@media(max-width:700px){{body{{padding:18px}}.cards{{grid-template-columns:repeat(2,1fr)}}}}
+</style></head><body>
+<header><h1>{_e(info["name"])}</h1><div class="meta">{_e(w["report"])} · {_e(w["reference"])}: {_e(info.get("reference") or "—")} · {_e(w["generated"])}: {_e(data["generated"])}</div></header>
+<div class="cards">{card_html}</div>
+{sections_html}
+<footer>{_e(w["tool"])}: {_e(data["version"])} · SHA-256 is returned in the HTTP <code>X-Content-SHA256</code> header.</footer>
+</body></html>'''
+
+
+def render_bytes(case_dir: Path, lang="en", tz_mode="log", cross_case=None,
+                 sections=None):
+    body = render(case_dir, lang, tz_mode, cross_case, sections).encode("utf-8")
+    return body, hashlib.sha256(body).hexdigest()

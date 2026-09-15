@@ -22,9 +22,9 @@ import {
 import type { Navigate } from '../App'
 import { formatBytes, formatCount, formatLogTime, formatSpan } from '../format'
 import { useT } from '../i18n'
-import { IpFlag } from '../components/IpFlag'
-import { TraceWindow } from '../components/TraceWindow'
-import { Button, Card, EmptyState, Modal, SearchInput } from '../components/ui'
+import { IpFlag } from '../components/ui/IpFlag'
+import { TraceWindow } from '../components/logview/TraceWindow'
+import { Button, Card, EmptyState, Modal, SearchInput } from '../components/ui/ui'
 
 type AccessTab = 'requests' | 'patterns' | 'segments'
 

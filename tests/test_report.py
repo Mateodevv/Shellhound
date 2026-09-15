@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server import case_report, db, workspace
+from server.casework import report as case_report
+from server import db, workspace
 
 
 class HtmlReportTests(unittest.TestCase):

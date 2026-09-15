@@ -1,7 +1,7 @@
 // Evidence.tsx — register evidence paths, auto-detect, analyze, watch jobs.
 import { useT } from '../i18n'
-import { SkippedFiles } from '../components/SkippedFiles'
-import { LogImport, LogSourceList } from '../components/LogSources'
+import { SkippedFiles } from '../components/review/SkippedFiles'
+import { LogImport, LogSourceList } from '../components/logview/LogSources'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -14,8 +14,8 @@ import {
   type EvidenceItem, type Job, type PickPath,
 } from '../api'
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
-import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } from '../components/ui'
-import { InfoDot, Tooltip } from '../components/Tooltip'
+import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } from '../components/ui/ui'
+import { InfoDot, Tooltip } from '../components/ui/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
 import { EVIDENCE_KINDS } from '../workflow'

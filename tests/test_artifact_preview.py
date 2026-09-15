@@ -43,7 +43,8 @@ class ArtifactPreviewTests(unittest.TestCase):
         return endpoint(self.case.name, body)
 
     def test_multiple_classes_roundtrip_to_ioc_labels_and_opencti_without_erasing_notes(self):
-        from server import ioc_model, opencti_graph
+        from server.ioc import model as ioc_model
+        from server.integrations.opencti import graph as opencti_graph
         conn = db.connect(self.case)
         conn.execute('UPDATE findings SET triage_note=?', ('Existing analyst note',))
         conn.commit()

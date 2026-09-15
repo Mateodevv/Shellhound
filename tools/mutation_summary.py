@@ -13,8 +13,8 @@ _COMPLETE = re.compile(r"^complete:\s*(\d+)", re.M)
 _SURVIVING = re.compile(r"^surviving mutants:\s*(\d+)", re.M)
 
 P0 = {"server/app.py", "server/engines/logindex.py",
-      "server/engines/sqldump.py", "server/db.py", "server/iocs.py",
-      "server/workspace.py", "server/case_report.py", "server/correlation.py"}
+      "server/engines/sqldump.py", "server/db.py", "server/ioc/formats.py",
+      "server/workspace.py", "server/casework/report.py", "server/correlation.py"}
 P1_PREFIXES = ("server/chain.py", "server/coverage.py", "server/engines/",
                "server/patterns.py", "server/sigma.py")
 

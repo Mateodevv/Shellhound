@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from server import db, enrich, ruleswitch, settings
+from server import db
+from server.integrations import enrich
+from server import ruleswitch, settings
 
 
 class SettingsTests(unittest.TestCase):

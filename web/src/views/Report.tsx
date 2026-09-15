@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, type CaseDetail } from '../api'
 import { useT } from '../i18n'
-import { CtiError } from '../components/CaseProfile'
-import { ReportTransfer } from '../components/ReportTransfer'
+import { CtiError } from '../components/casework/CaseProfile'
+import { ReportTransfer } from '../components/enrichment/ReportTransfer'
 import type { Navigate } from '../App'
 
 export function Report({ slug, onClosed, gotoView }: { slug: string; onClosed?: () => void; gotoView: Navigate }) {

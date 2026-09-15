@@ -18,10 +18,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import db, ioc_model, opencti_graph as graph, opencti_service as service, workspace
+from server import db
+from server.ioc import model as ioc_model
+from server.integrations.opencti import graph, service
+from server import workspace
 from server.config import Config
 from server.jobs import manager
-from server.opencti_client import OpenCTIClient
+from server.integrations.opencti.client import OpenCTIClient
 
 _MARKER = "opencti-smoke.json"
 

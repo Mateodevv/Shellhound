@@ -1,5 +1,7 @@
 # Testing SHELLHOUND
 
+See [Development](development.md) for setup and the [repository map](repository-structure.md) for source locations.
+
 ## Case workflow acceptance
 
 Run the deterministic lifecycle checks with the project Python environment:
@@ -54,7 +56,7 @@ Broader related regressions:
 
 From `web/`, exercise the visible wizard and review interactions:
 
-    npm test -- src/components/CaseWizard.test.tsx src/components/ArtifactWindow.test.tsx src/components/ReportTransfer.test.tsx src/components/OpenCti.test.tsx src/components/FileViewer.test.tsx src/views/Start.test.tsx
+    npm test -- src/components/casework/CaseWizard.test.tsx src/components/review/ArtifactWindow.test.tsx src/components/enrichment/ReportTransfer.test.tsx src/components/enrichment/OpenCti.test.tsx src/components/review/FileViewer.test.tsx src/views/Start.test.tsx
     npm run build
 
 These checks do not prove behavior against a particular live OpenCTI version,
@@ -72,7 +74,7 @@ Focused backend coverage (use the project `.venv`, with Windows `TEMP` and
 
 Frontend coverage, from `web/`:
 
-    npm test -- src/components/FirstSign.test.tsx src/components/CaseChain.test.tsx
+    npm test -- src/components/casework/FirstSign.test.tsx src/components/casework/CaseChain.test.tsx
 
 Harmless synthetic evidence covers confirmed-only eligibility, UTC ordering,
 copied metadata fallback, unrelated earlier IP activity, stale/removed sources,

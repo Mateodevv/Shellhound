@@ -7,7 +7,7 @@ from email import policy
 from email.parser import BytesParser
 from unittest.mock import Mock, patch
 
-from server import opencti_client as api
+from server.integrations.opencti import client as api
 
 
 class Response(io.BytesIO):

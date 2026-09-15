@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { act, render, renderHook } from '@testing-library/react'
 import { syntaxLanguage } from './syntax'
 import { highlightLines } from './syntaxHighlight'
-import { SyntaxText } from './components/SyntaxCode'
+import { SyntaxText } from './components/ui/SyntaxCode'
 import { useSyntaxLines } from './useSyntaxLines'
 
 it.each([

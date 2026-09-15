@@ -37,14 +37,14 @@ import {
 import {
   Button, Card, EmptyState, Modal, SearchInput, SeverityBadge,
   Toast, TriageBadge,
-} from '../components/ui'
-import { InfoDot, Tooltip } from '../components/Tooltip'
-import { FileViewer } from '../components/FileViewer'
-import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { ArtifactWindow } from '../components/ArtifactWindow'
+} from '../components/ui/ui'
+import { InfoDot, Tooltip } from '../components/ui/Tooltip'
+import { FileViewer } from '../components/review/FileViewer'
+import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
+import { ArtifactWindow } from '../components/review/ArtifactWindow'
 import { KIND_ICON } from '../artifactKinds'
-import { TriageFollowUp } from '../components/triage'
-import { useTriage } from '../components/useTriage'
+import { TriageFollowUp } from '../components/review/triage'
+import { useTriage } from '../components/review/useTriage'
 import { artifactNoun, categories as findingCategories, categorize, explainRule, type Category } from '../explain'
 import { firstReviewArtifact, nextReviewArtifact } from '../reviewQueue'
 import type { Navigate } from '../App'

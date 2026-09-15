@@ -15,11 +15,11 @@ import { useT } from '../i18n'
 import { shortPath } from '../format'
 import {
   Button, Card, Section, SeverityBadge, Tabs, Tag,
-} from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
-import { GeoSettings } from '../components/GeoSettings'
-import { DirectEnrichmentSettings } from '../components/DirectEnrichmentSettings'
-import { OpenCtiSettings } from '../components/OpenCtiSettings'
+} from '../components/ui/ui'
+import { Tooltip } from '../components/ui/Tooltip'
+import { GeoSettings } from '../components/settings/GeoSettings'
+import { DirectEnrichmentSettings } from '../components/settings/DirectEnrichmentSettings'
+import { OpenCtiSettings } from '../components/settings/OpenCtiSettings'
 
 type Tab = 'intel' | 'detection'
 

@@ -8,11 +8,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
-from server import db, diagnostics, opencti_graph, opencti_service, patterns, workspace
+from server import db, diagnostics
+from server.integrations.opencti import graph as opencti_graph, service as opencti_service
+from server import patterns, workspace
 from server.app import create_app
 from server.config import Config
 from server.jobs import JobManager
-from server.opencti_client import OpenCTIClient, OpenCTIError
+from server.integrations.opencti.client import OpenCTIClient, OpenCTIError
 from tests.fixtures_workflow import CVE, IP, create
 from tests.test_scan_retry_api import LocalClient
 
@@ -37,14 +39,14 @@ class CaseWorkflowTests(unittest.TestCase):
         self.addCleanup(self.manager.pool.shutdown, wait=True)
         self.addCleanup(self.manager.cancel_all_and_wait)
         for target, value in (("server.app.manager", self.manager),
-                              ("server.opencti_service.manager", self.manager),
-                              ("server.opencti_service.settings.opencti_config", lambda _: dict(self.remote_config)),
-                              ("server.opencti_service.POLL_LIMIT", 1),
-                              ("server.opencti_service.POLL_SECONDS", 0)):
+                              ("server.integrations.opencti.service.manager", self.manager),
+                              ("server.integrations.opencti.service.settings.opencti_config", lambda _: dict(self.remote_config)),
+                              ("server.integrations.opencti.service.POLL_LIMIT", 1),
+                              ("server.integrations.opencti.service.POLL_SECONDS", 0)):
             patcher = patch(target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch("server.opencti_service.OpenCTIClient", return_value=self.remote)
+        patcher = patch("server.integrations.opencti.service.OpenCTIClient", return_value=self.remote)
         self.client_factory = patcher.start()
         self.addCleanup(patcher.stop)
         self.client = None

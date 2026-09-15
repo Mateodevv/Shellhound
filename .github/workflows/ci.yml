@@ -87,7 +87,7 @@ jobs:
       - name: Dependencies
         run: pip install -r requirements.txt
       - name: Imports
-        run: python -c "import server.app, server.main, server.geoip; print('import ok')"
+        run: python -c "import server.app, server.main, server.integrations.geoip; print('import ok')"
       # The end-to-end test: real files go in, the normal engines run over
       # them, and every assertion is about what came out. A detection rule
       # that stops firing turns this red.

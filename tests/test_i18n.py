@@ -48,7 +48,7 @@ class ServerCatalogueTests(unittest.TestCase):
 
     def test_country_names_ignore_legacy_language_preferences(self):
         from unittest.mock import Mock, patch
-        from server import geoip
+        from server.integrations import geoip
         reader = Mock()
         reader.get.return_value = {"country": {
             "iso_code": "DE", "names": {"en": "Germany", "de": "Deutschland"}}}

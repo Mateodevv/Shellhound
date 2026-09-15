@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
-from server.opencti_sample_context import context_plan, legacy_context_plans
-from server.opencti_client import OpenCTIClient, OpenCTIError
+from server.integrations.opencti.sample_context import context_plan, legacy_context_plans
+from server.integrations.opencti.client import OpenCTIClient, OpenCTIError
 
 
 class SampleContextTests(unittest.TestCase):

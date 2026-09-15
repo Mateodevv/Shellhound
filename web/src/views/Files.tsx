@@ -13,12 +13,12 @@ import {
 } from '../api'
 import { absoluteTime, formatBytes, formatCount, type EvidenceRoot } from '../format'
 import { useT } from '../i18n'
-import { Button, Card, CopyButton, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui'
-import { FileViewer } from '../components/FileViewer'
-import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TriageFollowUp } from '../components/triage'
-import { useTriage } from '../components/useTriage'
-import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
+import { Button, Card, CopyButton, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge } from '../components/ui/ui'
+import { FileViewer } from '../components/review/FileViewer'
+import { ArtifactWindow, type ArtifactStub } from '../components/review/ArtifactWindow'
+import { TriageFollowUp } from '../components/review/triage'
+import { useTriage } from '../components/review/useTriage'
+import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
 import type { ViewId } from '../App'
 
 export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {

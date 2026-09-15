@@ -2,7 +2,7 @@
 """The mark exists twice, and has to stay the same thing twice.
 
 `web/public/favicon.svg` must be a standalone file the browser can fetch
-before any script runs; `web/src/components/Mark.tsx` is what the interface
+before any script runs; `web/src/components/shell/Mark.tsx` is what the interface
 draws. Neither can be generated from the other at build time without adding
 a build step for three shapes. So they are duplicated on purpose -- and this
 is the check that stops them drifting into two different logos, which is a
@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FAVICON = ROOT / "web" / "public" / "favicon.svg"
-COMPONENT = ROOT / "web" / "src" / "components" / "Mark.tsx"
+COMPONENT = ROOT / "web" / "src" / "components" / "shell" / "Mark.tsx"
 
 # The three things that make the mark what it is.
 PATH_D = "M5 24H16V10h11"

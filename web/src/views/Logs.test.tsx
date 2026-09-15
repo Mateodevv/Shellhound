@@ -4,8 +4,8 @@ import { api, post } from '../api'
 import { renderWithProviders } from '../test/setup'
 import type { LogEvent, LogSource } from '../logApi'
 import { Logs } from './Logs'
-import { LogImport } from '../components/LogSources'
-import { LogEntryContext } from '../components/LogEntryContext'
+import { LogImport } from '../components/logview/LogSources'
+import { LogEntryContext } from '../components/logview/LogEntryContext'
 
 vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn(), patch: vi.fn() }))
 vi.mock('./AccessLogs', () => ({ AccessLogs: () => <div>Access investigation</div> }))

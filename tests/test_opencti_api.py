@@ -125,7 +125,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(200, self.request("POST", base + f"/iocs/{ip}/assessments", {"state": "suspicious", "reason": "Finding 1"})[0])
         code, link = self.request("POST", base + "/ioc-relationships", {"src": ip, "dst": cve, "kind": "exploit-attempt", "reference": "Access log line 5"})
         self.assertEqual(200, code)
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             code, detail = self.request("GET", base + f"/iocs/{ip}/detail")
         self.assertEqual(200, code)
         self.assertEqual("suspicious", detail["object"]["assessment"])
@@ -138,7 +138,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         _, created = self.request("POST", base, {"value": "198.51.100.9", "type": "ip"})
         url = base + f"/{created['id']}/tags"
         self.assertEqual(401, self.request("POST", url, {"add": ["test"]}, token="bad")[0])
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             status, payload = self.request("POST", url, {"add": [" IOC ", "ioc", "true positive"]})
             self.assertEqual(200, status)
             self.assertEqual(1, sum(t.casefold() == "ioc" for t in payload["tags"]))
@@ -178,7 +178,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
             return response.status, json.loads(response.read())
 
     def test_offline_reads_auth_and_unconfigured_providers(self):
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("network")):
             for path in ["/api/opencti/settings", "/api/organizations", f"/api/cases/{self.slug}/opencti"]:
                 self.assertEqual(401, self.request("GET", path, token="bad")[0])
                 self.assertEqual(200, self.request("GET", path)[0])
@@ -190,7 +190,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
     def test_direct_provider_api_auth_cache_and_opencti_precedence(self):
         path = f"/api/cases/{self.slug}/enrich"
         body = {"service": "abuseipdb", "value": "1.1.1.1", "kind": "ip"}
-        with patch("server.enrich._get", return_value={"data": {"abuseConfidenceScore": 7}}) as remote:
+        with patch("server.integrations.enrich._get", return_value={"data": {"abuseConfidenceScore": 7}}) as remote:
             self.assertEqual(401, self.request("POST", "/api/settings/key", {"service":"abuseipdb","key":"test-private-key"}, token="bad")[0])
             self.assertEqual(401, self.request("POST", path, body, token="bad")[0])
             self.assertEqual(400, self.request("POST", path, body)[0])
@@ -212,7 +212,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertEqual(["DE", "AT"], [item["code"] for item in geo["countries"][:2]])
         self.assertEqual(16, len(geo["states"]["DE"]))
-        with patch("server.profile_options.sectors", return_value={"sectors": [], "stale": False}) as read:
+        with patch("server.casework.profile_options.sectors", return_value={"sectors": [], "stale": False}) as read:
             self.assertEqual(200, self.request("GET", "/api/opencti/sectors")[0])
             read.assert_called_once()
 
@@ -245,7 +245,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
                 {"name": "Custom plugin flaw", "status": "suspected", "description": "Upload validation under investigation"},
             ], "marking": "TLP:AMBER+STRICT",
         }
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             status, created = self.request("POST", "/api/cases", {
                 "name": "Wizard acceptance", "reference": "PIM-WIZARD-1", "profile": profile,
             })
@@ -412,7 +412,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         _, saved = self.request("GET", route)
         self.assertEqual("First editor", saved["profile"]["summary"])
         self.assertEqual("Updated name", saved["name"])
-        with patch("server.opencti_service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
+        with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             code, changes = self.request("GET", route + "/opencti/profile-changes")
         self.assertEqual(200, code, changes)
         self.assertEqual("first_export", changes["status"])

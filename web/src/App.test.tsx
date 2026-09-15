@@ -8,8 +8,8 @@ import { queryClient } from './queryClient'
 
 vi.mock('./api', async (original) => ({ ...(await original<typeof import('./api')>()), api: vi.fn() }))
 vi.mock('./ws', () => ({ useLiveEvents: vi.fn() }))
-vi.mock('./components/GeoBanner', () => ({ GeoBanner: () => null }))
-vi.mock('./components/SetupBanners', () => ({ EnrichmentBanners: () => null }))
+vi.mock('./components/settings/GeoBanner', () => ({ GeoBanner: () => null }))
+vi.mock('./components/settings/SetupBanners', () => ({ EnrichmentBanners: () => null }))
 vi.mock('./views/Hunt', () => ({ Hunt: () => {
   const [page] = useState(() => new URLSearchParams(location.search).get('section') ?? 'overview')
   return <div>Saved Hunt page: {page}</div>

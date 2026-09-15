@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, ArrowRight, Check, PencilLine } from 'lucide-react'
 import { api, post, type AccessLogRow, type AccessRequestContext, type HuntClusterPage, type HuntIpPage, type HuntTest } from '../../api'
 import { formatCount, formatLogTime } from '../../format'
-import { Button, Card, Tag } from '../../components/ui'
-import { TraceWindow } from '../../components/TraceWindow'
+import { Button, Card, Tag } from '../../components/ui/ui'
+import { TraceWindow } from '../../components/logview/TraceWindow'
 import { ErrorMessage } from './HuntRunOverview'
 
 const PAGE_SIZE = 50

@@ -1,5 +1,5 @@
 // The case overview separates analyst decisions from technical scan coverage.
-import { CaseProfileButton } from '../components/CaseProfile'
+import { CaseProfileButton } from '../components/casework/CaseProfile'
 import { useT } from '../i18n'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowRight, Check, Database, FileSearch, HardDrive, Layers, Radar, ShieldAlert, ShieldCheck } from 'lucide-react'
@@ -7,9 +7,9 @@ import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from 
 import { absoluteTime, formatCount, formatDay, relativeToRoot, shortPath } from '../format'
 import { KIND_ICON } from '../artifactKinds'
 import { artifactNoun, categories } from '../explain'
-import { Card, PageSkeleton, Tag } from '../components/ui'
+import { Card, PageSkeleton, Tag } from '../components/ui/ui'
 import { evidenceAttempt } from '../analysis'
-import { FirstSign } from '../components/FirstSign'
+import { FirstSign } from '../components/casework/FirstSign'
 import { deriveWorkflowActions, isBaseAnalysisJob, type WorkflowAction } from '../workflow'
 import type { Navigate } from '../App'
 import { dashboardCopy as copy } from './dashboard-copy'

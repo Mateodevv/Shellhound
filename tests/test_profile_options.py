@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from server import profile_options as options
-from server.opencti_client import OpenCTIError
+from server.casework import profile_options as options
+from server.integrations.opencti.client import OpenCTIError
 
 
 class ProfileOptionsTests(unittest.TestCase):

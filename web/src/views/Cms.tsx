@@ -29,14 +29,14 @@ import {
 } from '../format'
 import {
   Button, Card, Chip, EmptyState, Modal, SearchInput, SeverityBadge, Tag,
-} from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
+} from '../components/ui/ui'
+import { Tooltip } from '../components/ui/Tooltip'
 import { explain, explainPluginGroup } from '../explain'
-import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TriageFollowUp } from '../components/triage'
-import { useTriage } from '../components/useTriage'
-import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { FileViewer } from '../components/FileViewer'
+import { ArtifactWindow, type ArtifactStub } from '../components/review/ArtifactWindow'
+import { TriageFollowUp } from '../components/review/triage'
+import { useTriage } from '../components/review/useTriage'
+import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
+import { FileViewer } from '../components/review/FileViewer'
 import type { ViewId } from '../App'
 
 // "Plugin (system)" -> group Plugin, addition system; "Module (Admin)" ->

@@ -7,7 +7,7 @@ import type {
   HuntClause, HuntField, HuntOperator, HuntTechnology,
 } from '../../api'
 import { useT } from '../../i18n'
-import { Button, Tag } from '../../components/ui'
+import { Button, Tag } from '../../components/ui/ui'
 import type { HuntDraft } from './state'
 import { toDsl, updateClause } from './state'
 

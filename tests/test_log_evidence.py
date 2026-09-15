@@ -249,7 +249,7 @@ class LogEvidenceTests(unittest.TestCase):
         self.assertTrue(logs.context(self.case, current["id"], current["fingerprint"])["lines"])
 
     def test_report_uses_source_reference_and_escaped_saved_observation(self):
-        from server import case_report
+        from server.casework import report as case_report
         (self.sources / "notes.txt").write_text("A harmless <em>marker</em> observation\n", encoding="utf-8")
         logs.build(self.case)
         event = logs.search(self.case)["rows"][0]

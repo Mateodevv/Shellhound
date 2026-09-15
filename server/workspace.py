@@ -21,7 +21,8 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-from server import case_profile, db, diagnostics
+from server.casework import profile as case_profile
+from server import db, diagnostics
 
 ARCHIVE_DIR = "archive"
 CASE_FILE = "case.json"          # human-readable identity next to case.db

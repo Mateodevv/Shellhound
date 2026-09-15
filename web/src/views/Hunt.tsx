@@ -6,7 +6,7 @@ import { api, del, patch, post, type AccessRequestContext, type CaseDetail, type
 import type { Navigate } from '../App'
 import { useT } from '../i18n'
 import { formatCount, formatLogTime } from '../format'
-import { Button, Card, Modal, Toast } from '../components/ui'
+import { Button, Card, Modal, Toast } from '../components/ui/ui'
 import { HuntResults } from './hunt/HuntResults'
 import { HuntRunOverview, ErrorMessage } from './hunt/HuntRunOverview'
 import { HuntLibrarySummary, HuntResultsSummary } from './hunt/HuntOverview'

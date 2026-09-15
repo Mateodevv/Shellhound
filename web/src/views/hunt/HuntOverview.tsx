@@ -3,7 +3,7 @@ import { ArrowRight, CheckCircle2, Clock3, Library, Plus, Search, TriangleAlert 
 import type { HuntBatch, HuntPattern } from '../../api'
 import { absoluteTime, formatCount, formatLogTime } from '../../format'
 import { useT } from '../../i18n'
-import { Button, Card, Tag } from '../../components/ui'
+import { Button, Card, Tag } from '../../components/ui/ui'
 import { ErrorMessage, HuntRunCounts } from './HuntRunOverview'
 import { huntRunState } from './run-state'
 

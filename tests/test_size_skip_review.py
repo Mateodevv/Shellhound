@@ -3,7 +3,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from server import case_report, db
+from server.casework import report as case_report
+from server import db
 from server.engines import webshell
 from server.engines.scan_limits import MAX_OVERRIDE_SCAN_BYTES
 from server.skip_reasons import classify_skip

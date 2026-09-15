@@ -22,15 +22,15 @@ import {
 } from '../format'
 import {
   Button, EmptyState, SearchInput, SeverityBadge, Tag, TriageBadge,
-} from '../components/ui'
-import { InfoDot, Tooltip } from '../components/Tooltip'
-import { Sparkline } from '../components/Sparkline'
-import { IpFlag } from '../components/IpFlag'
-import { TraceWindow, type TraceMarks } from '../components/TraceWindow'
-import { FileViewer } from '../components/FileViewer'
-import { ArtifactWindow, type ArtifactStub } from '../components/ArtifactWindow'
-import { TriageFollowUp } from '../components/triage'
-import { useTriage } from '../components/useTriage'
+} from '../components/ui/ui'
+import { InfoDot, Tooltip } from '../components/ui/Tooltip'
+import { Sparkline } from '../components/ui/Sparkline'
+import { IpFlag } from '../components/ui/IpFlag'
+import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
+import { FileViewer } from '../components/review/FileViewer'
+import { ArtifactWindow, type ArtifactStub } from '../components/review/ArtifactWindow'
+import { TriageFollowUp } from '../components/review/triage'
+import { useTriage } from '../components/review/useTriage'
 import type { Navigate } from '../App'
 
 const PAGE_SIZE = 50

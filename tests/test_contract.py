@@ -58,7 +58,7 @@ API_TS = REPO / "web" / "src" / "api.ts"
 # `Coverage` lives next to the component that fetches it rather than in
 # api.ts. It is still a declaration of a server response and drifts the same
 # way, so it is read from where it stands.
-COVERAGE_TSX = REPO / "web" / "src" / "components" / "LogCoverage.tsx"
+COVERAGE_TSX = REPO / "web" / "src" / "components" / "logview" / "LogCoverage.tsx"
 
 TOKEN = "contract-token"
 

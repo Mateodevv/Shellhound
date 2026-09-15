@@ -99,11 +99,17 @@ jobs:
           - name: chain-and-patterns
             modules: server/chain.py server/engines/webshell.py server/patterns.py server/sigma.py
           - name: workspace-and-scanning
-            modules: server/engines/yarascan.py server/workspace.py server/engines/webrootdiff.py server/coverage.py server/enrich.py
+            modules: server/engines/yarascan.py server/workspace.py server/engines/webrootdiff.py server/coverage.py server/integrations/enrich.py
           - name: logs-and-storage
-            modules: server/engines/errorlog.py server/db.py server/iocs.py server/case_report.py server/correlation.py server/engines/accesslog.py server/geoip.py server/engines/sigmascan.py
+            modules: server/engines/errorlog.py server/db.py server/ioc/formats.py server/casework/report.py server/correlation.py server/engines/accesslog.py server/integrations/geoip.py server/engines/sigmascan.py
           - name: small-modules
             modules: server/jobs.py server/artifacts.py server/bundled_rules.py server/settings.py server/engines/fsutil.py server/i18n.py server/rules.py server/config.py server/main.py server/events.py server/ruleswitch.py server/__init__.py server/engines/__init__.py
+          - name: casework-and-iocs
+            modules: server/casework/__init__.py server/casework/profile.py server/casework/profile_changes.py server/casework/profile_options.py server/ioc/__init__.py server/ioc/api.py server/ioc/model.py server/ioc/tags.py
+          - name: opencti
+            modules: server/integrations/__init__.py server/integrations/opencti/__init__.py server/integrations/opencti/client.py server/integrations/opencti/graph.py server/integrations/opencti/sample_context.py server/integrations/opencti/service.py
+          - name: evidence-and-review
+            modules: server/analysis.py server/artifact_review.py server/cmsintelligence.py server/diagnostics.py server/engines/scan_limits.py server/evidence_files.py server/evidence_rows.py server/file_classifications.py server/finding_categories.py server/first_sign.py server/hunt_batches.py server/huntrules.py server/log_evidence.py server/log_parsers.py server/log_routes.py server/paths.py server/phpserialize.py server/runtime.py server/scan_retries.py server/skip_reasons.py server/startup.py
     steps:
       - uses: actions/checkout@v4
 

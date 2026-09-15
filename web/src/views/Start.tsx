@@ -1,7 +1,7 @@
 // Start.tsx -- the landing view: pick an open case, create a new one, or
 // restore a closed case from the archive.
 import { useT } from '../i18n'
-import { Mark } from '../components/Mark'
+import { Mark } from '../components/shell/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -11,11 +11,11 @@ import {
   api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
 } from '../api'
 import { formatBytes, formatCount } from '../format'
-import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui'
-import { Tooltip } from '../components/Tooltip'
-import { WorkspaceSettingsDialog } from '../components/WorkspaceSettingsDialog'
-import { StartGeoBanner } from '../components/GeoBanner'
-import { CaseWizard } from '../components/CaseWizard'
+import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui/ui'
+import { Tooltip } from '../components/ui/Tooltip'
+import { WorkspaceSettingsDialog } from '../components/settings/WorkspaceSettingsDialog'
+import { StartGeoBanner } from '../components/settings/GeoBanner'
+import { CaseWizard } from '../components/casework/CaseWizard'
 
 interface State { workspace: string; cases: CaseInfo[] }
 

@@ -1,5 +1,5 @@
-# Web-native server (server/): FastAPI + Uvicorn. The legacy toolkit
-# (main.py + core/ + modules/) stays stdlib-only and does not need these.
+# Runtime dependencies for the server package. Keep these aligned with
+# project.dependencies in pyproject.toml; frontend packages live in web/.
 fastapi>=0.115
 uvicorn[standard]>=0.30
 # Country attribution for IPs -- reads a LOCAL MMDB from the workspace

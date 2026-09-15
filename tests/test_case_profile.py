@@ -7,7 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from server import case_profile, db, workspace
+from server.casework import profile as case_profile
+from server import db, workspace
 
 
 class CaseProfileTests(unittest.TestCase):

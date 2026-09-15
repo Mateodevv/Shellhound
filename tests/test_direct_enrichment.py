@@ -5,7 +5,9 @@ import unittest
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from server import db, enrich, settings, workspace
+from server import db
+from server.integrations import enrich
+from server import settings, workspace
 
 class DirectEnrichmentTests(unittest.TestCase):
     def setUp(self):

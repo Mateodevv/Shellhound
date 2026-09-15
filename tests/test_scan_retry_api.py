@@ -10,7 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from server import case_report, db, workspace
+from server.casework import report as case_report
+from server import db, workspace
 from server.app import create_app
 from server.config import Config
 from server.jobs import JobManager

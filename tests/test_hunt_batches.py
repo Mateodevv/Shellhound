@@ -106,7 +106,7 @@ class HuntBatchTests(unittest.TestCase):
             finally:
                 conn.close()
 
-        from server import opencti_graph
+        from server.integrations.opencti import graph as opencti_graph
         workspace.update_case(self.case, reference="PIM-SYNTHETIC-CVE")
         preview = opencti_graph.build_preview(self.case)
         self.assertFalse(preview["errors"])

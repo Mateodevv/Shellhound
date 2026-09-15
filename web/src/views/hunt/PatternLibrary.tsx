@@ -3,7 +3,7 @@ import { Archive, Copy, PencilLine, Play, Plus, Search, ScrollText, ToggleLeft, 
 import type { HuntPattern, HuntTechnology, HuntTest, Job } from '../../api'
 import { formatCount } from '../../format'
 import { useT } from '../../i18n'
-import { Button, Tag } from '../../components/ui'
+import { Button, Tag } from '../../components/ui/ui'
 import { splitDescription } from './state'
 
 const TECHNOLOGIES: HuntTechnology[] = ['wordpress', 'joomla', 'generic', 'other']

@@ -666,7 +666,7 @@ def _upgrade(conn):
         from server.analysis import refresh_receipts
         refresh_receipts(conn)
     _relativize_ioc_paths(conn)
-    from server import ioc_model
+    from server.ioc import model as ioc_model
     ioc_model.migrate(conn)
     for table in ("iocs", "ioc_links"):
         conn.execute(f"UPDATE {table} SET source_uid=lower(hex(randomblob(16))) WHERE source_uid=''")
@@ -1008,7 +1008,7 @@ def add_ioc(conn, value, ioc_type, tags=(), note="", origin="", *, context="", p
     value = str(value).strip()
     if not value:
         return None
-    from server.ioc_model import identity
+    from server.ioc.model import identity
     key = identity(value, ioc_type, context, path_context)
     existing = one(conn, "SELECT * FROM iocs WHERE identity_key = ?", (key,))
     if existing is None:
@@ -1034,7 +1034,7 @@ def link_iocs(conn, src_id, dst_id, kind, note=""):
     conn.execute(
         "INSERT OR IGNORE INTO ioc_links (src, dst, kind, note, added) "
         "VALUES (?,?,?,?,?)", (src_id, dst_id, kind, note[:200], now()))
-    from server.ioc_model import add_support
+    from server.ioc.model import add_support
     row = one(conn, "SELECT id FROM ioc_links WHERE src=? AND dst=? AND kind=?", (src_id, dst_id, kind))
     add_support(conn, row["id"], "Automatic collection", note)
 
@@ -1045,7 +1045,7 @@ def ioc_links(conn):
     The INNER JOIN doubles as the cleanup: an edge whose indicator was
     deleted disappears from every view without any delete path having had to
     think of it."""
-    from server.ioc_model import supported_links
+    from server.ioc.model import supported_links
     return supported_links(conn, rows(conn, """
         SELECT l.id, l.kind, l.note, l.added, l.source_uid,
                l.origin, l.active, l.withdrawal_reason,

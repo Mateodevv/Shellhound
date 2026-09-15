@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server import db, ioc_model
+from server import db
+from server.ioc import model as ioc_model
 
 
 class AccountAttributesTests(unittest.TestCase):

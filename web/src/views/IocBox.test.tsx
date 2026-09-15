@@ -5,8 +5,8 @@ import { renderWithProviders } from '../test/setup'
 import { IocBox } from './IocBox'
 
 vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn() }))
-vi.mock('../components/OpenCti', () => ({ OpenCtiToolbar: ({ selectedIds, actionScope, iocs }: { selectedIds: number[]; actionScope?: string; iocs: Ioc[] }) => <div data-testid={actionScope === 'case' ? 'case-action-ids' : 'action-ids'}>{(actionScope === 'case' ? iocs.map(ioc => ioc.id) : selectedIds).join(',')}</div> }))
-vi.mock('../components/IocDetails', () => ({ IocDetails: ({ id, onNavigate, onDirtyChange }: { id: number; onNavigate: (id: number) => void; onDirtyChange: (v: boolean) => void }) => <div><h2>Object detail {id}</h2><button onClick={() => onNavigate(2)}>Related object</button><button onClick={() => onDirtyChange(true)}>Edit draft</button></div> }))
+vi.mock('../components/enrichment/OpenCti', () => ({ OpenCtiToolbar: ({ selectedIds, actionScope, iocs }: { selectedIds: number[]; actionScope?: string; iocs: Ioc[] }) => <div data-testid={actionScope === 'case' ? 'case-action-ids' : 'action-ids'}>{(actionScope === 'case' ? iocs.map(ioc => ioc.id) : selectedIds).join(',')}</div> }))
+vi.mock('../components/iocs/IocDetails', () => ({ IocDetails: ({ id, onNavigate, onDirtyChange }: { id: number; onNavigate: (id: number) => void; onDirtyChange: (v: boolean) => void }) => <div><h2>Object detail {id}</h2><button onClick={() => onNavigate(2)}>Related object</button><button onClick={() => onDirtyChange(true)}>Edit draft</button></div> }))
 vi.mock('../geo', () => ({ useGeo: () => ({ iso: 'de', name: 'Germany', special: false }) }))
 vi.mock('../flags', () => ({ useFlagUrl: () => '/flags/de.svg' }))
 const object = (id: number, overrides: Partial<Ioc> = {}): Ioc => ({ id, type: 'ip', value: `198.51.100.${id}`, note: '', tags: ['hunt'], origin: 'Pattern Hunt', added: String(id).padStart(4, '0'), first_seen: null, last_seen: null, links: [], assessment: 'malicious', ...overrides })

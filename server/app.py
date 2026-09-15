@@ -36,10 +36,14 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 
-from server import case_profile, case_report, correlation, coverage, db, diagnostics, geoip, huntrules, hunt_batches
-from server import opencti_service, enrich
-from server import ioc_model
-from server import iocs as ioclib
+from server.casework import profile as case_profile, report as case_report
+from server import correlation, coverage, db, diagnostics
+from server.integrations import geoip
+from server import huntrules, hunt_batches
+from server.integrations.opencti import service as opencti_service
+from server.integrations import enrich
+from server.ioc import model as ioc_model
+from server.ioc import formats as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
@@ -622,12 +626,12 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/profile/geography", dependencies=[auth])
     def profile_geography():
-        from server.profile_options import geography
+        from server.casework.profile_options import geography
         return geography()
 
     @app.get("/api/opencti/sectors", dependencies=[auth])
     def profile_sectors():
-        from server.profile_options import sectors
+        from server.casework.profile_options import sectors
         return _cti_call(sectors, config.workspace)
 
     @app.post("/api/organizations", dependencies=[auth])
@@ -2324,7 +2328,7 @@ def create_app(config: Config) -> FastAPI:
                 f.get("source") == "analyst" and f.get("rule_id") == "analyst.file_review"
                 and f.get("evidence") == "Analyst classified the file as a malware sample."
                 for f in findings)
-            from server.ioc_tags import finding_classification
+            from server.ioc.tags import finding_classification
             from server.file_classifications import saved
             explicit_classes = saved(conn, artifact)
             file_classification = ("webshell" if manual_webshell else "malware" if manual_malware
@@ -4491,7 +4495,7 @@ def create_app(config: Config) -> FastAPI:
         return {"added": added}
 
     # --- IOC box ------------------------------------------------------------
-    from server import ioc_api, ioc_model
+    from server.ioc import api as ioc_api, model as ioc_model
     ioc_api.register(app, case_dir_or_404, auth, hub)
 
     def _ioc_spans(case_dir, rows):

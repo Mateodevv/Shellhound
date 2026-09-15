@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ArrowRight, CheckCircle2, Clock3, Search, TriangleAlert } from 'lucide-react'
 import type { HuntBatch, HuntBatchPattern } from '../../api'
 import { absoluteTime, formatCount, formatLogTime } from '../../format'
-import { Button, Card, Tag } from '../../components/ui'
+import { Button, Card, Tag } from '../../components/ui/ui'
 import { huntRunState } from './run-state'
 
 export function HuntRunCounts({ run }: { run: HuntBatch }) {

@@ -8,7 +8,7 @@ import { Findings } from './Findings'
 
 vi.mock('../geo', async original => ({ ...(await original<typeof import('../geo')>()), useGeo: () => null }))
 
-vi.mock('../components/TraceWindow', () => ({ TraceWindow: () => <div>Embedded trace</div> }))
+vi.mock('../components/logview/TraceWindow', () => ({ TraceWindow: () => <div>Embedded trace</div> }))
 
 vi.mock('../api', async (original) => ({
   ...(await original<typeof import('../api')>()),
