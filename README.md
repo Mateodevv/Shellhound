@@ -29,4 +29,25 @@ to configure the access token, evidence mount and persistent case volume, then r
 docker compose up --build -d
 ```
 
+## Screenshots
+
+Actual application views using synthetic training data, with example analyst decisions.
+
+**Incident timeline** — confirmed activity, log coverage and a chronological evidence view.
+
+![Incident timeline with synthetic training data](docs/screenshots/timeline.png)
+
+<details>
+<summary>File review and Pattern Hunt</summary>
+
+**File review** — syntax-highlighted content, forensic metadata and classification controls.
+
+![File review with PHP syntax highlighting](docs/screenshots/file-review.png)
+
+**Pattern Hunt** — run selected patterns, inspect matching requests and collect IP indicators.
+
+![Pattern Hunt results for synthetic access logs](docs/screenshots/pattern-hunt.png)
+
+</details>
+
 [License](docs/legal/LICENSE) · [Third-party notices](docs/legal/NOTICE)
