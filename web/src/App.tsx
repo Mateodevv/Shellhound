@@ -5,7 +5,7 @@ import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
-  LayoutDashboard, ListChecks, Puzzle, Radar, ScrollText, Search,
+  LayoutDashboard, Puzzle, Radar, ScrollText, Search,
   SlidersHorizontal, Users,
 } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type Job } from './api'
@@ -67,7 +67,6 @@ const WORKFLOW_NAV: NavItem[] = [
 const INVESTIGATION_NAV: NavItem[] = [
   { id: 'actors', icon: Users },
   { id: 'files', icon: FolderTree },
-  { id: 'timeline', icon: ListChecks },
   { id: 'database', icon: Database },
   { id: 'cms', icon: Puzzle },
   { id: 'hunt', icon: Radar },

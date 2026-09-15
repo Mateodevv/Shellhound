@@ -216,33 +216,29 @@ or changes a decision by itself.
 
 ### Case dashboard
 
-The dashboard separates **Case status**, **Recommended next step**, **Top
-findings**, and **Case data overview**. Analysis coverage describes what was examined; the case
-assessment describes the analyst's decisions. No findings does not mean a site
-is clean. Red marks confirmed incident findings or failed checks, yellow marks
-work needing attention, and green marks completed checks or review. Use the
-linked counts at the top or the recommended action to continue. Accepting a
-skipped file clears its warning; the decision remains available under
-**Evidence → Resolved scan skips** without keeping a dashboard warning open.
-Top findings shows up to three groups from the whole case, with distinct
-affected-item counts and a representative file, IP, or database item. Red groups
-contain analyst-confirmed findings; yellow groups await review. Mixed groups
-label both counts separately. Click a group to open its removable category
-filter in Findings, or use **View all findings** for the full list. Dismissed
-and hidden items do not enter the highlights; historical confirmed findings
-keep their decisions and are marked when no longer reported by current scans.
-Informational observations remain available in Findings. Empty results only
-turn green once analysis is complete, and distinguish no detections from items
-the analyst dismissed. The case data overview shows software observed in the
-evidence, including analyst-corrected versions and source coverage.
-When the latest saved Pattern Hunt check has matches, Top findings also shows
-its matching-pattern count and names, with a direct link to that check. These
-unconfirmed matches stay separate from Findings and do not inflate artifact
-counts or confirm compromise. Partial and historical results are labelled;
-changed log evidence requires a new check before drilling into saved matches.
+The dashboard is the incident timeline. Five copyable values summarize the
+case: **First observed action**, **Last observed action**, **Log coverage**,
+**Unique attacker IPs**, and **Webshells / Malware**. All timestamps include UTC.
+Actions come from current confirmed evidence and confirmed clients' request
+spans, not file-copy timestamps. Capture coverage describes all indexed access
+logs, including normal traffic. IPs are distinct confirmed clients. File counts
+include confirmed Webshell, Malware, Backdoor and Dropper classifications once
+per file, even when several tags apply. Missing action dates stay unknown;
+stale log evidence must be reindexed before it can establish current timing.
 
-The **First known sign of compromise** marker sits below Case status. It
-suggests the earliest dated activity tied to a confirmed finding: requests to
+The request chart, confirmed chronology and log-coverage details follow below.
+**Evidence & analysis** opens scan controls; **Case profile** edits case metadata.
+The former separate Timeline link remains supported for saved URLs.
+
+On the start screen, **Generate Testcase** creates an independent local training
+case with inert sample files, synthetic access logs and sample findings. Some
+items are already confirmed; others are available to review. All IPs use
+reserved documentation ranges. Generation does not contact enrichment services.
+Repeated generation creates separate cases and never replaces an existing case.
+
+The collapsible **First known sign of compromise** section retains the optional
+analyst-selected incident anchor. It does not override the five measured values.
+It suggests the earliest dated activity tied to a confirmed finding: requests to
 a confirmed webshell, the requests behind a confirmed log alert, or selected
 Pattern Hunt evidence that was added to Findings and confirmed. Ordinary earlier
 traffic from a confirmed IP does not become the automatic starting point.
@@ -264,15 +260,16 @@ zone are not used automatically.
 ### Pattern Hunt
 
 Pattern Hunt checks indexed access logs against the enabled patterns in the
-local reusable library. Open **Pattern Hunt** and use the large **Check all
-patterns** button in the first panel. Progress and a compact result summary
-stay here; choose **View full results** to investigate. The **Pattern library**
-panel below previews enabled patterns and opens the full library. Each run
-keeps the pattern versions it checked, including zero matches, failures, and
-unfinished checks. You can stop a run and still inspect completed results.
-Matches are highlighted in red; query failures in yellow. The match summary
-also opens full results. Remaining work is shown during a run; stopped runs
-identify any patterns that were not checked.
+local reusable library. The compact pattern list stays on the left, while the
+selected pattern's rule and results appear on the right. Search by name, CVE
+or technology and filter active, own or previously matching patterns. Checkboxes
+enable or disable patterns. **Edit pattern** opens its editor in the same
+workspace; an unsaved draft can be resumed after inspecting another pattern.
+
+**Check all patterns** starts the enabled library; **Check this pattern** checks
+only the selected entry. **Run history** opens saved checks with their original
+pattern versions, including zero matches, failures and unfinished work. Progress,
+remaining work and cancellation stay visible during a run.
 
 Open a matched pattern to see request counts, distinct IPs, and first/last
 matches. Select an IP, inspect a matching request, then choose **Activity after
@@ -283,8 +280,8 @@ an observation, not proof of successful exploitation.
 Select matching request groups and choose **Add selected to Findings** to send
 only those groups for review. Selection is limited to the current page and
 clears when you change pages or IPs; existing review decisions are preserved.
-Searching alone never adds findings. **Open pattern library** lets you check one
-pattern, enable or disable patterns, or preview and save a new one. Previewing
+Searching alone never adds findings. **Add a pattern** creates a reusable rule;
+**Pattern actions** contains duplicate and archive actions. Previewing
 a draft and saving it are separate actions.
 
 Changed evidence or a rebuilt index makes old results historical. Run a new
@@ -445,7 +442,7 @@ can be named and stored as saved views in the browser.
 
 ### Chronology
 
-The dedicated timeline orders confirmed artifacts in evidential time, every
+The dashboard timeline orders confirmed artifacts in evidential time, every
 line naming its source. It stays focused on incident evidence: scans, hunts
 and analyst actions are not mixed into the incident chronology. It orders
 observations and derives no causes.
@@ -657,8 +654,7 @@ Full threat model and how to report vulnerabilities:
 
 ## Documentation and development
 
-The [documentation index](README.md) groups user guides, development
-instructions and release checks.
+Further technical documentation:
 
 - [Development setup and commands](development.md)
 - [Repository structure and feature map](repository-structure.md)

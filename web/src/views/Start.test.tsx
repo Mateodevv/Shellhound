@@ -80,3 +80,20 @@ it('keeps closed cases collapsed until the heading is clicked', async () => {
   fireEvent.click(toggle)
   expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
 })
+
+it('generates a local testcase and opens the returned case', async () => {
+  const onOpen = vi.fn()
+  vi.mocked(post).mockResolvedValue({ slug: 'training-case' })
+  renderWithProviders(<Start onOpen={onOpen} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate Testcase' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/testcase', {}))
+  await waitFor(() => expect(onOpen).toHaveBeenCalledWith('training-case'))
+})
+it('shows generation errors without opening a case', async () => {
+  const onOpen = vi.fn()
+  vi.mocked(post).mockRejectedValue(new Error('Cannot write the workspace'))
+  renderWithProviders(<Start onOpen={onOpen} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate Testcase' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Cannot write the workspace')
+  expect(onOpen).not.toHaveBeenCalled()
+})

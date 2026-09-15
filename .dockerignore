@@ -1,6 +1,7 @@
 # Default deny: send only application/build inputs to the builder.
 # Keep runtime data excluded even if it is placed inside a source directory.
 **
+!README.md
 !Dockerfile
 !.dockerignore
 !pyproject.toml

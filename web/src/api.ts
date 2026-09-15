@@ -965,6 +965,12 @@ export interface DashboardChronology {
 }
 
 export interface Dashboard {
+  incident_summary?: {
+    first_action: number | null
+    last_action: number | null
+    attacker_ips: number
+    malware_files: number
+  }
   manual_log_sources?: number
   /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
   severity: Record<string, number>

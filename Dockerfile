@@ -10,7 +10,7 @@ RUN npm run build
 FROM python:3.13-slim-bookworm AS wheel
 WORKDIR /src
 RUN python -m pip install --no-cache-dir build 'pyproject-hooks>=1.3'
-COPY pyproject.toml build_backend.py MANIFEST.in ./
+COPY README.md pyproject.toml build_backend.py MANIFEST.in ./
 COPY LICENSES/ LICENSES/
 COPY docs/user-guide.md docs/LICENSING.md docs/
 COPY docs/legal/LICENSE docs/legal/NOTICE docs/legal/

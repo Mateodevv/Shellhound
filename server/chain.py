@@ -413,6 +413,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                 epoch=first_ok + off_logs, basis="request",
                 eligible=log_fresh and file_registered and artifact in webshell_files,
                 selectable=log_fresh and file_registered)
+            events[-1]["activity_last_epoch"] = max((h["last_ok"] for h in hits if h.get("last_ok")), default=first_ok) + off_logs
         else:
             add(log_at(first_any, tz), "versuch",
                 t(lang, "chain.file.firstTry", name=name),
@@ -489,6 +490,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
             "log", ip, "client", ip, by_artifact[ip]["worst"],
             raw_time=epoch, epoch=epoch + off_logs, identity=identity,
             basis="hunt_match", eligible=fresh, selectable=fresh)
+        events[-1]["activity_last_epoch"] = (match["last_epoch"] or epoch) + off_logs
 
     # --- accounts created WITHIN THE PERIOD OF THE CASE -----------------
     # An account from 2019 does not belong in the chronology of an incident

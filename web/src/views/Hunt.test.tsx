@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, del, patch, post, type HuntBatch, type HuntPattern, type HuntRuleV2, type HuntTest } from '../api'
 import { renderWithProviders } from '../test/setup'
@@ -90,8 +90,7 @@ describe('Pattern Hunt investigation workflow', () => {
 
   it('passes explicit draft CVE metadata when previewing a query', async () => {
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit pattern' }))
     fireEvent.change(await screen.findByPlaceholderText('CVE-…'), { target: { value: 'CVE-2026-12345' } })
     fireEvent.click(screen.getByRole('button', { name: 'Preview in this case' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests', expect.objectContaining({ name: PATTERN.name, cve: 'CVE-2026-12345' })))
@@ -116,46 +115,37 @@ describe('Pattern Hunt investigation workflow', () => {
     expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
-  it('keeps both summaries visible when a check starts and opens details explicitly', async () => {
+  it('keeps the pattern picker visible while running and inspecting results', async () => {
     allRuns = []
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    const summary = await screen.findByRole('region', { name: 'Pattern check' })
-    const start = await within(summary).findByRole('button', { name: 'Check all patterns (1)' })
+    const start = await screen.findByRole('button', { name: 'Check all patterns (1)' })
     await waitFor(() => expect(start).toBeEnabled())
-    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
     fireEvent.click(start)
-    const details = await within(summary).findByRole('button', { name: 'View full results' })
-    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Inspect matches' })).not.toBeInTheDocument()
-    fireEvent.click(details)
-    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
-    expect(await screen.findByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
-    expect(post).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('heading', { name: 'Matching IP addresses' })).toBeVisible()
+    expect(screen.getByRole('complementary', { name: 'Manage patterns' })).toBeVisible()
+    expect(applied).toBeUndefined()
   })
 
   it('opens the overview on a sidebar visit while keeping the selected run and draft', async () => {
     const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit pattern' }))
     fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Keep this draft' } })
     first.unmount()
     history.replaceState(null, '', '/?case=case-1&view=hunt')
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    expect(await screen.findByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Resume draft' }))
+    expect(await screen.findByRole('complementary', { name: 'Manage patterns' })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
     expect(await screen.findByDisplayValue('Keep this draft')).toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
-  it('opens full results from the match summary and omits a finished remaining count', async () => {
+  it('shows the selected pattern results directly and switches to its rule', async () => {
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    const summary = await screen.findByRole('button', { name: 'Matches worth a closer look' })
+    expect(await screen.findByRole('heading', { name: 'Matching IP addresses' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Rule' }))
+    expect(await screen.findByText(/client any.*request.*training-marker.*end/s)).toBeVisible()
     expect(screen.queryByText('Remaining')).not.toBeInTheDocument()
-    fireEvent.click(summary)
-    expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeEnabled()
-    expect(screen.queryByText('Remaining')).not.toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
+    expect(applied).toBeUndefined()
   })
 
   it('explains missing indexing beside the start action and still allows managing patterns', async () => {
@@ -169,23 +159,22 @@ describe('Pattern Hunt investigation workflow', () => {
     expect(start).toBeDisabled()
     fireEvent.click(await screen.findByRole('button', { name: 'View analysis' }))
     expect(gotoView).toHaveBeenCalledWith('evidence')
-    fireEvent.click(screen.getByRole('button', { name: 'Open pattern library' }))
     expect(await screen.findByRole('button', { name: 'Add a pattern' })).toBeEnabled()
-    expect(post).not.toHaveBeenCalled()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
   it.each(['running', 'cancelled', 'failed'] as const)('preserves partial results and the library for a %s check', async (state) => {
     allRuns[0] = { ...RUN, state, progress: 0.5, counts: { total: 2, checked: 1, matched: 1, failed: state === 'failed' ? 1 : 0, remaining: 1 } }
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    expect(await screen.findByRole('button', { name: 'View full results' })).toBeEnabled()
-    expect(screen.getByRole('region', { name: 'Pattern library' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Run history' })).toBeEnabled()
+    expect(screen.getByRole('complementary', { name: 'Manage patterns' })).toBeInTheDocument()
     expect(screen.queryByText('Check complete')).not.toBeInTheDocument()
     if (state === 'running') {
-      expect(screen.getByText('Remaining')).toBeInTheDocument()
+      expect(await screen.findByText('Remaining')).toBeInTheDocument()
       expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0.5')
       expect(screen.getByRole('button', { name: 'Stop check' })).toBeEnabled()
-    } else expect(screen.getByText('Not checked')).toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
+    } else expect(await screen.findByText('Not checked')).toBeInTheDocument()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
   it('starts all or one enabled pattern explicitly without adding findings', async () => {
@@ -193,10 +182,9 @@ describe('Pattern Hunt investigation workflow', () => {
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     const checkAll = await screen.findByRole('button', { name: 'Check all patterns (1)' })
     await waitFor(() => expect(checkAll).toBeEnabled())
-    expect(post).not.toHaveBeenCalled()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
     fireEvent.click(checkAll)
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) => path.endsWith('/batch-tests') && JSON.stringify(body) === '{}')).toBe(true))
-    fireEvent.click(screen.getByRole('button', { name: 'Open pattern library' }))
     const single = await screen.findByRole('button', { name: /Check this pattern/ })
     fireEvent.click(single)
     await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, body]) => path.endsWith('/batch-tests') && (body as { ids?: string[] }).ids?.join() === PATTERN.id)).toBe(true))
@@ -206,7 +194,7 @@ describe('Pattern Hunt investigation workflow', () => {
   it('adds only the current page selection and clears it when changing pages', async () => {
     paginateGroups = true
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
     fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
     await screen.findByLabelText('Select GET /training-marker 2xx')
@@ -225,28 +213,28 @@ describe('Pattern Hunt investigation workflow', () => {
     old.patterns[0].name = 'Earlier pattern name'; old.patterns[0].test!.hits = 1
     allRuns.push(old)
     const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     fireEvent.change(await screen.findByRole('combobox', { name: 'Run' }), { target: { value: 'older' } })
     await screen.findByText('Earlier pattern name')
     first.unmount()
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     expect(await screen.findByText('Earlier pattern name')).toBeInTheDocument()
-    expect(screen.queryByText('Training marker')).not.toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Manage patterns' })).toHaveTextContent('Training marker')
+    expect(screen.getByRole('combobox', { name: 'Run' })).toHaveValue('older')
   })
 
   it('shows stale historical counts while blocking evidence inspection', async () => {
     allRuns[0].fresh = false
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     expect(await screen.findByRole('button', { name: 'Inspect matches' })).toBeDisabled()
     expect(screen.getByText(/These are historical counts/)).toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
   it('preserves an edited draft across navigation and refresh without searching', async () => {
     const first = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit pattern' }))
     fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Unsaved investigator note' } })
     fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Resume draft' }))
@@ -254,7 +242,7 @@ describe('Pattern Hunt investigation workflow', () => {
     first.unmount()
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     expect(await screen.findByDisplayValue('Unsaved investigator note')).toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
+    expect(vi.mocked(post).mock.calls.some(([path]) => /\/(apply|batch-tests|tests)$/.test(path))).toBe(false)
   })
 
   it.each(['preview', 'save'])('keeps newer draft edits when a delayed %s finishes', async (operation) => {
@@ -264,8 +252,7 @@ describe('Pattern Hunt investigation workflow', () => {
     if (operation === 'preview') vi.mocked(post).mockImplementation((path, body) => path.endsWith('/hunt/tests') ? response : originalPost(path, body))
     else vi.mocked(patch).mockReturnValue(response)
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit pattern' }))
     fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Submitted draft' } })
     fireEvent.click(screen.getByRole('button', { name: operation === 'preview' ? 'Preview in this case' : 'Save pattern' }))
     fireEvent.change(screen.getByDisplayValue('Submitted draft'), { target: { value: 'Newer unsaved draft' } })
@@ -281,11 +268,10 @@ describe('Pattern Hunt investigation workflow', () => {
 
   it('does not leak a selected run or draft into another case', async () => {
     const view = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Open pattern library' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit pattern' }))
     fireEvent.change(await screen.findByDisplayValue(PATTERN.name), { target: { value: 'Case one draft' } })
     view.rerender(<Hunt slug="case-2" gotoView={vi.fn()} />)
-    expect(await screen.findByRole('button', { name: 'View full results' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Run history' })).toBeInTheDocument()
     expect(screen.queryByDisplayValue('Case one draft')).not.toBeInTheDocument()
   })
 
@@ -347,7 +333,7 @@ describe('Pattern Hunt investigation workflow', () => {
     vi.mocked(post).mockImplementation((path, body) => path.endsWith('/clusters') && stale
       ? Promise.reject(new Error('The log index changed. Run this check again.')) : originalPost(path, body))
     const { qc } = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'View full results' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
     fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect first request' }))

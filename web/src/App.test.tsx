@@ -62,7 +62,7 @@ describe('CaseNavigation', () => {
 
     expect(screen.getByText('Investigation tools')).toBeInTheDocument()
     for (const label of [
-      'Actors', 'Files', 'Timeline', 'Database', 'CMS inventory', 'Pattern hunt', 'Logs',
+      'Actors', 'Files', 'Database', 'CMS inventory', 'Pattern hunt', 'Logs',
     ]) {
       expect(screen.getByRole('button', { name: new RegExp(label, 'i') })).toBeInTheDocument()
     }

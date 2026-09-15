@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 
-from server.casework import profile as case_profile, report as case_report
+from server.casework import profile as case_profile, report as case_report, incident_summary
 from server import correlation, coverage, db, diagnostics
 from server.integrations import geoip
 from server import huntrules, hunt_batches
@@ -248,6 +248,11 @@ def create_app(config: Config) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         return workspace.case_info(case_dir)
+
+    @app.post("/api/testcase", dependencies=[auth])
+    def generate_testcase():
+        from server.casework.testcase import generate
+        return workspace.case_info(generate(config.workspace))
 
     # How long a "how much evidence is this?" scan may take. A webroot can
     # hold six figures of files and a log directory gigabytes; the answer is
@@ -1473,6 +1478,7 @@ def create_app(config: Config) -> FastAPI:
             "manual_log_sources": sum(s["format"] == "text" or not s["fresh"] for s in additional_sources),
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
+            "incident_summary": incident_summary.summarize(case_dir, chain),
             "chronology": {
                 "total_events": chain["total_events"],
                 "event_span": chain["event_span"],

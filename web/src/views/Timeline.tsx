@@ -4,8 +4,7 @@ import { CalendarClock } from 'lucide-react'
 import { api, type CaseDetail, type Dashboard as DashboardData, type FirstSign as FirstSignData, type ChainEvent } from '../api'
 import { useT } from '../i18n'
 import { formatCount, formatDay, type EvidenceRoot } from '../format'
-import { Button, Card, EmptyState, Section } from '../components/ui/ui'
-import { FirstSign, FirstSignEditor } from '../components/casework/FirstSign'
+import { Button, Card, EmptyState, Section, CopyButton } from '../components/ui/ui'
 import { TimelineChart } from '../components/ui/TimelineChart'
 import { LogCoverage } from '../components/logview/LogCoverage'
 import { CaseChain } from '../components/casework/CaseChain'
@@ -14,6 +13,8 @@ import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
 import { FileViewer } from '../components/review/FileViewer'
 import { TriageFollowUp } from '../components/review/triage'
 import { useTriage } from '../components/review/useTriage'
+import { FirstSign, FirstSignEditor } from '../components/casework/FirstSign'
+import { CaseProfileButton } from '../components/casework/CaseProfile'
 import type { Navigate } from '../App'
 
 export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
@@ -22,11 +23,11 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
   const [traceMarks, setTraceMarks] = useState<TraceMarks | undefined>()
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
-  const [focusId, setFocusId] = useState(() => new URLSearchParams(location.search).get('event') ?? '')
-  const [focusRequest, setFocusRequest] = useState(0)
   const [choosing, setChoosing] = useState(false)
   const [draftEvent, setDraftEvent] = useState<ChainEvent | null>(null)
+  const [focusRequest, setFocusRequest] = useState(0)
   const chainRef = useRef<HTMLDivElement>(null)
+  const [focusId, setFocusId] = useState(() => new URLSearchParams(location.search).get('event') ?? '')
   useEffect(() => {
     const restore = () => setFocusId(new URLSearchParams(location.search).get('event') ?? '')
     restore()
@@ -37,15 +38,16 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
   }, [slug])
   const jumpTo = (id?: string) => {
     setFocusId(id ?? '')
-    setFocusRequest((value) => value + 1)
+    setFocusRequest(value => value + 1)
     const url = new URL(location.href)
     if (id) url.searchParams.set('event', id)
     else url.searchParams.delete('event')
     history.replaceState(null, '', url)
     chainRef.current?.scrollIntoView({ block: 'start' })
   }
+  const marker = useQuery({ queryKey: ['first-sign', slug], queryFn: () => api<FirstSignData>(`/api/cases/${slug}/first-sign`), refetchInterval: 10000 })
   const triage = useTriage(slug)
-  const { data } = useQuery({
+  const { data, isError, refetch } = useQuery({
     queryKey: ['dashboard', slug],
     queryFn: () => api<DashboardData>(`/api/cases/${slug}/dashboard`),
     refetchInterval: 10000,
@@ -54,22 +56,36 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
-  const marker = useQuery({
-    queryKey: ['first-sign', slug],
-    queryFn: () => api<FirstSignData>(`/api/cases/${slug}/first-sign`),
-    refetchInterval: 10000,
-  })
   const roots: EvidenceRoot[] = (caseInfo?.evidence_items ?? []).map((item) => ({
     kind: item.kind, path: item.path, label: item.label,
   }))
 
+  if (isError) return <Card className="p-4"><p role="alert">{tr('incident.loadFailed')}</p><Button onClick={() => void refetch()}>{tr('common.retry')}</Button></Card>
   if (!data) return <div className="py-16 text-center text-[var(--muted)]">{tr('common.loading')}</div>
   const sparseTimeline = data.timeline.length < 4
+  const stamp = (value?: number | null) => value == null ? null : new Date(value * 1000).toISOString().replace('T', ' ').replace('.000Z', ' UTC')
+  const metrics: [string, string | null][] = [
+    [tr('incident.first'), stamp(data.incident_summary?.first_action)],
+    [tr('incident.last'), stamp(data.incident_summary?.last_action)],
+    [tr('incident.coverage'), data.logs?.first_epoch != null && data.logs?.last_epoch != null ? `${stamp(data.logs.first_epoch)} – ${stamp(data.logs.last_epoch)}` : null],
+    [tr('incident.ips'), data.incident_summary ? String(data.incident_summary.attacker_ips) : null],
+    [tr('incident.malware'), data.incident_summary ? String(data.incident_summary.malware_files) : null],
+  ]
 
   return (
-    <div className="flex flex-col gap-6">
-      <FirstSign slug={slug} data={marker.isError ? undefined : marker.data} editing
-        onTimeline={jumpTo} onChoose={() => { setChoosing(true); chainRef.current?.scrollIntoView({ block: 'start' }) }} />
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">{tr('incident.title')}</h1>
+        <div className="flex gap-2"><Button onClick={() => gotoView('evidence')}>{tr('nav.evidence')}</Button><CaseProfileButton slug={slug} /></div>
+      </div>
+      <section aria-label={tr('incident.metrics')} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        {metrics.map(([label, value]) => <Card key={label} className="min-w-0 p-3">
+          <div className="text-xs text-[var(--muted)]">{label}</div>
+          <div className="mt-2 flex items-start justify-between gap-2"><span className="select-text break-words text-sm font-semibold tabular">{value ?? tr('incident.unavailable')}</span>
+            {value != null && <CopyButton value={value} label={`${tr('common.copy')} ${label}`} />}</div>
+        </Card>)}
+      </section>
+      <p className="text-xs text-[var(--muted)]">{tr('incident.metricsHelp')}</p>
       {data.logs ? <>
         <Section title={tr('timeline.title')}
           sub={tr('timeline.sub', {
@@ -77,7 +93,7 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
             from: formatDay(data.logs.first_epoch),
             to: formatDay(data.logs.last_epoch),
           })}>
-          <Card className={sparseTimeline ? 'max-w-4xl p-3' : 'p-4'}>
+          <Card className={'p-3'}>
             <TimelineChart data={data.timeline} height={sparseTimeline ? 140 : 220} />
           </Card>
         </Section>
@@ -85,13 +101,14 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
         <EmptyState icon={<CalendarClock size={36} />} title={tr('timeline.empty.title')}
           sub={tr('timeline.empty.sub')} />
       )}
+      <details className="rounded-lg border border-[var(--line)] p-3">
+        <summary className="cursor-pointer text-sm text-[var(--muted)]">{tr('firstSign.title')}</summary>
+        <div className="mt-3"><FirstSign slug={slug} data={marker.isError ? undefined : marker.data} editing onTimeline={jumpTo}
+          onChoose={() => { setChoosing(true); chainRef.current?.scrollIntoView({ block: 'start' }) }} /></div>
+      </details>
       <div ref={chainRef} className="scroll-mt-4">
-      {choosing && <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--accent-soft)] px-4 py-3 text-sm">
-        <span>{tr('firstSign.chooseHelp')}</span>
-        <Button variant="ghost" onClick={() => setChoosing(false)}>{tr('common.cancel')}</Button>
-      </div>}
-      <CaseChain slug={slug} focusId={focusId} focusRequest={focusRequest}
-        onSelectFirstSign={choosing ? setDraftEvent : undefined}
+      {choosing && <div role="status" className="mb-3 flex items-center justify-between gap-2 text-sm"><span>{tr('firstSign.chooseHelp')}</span><Button onClick={() => setChoosing(false)}>{tr('common.cancel')}</Button></div>}
+      <CaseChain slug={slug} focusId={focusId} focusRequest={focusRequest} onSelectFirstSign={choosing ? setDraftEvent : undefined}
         onOpen={(artifact, kind) => setSelected({
           artifact,
           artifact_kind: (kind || 'file') as ArtifactStub['artifact_kind'],

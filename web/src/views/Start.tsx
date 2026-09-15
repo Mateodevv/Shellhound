@@ -5,7 +5,7 @@ import { Mark } from '../components/shell/Mark'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, ArchiveRestore, ChevronRight, FolderSearch, Package, Plus, Settings2, Trash2, TriangleAlert,
+  FlaskConical, Archive, ArchiveRestore, ChevronRight, FolderSearch, Package, Plus, Settings2, Trash2, TriangleAlert,
 } from 'lucide-react'
 import {
   api, del, post, type ArchivesResponse, type CaseInfo, type ImportResult,
@@ -37,6 +37,10 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
   const [importPath, setImportPath] = useState('')
   const [showImport, setShowImport] = useState(false)
 
+  const generateTestcase = useMutation({
+    mutationFn: () => post<CaseInfo>('/api/testcase', {}),
+    onSuccess: (result) => { void qc.invalidateQueries({ queryKey: ['state'] }); onOpen(result.slug) },
+  })
   const importCase = useMutation({
     mutationFn: (body: { file?: string; path?: string }) =>
       post<ImportResult>('/api/import', body),
@@ -97,6 +101,9 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           {data && <Tag>{data.cases.length}</Tag>}
         </h2>
         <div className="flex flex-wrap gap-2">
+          <Tooltip hint={tr('start.testcaseHelp')}><Button disabled={generateTestcase.isPending} onClick={() => generateTestcase.mutate()}>
+            <FlaskConical size={15} />{tr(generateTestcase.isPending ? 'start.generatingTestcase' : 'start.generateTestcase')}
+          </Button></Tooltip>
           <Button variant="primary" onClick={() => setCreating(true)}>
             <Plus size={15} /> {tr('start.newCase')}
           </Button>
@@ -106,6 +113,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         </div>
       </div>
 
+      {generateTestcase.error && <p role="alert" className="mb-3 text-sm text-[var(--danger-text)]">{generateTestcase.error.message}</p>}
       <div className="flex flex-col gap-2">
         {isLoading && <div className="text-[var(--muted)]">{tr('common.loading')}</div>}
         {data?.cases.map((c, i) => (

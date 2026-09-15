@@ -1,29 +1,32 @@
-# SHELLHOUND
+![Shellhound](assets/brand/banner.svg)
 
-CMS Forensics & Incident Analysis.
+CMS Forensics & Incident Analysis, running locally in your browser.
 
-A local workbench for reviewing webroots, logs and database exports, collecting
-IoCs and transferring reviewed cases to OpenCTI.
+## Run from source
 
-## Get started
+Install **Python 3.10+**, **Node.js 22.12+ with npm**, and **Git**.
+On Linux, install the Python `venv` package if your distribution requires it.
 
-- [Installation and investigation workflow](docs/user-guide.md)
-- [Run locally with Docker](docs/containers.md)
-- [All documentation](docs/README.md)
+```sh
+git clone https://github.com/Mateodevv/Shellhound.git
+cd Shellhound
+```
 
-From a source checkout, run `Start-Shellhound.bat` on Windows or
-`./shellhound.sh` on Linux/macOS. See the installation guide for prerequisites.
+- **Windows:** double-click `Start-Shellhound.bat`.
+- **Linux / macOS:** run `./shellhound.sh`.
 
-## Develop and contribute
+The launcher creates `.venv`, installs dependencies, builds the interface and
+opens the local application. Initial setup needs internet access. Cases are
+stored in the configured workspace, separately from the source checkout.
+Choose **Generate Testcase** on the start screen to try a synthetic case.
 
-- [Development commands](docs/development.md)
-- [Repository structure](docs/repository-structure.md)
-- [Contribution guidelines](docs/user-guide.md#contributing)
-- [Changelog](docs/CHANGELOG.md)
-- [Security and private vulnerability reporting](.github/SECURITY.md)
+## Docker
 
-## License
+With Docker Compose installed, follow [local container setup](docs/containers.md)
+to configure the access token, evidence mount and persistent case volume, then run:
 
-[Licensing and existing rights](docs/LICENSING.md),
-[Shellhound Source Available License 1.0](docs/legal/LICENSE),
-[Apache-2.0](LICENSES/Apache-2.0.txt) and [third-party notices](docs/legal/NOTICE).
+```sh
+docker compose up --build -d
+```
+
+[License](docs/legal/LICENSE) · [Third-party notices](docs/legal/NOTICE)
