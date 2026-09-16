@@ -608,19 +608,21 @@ export function Section({ title, sub, children, right }: {
  *  and a banner that dumps you at the top of a long page is a banner that
  *  gets ignored the second time. */
 export function Tabs<T extends string>({ tabs, active, onChange }: {
-  tabs: { id: T; label: string; badge?: ReactNode }[]
+  tabs: { id: T; label: string; badge?: ReactNode; tone?: 'danger'; title?: string }[]
   active: T
   onChange: (id: T) => void
 }) {
   return (
     <div role="tablist"
       className="flex gap-1 border-b border-[var(--line)]">
-      {tabs.map(({ id, label, badge }) => (
-        <button key={id} role="tab" aria-selected={active === id}
+      {tabs.map(({ id, label, badge, tone, title }) => (
+        <button key={id} role="tab" aria-selected={active === id} title={title}
           onClick={() => onChange(id)}
           className={clsx(
             'ui-press relative -mb-px cursor-pointer border-b-2 px-3 py-2 text-[13px] font-medium',
-            active === id
+            tone === 'danger'
+              ? clsx('bg-[var(--danger-soft)] text-[var(--danger-text)]', active === id ? 'border-[var(--danger-text)]' : 'border-transparent hover:border-[var(--danger-text)]')
+              : active === id
               ? 'border-[var(--accent)] text-[var(--fg)]'
               : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]')}>
           {label}

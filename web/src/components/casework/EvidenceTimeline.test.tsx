@@ -116,12 +116,22 @@ describe('evidence timeline preview', () => {
     expect(gotoView).toHaveBeenCalledWith('timeline', { scope: 'all' })
   })
 
-  it('marks a current first sign with its exact time but excludes stale overrides', async () => {
-    const sign = { state: 'metadata_only', event: { epoch: START + 60, fresh: true } } as FirstSign
-    const { rerender } = mount(sign)
-    expect(await screen.findByText('First known sign of compromise:', { exact: false })).toHaveTextContent('2026-09-08 09:01:00 UTC')
+  it('centers the flag between its interval bars, keeps the exact date, and excludes stale overrides', async () => {
+    const sign = { state: 'metadata_only', event: { epoch: START + 3300, fresh: true } } as FirstSign
+    const { container, rerender } = mount(sign)
+    expect(await screen.findByText('First known sign of compromise:', { exact: false })).toHaveTextContent('2026-09-08 09:55:00 UTC')
+    const bars = container.querySelectorAll('.recharts-bar-rectangles')
+    const file = bars[0].querySelector('.recharts-rectangle')!
+    const log = bars[2].querySelector('.recharts-rectangle')!
+    const middle = (Number(file.getAttribute('x')) + Number(log.getAttribute('x')) + Number(log.getAttribute('width'))) / 2
+    const flagX = () => Number(container.querySelector('.recharts-reference-line-line')?.getAttribute('x1'))
+    expect(flagX()).toBeCloseTo(middle, 0)
+    rerender(<EvidenceTimeline slug="case-1" firstSign={{ ...sign, event: { ...sign.event!, epoch: START + 60 } }} gotoView={vi.fn()} />)
+    expect(flagX()).toBeCloseTo(middle, 0)
+    expect(screen.getByText('First known sign of compromise:', { exact: false })).toHaveTextContent('2026-09-08 09:01:00 UTC')
     rerender(<EvidenceTimeline slug="case-1" firstSign={{ ...sign, state: 'stale_override' }} gotoView={vi.fn()} />)
     expect(screen.queryByText('First known sign of compromise:', { exact: false })).toBeNull()
+    expect(container.querySelector('.recharts-reference-line-line')).toBeNull()
   })
 
   it('offers retry without presenting an error as no events', async () => {

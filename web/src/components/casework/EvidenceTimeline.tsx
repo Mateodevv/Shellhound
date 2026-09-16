@@ -52,8 +52,8 @@ export function EvidenceTimeline({ slug, firstSign, gotoView }: {
   const series = SERIES.find(item => item.key === seriesKey)!
   const selectedCount = bucket?.[seriesKey] ?? 0
   const signEpoch = firstSign?.state !== 'stale_override' && firstSign?.event?.fresh !== false ? firstSign?.event?.epoch : null
-  const plottedSign = signEpoch != null && data.buckets.length > 0
-    && signEpoch >= data.buckets[0].start && signEpoch < data.buckets.at(-1)!.end
+  const signBucket = signEpoch == null ? undefined : data.buckets.find(item => signEpoch >= item.start && signEpoch < item.end)
+  const plottedSign = !!signBucket
   const open = (start: number, end: number, selected: typeof SERIES[number]) => gotoView('timeline', {
     scope: selected.scope, event_source: selected.source, from_epoch: String(start), to_epoch: String(end),
   })
@@ -90,8 +90,8 @@ export function EvidenceTimeline({ slug, firstSign, gotoView }: {
             {SERIES.map(entry => <Bar key={entry.key} dataKey={entry.key} stackId={entry.source} fill={entry.color}
               name={tr(entry.label)} maxBarSize={30} isAnimationActive={false} cursor="pointer"
               onClick={(_item, index) => { const selected = data.buckets[index]; if (selected?.[entry.key]) open(selected.start, selected.end, entry) }} />)}
-            {plottedSign && <ReferenceLine x={signEpoch!} stroke="var(--accent-text)" strokeDasharray="4 3"
-              label={{ value: '⚑', position: 'insideTopRight', fill: 'var(--accent-text)', fontSize: 18 }} />}
+            {signBucket && <ReferenceLine x={(signBucket.start + signBucket.end) / 2} stroke="var(--accent-text)" strokeDasharray="4 3"
+              label={{ value: '⚑', position: 'top', fill: 'var(--accent-text)', fontSize: 18 }} />}
           </BarChart>
         </ResponsiveContainer>
       </div>

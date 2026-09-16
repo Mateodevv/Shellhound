@@ -234,7 +234,9 @@ traffic and unapplied Pattern Hunt matches are not added automatically.
 The chart covers all dated, available evidence in at most 24 intervals, or 12 on
 narrow screens, including empty intervals. Times are UTC with clock corrections
 applied once. Hover over a segment for its exact interval and count, then click
-to inspect those events. The interval and evidence selectors with **View events**
+to inspect those events. The first-sign flag is centered between its interval's
+file and log bars; its exact timestamp remains in the first-sign summary.
+The interval and evidence selectors with **View events**
 provide the same navigation with a keyboard. Unknown dates and stale evidence
 are explained separately, without inventing dates. **Open full timeline** opens
 the confirmed chronology; removable decision, source and time filters survive
@@ -584,7 +586,19 @@ automatic feed imports can keep running. Shellhound blocks transfer when an
 active enrichment connector still runs automatically. Metadata-only observables
 can be enriched explicitly; attached file contents are never forwarded by a
 Shellhound enrichment request. Historical VirusTotal/AbuseIPDB results remain
-readable, but their direct network APIs and key inputs are retired.
+readable. When OpenCTI is not configured, a locally configured VirusTotal or
+AbuseIPDB key enables explicit direct lookups instead.
+
+During file review, **Ask VirusTotal** sits beneath SHA-256; files no longer
+need a separate Enrichment tab or prior IOC collection. A click sends only the
+displayed hash to retrieve an existing report, never file contents or a new scan.
+Saved reports show their retrieval date and provider link. Zero malicious
+verdicts are green, positive counts red, and unknown reports or unavailable
+counts neutral. Green does not establish that the file is safe, and no result
+changes the analyst decision. **Refresh VirusTotal** explicitly requests a new
+report; failed refreshes retain the dated saved result. If OpenCTI is configured,
+the file context links to its existing IOC Box workflow instead of contacting
+VirusTotal directly. IP review keeps its existing enrichment tools.
 
 Results distinguish visible knowledge, own exports, no visible match, stale
 cache and errors. No visible match does not mean benign. Import receipts track

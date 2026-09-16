@@ -14,6 +14,8 @@
   into an existing feature branch before editing. Preserve local changes and
   commits; never reset or discard work to make a pull succeed. These routine
   fetch/pull operations are authorized unless the user explicitly asks to work offline.
+- **Codi reminder:** keep accepted, unmerged UI changes in the local preview
+  during follow-up UI work; preserve their commits so PR scopes stay clear.
 - User startup: `Start-Shellhound.bat` on Windows, `./shellhound.sh` on Linux/macOS.
   Both delegate to `python -m server.main`; `--update` explicitly updates the current upstream.
 - Use the project `.venv` for Python checks. Focused startup checks:
