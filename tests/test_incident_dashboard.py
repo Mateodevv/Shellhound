@@ -88,7 +88,10 @@ class IncidentDashboardTests(unittest.TestCase):
         conn.execute("UPDATE findings SET triage='dismissed'")
         conn.commit()
         conn.close()
-        self.assertEqual({'first_action': None, 'last_action': None, 'attacker_ips': 0, 'malware_files': 0}, self.summary())
+        self.assertEqual({'first_action': None, 'last_action': None,
+                          'last_action_event_id': None, 'attacker_ips': 0,
+                          'confirmed_ips': 0, 'pending_ips': 0,
+                          'malware_files': 0, 'pending_malware_files': 0}, self.summary())
 
     def test_stale_log_does_not_claim_current_action_times(self):
         self.analyse_and_review()
@@ -107,6 +110,10 @@ class IncidentDashboardTests(unittest.TestCase):
         result = self.summary()
         self.assertEqual(0, result['attacker_ips'])
         self.assertEqual(120, result['last_action'] - result['first_action'])
+        chain = case_chain(self.case, event_cap=None)
+        anchor = next(event for event in chain['events']
+                      if event['id'] == result['last_action_event_id'])
+        self.assertEqual(result['last_action'], anchor['epoch'])
 
     def test_files_produce_reviewable_findings_only_after_analysis(self):
         from server.engines import webshell

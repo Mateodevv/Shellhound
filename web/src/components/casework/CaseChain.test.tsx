@@ -100,6 +100,7 @@ describe('timeline first sign links', () => {
     const selectable = event(1)
     vi.mocked(api).mockResolvedValue(page(0, 3, 3, { events: [
       selectable, event(2, { first_sign_selectable: false }), event(3, { id: undefined }),
+      event(4, { review_state: 'pending' }), event(5, { fresh: false }),
     ] }))
     const choose = vi.fn()
     const open = vi.fn()
@@ -109,5 +110,38 @@ describe('timeline first sign links', () => {
     await userEvent.setup().click(button)
     expect(choose).toHaveBeenCalledWith(selectable)
     expect(open).not.toHaveBeenCalled()
+  })
+
+  it('keeps dashboard segment filters on every page and does not call pending observations confirmed', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      const offset = Number(new URL(path, location.origin).searchParams.get('offset'))
+      return page(offset, offset === 0 ? 80 : 1, 81, { events: [event(offset, { review_state: 'pending' })], truncated: offset === 0 })
+    })
+    renderWithProviders(<CaseChain slug="sample" filters={{ scope: 'pending', event_source: 'log',
+      from_epoch: '1749999900', to_epoch: '1750000100' }} onOpen={() => {}} onTrace={() => {}} />)
+    expect(await screen.findByText('Awaiting review')).toBeVisible()
+    expect(screen.queryByText('Confirmed')).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('button', { name: /Show .* more/ }))
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2))
+    for (const [path] of vi.mocked(api).mock.calls) {
+      const params = new URL(path, location.origin).searchParams
+      expect(params.get('scope')).toBe('pending')
+      expect(params.get('event_source')).toBe('log')
+      expect(params.get('from_epoch')).toBe('1749999900')
+      expect(params.get('to_epoch')).toBe('1750000100')
+    }
+  })
+
+  it('labels database context neutrally and never offers it as a confirmed first sign', async () => {
+    vi.mocked(api).mockResolvedValue(page(0, 2, 2, { events: [
+      event(1, { source: 'dump', kind: 'konto', title: 'Account creation recorded', artifact: '', artifact_kind: '', review_state: 'context' }),
+      event(2, { source: 'dump', kind: 'konto', title: 'Legacy account context', artifact: '', artifact_kind: '', review_state: undefined }),
+    ] }))
+    renderWithProviders(<CaseChain slug="sample" onOpen={vi.fn()} onTrace={vi.fn()} onSelectFirstSign={vi.fn()} />)
+    expect(await screen.findByText('Account creation recorded')).toBeVisible()
+    expect(screen.getAllByText('Context observation')).toHaveLength(2)
+    expect(screen.queryByText('Confirmed')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Use as first sign:/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Artifact' })).not.toBeInTheDocument()
   })
 })

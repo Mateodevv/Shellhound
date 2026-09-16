@@ -685,10 +685,11 @@ def retire_removed(case_dir):
         conn.close()
 
 
-def timeline_events(case_dir):
+def timeline_events(case_dir, *, artifacts=None):
     conn = db.connect(case_dir)
     try:
-        confirmed = {r["artifact"] for r in db.rows(conn, f"WITH art AS ({ART_SQL}) SELECT artifact FROM art WHERE triage='confirmed'")}
+        confirmed = (set(artifacts) if artifacts is not None else
+                     {r["artifact"] for r in db.rows(conn, f"WITH art AS ({ART_SQL}) SELECT artifact FROM art WHERE triage='confirmed'")})
         saved = [e for artifact in confirmed for e in saved_for_artifact(conn, artifact)]
     finally:
         conn.close()

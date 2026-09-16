@@ -970,6 +970,10 @@ export interface Dashboard {
     last_action: number | null
     attacker_ips: number
     malware_files: number
+    confirmed_ips?: number
+    pending_ips?: number
+    pending_malware_files?: number
+    last_action_event_id?: string | null
   }
   manual_log_sources?: number
   /** Artefakte je Schweregrad (ihr schwerster Fund), ohne False Positives. */
@@ -1390,7 +1394,27 @@ export interface HuntResult {
  *  reading. Log and dump values retain their measured wall-clock meaning;
  *  absolute filesystem epochs are shifted into that reading by the server.
  *  Always format it with tz = 0 for that reason. */
+export interface TimelineCounts {
+  filesystem_confirmed: number
+  filesystem_pending: number
+  log_confirmed: number
+  log_pending: number
+}
+
+export interface TimelinePreview {
+  buckets: (TimelineCounts & { start: number; end: number })[]
+  totals: TimelineCounts
+  span: { first: number | null; last: number | null }
+  interval: number
+  undated: number
+  unavailable: number
+  zone: 'UTC'
+}
+
 export interface ChainEvent {
+  review_state?: 'confirmed' | 'pending' | 'context'
+  fresh?: boolean
+  artifact_triage?: TriageState
   /** Stable across display timezone, pagination and wording changes. */
   id?: string
   /** Absolute event time with any analyst clock correction; null if unknown. */

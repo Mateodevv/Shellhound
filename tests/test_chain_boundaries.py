@@ -337,13 +337,20 @@ class CraftedFactTests(unittest.TestCase):
         user agent, say. Ordering it into the chain would put a line into the
         story that carries no claim, and the reader has no way to tell that
         from the lines that do."""
+        conn = db.connect(self.ev.case_dir)
+        for row in db.rows(conn, "SELECT DISTINCT artifact FROM findings WHERE artifact_kind='client'"):
+            db.upsert_finding(conn, "logs", db.SEV_HIGH, "Harmless claim", "client", row["artifact"],
+                              rule_id="logs.synthetic-claim")
+        conn.execute("UPDATE findings SET triage='confirmed' WHERE rule_id='logs.synthetic-claim'")
+        conn.commit()
+        conn.close()
         def add_alerts(facts):
             for actor in facts["clients"].values():
                 actor["alerts"] = [
                     {"severity": db.SEV_INFO, "epoch": actor["first_epoch"],
-                     "detail": "UA: some-scanner/1.0", "example": "/"},
+                     "kind": "synthetic-claim", "detail": "UA: some-scanner/1.0", "example": "/"},
                     {"severity": db.SEV_HIGH, "epoch": actor["first_epoch"],
-                     "detail": "carries a claim", "example": "/x"},
+                     "kind": "synthetic-claim", "detail": "carries a claim", "example": "/x"},
                 ]
                 break
 

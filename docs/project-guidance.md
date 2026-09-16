@@ -28,6 +28,8 @@
   Keep managed server waits interruptible: Python 3.10 on Windows can stall in
   subprocess's timed KeyboardInterrupt wait before forwarding cancellation.
   Preserve the polling wait and delayed-signal shutdown regression.
+- **Codi reminder:** after preview checks, verify the launcher process exits and
+  releases the checkout lock; a closed HTTP port alone does not prove it stopped.
 - **Codi reminder:** retry skipped files through `scan_retries`, retaining their
   original evidence root. A targeted retry must never advance a whole-engine
   retirement marker or clear findings for files it could not examine.

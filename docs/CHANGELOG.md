@@ -6,6 +6,15 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — case overview and evidence timeline
+
+- Restore separate case assessment and analysis coverage, a compact next action,
+  and software, database and evidence summaries.
+- Add a grouped evidence-event chart with confirmed/pending file and log counts,
+  the first-sign marker, keyboard navigation and exact timeline drill-downs.
+- Link whole-case IP and malware counts to persistent Findings filters; preserve
+  confirmed-only first-sign selection and reporting, with stale evidence labelled.
+
 ### Added — OpenCTI integration
 
 - Add reusable random organization pseudonyms, unique case IDs and structured

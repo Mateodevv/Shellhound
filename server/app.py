@@ -55,6 +55,7 @@ from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
                               counts as artifact_counts, review_progress, uri_path,
                               uri_targets, web_path)
 from server.chain import case_chain
+from server.casework import timeline_preview
 from server import first_sign
 from server import log_evidence, log_routes
 from server.finding_categories import categorized_art_sql, top_findings
@@ -1478,7 +1479,8 @@ def create_app(config: Config) -> FastAPI:
             "manual_log_sources": sum(s["format"] == "text" or not s["fresh"] for s in additional_sources),
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
-            "incident_summary": incident_summary.summarize(case_dir, chain),
+            "incident_summary": incident_summary.summarize(
+                case_dir, chain, ruleswitch.disabled_ids(config.workspace)),
             "chronology": {
                 "total_events": chain["total_events"],
                 "event_span": chain["event_span"],
@@ -1500,7 +1502,9 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/chain", dependencies=[auth])
     def chain(slug: str, lang: str = lang_dep, tz: str = tz_dep,
-              limit: int = 80, offset: int = 0, order: str = "asc", focus: str = ""):
+              limit: int = 80, offset: int = 0, order: str = "asc", focus: str = "",
+              scope: str = "confirmed", event_source: str = "",
+              from_epoch: int | None = None, to_epoch: int | None = None):
         """One page of the evidential chronology.
 
         Pagination is a presentation concern, not an evidence gap: the
@@ -1513,9 +1517,24 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(422, "offset must not be negative")
         if order not in ("asc", "desc"):
             raise HTTPException(422, "order must be asc or desc")
+        if scope not in ("confirmed", "pending", "all"):
+            raise HTTPException(422, "Unknown timeline scope")
+        if event_source not in ("", "log", "filesystem", "dump"):
+            raise HTTPException(422, "Unknown timeline source")
+        if from_epoch is not None and to_epoch is not None and from_epoch >= to_epoch:
+            raise HTTPException(422, "The timeline interval must end after it starts")
 
-        result = case_chain(case_dir_or_404(slug), lang, tz, event_cap=None)
-        complete = result["events"]
+        result = case_chain(case_dir_or_404(slug), lang, tz, event_cap=None,
+                            scope=scope, muted=ruleswitch.disabled_ids(config.workspace))
+        complete = timeline_preview.filter_events(result["events"], scope=scope,
+                    event_source=event_source, from_epoch=from_epoch, to_epoch=to_epoch)
+        result["total_events"] = len(complete)
+        result["event_span"] = {"first": complete[0]["at"] if complete else None,
+                                "last": complete[-1]["at"] if complete else None}
+        result.update(scope=scope, event_source=event_source,
+                      from_epoch=from_epoch, to_epoch=to_epoch)
+        if event_source or from_epoch is not None or to_epoch is not None:
+            result["undated"] = []
         if order == "desc":
             complete = list(reversed(complete))
         # Open the page containing the requested stable event, even when it
@@ -1533,6 +1552,13 @@ def create_app(config: Config) -> FastAPI:
         result["order"] = order
         result["truncated"] = offset + len(result["events"]) < len(complete)
         return result
+
+    @app.get("/api/cases/{slug}/timeline-preview", dependencies=[auth])
+    def preview_timeline(slug: str, bins: int = 24):
+        if not 1 <= bins <= 24:
+            raise HTTPException(422, "bins must be between 1 and 24")
+        return timeline_preview.summarize(case_dir_or_404(slug), bins=bins,
+                    muted=ruleswitch.disabled_ids(config.workspace))
 
     @app.get("/api/cases/{slug}/first-sign", dependencies=[auth])
     def get_first_sign(slug: str, lang: str = lang_dep, tz: str = tz_dep):
@@ -1702,7 +1728,7 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/findings", dependencies=[auth])
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
                       hide_source: str = "", source: str = "", kind: str = "",
-                      search: str = "", category: str = "",
+                      search: str = "", category: str = "", summary_group: str = "",
                       show_retired: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
@@ -1798,9 +1824,17 @@ def create_app(config: Config) -> FastAPI:
             muted_clause = (f"({MUTED_CLAUSE} "
                             f"OR (findings = 0 AND retired > 0))")
         where.append(muted_clause)
-        clause = "WHERE " + " AND ".join(where)
         conn = db.connect(case_dir)
         try:
+            if summary_group:
+                selected = incident_summary.group_artifacts(conn, summary_group, muted)
+                # A set-backed SQLite predicate avoids a variable for every
+                # artifact in a large case while filtering before pagination.
+                conn.create_function("incident_summary_member", 1,
+                                     lambda artifact: artifact in selected,
+                                     deterministic=True)
+                where.append("incident_summary_member(artifact)")
+            clause = "WHERE " + " AND ".join(where)
             total = conn.execute(
                 f"WITH art AS ({art}) SELECT count(*) FROM art {clause}",
                 params).fetchone()[0]

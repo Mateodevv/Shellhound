@@ -24,6 +24,7 @@ export function FirstSign({ slug, data, onTimeline, editing = false, onChoose }:
       qc.setQueryData(['first-sign', slug], value)
       void qc.invalidateQueries({ queryKey: ['dashboard', slug] })
       void qc.invalidateQueries({ queryKey: ['chain', slug] })
+      void qc.invalidateQueries({ queryKey: ['timeline-preview', slug] })
     },
   })
   const event = data?.event
@@ -94,6 +95,7 @@ export function FirstSignEditor({ slug, event, initialNote, onClose, onSaved }: 
       qc.setQueryData(['first-sign', slug], value)
       void qc.invalidateQueries({ queryKey: ['dashboard', slug] })
       void qc.invalidateQueries({ queryKey: ['chain', slug] })
+      void qc.invalidateQueries({ queryKey: ['timeline-preview', slug] })
       onSaved()
     },
   })
