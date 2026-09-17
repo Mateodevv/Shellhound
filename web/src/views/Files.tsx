@@ -18,6 +18,7 @@ import { FileViewer } from '../components/review/FileViewer'
 import { ArtifactWindow, type ArtifactStub } from '../components/review/ArtifactWindow'
 import { TriageFollowUp } from '../components/review/triage'
 import { useTriage } from '../components/review/useTriage'
+import { InfoDot } from '../components/ui/Tooltip'
 import { TraceWindow, type TraceMarks } from '../components/logview/TraceWindow'
 import type { ViewId } from '../App'
 
@@ -188,9 +189,9 @@ export function Files({ slug }: { slug: string; gotoView: (v: ViewId) => void })
       collected={triage.collected} onView={(path, line) => setViewing({ path, line })}
       onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
       onClose={() => { setArtifact(null); triage.clearCollected() }}
-      onSave={(state, note, classifications) => {
+      onSave={(state, note, classifications, shareContent) => {
         if (!artifact) return Promise.reject(new Error('No artifact selected'))
-        return triage.decideAsync([artifact.artifact], state, note, undefined, classifications)
+        return triage.decideAsync([artifact.artifact], state, note, undefined, classifications, shareContent)
       }} />
     <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
       onClose={() => setTraceIps(null)} />
@@ -277,7 +278,7 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
   const classify = useMutation({
     mutationFn: (classification: FileClassification) => post<FileReviewResult>(
       `/api/cases/${slug}/files/review`, {
-        path: file!.path, state: 'confirmed', classification, note: file?.review?.note ?? '',
+        path: file!.path, state: 'confirmed', classification, note: file?.review?.note ?? '', share_content: true,
       }),
     onSuccess: onRecorded,
   })
@@ -387,6 +388,7 @@ function FileReviewPanel({ slug, file, position, total, canPrevious, canNext,
 
       <section aria-label={tr('files.classification.title')} className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-3">
         <div className="flex flex-wrap items-center gap-2">
+          <InfoDot label={tr('artifact.classificationsHelp')} body={tr('artifact.classificationsHint')} hint={tr('backups.automaticContent')} />
           {(['webshell', 'dropper', 'backdoor', 'seo-spam', 'malware', 'phishing', 'injected-code', 'modified-file'] as const).map(value =>
             <Button key={value} aria-pressed={review?.state === 'confirmed' && review.classification === value}
               variant={review?.state === 'confirmed' && review.classification === value ? 'primary' : 'default'}

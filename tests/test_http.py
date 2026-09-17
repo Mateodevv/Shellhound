@@ -326,11 +326,13 @@ def tearDownModule():
 # A value of None means "not an API answer": the two below serve the built
 # interface and are asserted separately.
 GET_ROUTES = {
+    "/api/timezones": "",
     "/api/opencti/sectors": "",
     "/api/profile/geography": "",
     "/api/organizations": "",
     "/api/opencti/settings": "",
     "/api/cases/{slug}/opencti": "",
+    "/api/cases/{slug}/opencti/profile-changes": "",
     "/api/state": "",
     "/api/archives": "",
     "/api/settings": "",
@@ -352,12 +354,20 @@ GET_ROUTES = {
     "/api/cases/{slug}/jobs/{job_id}/skipped": "",
     "/api/cases/{slug}/activity": "",
     "/api/cases/{slug}/dashboard": "",
+    "/api/cases/{slug}/timeline-preview": "",
+    "/api/cases/{slug}/backups": "",
+    "/api/cases/{slug}/backups/compare": "site_id=1",
+    "/api/cases/{slug}/backups/history": "site_id=1&path=example.txt",
+    "/api/cases/{slug}/backups/artifact": "artifact={artifact}",
+    "/api/cases/{slug}/backups/diff": None,  # prepared copies covered in test_backup_api
     "/api/cases/{slug}/chain": "",
     "/api/cases/{slug}/first-sign": "",
     "/api/cases/{slug}/report.html": "",
     "/api/cases/{slug}/search": "q=203.0.113",
     "/api/cases/{slug}/findings": "",
     "/api/cases/{slug}/artifact": "artifact={artifact}",
+    "/api/cases/{slug}/artifact/accesses": f"ip={ATTACKER}",
+    "/api/cases/{slug}/artifact/finding-requests": None,  # client-specific fixture
     "/api/cases/{slug}/file": "path={file}",
     "/api/cases/{slug}/file-preview": "path={file}&line=1",
     "/api/cases/{slug}/hunt/runs": "",
@@ -381,6 +391,8 @@ GET_ROUTES = {
     "/api/cases/{slug}/cms": "",
     "/api/cases/{slug}/database": "",
     "/api/cases/{slug}/database/row": "finding_id={row_finding}&dump_id={row_dump}",
+    "/api/cases/{slug}/database/table-row": None,  # specific table ordinal
+    "/api/cases/{slug}/database/sql-preview": None,  # registered SQL source
     "/api/cases/{slug}/database/accounts.csv": "",
     "/": None,
     "/favicon.svg": None,
@@ -788,7 +800,7 @@ class EndpointSurfaceTests(unittest.TestCase):
 
     def test_the_api_refuses_a_request_without_the_token(self):
         for route, query in sorted(GET_ROUTES.items()):
-            if query is None:
+            if not route.startswith("/api/"):
                 continue
             with self.subTest(route=route):
                 status, _headers, _body = get(

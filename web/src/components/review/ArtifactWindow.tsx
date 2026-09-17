@@ -30,6 +30,7 @@ import { useGeo } from '../../geo'
 import { GroupedActions } from '../enrichment/OpenCti'
 import { ArtifactEnrichment } from '../enrichment/ArtifactEnrichment'
 import { FileReputation } from '../enrichment/FileReputation'
+import { ArtifactBackups } from '../backups/BackupHistory'
 import { SuccessfulAccesses, TableRecord } from './ReviewEvidence'
 import { LogEntryContext } from '../logview/LogEntryContext'
 import { LogFindingReview } from '../logview/LogFindingReview'
@@ -220,7 +221,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   roots: EvidenceRoot[]
   collected: TriageResult['collected']
   onClose: () => void
-  onSave: (state: Decision, note: string, classifications?: string[]) => Promise<TriageResult>
+  onSave: (state: Decision, note: string, classifications?: string[], shareContent?: boolean) => Promise<TriageResult>
   /** Present only when the caller owns a meaningful filtered Findings queue. */
   onSavedNext?: (result: TriageResult) => void
   onView: (path: string, line: number | null) => void
@@ -365,7 +366,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     try {
       // Removing the editor must not clear historical notes when a decision is saved.
       const note = ctx?.triage_note ?? ''
-      const result = kind === 'file' ? await onSave(draftDecision, note, classifications) : await onSave(draftDecision, note)
+      const result = kind === 'file'
+        ? draftDecision === 'reviewed' ? await onSave(draftDecision, note, classifications) : await onSave(draftDecision, note, classifications, true)
+        : await onSave(draftDecision, note)
       if (result.updated === 0) return
       setDraftDecision(null)
       if (intent === 'next' && onSavedNext) onSavedNext(result)
@@ -451,7 +454,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         {file.exists ? formatBytes(file.size) : tr('artifact.fileMissing')}
       </MetaCell>
       <MetaCell label={tr('artifact.modified')} explain={tr('artifact.mtime.hint')}>
-        <Tooltip title={absoluteTime(file.mtime)}><span>{relativeTime(file.mtime)}</span></Tooltip>
+        <Tooltip title={relativeTime(file.modified_at ?? file.mtime)}><time dateTime={file.modified_at ?? file.mtime}>
+          {file.modified_at ? formatLogTime(Date.parse(file.modified_at) / 1000, 0, { withZone: true, mode: 'utc' }) : absoluteTime(file.mtime)}
+        </time></Tooltip>
       </MetaCell>
       <MetaCell label={tr('artifact.cmsGuard')} explain={tr('field.cms_guard')}>
         {file.cms_guard == null ? '—' : file.cms_guard ? (
@@ -618,6 +623,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               data-artifact-scroll={kind === 'client' ? 'primary' : undefined} tabIndex={0}
               className={clsx('flex min-h-0 flex-col gap-3', kind === 'file' ? 'max-h-[42%] overflow-y-auto' : 'flex-1 overflow-y-auto')}>
               {tab === 'findings' && <FindingList key={artifactKey} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={kind === 'dump' ? sqlQuery.data : preview} loading={kind === 'dump' ? sqlQuery.isFetching : needsPreview && previewLoading} />}
+              {kind === 'file' && tab === 'findings' && <ArtifactBackups slug={slug} artifact={artifact.artifact} onOpenFile={path => onView(path, null)} />}
               {tab === 'findings' && ctx?.log_observations?.map(event => <details key={event.id} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary><div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onView} /></div></details>)}
               {tab === 'ips' && <Clients slug={slug} ips={ips} marks={marks} onTrace={onTrace} />}
               {tab === 'accesses' && <SuccessfulAccesses key={artifactKey} slug={slug} ip={artifact.artifact} onView={onView} />}
@@ -643,7 +649,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
         <div className="max-h-[48%] shrink-0 overflow-y-auto border-t border-[var(--line-strong)] bg-[var(--panel)] px-4 py-3 shadow-[0_-12px_30px_rgba(0,0,0,0.24)]">
           {kind === 'file' && <fieldset data-review-classifications className="mb-3" disabled={controlsDisabled}>
             <legend className="mb-2 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              {tr('artifact.classifications')} <InfoDot body={tr('artifact.classificationsHint')} />
+              {tr('artifact.classifications')} <InfoDot label={tr('artifact.classificationsHelp')} body={tr('artifact.classificationsHint')} hint={tr('backups.automaticContent')} />
             </legend>
             <div className="flex flex-wrap gap-1.5">
               {FILE_CLASSES.map(value => <button key={value} type="button" aria-pressed={classifications.includes(value)}
@@ -658,20 +664,15 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             </div>
           </fieldset>}
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-                {tr('artifact.decision.title')}
-              </div>
-              <div className="mt-0.5 text-[12.5px]">
-                {tr('artifact.question', { what: tr(KIND_THIS[kind] ?? 'artifact.this.generic') })}{' '}
-                <span className="font-semibold">{tr('artifact.question.tail')}</span>{' '}
-                <span className="text-[var(--muted)]">
-                  {tr('artifact.question.scope', {
-                    n: formatCount(findings.length),
-                    findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
-                  })}
-                </span>
-              </div>
+            <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              {tr('artifact.decision.title')}
+              <InfoDot label={tr('artifact.decisionHelp')} wide
+                title={`${tr('artifact.question', { what: tr(KIND_THIS[kind] ?? 'artifact.this.generic') })} ${tr('artifact.question.tail')}`}
+                body={tr('artifact.question.scope', {
+                  n: formatCount(findings.length),
+                  findings: plural(tr, findings.length, 'artifact.finding.one', 'artifact.finding.many'),
+                })}
+                hint={tr(kind === 'log_observation' ? 'logEvidence.triageExplain' : 'artifact.triage.explain')} />
             </div>
             {ctx?.triaged_at && (
               <span className="text-[11px] text-[var(--muted)]">
@@ -725,13 +726,13 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           </div>
 
 
-          <div role={contextError || saveError ? 'alert' : undefined}
+          {(contextError || saveError || !contextReady) && <div role={contextError || saveError ? 'alert' : 'status'}
             className={clsx('mt-1 text-[11px]',
             contextError || saveError ? 'text-[var(--danger-text)]' : 'text-[var(--muted)]')}>
             {saveError ? `${tr('artifact.saveError')}: ${saveError}`
               : contextError ? tr('artifact.contextError')
-                : contextReady ? tr(kind === 'log_observation' ? 'logEvidence.triageExplain' : 'artifact.triage.explain') : tr('artifact.contextLoading')}
-          </div>
+                : tr('artifact.contextLoading')}
+          </div>}
         </div>
       </div>
     </Modal>

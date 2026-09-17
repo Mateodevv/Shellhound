@@ -407,7 +407,7 @@ describe('deliberate decision submission', () => {
     await userEvent.keyboard('1')
     expect(onSave).not.toHaveBeenCalled()
     await userEvent.keyboard('{Enter}')
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith('confirmed', 'Existing historical note', ['webshell', 'dropper']))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('confirmed', 'Existing historical note', ['webshell', 'dropper'], true))
   })
 
   it('restores saved classifications including an empty selection and resets between artifacts', async () => {
@@ -533,6 +533,22 @@ describe('deliberate decision submission', () => {
 })
 
 describe('what the window states about the artifact', () => {
+  it('shows the recorded UTC modification time, with relative time available on focus', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-17T12:00:00Z'))
+    vi.mocked(api).mockResolvedValue(context({ file: {
+      exists: true, mtime: '2026-06-17T14:00:00', modified_at: '2026-06-17T12:00:00Z',
+    } }))
+    mount()
+    const stamp = await screen.findByText('2026-06-17 12:00:00 UTC')
+    expect(stamp).toHaveAttribute('datetime', '2026-06-17T12:00:00Z')
+    expect(screen.queryByText('3 months ago')).not.toBeInTheDocument()
+    await userEvent.click(stamp.parentElement!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('3 months ago')
+    const help = screen.getByLabelText('About review decisions')
+    await userEvent.click(help)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Skip for now keeps the artifact open')
+  })
+
   it('shows all available forensic file hashes in full', async () => {
     const artifactContext = context({
       file: {

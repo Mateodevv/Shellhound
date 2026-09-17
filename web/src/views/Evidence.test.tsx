@@ -70,10 +70,11 @@ describe('evidence registration', () => {
     const path = screen.getByPlaceholderText('or type a path directly')
     fireEvent.change(path, { target: { value: 'C:\\Synthetic\\Evidence' } })
     fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       '/api/cases/case-1/evidence',
-      { kind: 'webroot', path: 'C:\\Synthetic\\Evidence' },
+      { kind: 'webroot', path: 'C:\\Synthetic\\Evidence', source_timezone: 'auto' },
     ))
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Logs' }))

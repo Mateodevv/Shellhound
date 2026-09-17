@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from server import db, log_evidence
+from server import db, log_evidence, source_time
 from server.events import hub
 from server.jobs import CaseBusy
 
@@ -11,6 +11,11 @@ from server.jobs import CaseBusy
 def install(app, auth, case_dir_or_404, manager):
     class PreviewBody(BaseModel):
         path: str
+        timezone: str = 'auto'
+
+    @app.get('/api/timezones', dependencies=[auth])
+    def timezones():
+        return source_time.catalogue()
 
     class SettingsBody(BaseModel):
         format: str = "auto"
@@ -54,7 +59,7 @@ def install(app, auth, case_dir_or_404, manager):
         if not Path(body.path).exists():
             raise HTTPException(400, "Choose an existing log file or folder")
         try:
-            return log_evidence.preview(body.path)
+            return log_evidence.preview(body.path, source_time.validate(body.timezone))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
 

@@ -446,6 +446,9 @@ CREATE TABLE IF NOT EXISTS access_clips (
 );
 """
 
+from server.backup_schema import SCHEMA as BACKUP_SCHEMA
+SCHEMA += BACKUP_SCHEMA
+
 TRIAGE_STATES = ("new", "reviewed", "confirmed", "dismissed")
 
 # Severity levels. INFO is not a weaker finding -- it is CONTEXT: something
@@ -476,6 +479,7 @@ _ADDED_COLUMNS = {
     "iocs": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
     "ioc_links": [("source_uid", "TEXT NOT NULL DEFAULT ''")],
     "evidence": [
+        ("source_timezone", "TEXT NOT NULL DEFAULT 'auto'"),
         ("label", "TEXT DEFAULT ''"),
         ("files", "INTEGER DEFAULT 0"),
         ("bytes", "INTEGER DEFAULT 0"),
@@ -540,7 +544,7 @@ _ADDED_COLUMNS = {
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
-CASE_SCHEMA_VERSION = 19
+CASE_SCHEMA_VERSION = 20
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -548,6 +552,9 @@ CASE_SCHEMA_VERSION = 19
 # structure. These are the current sentinels whose absence is safe to repair
 # with the idempotent upgrade.
 _CURRENT_SCHEMA_TABLES = {
+    "backup_sites", "backup_snapshots", "backup_generations", "backup_files",
+    "content_files", "content_assessments", "content_assessment_history",
+    "content_inheritance", "content_exceptions",
     "log_sources", "log_observations",
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",

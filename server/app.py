@@ -227,6 +227,8 @@ def create_app(config: Config) -> FastAPI:
     # --- workspace / cases --------------------------------------------------
 
     log_routes.install(app, auth, case_dir_or_404, manager)
+    from server import backups, backup_routes, source_time
+    backup_routes.install(app, auth, case_dir_or_404, manager)
 
     @app.get("/api/state", dependencies=[auth])
     def state():
@@ -448,6 +450,7 @@ def create_app(config: Config) -> FastAPI:
     class NewEvidence(BaseModel):
         kind: str
         path: str
+        source_timezone: str = 'auto'
 
     @app.post("/api/cases/{slug}/evidence", dependencies=[auth])
     def add_evidence(slug: str, body: NewEvidence, lang: str = lang_dep):
@@ -457,18 +460,23 @@ def create_app(config: Config) -> FastAPI:
         path = str(Path(body.path).expanduser())
         if not os.path.exists(io_path(path)):
             raise HTTPException(400, _t(lang, "err.evidenceMissing", path=path))
+        try:
+            selected_zone = source_time.validate(body.source_timezone)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
         conn = db.connect(case_dir)
         try:
             conn.execute(
-                "INSERT OR IGNORE INTO evidence (kind, path, added) VALUES (?,?,?)",
-                (body.kind, path, db.now()))
+                "INSERT OR IGNORE INTO evidence (kind, path, added, source_timezone) VALUES (?,?,?,?)",
+                (body.kind, path, db.now(), selected_zone))
             conn.commit()
             return db.rows(conn, "SELECT * FROM evidence ORDER BY kind, path")
         finally:
             conn.close()
 
     class PatchEvidence(BaseModel):
-        label: str
+        label: str | None = None
+        source_timezone: str | None = None
 
     @app.patch("/api/cases/{slug}/evidence/{evidence_id}", dependencies=[auth])
     def rename_evidence(slug: str, evidence_id: int, body: PatchEvidence):
@@ -476,8 +484,16 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
-            conn.execute("UPDATE evidence SET label = ? WHERE id = ?",
-                         (body.label.strip()[:120], evidence_id))
+            if body.label is not None:
+                conn.execute("UPDATE evidence SET label = ? WHERE id = ?",
+                             (body.label.strip()[:120], evidence_id))
+            if body.source_timezone is not None:
+                try:
+                    selected_zone = source_time.validate(body.source_timezone)
+                except ValueError as error:
+                    raise HTTPException(400, str(error)) from None
+                conn.execute('UPDATE evidence SET source_timezone=? WHERE id=?',
+                             (selected_zone, evidence_id))
             conn.commit()
             return {"ok": True}
         finally:
@@ -1148,6 +1164,34 @@ def create_app(config: Config) -> FastAPI:
                 return log_evidence.build(case_dir, ctx)
             tasks.append(("log_events", run_additional_logs, kinds))
 
+        check = db.connect(case_dir)
+        try:
+            prepare_backups = bool(webroots and (check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone()
+                                                or check.execute('SELECT 1 FROM content_assessments LIMIT 1').fetchone()
+                                                or check.execute("SELECT 1 FROM ioc_assessments a JOIN iocs i ON i.id=a.ioc_id WHERE i.type IN ('file','hash') LIMIT 1").fetchone()))
+        finally:
+            check.close()
+        if prepare_backups:
+            dependencies = []
+            waiting = []
+            for engine, fn, kinds in tasks:
+                done = task_done.get(engine) or threading.Event()
+                dependencies.append(done)
+                task_done[engine] = done
+                def finish_backup_dependency(ctx, fn=fn, done=done):
+                    try:
+                        return fn(ctx)
+                    finally:
+                        done.set()
+                waiting.append((engine, finish_backup_dependency, kinds))
+            def prepare_comparison(ctx):
+                for done in dependencies:
+                    while not done.wait(0.1):
+                        if ctx.cancelled():
+                            return {'partial': True}
+                return backups.build(case_dir, ctx)
+            tasks = waiting + [('backup_comparison', prepare_comparison, ())]
+
         if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
         contexts = {kind: scan_retries.make_context(kind, webroots, mode, config.workspace)
@@ -1269,63 +1313,7 @@ def create_app(config: Config) -> FastAPI:
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
-            # Counted in ARTIFACTS -- the same unit the findings view works
-            # in. "14 Dateien" is the size of the job; the 119 rules that
-            # fired on them are the evidence, not the workload.
-            severity = {r["worst"]: r["n"] for r in db.rows(
-                conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
-                      f"FROM art WHERE triage != 'dismissed' GROUP BY worst")}
-            triage = artifact_counts(conn)["triage"]
-            confirmed_kinds = {r["artifact_kind"]: r["n"] for r in db.rows(
-                conn, f"WITH art AS ({ART_SQL}) SELECT artifact_kind, count(*) n "
-                      f"FROM art WHERE triage = 'confirmed' GROUP BY artifact_kind")}
-            confirmed_severity = {r["worst"]: r["n"] for r in db.rows(
-                conn, f"WITH art AS ({ART_SQL}) SELECT worst, count(*) n "
-                      f"FROM art WHERE triage = 'confirmed' GROUP BY worst")}
-            # A dashboard count without any names forces the analyst to leave
-            # the overview before it answers the basic question "what was
-            # confirmed?".  Keep the preview short, but balance it by entity
-            # type so a case with many client artifacts does not hide every
-            # confirmed file (or vice versa).
-            confirmed_artifacts = db.rows(conn, f"""
-                WITH art AS ({ART_SQL}), ranked AS (
-                    SELECT artifact, artifact_kind, worst,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY artifact_kind
-                               ORDER BY worst, lower(artifact)
-                           ) AS kind_rank
-                    FROM art WHERE triage = 'confirmed'
-                )
-                SELECT artifact, artifact_kind, worst FROM ranked
-                ORDER BY kind_rank,
-                         CASE artifact_kind
-                           WHEN 'file' THEN 0 WHEN 'table' THEN 1
-                           WHEN 'dump' THEN 2 ELSE 3 END,
-                         worst, lower(artifact)
-                LIMIT 6
-            """)
-            # The overview previews actual artifacts, not individual rule
-            # hits. Confirmed decisions lead; unresolved evidence follows by
-            # severity, balanced by type within each severity level.
-            notable_artifacts = db.rows(conn, f"""
-                WITH art AS ({ART_SQL}), ranked AS (
-                    SELECT artifact, artifact_kind, worst, triage,
-                           CASE triage WHEN 'confirmed' THEN 0 ELSE 1 END AS priority,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY CASE triage WHEN 'confirmed' THEN 0 ELSE 1 END,
-                                            worst, artifact_kind
-                               ORDER BY lower(artifact), artifact
-                           ) AS kind_rank
-                    FROM art WHERE triage != 'dismissed'
-                )
-                SELECT artifact, artifact_kind, worst, triage FROM ranked
-                ORDER BY priority, worst, kind_rank,
-                         CASE artifact_kind
-                           WHEN 'file' THEN 0 WHEN 'table' THEN 1
-                           WHEN 'dump' THEN 2 ELSE 3 END,
-                         lower(artifact), artifact
-                LIMIT 6
-            """)
+            review_summary = incident_summary.review_summary(conn, ruleswitch.disabled_ids(config.workspace))
             top_groups = top_findings(conn, ruleswitch.disabled_ids(config.workspace))
             has_hunt_runs = conn.execute(
                 "SELECT 1 FROM jobs WHERE kind='hunt' AND run_id!='' LIMIT 1").fetchone()
@@ -1461,11 +1449,7 @@ def create_app(config: Config) -> FastAPI:
                 analysis_complete = analysis_complete and bool(logindex.status(case_dir, current_access).get("fresh"))
 
         return {
-            "severity": severity, "triage": triage, "iocs": ioc_count,
-            "confirmed_kinds": confirmed_kinds,
-            "confirmed_severity": confirmed_severity,
-            "confirmed_artifacts": confirmed_artifacts,
-            "notable_artifacts": notable_artifacts,
+            **review_summary, "iocs": ioc_count,
             "top_findings": top_groups,
             "hunt_summary": hunt_summary,
             "system_summary": system_summary,
@@ -1729,7 +1713,7 @@ def create_app(config: Config) -> FastAPI:
     def findings_list(slug: str, hide_severity: str = "", hide_triage: str = "",
                       hide_source: str = "", source: str = "", kind: str = "",
                       search: str = "", category: str = "", summary_group: str = "",
-                      show_retired: bool = False,
+                      show_retired: bool = False, group_backups: bool = False,
                       limit: int = 500, offset: int = 0):
         """The artifact list with the findings of every artifact attached.
 
@@ -1864,17 +1848,66 @@ def create_app(config: Config) -> FastAPI:
                 f"WITH art AS ({art}) SELECT * FROM art {clause} "
                 f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
                 params + [min(limit, 2000), offset])
+            if group_backups:
+                from server.artifacts import grouped_review_artifacts
+                # A filter selects logical review units. Filtering individual
+                # copies first could conceal an independent contradictory
+                # decision or the observation that belongs to another backup.
+                all_rows = db.rows(conn, f'WITH art AS ({art}) SELECT * FROM art ORDER BY worst,artifact')
+                grouped_rows = grouped_review_artifacts(conn, all_rows)
+                source_members = {}
+                for finding in db.rows(conn, 'SELECT DISTINCT artifact,source FROM findings'):
+                    source_members.setdefault(finding['artifact'], set()).add(finding['source'])
+                search_members = None
+                if search:
+                    search_members = {row['artifact'] for row in db.rows(
+                        conn, "SELECT DISTINCT artifact FROM findings WHERE rule LIKE ? ESCAPE '\\' "
+                              "OR artifact LIKE ? ESCAPE '\\' OR evidence LIKE ? ESCAPE '\\'",
+                        (like, like, like))}
+                summary_members = incident_summary.group_artifacts(conn, summary_group, muted) if summary_group else None
+
+                def matches_group(row):
+                    members = set(row['backup_members'])
+                    member_sources = set().union(*(source_members.get(name, set()) for name in members))
+                    return not (
+                        str(row['worst']) in sevs or row['triage'] in triages
+                        or (sources and member_sources.issubset(sources))
+                        or (source and not member_sources.intersection(selected_sources))
+                        or (kind and row['artifact_kind'] != kind)
+                        or (category and row['category'] != category)
+                        or (search_members is not None and members.isdisjoint(search_members))
+                        or (summary_members is not None and members.isdisjoint(summary_members))
+                    )
+
+                selected_groups = [row for row in grouped_rows if matches_group(row)]
+                retired_hidden = sum(not row['review_visible'] and row['findings'] == 0 and row['retired'] > 0
+                                     for row in selected_groups)
+                muted_hidden = sum(not row['review_visible'] and not (row['findings'] == 0 and row['retired'] > 0)
+                                   for row in selected_groups)
+                visible_groups = [row for row in selected_groups if row['review_visible']
+                                  or (show_retired and row['findings'] == 0 and row['retired'] > 0)]
+                visible_groups.sort(key=lambda row: (row['worst'], row['artifact']))
+                total = len(visible_groups)
+                artifacts = visible_groups[max(0, offset):max(0, offset) + min(max(limit, 1), 2000)]
             for artifact in artifacts:
                 # These two columns support the shared category query only.
                 # Actual observations travel in the separate findings list.
                 artifact.pop("lead_rule", None)
                 artifact.pop("lead_source", None)
+                artifact.pop('review_visible', None)
                 if artifact["artifact_kind"] == "log_observation":
                     artifact["display_name"] = log_evidence.artifact_label(conn, artifact["artifact"])
             rows = []
             if artifacts:
-                names = [a["artifact"] for a in artifacts]
+                names = sorted({name for a in artifacts for name in
+                                (a.get('backup_members', [a['artifact']]) if group_backups else [a['artifact']])})
                 marks = ",".join("?" * len(names))
+                selection, selection_params = f'f.artifact IN ({marks})', names
+                if group_backups:
+                    selected_artifacts = set(names)
+                    conn.create_function('selected_review_member', 1,
+                                         lambda name: name in selected_artifacts, deterministic=True)
+                    selection, selection_params = 'selected_review_member(f.artifact)', []
                 # Retired rows travel too, marked: the interface shows them
                 # greyed with the date they were last seen, because a row
                 # that silently vanished from under a decision is exactly
@@ -1883,10 +1916,10 @@ def create_app(config: Config) -> FastAPI:
                                f"SELECT f.*, CASE WHEN {db.LIVE_PREDICATE} "
                                f"THEN 0 ELSE 1 END AS retired "
                                f"FROM findings f {db.RETIRE_JOIN} "
-                               f"WHERE f.artifact IN ({marks}) "
-                               f"ORDER BY retired, f.severity, f.artifact, "
-                               f"f.line, f.id", names)
-            counts = artifact_counts(conn)
+                                f"WHERE {selection} "
+                                f"ORDER BY retired, f.severity, f.artifact, "
+                                f"f.line, f.id", selection_params)
+            counts = artifact_counts(conn, group_backups=group_backups)
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
             # under a named webroot, not 90 characters of absolute path.
@@ -1938,15 +1971,15 @@ def create_app(config: Config) -> FastAPI:
         # _propagate). Off for undo and for applying a suggestion -- those
         # must not start a second wave.
         propagate: bool = True
+        share_content: bool = False
 
-    @app.post("/api/cases/{slug}/triage", dependencies=[auth])
-    def set_triage(slug: str, body: TriageBody):
+    def _set_triage(slug: str, body: TriageBody, connection=None):
         """Decide about artifacts. Every finding of an artifact carries the
         decision -- they are the evidence for it, not separate questions."""
         case_dir = case_dir_or_404(slug)
         if body.state not in db.TRIAGE_STATES:
             raise HTTPException(400, f"state must be one of {db.TRIAGE_STATES}")
-        conn = db.connect(case_dir)
+        conn = connection if connection is not None else db.connect(case_dir)
         collected = []
         retained_iocs = []
         try:
@@ -1961,6 +1994,21 @@ def create_app(config: Config) -> FastAPI:
             rows = db.rows(conn,
                            f"SELECT * FROM findings WHERE artifact IN ({marks}) "
                            f"ORDER BY severity, line", artifacts)
+            shared_hashes = []
+            if body.share_content and body.state in ('confirmed', 'dismissed', 'new'):
+                for artifact, before in previous.items():
+                    if before['artifact_kind'] == 'file':
+                        try:
+                            digest = backups.assess_content(conn, artifact, body.state, body.note or '', body.classifications)
+                            if digest:
+                                shared_hashes.append(digest)
+                        except (OSError, backups.BackupError) as error:
+                            raise HTTPException(409, str(error)) from None
+            elif not body.share_content:
+                for artifact in artifacts:
+                    inherited = db.one(conn, 'SELECT * FROM content_inheritance WHERE artifact=?', (artifact,))
+                    if inherited:
+                        conn.execute('INSERT OR IGNORE INTO content_exceptions VALUES (?,?)', (artifact, inherited['sha256']))
             if body.classifications is not None:
                 from server import file_classifications
                 try:
@@ -2023,12 +2071,26 @@ def create_app(config: Config) -> FastAPI:
                         conn, formerly_confirmed)
             conn.commit()
         finally:
-            conn.close()
+            if connection is None:
+                conn.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
+        content_result = {'applied': [], 'conflicts': []}
+        if shared_hashes:
+            content_result['job'] = manager.submit(case_dir, 'backup_comparison', lambda ctx: backups.build(case_dir, ctx, []))
         return {"updated": len(rows), "artifacts": len(artifacts),
                 "collected": _dedupe_collected(collected),
                 "linked": linked, "suggested": suggested,
-                "retained_iocs": retained_iocs}
+                "retained_iocs": retained_iocs, 'content_assessment': content_result}
+
+    @app.post('/api/cases/{slug}/triage', dependencies=[auth])
+    def set_triage(slug: str, body: TriageBody):
+        if not body.share_content:
+            return _set_triage(slug, body)
+        try:
+            with manager.case_operation(case_dir_or_404(slug)):
+                return _set_triage(slug, body)
+        except CaseBusy as error:
+            raise HTTPException(409, str(error)) from None
 
     class RemoveGeneratedIocsBody(BaseModel):
         ioc_ids: list[int] = []
@@ -3720,9 +3782,9 @@ def create_app(config: Config) -> FastAPI:
         state: str
         classification: str = "webshell"
         note: str = Field(default="", max_length=4000)
+        share_content: bool = False
 
-    @app.post("/api/cases/{slug}/files/review", dependencies=[auth])
-    def review_file(slug: str, body: FileReviewBody, lang: str = lang_dep):
+    def _review_file(slug: str, body: FileReviewBody, lang: str = lang_dep):
         """Record a manual file decision through the ordinary audit chain.
 
         The analyst observation is its own unmanaged finding: a later scanner
@@ -3765,22 +3827,30 @@ def create_app(config: Config) -> FastAPI:
                 conn.execute("INSERT INTO triage_events (artifact,artifact_kind,from_state,to_state,note,propagated,at) "
                              "VALUES (?,'file','confirmed','confirmed',?,0,?)",
                              (artifact, f"Classification changed to {body.classification}: {note}", db.now()))
-            conn.commit()
+            # The manual observation and decision share a transaction. A failed
+            # content verification must not leave behind an unapplied review.
+            result = _set_triage(slug, TriageBody(
+                artifacts=[artifact], state=body.state, note=note,
+                classifications=[body.classification] if body.state == 'confirmed' else None,
+                # This workflow cannot confirm linked IPs or requests silently.
+                propagate=False, share_content=body.share_content), connection=conn)
         finally:
             conn.close()
-
-        result = set_triage(slug, TriageBody(
-            artifacts=[artifact], state=body.state, note=note,
-            classifications=[body.classification] if body.state == 'confirmed' else None,
-            # The file-review panel has no propagation receipt. Keep the
-            # decision scoped to the file instead of silently deciding linked
-            # artifacts the analyst cannot see in that workflow.
-            propagate=False))
         return {**result, "review": {
             "state": body.state, "note": note,
             "classification": body.classification if body.state == "confirmed" else None,
             "at": db.now(),
         }}
+
+    @app.post('/api/cases/{slug}/files/review', dependencies=[auth])
+    def review_file(slug: str, body: FileReviewBody, lang: str = lang_dep):
+        if not body.share_content:
+            return _review_file(slug, body, lang)
+        try:
+            with manager.case_operation(case_dir_or_404(slug)):
+                return _review_file(slug, body, lang)
+        except CaseBusy as error:
+            raise HTTPException(409, str(error)) from None
 
     @app.post("/api/cases/{slug}/files/flag", dependencies=[auth])
     def flag_files(slug: str, body: FlagBody, lang: str = lang_dep):

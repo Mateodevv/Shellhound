@@ -94,8 +94,8 @@ export function TriageFollowUp({ t, roots, layer = 1, onOpenIocs }: {
         title={n?.linked.length
           ? plural(tr, n.linked.length, 'triage.alsoDecided.one', 'triage.alsoDecided.many',
                    { n: formatCount(n.linked.length) })
-          : plural(tr, n?.suggested.length ?? 0, 'triage.linkedFound.one', 'triage.linkedFound.many',
-                   { n: formatCount(n?.suggested.length ?? 0) })}
+          : n?.suggested.length ? plural(tr, n.suggested.length, 'triage.linkedFound.one', 'triage.linkedFound.many',
+                   { n: formatCount(n.suggested.length) }) : tr('backups.hashAssessment')}
         actions={
           <>
             {!!n?.suggested.length && (
@@ -129,6 +129,13 @@ export function TriageFollowUp({ t, roots, layer = 1, onOpenIocs }: {
         {!n?.linked.length && !!n?.suggested.length && (
           <>{tr('triage.linkedFound.body')}</>
         )}
+        {n?.content && <div className="mt-2 space-y-1">
+          {!!n.content.applied.length && <p>{tr('backups.appliedCopies', { n: n.content.applied.length })}</p>}
+          {!!n.content.job && <p>{tr('backups.checkingCopies')}</p>}
+          {n.content.incomplete && <p>{tr('backups.copiesIncomplete')}</p>}
+          {!n.content.job && !n.content.incomplete && !n.content.applied.length && !n.content.conflicts.length && <p>{tr('backups.noOtherCopies')}</p>}
+          {!!n.content.conflicts.length && <><p>{tr('backups.keptConflicts', { n: n.content.conflicts.length })}</p><ul>{n.content.conflicts.slice(0, 4).map(path => <li key={path} className="mono break-all text-xs">{relativeToRoot(path, roots).rel}</li>)}</ul></>}
+        </div>}
       </Toast>
     </>
   )

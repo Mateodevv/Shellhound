@@ -20,6 +20,9 @@ opens the local application. Initial setup needs internet access. Cases are
 stored in the configured workspace, separately from the source checkout.
 Choose **Generate Testcase** on the start screen to try a synthetic case.
 
+For several copies of one website, see [Comparing website backups](docs/website-backups.md).
+For source formats and time zones, see [Investigating log evidence](docs/log-evidence.md).
+
 ## Docker
 
 With Docker Compose installed, follow [local container setup](docs/containers.md)

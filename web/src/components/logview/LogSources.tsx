@@ -7,6 +7,7 @@ import { useT } from '../../i18n'
 import { Button, Card, Modal, Tag } from '../ui/ui'
 import { formatCount } from '../../format'
 import { useLogSources } from './useLogSources'
+import { SourceTimezone } from '../SourceTimezone'
 
 const inputClass = 'min-w-0 w-full rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 text-[13px] text-[var(--fg)]'
 
@@ -15,9 +16,9 @@ export function LogImport({ slug, path, onClose, onDone }: { slug: string; path:
   const qc = useQueryClient()
   const [label, setLabel] = useState('')
   const [page, setPage] = useState(0)
-  const [timezone, setTimezone] = useState('')
+  const [timezone, setTimezone] = useState('auto')
   const [formats, setFormats] = useState<Record<string, string>>({})
-  const preview = useQuery({ queryKey: ['log-preview', slug, path], queryFn: () => post<{ sources: (LogSource & { ambiguous: boolean; error: string })[]; formats: Record<string, string> }>(`/api/cases/${slug}/log-sources/preview`, { path }) })
+  const preview = useQuery({ queryKey: ['log-preview', slug, path, timezone], queryFn: () => post<{ sources: (LogSource & { ambiguous: boolean; error: string; time_examples?: { original: string; utc: string }[] })[]; formats: Record<string, string> }>(`/api/cases/${slug}/log-sources/preview`, { path, timezone }) })
   const save = useMutation({ mutationFn: () => post(`/api/cases/${slug}/log-sources/register`, { path, label, timezone, formats }),
     onSuccess: () => { qc.invalidateQueries(); onDone() } })
   return <Modal open onClose={onClose} title={tr('logEvidence.add')}>
@@ -26,7 +27,7 @@ export function LogImport({ slug, path, onClose, onDone }: { slug: string; path:
       <p className="mono break-all text-xs">{path}</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-xs">{tr('logEvidence.label')}<input className={inputClass} value={label} onChange={e => setLabel(e.target.value)} maxLength={120} /></label>
-        <label className="flex flex-col gap-1 text-xs">{tr('logEvidence.timezone')}<input className={inputClass} value={timezone} onChange={e => setTimezone(e.target.value)} placeholder="UTC / +02:00 / Europe/Berlin" /></label>
+        <SourceTimezone value={timezone} onChange={setTimezone} />
       </div>
       <p className="text-xs text-[var(--muted)]">{tr('logEvidence.timezoneHelp')}</p>
       {preview.isPending && <p role="status">{tr('logEvidence.discovering')}</p>}
@@ -36,6 +37,7 @@ export function LogImport({ slug, path, onClose, onDone }: { slug: string; path:
           <FileText size={17} className="shrink-0 text-[var(--muted)]" />
           <div className="min-w-0 flex-1"><p className="mono break-all text-xs">{source.path}</p>
             <p className="mt-1 text-xs text-[var(--review-text)]">{source.error || (source.ambiguous ? tr('logEvidence.ambiguous') : source.format === 'text' ? tr('logEvidence.manual') : '')}</p>
+            {source.time_examples?.map((example, index) => <p key={index} className="mt-1 text-[11px] text-[var(--muted)]">{tr('sourceTime.preview')}: {example.original} → {example.utc || tr('sourceTime.uncertain')}</p>)}
           </div>
           <select aria-label={tr('logEvidence.formatFor', { name: source.path })} className={`${inputClass} w-full sm:w-auto sm:max-w-full`}
             value={formats[source.id] ?? 'auto'} onChange={e => setFormats({ ...formats, [source.id]: e.target.value })}>
@@ -63,7 +65,7 @@ function SourceSettings({ slug, source, formats, onClose }: { slug: string; sour
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-xs">{tr('logEvidence.label')}<input className={inputClass} value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} /></label>
       <label className="flex flex-col gap-1 text-xs">{tr('logEvidence.format')}<select className={inputClass} value={draft.format} onChange={e => setDraft({ ...draft, format: e.target.value })}>{Object.entries(formats).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-      <label className="flex flex-col gap-1 text-xs">{tr('logEvidence.timezone')}<input className={inputClass} placeholder="UTC / +02:00 / Europe/Berlin" value={draft.timezone} onChange={e => setDraft({ ...draft, timezone: e.target.value })} /></label>
+      <SourceTimezone value={draft.timezone} onChange={timezone => setDraft({ ...draft, timezone })} />
     </div>
     <p className="text-xs text-[var(--muted)]">{tr('logEvidence.timezoneHelp')}</p>
     <details className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{tr('logEvidence.mapping')}</summary>

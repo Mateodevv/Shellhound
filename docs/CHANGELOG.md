@@ -6,8 +6,22 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — website backup comparison
+
+- Group identical website/path/content copies in Findings while retaining their
+  provenance, independent decisions, changed versions and timeline observations.
+- Add backup history, suspicious-first comparison, bounded text differences,
+  source checks, cancellation and retry in Evidence & analysis.
+- Reuse explicit SHA-256 content assessments across verified copies within a
+  case, with visible conflicts, occurrence-only exceptions and an audit trail.
+- Add recorded/UTC/local/named/unknown source time zones with log timestamp
+  previews; preserve filesystem epochs and uncertain dates.
+- See [Comparing website backups](website-backups.md) for the workflow.
+
 ### Fixed — evidence review cues
 
+- Simplify evidence review with automatic identical-copy assessment, compact
+  help icons, and exact modification timestamps with relative-time tooltips.
 - Add **V** to ask or refresh VirusTotal during file review, with a visible key
   hint and protection against typing, held keys, and duplicate pending requests.
 - Center the first-sign flag on its chart interval while retaining the exact date.
