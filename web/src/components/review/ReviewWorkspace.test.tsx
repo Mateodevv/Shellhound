@@ -37,10 +37,12 @@ it('uses an embedded Trace tab without a separate Requests tab or trace button',
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/trace', expect.objectContaining({ ips: ['192.0.2.1'] })))
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
 })
-it('shows enrichment only when configured and never silently collects an artifact', async () => {
+it('keeps OpenCTI file enrichment in the IOC Box without silently collecting an artifact', async () => {
   renderReview(base,true)
-  await userEvent.click(await screen.findByRole('tab', { name: 'Enrichment' }))
-  expect(screen.getByText(/Collect this artifact in the IOC Box first/)).toBeVisible()
+  expect(await screen.findByText(/Lookups use your configured OpenCTI/)).toBeVisible()
+  expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Ask VirusTotal' })).not.toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Open IOC Box' })).toBeVisible()
   expect(screen.getByText('selected marker')).toBeVisible()
   expect(post).not.toHaveBeenCalled()
 })

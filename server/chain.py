@@ -15,8 +15,8 @@ convenient in every case and wrong in every tenth, and a wrong chain is
 worse than none.
 
 Three rules follow from that:
-  1. CONFIRMED ARTIFACTS ONLY. The triage decides what belongs to the story,
-     not the detection.
+  1. CONFIRMED BY DEFAULT. Review previews may include pending artifacts,
+     explicitly labelled. They never become first-sign candidates.
   2. MEASURED TIME ONLY. A 2xx records a response for the file's path. File
      system timestamps are shown only for confirmed webshells and explicitly
      as metadata of the evidence copy: they do not prove deployment, upload
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from server import db
 from server import coverage
-from server.artifacts import ART_SQL, uri_targets, web_path
+from server.artifacts import ART_SQL, MUTED_CLAUSE, art_sql, uri_targets, web_path
 from server.engines import logindex
 from server.i18n import t
 from server.engines.fsutil import io_path
@@ -176,7 +176,8 @@ def clock_offsets(conn):
             "dump": int(raw.get("dump", 0) or 0)}
 
 
-def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
+def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP,
+               *, scope="confirmed", muted=()):
     """The chronology as data -- shared by the route and the exports: what
     the analyst reads in the dashboard has to be the same thing the case
     hands out.
@@ -186,12 +187,17 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
     conservative default cap so an unexpectedly large case cannot make an
     export unbounded.
     """
+    if scope not in ("confirmed", "pending", "all"):
+        raise ValueError("Unknown chronology scope")
+    # Build both states together when requested. Filtering events afterwards
+    # preserves rule-specific decisions within a legacy mixed-decision IP.
+    states = "'confirmed'" if scope == "confirmed" else "'confirmed','new','reviewed'"
     conn = db.connect(case_dir)
     try:
         confirmed = db.rows(
-            conn, f"WITH art AS ({ART_SQL}) SELECT artifact, artifact_kind,"
-                  f" worst, findings, triage_note FROM art "
-                  f"WHERE triage = 'confirmed'")
+            conn, f"WITH art AS ({art_sql(muted)}) SELECT artifact, artifact_kind,"
+                  f" worst, findings, triage, triage_note FROM art "
+                  f"WHERE triage IN ({states}) AND {MUTED_CLAUSE}")
         files = {r["artifact"]: web_path(conn, r["artifact"])
                  for r in confirmed if r["artifact_kind"] == "file"}
         from server.log_evidence import artifact_label
@@ -219,6 +225,13 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
             conn, f"SELECT DISTINCT f.artifact, f.rule_id FROM findings f {db.RETIRE_JOIN} "
                   "WHERE f.artifact_kind='client' AND f.source='logs' "
                   f"AND f.triage='confirmed' AND ({db.LIVE_PREDICATE})")}
+        alert_states = {(r["artifact"], r["rule_id"]): r["triage"] for r in db.rows(
+            conn, f"SELECT f.artifact, f.rule_id, CASE WHEN max(f.triage='confirmed') "
+                  f"THEN 'confirmed' ELSE 'pending' END AS triage FROM findings f {db.RETIRE_JOIN} "
+                  f"WHERE f.triage IN ({states}) AND ({db.LIVE_PREDICATE}) "
+                  f"GROUP BY f.artifact, f.rule_id")}
+        # Confirmed wins when older cases contain per-finding decisions.
+        alert_states.update({key: "confirmed" for key in confirmed_alerts})
         # Applied clusters retain the exact matching request window. A generic
         # confirmed IP is insufficient: this specific Hunt finding must still
         # be confirmed, including Findings' existing retirement semantics.
@@ -231,7 +244,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
              WHERE EXISTS (
                  SELECT 1 FROM findings f {db.RETIRE_JOIN}
                   WHERE f.artifact = c.client AND f.artifact_kind = 'client'
-                    AND f.triage = 'confirmed'
+                    AND f.triage IN ({states})
                     AND f.rule_id = 'hunt.' || a.pattern_id || '.v' || a.pattern_version
                     AND ({db.LIVE_PREDICATE}))
              ORDER BY c.first_epoch, c.id
@@ -319,8 +332,18 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
 
     def add(at, kind, title, detail, source, artifact="", artifact_kind="",
             ip="", severity=None, *, raw_time=None, epoch=None,
-            identity="", basis=None, eligible=False, selectable=False):
+            identity="", basis=None, eligible=False, selectable=False,
+            fresh=None, review_state=None):
         if at is None:
+            return
+        row = by_artifact.get(artifact, {})
+        decision = row.get("triage", "new")
+        review_state = review_state or ("context" if not artifact else
+                                       "confirmed" if decision == "confirmed" else "pending")
+        if fresh is None:
+            fresh = log_fresh if source == "log" else True
+        fresh = bool(fresh and row.get("findings", 0) > 0)
+        if scope == "confirmed" and artifact and review_state != "confirmed":
             return
         dated.add(artifact)
         events.append({"id": _event_id(source, kind, artifact, raw_time, identity),
@@ -335,16 +358,18 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                        # For clients and tables the two are identical.
                        "artifact_rel": files.get(artifact, observation_labels.get(artifact, artifact)),
                        "ip": ip, "severity": severity,
+                       "artifact_triage": decision, "review_state": review_state,
+                       "fresh": fresh,
                        "first_sign_basis": basis,
-                       "first_sign_eligible": bool(eligible and epoch is not None),
-                       "first_sign_selectable": bool(selectable and epoch is not None)})
+                       "first_sign_eligible": bool(eligible and fresh and review_state == "confirmed" and epoch is not None),
+                       "first_sign_selectable": bool(selectable and fresh and review_state == "confirmed" and epoch is not None)})
 
     # --- confirmed files: when was it there, when was it used ----------
     for artifact, rel in files.items():
         row = by_artifact[artifact]
         name = os.path.basename(rel)
         file_registered = _registered_file(artifact, evidence_roots)
-        if artifact in webshell_files:
+        if file_registered:
             metadata_detail = t(lang, "chain.file.fs.detail")
             file_times = filesystem_times(artifact)
             add(filesystem_at(file_times.get("created")), "datei-erstellt",
@@ -352,18 +377,20 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                 metadata_detail, "filesystem", artifact, "file",
                 severity=row["worst"], raw_time=file_times.get("created"),
                 epoch=file_times.get("created"), basis="filesystem",
-                eligible=file_registered, selectable=file_registered)
+                eligible=artifact in webshell_files, selectable=file_registered,
+                fresh=file_registered)
             add(filesystem_at(file_times.get("modified")), "datei-geaendert",
                 t(lang, "chain.file.fs.modified", name=name),
                 metadata_detail, "filesystem", artifact, "file",
                 severity=row["worst"], raw_time=file_times.get("modified"),
                 epoch=file_times.get("modified"), basis="filesystem",
-                eligible=file_registered, selectable=file_registered)
+                eligible=artifact in webshell_files, selectable=file_registered,
+                fresh=file_registered)
             add(filesystem_at(file_times.get("changed")), "metadaten-geaendert",
                 t(lang, "chain.file.fs.changed", name=name),
                 metadata_detail, "filesystem", artifact, "file",
                 severity=row["worst"], raw_time=file_times.get("changed"),
-                epoch=file_times.get("changed"))
+                epoch=file_times.get("changed"), fresh=file_registered)
         hits = [h for h in facts["files"].get(name, [])
                 if uri_targets(h["uri"], rel)]
         if not hits:
@@ -412,22 +439,31 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                 artifact, "file", severity=row["worst"], raw_time=first_ok,
                 epoch=first_ok + off_logs, basis="request",
                 eligible=log_fresh and file_registered and artifact in webshell_files,
-                selectable=log_fresh and file_registered)
-            events[-1]["activity_last_epoch"] = max((h["last_ok"] for h in hits if h.get("last_ok")), default=first_ok) + off_logs
+                selectable=log_fresh and file_registered, fresh=log_fresh and file_registered)
+            events[-1]["activity_last_epoch"] = max((h["last_ok"] for h in hits
+                if h.get("last_ok") and first_ok <= h["last_ok"] <= last_any), default=first_ok) + off_logs
+            last_ok = events[-1]["activity_last_epoch"] - off_logs
+            if last_ok != first_ok:
+                add(log_at(last_ok, tz), "letzter-zugriff",
+                    t(lang, "chain.file.lastOk", name=name), detail, "log",
+                    artifact, "file", severity=row["worst"], raw_time=last_ok,
+                    epoch=last_ok + off_logs, basis="request", identity="last_ok",
+                    selectable=log_fresh and file_registered, fresh=log_fresh and file_registered)
+                events[-1]["activity_boundary"] = "last_ok"
         else:
             add(log_at(first_any, tz), "versuch",
                 t(lang, "chain.file.firstTry", name=name),
                 t(lang, "chain.file.firstTry.detail", n=total), "log",
                 artifact, "file", severity=row["worst"], raw_time=first_any,
                 epoch=first_any + off_logs, basis="request",
-                selectable=log_fresh and file_registered)
-        if last_any and last_any != (min(oks) if oks else first_any):
+                selectable=log_fresh and file_registered, fresh=log_fresh and file_registered)
+        if last_any and last_any != (min(oks) if oks else first_any) and not (oks and last_any == last_ok):
             add(log_at(last_any, tz), "letzter-zugriff",
                 t(lang, "chain.file.last", name=name),
                 t(lang, "chain.file.last.detail", n=total, ok=ok_total),
                 "log", artifact, "file", severity=row["worst"], raw_time=last_any,
                 epoch=last_any + off_logs, basis="request",
-                selectable=log_fresh and file_registered)
+                selectable=log_fresh and file_registered, fresh=log_fresh and file_registered)
 
     # --- confirmed clients: first contact and the triggering calls -----
     for ip in clients:
@@ -450,6 +486,10 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
             example = example or a["example"]
             if a["severity"] >= db.SEV_INFO or not event_epoch:
                 continue
+            alert_key = (ip, "logs." + a.get("kind", ""))
+            alert_state = alert_states.get(alert_key)
+            if alert_state is None:
+                continue
             # The alert text itself comes from the index and is English: it
             # is stored and travels into findings and the archive.
             add(log_at(event_epoch, event_tz), "alarm", a["detail"],
@@ -458,7 +498,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
                 epoch=event_epoch + off_logs, identity=[a.get("kind", ""), example],
                 basis="request", eligible=(log_fresh and bool(verified_epoch)
                     and (ip, "logs." + a.get("kind", "")) in confirmed_alerts),
-                selectable=log_fresh and bool(verified_epoch))
+                selectable=log_fresh and bool(verified_epoch), review_state=alert_state)
         add(log_at(actor["last_epoch"], tz), "letzter-zugriff",
             t(lang, "chain.client.last", ip=ip), "", "log", ip, "client",
             ip, row["worst"], raw_time=actor["last_epoch"],
@@ -483,14 +523,26 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         hunt_seen.add(key)
         fresh = bool(log_fresh and index_fingerprint
                      and match["index_fingerprint"] == index_fingerprint)
+        review_state = alert_states.get((ip, 'hunt.' + match['pattern_id'] + '.v' + str(match['pattern_version'])), 'pending')
         add(log_at(epoch, match["tz"]), "hunt-match",
             t(lang, "chain.hunt.first", ip=ip),
             t(lang, "chain.hunt.detail", method=match["method"],
               uri=match["uri_pattern"], status=match["status_class"]),
             "log", ip, "client", ip, by_artifact[ip]["worst"],
             raw_time=epoch, epoch=epoch + off_logs, identity=identity,
-            basis="hunt_match", eligible=fresh, selectable=fresh)
+            basis="hunt_match", eligible=fresh, selectable=fresh, fresh=fresh,
+            review_state=review_state)
         events[-1]["activity_last_epoch"] = (match["last_epoch"] or epoch) + off_logs
+        last = match["last_epoch"] or epoch
+        if last != epoch:
+            add(log_at(last, match["tz"]), "hunt-match",
+                t(lang, "chain.hunt.last", ip=ip),
+                t(lang, "chain.hunt.detail", method=match["method"],
+                  uri=match["uri_pattern"], status=match["status_class"]),
+                "log", ip, "client", ip, by_artifact[ip]["worst"],
+                raw_time=last, epoch=last + off_logs, identity=identity,
+                basis="hunt_match", selectable=fresh, fresh=fresh,
+                review_state=review_state)
 
     # --- accounts created WITHIN THE PERIOD OF THE CASE -----------------
     # An account from 2019 does not belong in the chronology of an incident
@@ -520,8 +572,9 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
             if event["source"] == "log":
                 event["first_sign_eligible"] = False
                 event["first_sign_selectable"] = False
+                event["fresh"] = False
 
-    for event in log_evidence.timeline_events(case_dir):
+    for event in log_evidence.timeline_events(case_dir, artifacts=set(by_artifact)):
         epoch = event.get("epoch")
         if epoch is None:
             continue
@@ -534,7 +587,14 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
             f"{event['source_name']}:{event['line']} · {event['raw'][:300]}", "log",
             artifact, event.get("artifact_kind", "file"), event["ip"],
             raw_time=event["raw_time"], epoch=epoch + off_logs, identity=event["id"],
-            basis="log_observation", eligible=eligible, selectable=event["fresh"])
+            basis="log_observation", eligible=eligible, selectable=event["fresh"], fresh=event["fresh"])
+    # Stable observations count once, even when several findings or saved
+    # selections point to the same record. State changes never change its ID.
+    events = list({event["id"]: event for event in events}.values())
+    if scope == "pending":
+        events = [e for e in events if e["review_state"] == "pending"]
+        confirmed = [r for r in confirmed if r["triage"] in ("new", "reviewed")]
+        dated = {e["artifact"] for e in events}
     events.sort(key=lambda e: e["at"])
     total_events = len(events)
     event_span = {
@@ -619,7 +679,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP):
         "span": {"first": span_first, "last": span_last},
         "event_span": event_span,
         "events": events, "gaps": gaps, "undated": undated,
-        "confirmed": len(confirmed), "truncated": truncated,
+        "confirmed": sum(r["triage"] == "confirmed" for r in confirmed), "truncated": truncated,
         "total_events": total_events,
         "offsets": offsets,
         # What zone the times above are in. The events carry no offset of

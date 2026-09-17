@@ -334,6 +334,42 @@ describe('findings filter workbench', () => {
   })
 })
 
+describe('dashboard evidence-group links', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset().mockResolvedValue(RESPONSE)
+    history.replaceState(null, '', '/?case=case-1&view=findings&summary_group=ips&triage=confirmed&severity=0,1,2,3')
+  })
+
+  it('sends the group before the list limit, restores it on refresh, and removes only that filter', async () => {
+    const first = renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Evidence group: Linked IPs')).toBeVisible()
+    const params = new URL(vi.mocked(api).mock.calls[0][0], location.origin).searchParams
+    expect(params.get('summary_group')).toBe('ips')
+    expect(params.get('hide_triage')).toBe('new,reviewed,dismissed')
+    expect(params.get('limit')).toBe('2000')
+    first.unmount()
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Evidence group: Linked IPs')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove evidence group filter' }))
+    await waitFor(() => expect(new URL(location.href).searchParams.has('summary_group')).toBe(false))
+    expect(new URL(location.href).searchParams.get('triage')).toBe('confirmed')
+    await waitFor(() => expect(new URL(vi.mocked(api).mock.calls.at(-1)![0], location.origin).searchParams.has('summary_group')).toBe(false))
+  })
+
+  it('restores a different evidence group on browser Back and preserves it in saved views', async () => {
+    renderWithProviders(<Findings slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByText('Evidence group: Linked IPs')
+    history.replaceState(null, '', '/?case=case-1&view=findings&summary_group=malware_files&triage=new,reviewed')
+    fireEvent.popState(window)
+    expect(await screen.findByText('Evidence group: Webshells / malware')).toBeVisible()
+    vi.spyOn(window, 'prompt').mockReturnValue('Malware evidence')
+    fireEvent.click(screen.getByRole('button', { name: 'Save view' }))
+    const stored = JSON.parse(localStorage.getItem('shellhound.saved-findings.case-1') || '[]')
+    expect(stored[0].summaryGroup).toBe('malware_files')
+    await waitFor(() => expect(new URL(vi.mocked(api).mock.calls.at(-1)![0], location.origin).searchParams.get('summary_group')).toBe('malware_files'))
+  })
+})
+
 describe('save-and-next queue ordering', () => {
   const queue = [
     { artifact: 'first', triage: 'new' as const },

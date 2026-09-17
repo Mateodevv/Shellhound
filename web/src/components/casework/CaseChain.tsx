@@ -69,6 +69,13 @@ const SOURCE_BADGE: Record<ChainEvent['source'], string> = {
 
 const PAGE_SIZE = 80
 
+export interface TimelineFilters {
+  scope?: 'confirmed' | 'pending' | 'all'
+  event_source?: 'log' | 'filesystem' | 'dump'
+  from_epoch?: string
+  to_epoch?: string
+}
+
 /** The clock alignment: an offset per source, set by the analyst.
  *
  *  Log server and database server can run different clocks, and with
@@ -108,6 +115,7 @@ function ClockEditor({ slug, offsets, onClose }: {
       qc.invalidateQueries({ queryKey: ['chain'] })
       qc.invalidateQueries({ queryKey: ['first-sign'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['timeline-preview', slug] })
       onClose()
     },
   })
@@ -139,7 +147,7 @@ function ClockEditor({ slug, offsets, onClose }: {
   )
 }
 
-export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 0, onSelectFirstSign, showSummary = true }: {
+export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 0, onSelectFirstSign, showSummary = true, filters = {} }: {
   showSummary?: boolean
   slug: string
   /** Open an artifact -- the same view as from Findings. */
@@ -149,6 +157,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
   /** A deliberate repeat click should jump again; background refreshes should not. */
   focusRequest?: number
   onSelectFirstSign?: (event: ChainEvent) => void
+  filters?: TimelineFilters
 }) {
   // It stands open because it is the first paragraph of the report.
   // Collapsing is for the cases where one wants to compare the key figures
@@ -159,18 +168,20 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
   const [order, setOrder] = useState<'asc' | 'desc'>('asc')
   const focusedRow = useRef<HTMLDivElement>(null)
   const jumpedTo = useRef('')
+  const filterQuery = new URLSearchParams(Object.entries(filters).filter(([, value]) => value != null && value !== '')).toString()
   const chain = useInfiniteQuery({
-    queryKey: ['chain', slug, order, focusId],
+    queryKey: ['chain', slug, order, focusId, filterQuery],
     initialPageParam: null as number | null,
     queryFn: ({ pageParam }) => api<ChainData>(
       `/api/cases/${slug}/chain?limit=${PAGE_SIZE}&offset=${pageParam ?? 0}&order=${order}` +
+      (filterQuery ? `&${filterQuery}` : '') +
       (pageParam == null && focusId ? `&focus=${encodeURIComponent(focusId)}` : '')),
     getNextPageParam: (last) => last.truncated
       ? last.offset + last.events.length
       : undefined,
     getPreviousPageParam: (first) => first.offset > 0 ? Math.max(0, first.offset - PAGE_SIZE) : undefined,
   })
-  useEffect(() => { setOpen(true); jumpedTo.current = '' }, [slug, focusId, focusRequest, order])
+  useEffect(() => { setOpen(true); jumpedTo.current = '' }, [slug, focusId, focusRequest, order, filterQuery])
   useEffect(() => {
     if (!focusId || !focusedRow.current || jumpedTo.current === focusId) return
     focusedRow.current.scrollIntoView({ block: 'center', behavior: 'auto' })
@@ -183,7 +194,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
   </div>
   if (!data) return <p role="status" className="text-sm text-[var(--muted)]">{tr('common.loading')}</p>
   const events = chain.data?.pages.flatMap((page) => page.events) ?? []
-  if (!events.length && !data.gaps.length && !data.undated.length && !focusId) return null
+  if (!events.length && !data.gaps.length && !data.undated.length && !focusId) return <Card className="p-4 text-sm text-[var(--muted)]"><p role="status">{tr(filterQuery ? 'timeline.filter.empty' : 'chain.empty')}</p></Card>
 
   const first = data.event_span.first
   const last = data.event_span.last
@@ -205,7 +216,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
             hint={tr('chain.title.hint')} />
         </>
       }
-      sub={!showSummary ? undefined : events.length
+      sub={!showSummary ? undefined : filters.scope && filters.scope !== 'confirmed' ? tr('timeline.filter.filtered') : events.length
         ? tr('chain.sub', { n: total, confirmed: data.confirmed, span: formatSpan(first, last) })
         : tr('chain.empty')}
       right={
@@ -289,6 +300,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
           const highlighted = !!focusId && e.id === focusId
           const sameMoment = prev?.at === e.at && !highlighted
           const gapBefore = prev && Math.abs(e.at - prev.at) > 3600
+          const reviewState = !e.artifact || e.review_state === 'context' ? 'context' : e.review_state ?? 'confirmed'
           return (
             <div key={e.id ?? i} ref={highlighted ? focusedRow : undefined} tabIndex={highlighted ? -1 : undefined}
               aria-label={highlighted ? tr('firstSign.highlighted') : undefined}
@@ -300,7 +312,7 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
                   </span>
                 </div>
               )}
-              <div className="flex items-start gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)]">
+              <div className="flex flex-wrap items-start gap-3 border-b border-[var(--line-soft)] px-4 py-2 last:border-0 hover:bg-[var(--panel-2)] sm:flex-nowrap">
                 <Tooltip hint={tr(SOURCE_KEY[e.source])}>
                   <span className={clsx('mono w-[96px] shrink-0 pt-0.5 text-[11px] tabular',
                     sameMoment ? 'text-transparent' : 'text-[var(--muted)]')}>
@@ -316,22 +328,28 @@ export function CaseChain({ slug, onOpen, onTrace, focusId = '', focusRequest = 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     {e.ip && <IpFlag ip={e.ip} />}
-                    <span className="text-[13px] font-medium">{e.title}</span>
+                    <span className="break-words text-[13px] font-medium [overflow-wrap:anywhere]">{e.title}</span>
                     {e.severity != null && e.severity <= 1 && (
                       <SeverityBadge severity={e.severity} />
                     )}
                     <span className="rounded border border-[var(--line)] px-1 text-[10px] uppercase tracking-wide text-[var(--muted)]">
                       {tr(SOURCE_BADGE[e.source])}
                     </span>
+                    <span className={clsx('rounded px-1.5 py-0.5 text-[10px] font-semibold', reviewState === 'context'
+                      ? 'bg-[var(--panel-2)] text-[var(--muted)]' : reviewState === 'pending'
+                        ? 'bg-[var(--review-soft)] text-[var(--review-text)]' : 'bg-[var(--danger-soft)] text-[var(--danger-text)]')}>
+                      {tr(`timeline.event.${reviewState}`)}
+                    </span>
+                    {e.fresh === false && <span className="text-[10px] text-[var(--review-text)]">{tr('timeline.event.unavailable')}</span>}
                   </div>
                   {e.detail && (
-                    <div className="mt-0.5 text-[11.5px] leading-snug text-[var(--muted)]">
+                    <div className="mt-0.5 break-words text-[11.5px] leading-snug text-[var(--muted)] [overflow-wrap:anywhere]">
                       {e.detail}
                     </div>
                   )}
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
-                  {onSelectFirstSign && e.id && e.first_sign_selectable && (
+                <div className="ml-auto flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:ml-0 sm:w-auto">
+                  {onSelectFirstSign && e.id && e.first_sign_selectable && reviewState === 'confirmed' && e.fresh !== false && (
                     <Button variant="ghost" onClick={() => onSelectFirstSign(e)} title={tr('firstSign.selectEvent', { title: e.title })}>
                       <Flag size={12} />{tr('firstSign.useEvent')}
                     </Button>

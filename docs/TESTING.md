@@ -65,6 +65,32 @@ a physical power loss, or every CMS detection rule. Use the opt-in
 boundary. Do not infer remote acceptance from a successful HTTP submission:
 the saved receipt must reach complete with visible objects.
 
+## Dashboard evidence timeline
+
+Use the project `.venv`, with Windows `TEMP` and `TMP` set to the ignored
+`workspace/defender-safe-temp` directory:
+
+    python -m unittest tests.test_timeline_preview tests.test_incident_dashboard tests.test_incident_summary_groups tests.test_chain_boundaries tests.test_first_sign tests.test_first_sign_api tests.test_first_sign_log_anchors
+
+From `web/`:
+
+    npm test -- src/views/Dashboard.test.tsx src/views/Timeline.test.tsx src/views/Findings.test.tsx src/components/casework/EvidenceTimeline.test.tsx src/components/casework/CaseChain.test.tsx src/App.test.tsx
+    npm run build
+    npm run lint
+
+Harmless fixtures cover all four event series, stable identities, deduplication,
+decision transitions, stale indexes, unknown dates, clock corrections, neutral
+database context, bounded long ranges and filtering before pagination. Summary
+tests check explicit classifications and whole-case counts beyond list limits.
+Frontend tests check independent loading/errors, navigation, keyboard selectors,
+single-interval bar geometry, pending decisions and persistent filters.
+
+Use a disposable synthetic case for browser checks in both themes at laptop and
+narrow widths. Follow a chart segment and keyboard selector to the same event
+set, check summary links, refresh and Back, and inspect pending evidence. Stop
+the preview launcher afterward and verify its process exits and checkout lock
+is released; a closed HTTP port alone does not prove it stopped.
+
 ## First known sign of compromise
 
 Focused backend coverage (use the project `.venv`, with Windows `TEMP` and

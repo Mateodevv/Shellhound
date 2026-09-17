@@ -22,7 +22,7 @@ vi.mock('./views/Logs', () => ({ Logs: ({ gotoView }: { gotoView: (view: 'logs',
 describe('CaseNavigation', () => {
   it('switches log sections immediately and restores the previous section on Back', async () => {
     queryClient.clear()
-    history.replaceState(null, '', '/?case=log-case&view=logs&section=error')
+    history.replaceState(null, '', '/?case=log-case&view=logs&section=error&scope=pending&event_source=log&from_epoch=1&to_epoch=2&event=old-event&summary_group=ips')
     vi.mocked(api).mockImplementation(async path => {
       if (path.endsWith('/jobs')) return []
       if (path.endsWith('/dashboard')) return { triage: {} }
@@ -33,6 +33,9 @@ describe('CaseNavigation', () => {
     expect(await screen.findByText('Log section: error')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Open FTP section' }))
     expect(await screen.findByText('Log section: ftp')).toBeVisible()
+    for (const key of ['scope', 'event_source', 'from_epoch', 'to_epoch', 'event', 'summary_group']) {
+      expect(new URL(location.href).searchParams.has(key)).toBe(false)
+    }
     history.replaceState(null, '', '/?case=log-case&view=logs&section=error')
     fireEvent.popState(window)
     expect(await screen.findByText('Log section: error')).toBeVisible()
@@ -57,15 +60,18 @@ describe('CaseNavigation', () => {
   })
 
   it('shows every investigation destination without a disclosure control', () => {
+    const navigate = vi.fn()
     renderWithProviders(<CaseNavigation view="dashboard" openArtifacts={0}
-      onNavigate={vi.fn()} onSearch={vi.fn()} />)
+      onNavigate={navigate} onSearch={vi.fn()} />)
 
     expect(screen.getByText('Investigation tools')).toBeInTheDocument()
     for (const label of [
-      'Actors', 'Files', 'Database', 'CMS inventory', 'Pattern hunt', 'Logs',
+      'Actors', 'Files', 'Timeline', 'Database', 'CMS inventory', 'Pattern hunt', 'Logs',
     ]) {
       expect(screen.getByRole('button', { name: new RegExp(label, 'i') })).toBeInTheDocument()
     }
     expect(screen.queryByRole('button', { name: /^Investigation tools$/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline' }))
+    expect(navigate).toHaveBeenCalledWith('timeline')
   })
 })

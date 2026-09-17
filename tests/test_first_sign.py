@@ -250,9 +250,15 @@ class FirstSignTests(unittest.TestCase):
             with patch("server.chain.logindex.chain_facts", return_value={
                     "files": {}, "clients": {"192.0.2.7": actor}}):
                 self.assertEqual("undated", self.summary()["state"])
-                alarm = next(e for e in self.chain()["events"] if e["kind"] == "alarm")
-                self.assertTrue(alarm["first_sign_selectable"])
-                self.assertFalse(alarm["first_sign_eligible"])
+                self.assertFalse(any(e["kind"] == "alarm" for e in self.chain()["events"]))
+                candidates = [e for e in self.chain(scope="all")["events"] if e["kind"] == "alarm"]
+                if triage == "new":
+                    self.assertEqual(1, len(candidates))
+                    self.assertEqual("pending", candidates[0]["review_state"])
+                    self.assertFalse(candidates[0]["first_sign_selectable"])
+                    self.assertFalse(candidates[0]["first_sign_eligible"])
+                else:
+                    self.assertEqual([], candidates)
 
     def test_hunt_match_requires_exact_confirmed_finding_and_current_generation(self):
         conn = db.connect(self.case)

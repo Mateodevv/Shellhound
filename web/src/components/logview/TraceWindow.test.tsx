@@ -34,7 +34,8 @@ function installTraceResponses() {
 
 function traceBodies() {
   return vi.mocked(post).mock.calls.filter(([path]) => path.endsWith('/trace'))
-    .map(([, body]) => body as Record<string, unknown>)
+    // Match the JSON sent by post(), which omits optional undefined fields.
+    .map(([, body]) => JSON.parse(JSON.stringify(body)) as Record<string, unknown>)
 }
 
 describe('Pattern Hunt follow-up activity', () => {

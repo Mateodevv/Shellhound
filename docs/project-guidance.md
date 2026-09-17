@@ -14,6 +14,8 @@
   into an existing feature branch before editing. Preserve local changes and
   commits; never reset or discard work to make a pull succeed. These routine
   fetch/pull operations are authorized unless the user explicitly asks to work offline.
+- **Codi reminder:** keep accepted, unmerged UI changes in the local preview
+  during follow-up UI work; preserve their commits so PR scopes stay clear.
 - User startup: `Start-Shellhound.bat` on Windows, `./shellhound.sh` on Linux/macOS.
   Both delegate to `python -m server.main`; `--update` explicitly updates the current upstream.
 - Use the project `.venv` for Python checks. Focused startup checks:
@@ -28,6 +30,8 @@
   Keep managed server waits interruptible: Python 3.10 on Windows can stall in
   subprocess's timed KeyboardInterrupt wait before forwarding cancellation.
   Preserve the polling wait and delayed-signal shutdown regression.
+- **Codi reminder:** after preview checks, verify the launcher process exits and
+  releases the checkout lock; a closed HTTP port alone does not prove it stopped.
 - **Codi reminder:** retry skipped files through `scan_retries`, retaining their
   original evidence root. A targeted retry must never advance a whole-engine
   retirement marker or clear findings for files it could not examine.

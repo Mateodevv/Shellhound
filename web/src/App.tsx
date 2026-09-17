@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  ArrowLeft, Box, Bug, Database, FileCheck2, FolderCog, FolderTree,
+  ArrowLeft, Box, Bug, CalendarClock, Database, FileCheck2, FolderCog, FolderTree,
   LayoutDashboard, Puzzle, Radar, ScrollText, Search,
   SlidersHorizontal, Users,
 } from 'lucide-react'
@@ -45,10 +45,12 @@ export type ViewId =
   | 'dashboard' | 'findings' | 'actors' | 'logs' | 'hunt' | 'iocbox' | 'files' | 'cms'
   | 'database' | 'evidence' | 'timeline' | 'report' | 'settings'
 
-export type ViewParams = Partial<Record<
-  | 'severity' | 'triage' | 'source' | 'search' | 'category' | 'artifact' | 'retired' | 'request'
-  | 'actor' | 'section' | 'batch' | 'pattern' | 'next' | 'event', string
->>
+const VIEW_PARAM_KEYS = [
+  'severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'request',
+  'actor', 'section', 'batch', 'pattern', 'next', 'event',
+  'scope', 'event_source', 'from_epoch', 'to_epoch', 'summary_group',
+] as const
+export type ViewParams = Partial<Record<typeof VIEW_PARAM_KEYS[number], string>>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
 
 const VIEW_IDS = new Set<ViewId>([
@@ -67,6 +69,7 @@ const WORKFLOW_NAV: NavItem[] = [
 const INVESTIGATION_NAV: NavItem[] = [
   { id: 'actors', icon: Users },
   { id: 'files', icon: FolderTree },
+  { id: 'timeline', icon: CalendarClock },
   { id: 'database', icon: Database },
   { id: 'cms', icon: Puzzle },
   { id: 'hunt', icon: Radar },
@@ -211,15 +214,15 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
     const url = new URL(location.href)
     url.searchParams.set('case', slug)
     url.searchParams.set('view', next)
-    for (const key of [
-      'severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'request',
-      'actor', 'section', 'batch', 'pattern', 'next', 'event',
-    ] as const) {
+    for (const key of VIEW_PARAM_KEYS) {
       const value = params[key]
       if (value) url.searchParams.set(key, value)
       else url.searchParams.delete(key)
     }
     history.pushState(null, '', url)
+    // pushState does not fire popstate. Mounted filtered views must also
+    // restore deliberate links that lead back to the same view.
+    window.dispatchEvent(new Event('shellhound:navigated'))
     // Re-enter the Hunt overview even when its library/details are already
     // open. The case-scoped session preserves drafts and the selected run.
     if (next === 'hunt') setHuntVisit((visit) => visit + 1)
@@ -402,6 +405,9 @@ function Root() {
     const url = new URL(location.href)
     url.searchParams.set('case', s)
     url.searchParams.set('view', 'dashboard')
+    for (const key of VIEW_PARAM_KEYS) {
+      url.searchParams.delete(key)
+    }
     history.pushState(null, '', url)
   }
   const back = () => {
@@ -409,7 +415,7 @@ function Root() {
     const url = new URL(location.href)
     url.searchParams.delete('case')
     url.searchParams.delete('view')
-    for (const key of ['severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'batch', 'pattern', 'section', 'next']) {
+    for (const key of VIEW_PARAM_KEYS) {
       url.searchParams.delete(key)
     }
     history.pushState(null, '', url)

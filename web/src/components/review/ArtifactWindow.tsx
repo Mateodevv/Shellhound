@@ -29,6 +29,7 @@ import { useOpenCtiSettings } from '../../opencti'
 import { useGeo } from '../../geo'
 import { GroupedActions } from '../enrichment/OpenCti'
 import { ArtifactEnrichment } from '../enrichment/ArtifactEnrichment'
+import { FileReputation } from '../enrichment/FileReputation'
 import { SuccessfulAccesses, TableRecord } from './ReviewEvidence'
 import { LogEntryContext } from '../logview/LogEntryContext'
 import { LogFindingReview } from '../logview/LogFindingReview'
@@ -312,7 +313,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   shortcutRef.current = () => {}
   if (!artifact) return null
   const kind = artifact.artifact_kind
-  const canEnrich = (kind === 'file' || kind === 'client') && (conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, kind === 'client' ? 'ip' : 'file')))
+  const canEnrich = kind === 'client' && (conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'ip')))
   const tab = evidenceTab === 'enrichment' && !canEnrich ? (kind === 'client' ? 'trace' : 'findings') : evidenceTab
   const activeFinding = selectedFinding ?? ctx?.findings.find(item => item.retired !== 1) ?? ctx?.findings[0]
   const boxUrl = new URL(location.href)
@@ -329,6 +330,8 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const state: TriageState = ctx?.triage ?? artifact.triage
   const worst = ctx?.worst ?? artifact.worst
   const ips = ctx?.related_ips ?? []
+  const linkedIpAlert = ips.some(entry => entry.in_box)
+    ? { tone: 'danger' as const, title: tr('artifact.ipsInBox') } : {}
   const { root, rel } = relativeToRoot(artifact.artifact, roots)
   const rootName = root && (root.label?.trim() ||
     root.path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop())
@@ -462,7 +465,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       </MetaCell>
       {fileHashes.sha256 && <div className="border-t border-[var(--line)] pt-3"><div className="mb-2 flex items-center gap-2 text-[12px]">SHA-256<InfoDot body={tr('field.sha256')} /><CopyButton value={fileHashes.sha256} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{fileHashes.sha256}</p></div>}
       {(fileHashes.md5 || fileHashes.sha1) && <details className="mt-2 text-[12px]"><summary className="cursor-pointer text-[var(--muted)]">{tr('review.otherHashes')}</summary><div className="mt-2 space-y-2">{[['MD5', fileHashes.md5], ['SHA-1', fileHashes.sha1]].filter(([, value]) => value).map(([label, value]) => <div key={label}><div className="flex items-center gap-2">{label}<CopyButton value={value!} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{value}</p></div>)}</div></details>}
-
+      {fileHashes.sha256 && <FileReputation slug={slug} sha256={fileHashes.sha256} boxUrl={boxUrl.toString()} />}
     </div>
   )
 
@@ -599,9 +602,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             <div className="shrink-0 overflow-x-auto"><Tabs active={tab} onChange={setEvidenceTab} tabs={[
               ...(kind === 'client' ? [{ id: 'trace', label: tr('review.trace') }] : []),
               ...(kind !== 'client' ? [{ id: 'findings', label: `${tr('artifact.findingsTab')} · ${findings.length}` }] : []),
-              ...(kind === 'file' ? [{ id: 'ips', label: `${tr('artifact.ipsTab')} · ${ips.length}` }] : []),
+              ...(kind === 'file' ? [{ id: 'ips', label: `${tr('artifact.ipsTab')} · ${ips.length}`, ...linkedIpAlert }] : []),
               ...(kind === 'client' ? [{ id: 'accesses', label: tr('review.accesses') }, { id: 'agents', label: tr('review.agents') }] : []),
-              ...(kind === 'table' ? [{ id: 'ips', label: `${tr('review.related')} · ${ips.length}` }] : []),
+              ...(kind === 'table' ? [{ id: 'ips', label: `${tr('review.related')} · ${ips.length}`, ...linkedIpAlert }] : []),
               ...(kind === 'dump' ? [{ id: 'tables', label: `${tr('review.tables')} · ${ctx?.tables?.length ?? 0}` }] : []),
               ...(canEnrich ? [{ id: 'enrichment', label: tr('review.enrichment') }] : []),
             ]} /></div>

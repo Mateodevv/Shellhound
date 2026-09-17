@@ -6,6 +6,28 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — evidence review cues
+
+- Center the first-sign flag on its chart interval while retaining the exact date.
+- Highlight Linked IPs in red when a related address is already in the IOC box.
+
+### Changed — case overview and evidence timeline
+
+- Restore separate case assessment and analysis coverage, a compact next action,
+  and software, database and evidence summaries.
+- Add a grouped evidence-event chart with confirmed/pending file and log counts,
+  the first-sign marker, keyboard navigation and exact timeline drill-downs.
+- Link whole-case IP and malware counts to persistent Findings filters; preserve
+  confirmed-only first-sign selection and reporting, with stale evidence labelled.
+
+### Changed — file reputation during review
+
+- Replace the file review Enrichment tab with **Ask VirusTotal** beneath the
+  hashes, without requiring a finding decision or IOC collection first.
+- Show saved reports in place: green for zero malicious verdicts, red for a
+  positive count, neutral for unknown reports or missing counts. Preserve
+  explicit hash-only lookups and the existing OpenCTI routing.
+
 ### Added — OpenCTI integration
 
 - Add reusable random organization pseudonyms, unique case IDs and structured

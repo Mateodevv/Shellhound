@@ -147,6 +147,23 @@ describe('case review progress', () => {
 })
 
 describe('artifact context and classification', () => {
+  it.each(['file', 'table'] as const)('marks linked IPs already in this case IOC box and clears the cue after removal for %s', async kind => {
+    const ip = { ip: '192.0.2.1', why: 'Synthetic relation', hits: 3, ok_hits: 1, in_box: false }
+    const ctx = context({ kind, related_ips: [ip] })
+    vi.mocked(api).mockResolvedValue(ctx)
+    const { qc } = mount(stub({ artifact_kind: kind }))
+    const tab = await screen.findByRole('tab', { name: kind === 'file' ? 'Linked IPs · 1' : 'Related objects · 1' })
+    expect(tab).not.toHaveAttribute('title')
+    await act(async () => { qc.setQueryData(['artifact', 'case', SHELL], { ...ctx, related_ips: [{ ...ip, in_box: true }] }) })
+    expect(tab).toHaveAttribute('title', 'Includes IP addresses already in the IOC box.')
+    await userEvent.click(tab)
+    expect(tab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: 'Linked IPs' })).toBeVisible()
+    expect(tab).toHaveAttribute('title', 'Includes IP addresses already in the IOC box.')
+    await act(async () => { qc.setQueryData(['artifact', 'case', SHELL], ctx) })
+    await waitFor(() => expect(tab).not.toHaveAttribute('title'))
+  })
+
   it.each(['file', 'client', 'table', 'dump'] as const)('removes analyst reasoning for %s and preserves the stored note on save', async kind => {
     vi.mocked(api).mockResolvedValue(context({ kind, triage_note: 'Historical analyst note', file: kind === 'file' ? { exists: true } : undefined }))
     const { onSave } = mount(stub({ artifact_kind: kind }))
@@ -510,14 +527,17 @@ describe('what the window states about the artifact', () => {
     expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?') || url.includes('/file-preview?'))).toBe(false)
   })
 
-  it('offers the same Enrichment tab with direct keys when OpenCTI is absent', async () => {
+  it('offers a hash lookup in file context before collection, without an Enrichment tab', async () => {
     vi.mocked(api).mockImplementation(async path => {
       if (path === '/api/opencti/settings') return { configured: false } as never
       if (path === '/api/settings') return { services: { virustotal: { configured: true } } } as never
       return context({ file: { exists: true, sha256: 'a'.repeat(64) } }) as never
     })
     mount()
-    expect(await screen.findByRole('tab', { name: 'Enrichment' })).toBeVisible()
+    const lookup = await screen.findByRole('button', { name: 'Ask VirusTotal' })
+    expect(lookup).toBeEnabled()
+    expect(within(screen.getByRole('complementary')).getByRole('button', { name: 'Ask VirusTotal' })).toBe(lookup)
+    expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
 

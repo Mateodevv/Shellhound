@@ -59,7 +59,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     // so they kept showing the state from before the decision until
     // something else happened to refetch them.
     for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors',
-                       'chain', 'first-sign', 'browse', 'database', 'cms', 'file',
+                       'chain', 'first-sign', 'timeline-preview', 'browse', 'database', 'cms', 'file',
                        'search', 'opencti', 'log-events', 'log-context']) {
       qc.invalidateQueries({ queryKey: [key] })
     }

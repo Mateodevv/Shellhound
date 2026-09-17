@@ -18,6 +18,8 @@ const SCOPE_KEYS: Record<string, string[]> = {
   yara: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
   cms: ['dashboard', 'cms', 'jobs', 'case'],
   sqldb: ['dashboard', 'database', 'findings', 'jobs', 'case'],
+  log_events: ['dashboard', 'findings', 'jobs', 'case', 'chain', 'first-sign', 'timeline-preview'],
+  errorlog: ['dashboard', 'findings', 'jobs', 'case', 'chain', 'first-sign', 'timeline-preview'],
   findings: ['dashboard', 'findings', 'iocs', 'case'],
   iocs: ['iocs', 'dashboard', 'case', 'actors'],
   // a case was closed or imported: the landing view's lists changed
@@ -63,6 +65,7 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
             qc.invalidateQueries({ queryKey: ['first-sign'] })
             qc.invalidateQueries({ queryKey: ['jobs'] })
             qc.invalidateQueries({ queryKey: ['dashboard'] })
+            qc.invalidateQueries({ queryKey: ['timeline-preview'] })
             // Any engine may be the last prerequisite for an evidence
             // receipt, including YARA, SIGMA and error-log correlations.
             qc.invalidateQueries({ queryKey: ['case'] })
@@ -72,6 +75,7 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
           if (['findings', 'index_logs', 'webshell', 'yara', 'sqldb'].includes(event.scope)) {
             qc.invalidateQueries({ queryKey: ['chain'] })
             qc.invalidateQueries({ queryKey: ['first-sign'] })
+            qc.invalidateQueries({ queryKey: ['timeline-preview'] })
           }
           for (const key of SCOPE_KEYS[event.scope] ?? ['dashboard']) {
             qc.invalidateQueries({ queryKey: [key] })

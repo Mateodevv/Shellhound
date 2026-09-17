@@ -92,6 +92,7 @@ interface SavedView {
   search: string
   showRetired: boolean
   category?: string
+  summaryGroup?: string
 }
 
 interface DirectoryNode {
@@ -244,6 +245,8 @@ export function Findings({ slug, gotoView }: {
     () => new URLSearchParams(location.search).get('search') ?? '')
   const [category, setCategory] = useState(
     () => new URLSearchParams(location.search).get('category') ?? '')
+  const [summaryGroup, setSummaryGroup] = useState(
+    () => new URLSearchParams(location.search).get('summary_group') ?? '')
   const [selected, setSelected] = useState<Artifact | null>(null)
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -288,9 +291,10 @@ export function Findings({ slug, gotoView }: {
     if (showRetired) p.set('show_retired', '1')
     if (search) p.set('search', search)
     if (category) p.set('category', category)
+    if (summaryGroup) p.set('summary_group', summaryGroup)
     p.set('limit', String(LIST_CAP))
     return p.toString()
-  }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search, category])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search, category, summaryGroup])
 
   const { data } = useQuery({
     queryKey: ['findings', slug, query],
@@ -315,11 +319,14 @@ export function Findings({ slug, gotoView }: {
     else url.searchParams.delete('retired')
     if (category) url.searchParams.set('category', category)
     else url.searchParams.delete('category')
+    if (summaryGroup) url.searchParams.set('summary_group', summaryGroup)
+    else url.searchParams.delete('summary_group')
     history.replaceState(null, '', url)
-  }, [hiddenSeverity, hiddenTriage, hiddenSource, search, showRetired, category])
+  }, [hiddenSeverity, hiddenTriage, hiddenSource, search, showRetired, category, summaryGroup])
 
   useEffect(() => {
     const restore = () => {
+      if (new URLSearchParams(location.search).get('view') !== 'findings') return
       setHiddenSeverity(hiddenFromUrl('severity', ALL_SEVERITIES, ['3']))
       setHiddenTriage(hiddenFromUrl('triage', ALL_TRIAGE, ['dismissed']))
       setHiddenSource(hiddenFromUrl('source', ALL_SOURCES, []))
@@ -327,9 +334,14 @@ export function Findings({ slug, gotoView }: {
       setSearch(params.get('search') ?? '')
       setShowRetired(params.get('retired') === '1')
       setCategory(params.get('category') ?? '')
+      setSummaryGroup(params.get('summary_group') ?? '')
     }
     window.addEventListener('popstate', restore)
-    return () => window.removeEventListener('popstate', restore)
+    window.addEventListener('shellhound:navigated', restore)
+    return () => {
+      window.removeEventListener('popstate', restore)
+      window.removeEventListener('shellhound:navigated', restore)
+    }
   }, [])
 
   // Category -> evidence directory (for files) -> artifact -> observations.
@@ -426,6 +438,7 @@ export function Findings({ slug, gotoView }: {
       search,
       showRetired,
       ...(category ? { category } : {}),
+      ...(summaryGroup ? { summaryGroup } : {}),
     })
     next.sort((a, b) => a.name.localeCompare(b.name))
     setSavedViews(next)
@@ -441,6 +454,7 @@ export function Findings({ slug, gotoView }: {
     setSearch(view.search)
     setShowRetired(view.showRetired)
     setCategory(view.category ?? '')
+    setSummaryGroup(view.summaryGroup ?? '')
   }
 
   // An active filter means: the analyst is looking for something specific.
@@ -448,7 +462,7 @@ export function Findings({ slug, gotoView }: {
   // behind clicks. Without a filter the overview is the purpose -- categories
   // closed. Search and category links open the matching group automatically;
   // hiding severity or triage alone leaves the overview closed.
-  const filtering = Boolean(search || category)
+  const filtering = Boolean(search || category || summaryGroup)
 
   const items = useMemo(() => {
     const out: Item[] = []
@@ -608,7 +622,7 @@ export function Findings({ slug, gotoView }: {
 
   const counts = data?.counts
   const filterCount = hiddenSeverity.size + hiddenTriage.size + hiddenSource.size +
-    (showRetired ? 1 : 0) + (category ? 1 : 0)
+    (showRetired ? 1 : 0) + (category ? 1 : 0) + (summaryGroup ? 1 : 0)
   const categoryLabel = findingCategories(tr)[category]?.label ?? tr('findings.categoryFilter.unknown')
 
   return (
@@ -677,6 +691,15 @@ export function Findings({ slug, gotoView }: {
         </Button>
       </div>
 
+      {summaryGroup && <div className="flex flex-wrap items-center gap-2 text-[12px]">
+        <button type="button" onClick={() => setSummaryGroup('')}
+          aria-label={tr('findings.summaryFilter.remove')}
+          className="flex max-w-full cursor-pointer items-center gap-2 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent-soft)] px-3 py-2 font-semibold text-[var(--accent-text)] hover:border-[var(--accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
+          <ListFilter size={14} className="shrink-0" />
+          <span>{tr('findings.summaryFilter', { group: tr(`findings.summaryFilter.${summaryGroup}`) })}</span>
+          <X size={14} />
+        </button>
+      </div>}
       {category && (
         <div className="flex flex-wrap items-center gap-2 text-[12px]">
           <button type="button" onClick={() => setCategory('')}
@@ -724,6 +747,7 @@ export function Findings({ slug, gotoView }: {
                 setHiddenTriage(new Set())
                 setHiddenSource(new Set())
                 setCategory('')
+                setSummaryGroup('')
               }}>
               {tr('findings.showAll')}
             </button>
@@ -735,6 +759,7 @@ export function Findings({ slug, gotoView }: {
                 setSearch('')
                 setShowRetired(false)
                 setCategory('')
+                setSummaryGroup('')
               }}>
               {tr('findings.resetFilters')}
             </button>
