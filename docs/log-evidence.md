@@ -5,7 +5,9 @@
 1. Open **Evidence → Add logs** and choose one file or a folder. Mixed folders
    and rotated files are supported. The preview shows a detected format for
    each file; correct it if necessary. Give sources helpful names if needed.
-2. Set a source timezone only when you know it, then add the sources and choose
+2. Keep **Automatic / recorded time zone**, or choose UTC, this computer's named
+   zone, another named zone, or Unknown. Check the original-to-UTC preview;
+   the server may use a different zone from your computer. Add the sources and choose
    **Run analysis**. A webroot is optional. Discovery and indexing appear in
    Analysis runs; individual source results appear under Log sources.
 3. Open **Logs** and choose **Access**, **Web errors**, **FTP**, **Malware

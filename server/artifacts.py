@@ -113,20 +113,42 @@ ART_SQL = art_sql()
 MUTED_CLAUSE = "(active > 0 OR triage != 'new')"
 
 
-def counts(conn):
+def grouped_review_artifacts(conn, rows):
+    """Keep the full backing observations when copies become one review unit."""
+    from server.backups import group_rows
+    by_artifact = {row['artifact']: row for row in rows}
+    grouped = group_rows(conn, rows)
+    for row in grouped:
+        copies = [by_artifact[name] for name in row['backup_members']]
+        for field in ('active', 'findings', 'retired'):
+            row[field] = sum(copy[field] for copy in copies)
+        # An independently decided member remains visible even when all its
+        # rules have retired or been muted, including a conflicting decision.
+        row['review_visible'] = any(copy['active'] > 0 or copy['triage'] != 'new'
+                                    for copy in copies)
+    return grouped
+
+
+def counts(conn, group_backups=True):
     """The chip counts -- artifacts, not findings, in every dimension."""
+    rows = db.rows(conn, f'WITH art AS ({ART_SQL}) SELECT * FROM art')
+    grouped = grouped_review_artifacts(conn, rows) if group_backups else rows
     def group(column):
-        return {r[column]: r["n"] for r in db.rows(
-            conn, f"WITH art AS ({ART_SQL}) "
-                  f"SELECT {column}, count(*) n FROM art GROUP BY {column}")}
+        result = {}
+        for row in grouped:
+            result[row[column]] = result.get(row[column], 0) + 1
+        return result
     sev = group("worst")
     # Source is multi-valued at artifact level: the same file can be found
     # by a custom YARA rule and by the shipped scan. Counting the arbitrary
     # representative source from ART_SQL made the YARA facet read zero even
     # while the artifact drawer visibly named a YARA match.
-    sources = {r["source"]: r["n"] for r in db.rows(
-        conn, "SELECT source, count(DISTINCT artifact) n FROM findings "
-              "GROUP BY source")}
+    units = {name: row.get('version_key', row['artifact'])
+             for row in grouped for name in row.get('backup_members', [row['artifact']])}
+    source_units = {}
+    for row in db.rows(conn, 'SELECT DISTINCT source,artifact FROM findings'):
+        source_units.setdefault(row['source'], set()).add(units[row['artifact']])
+    sources = {source: len(members) for source, members in source_units.items()}
     return {"severity": sev, "triage": group("triage"),
             "source": sources,
             "total": sum(sev.values())}
@@ -138,10 +160,12 @@ def review_progress(conn, muted=()):
     Match the normal review scope: actionable artifacts still in Findings,
     including dismissed items. A temporary skip is not a final decision.
     """
-    states = {row["triage"]: row["n"] for row in db.rows(
-        conn, f"WITH art AS ({art_sql(muted)}) "
-              f"SELECT triage, count(*) n FROM art "
-              f"WHERE worst < 3 AND {MUTED_CLAUSE} GROUP BY triage")}
+    grouped = grouped_review_artifacts(conn, db.rows(conn, f'WITH art AS ({art_sql(muted)}) SELECT * FROM art'))
+    states = {}
+    for row in grouped:
+        if row['worst'] >= 3 or not row['review_visible']:
+            continue
+        states[row['triage']] = states.get(row['triage'], 0) + 1
     reviewed = states.get("confirmed", 0) + states.get("dismissed", 0)
     remaining = states.get("new", 0) + states.get("reviewed", 0)
     return {"total": reviewed + remaining, "reviewed": reviewed,

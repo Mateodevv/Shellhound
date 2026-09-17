@@ -28,6 +28,8 @@ classifiers = [
 ]
 
 dependencies = [
+  # Offline IANA timezone data, including Windows where the OS has no zoneinfo database.
+  "tzdata>=2025.2",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   # Country attribution from a LOCAL database. Without the package

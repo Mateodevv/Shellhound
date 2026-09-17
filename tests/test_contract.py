@@ -337,7 +337,7 @@ def _answers_for(shape):
 
     out = {"client": client, "slug": slug}
     out["case"] = _ok(client.get(base))
-    out["findings"] = _ok(client.get(f"{base}/findings"))
+    out["findings"] = _ok(client.get(f"{base}/findings", group_backups='true'))
     out["dashboard"] = _ok(client.get(f"{base}/dashboard"))
     out["coverage"] = _ok(client.get(f"{base}/coverage"))
     out["chain"] = _ok(client.get(f"{base}/chain"))

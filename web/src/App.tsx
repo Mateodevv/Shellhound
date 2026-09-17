@@ -49,6 +49,7 @@ const VIEW_PARAM_KEYS = [
   'severity', 'triage', 'source', 'search', 'category', 'artifact', 'retired', 'request',
   'actor', 'section', 'batch', 'pattern', 'next', 'event',
   'scope', 'event_source', 'from_epoch', 'to_epoch', 'summary_group',
+  'backup_site', 'backup_scope', 'backup_search', 'backup_path', 'backup_left', 'backup_right',
 ] as const
 export type ViewParams = Partial<Record<typeof VIEW_PARAM_KEYS[number], string>>
 export type Navigate = (view: ViewId, params?: ViewParams) => void
@@ -377,9 +378,9 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         onView={(path, line) => setPaletteViewing({ path, line })}
         onTrace={(ips, m) => { setPaletteMarks(m); setPaletteTrace(ips) }}
         onClose={() => { setPaletteArtifact(null); t.clearCollected() }}
-        onSave={(state, note, classifications) => {
+        onSave={(state, note, classifications, shareContent) => {
           if (!paletteArtifact) return Promise.reject(new Error('No artifact selected'))
-          return t.decideAsync([paletteArtifact.artifact], state, note, undefined, classifications)
+          return t.decideAsync([paletteArtifact.artifact], state, note, undefined, classifications, shareContent)
         }}
       />
       <TraceWindow slug={slug} ips={paletteTrace} layer={1} marks={paletteMarks}

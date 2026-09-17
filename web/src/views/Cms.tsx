@@ -219,9 +219,9 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={() => { setSelected(null); t.clearCollected() }}
-        onSave={(state, note, classifications) => {
+        onSave={(state, note, classifications, shareContent) => {
           if (!selected) return Promise.reject(new Error('No artifact selected'))
-          return t.decideAsync([selected.artifact], state, note, undefined, classifications)
+          return t.decideAsync([selected.artifact], state, note, undefined, classifications, shareContent)
         }}
       />
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}

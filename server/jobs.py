@@ -152,6 +152,9 @@ class JobManager:
                 stale = [r["id"] for r in db.rows(conn, "SELECT id FROM jobs "
                          "WHERE state IN ('running','queued')") if r["id"] not in active]
                 if stale:
+                    if any(r['id'] in stale for r in db.rows(conn, "SELECT id FROM jobs WHERE kind='backup_comparison'")):
+                        conn.execute("UPDATE backup_snapshots SET state='stale' WHERE state='indexing'")
+                        conn.execute("UPDATE backup_generations SET state='failed' WHERE state='building'")
                     conn.executemany("UPDATE jobs SET state='failed', finished=?, error=? WHERE id=?",
                                      ((db.now(), "Interrupted before completion. Run analysis again.", job_id)
                                       for job_id in stale))
@@ -172,6 +175,24 @@ class JobManager:
                scan_context=None):
         with self._schedule_lock:
             return self._submit(case_dir, kind, fn, evidence_id, run_id, on_cancel, scan_context)
+
+    def submit_after_current(self, case_dir, kind, fn):
+        """Queue behind existing work without blocking a request or racing reindexing.
+
+        All dependencies were submitted earlier to the FIFO executor. A later
+        task cannot become a dependency, so workers cannot wait on each other.
+        """
+        with self._schedule_lock:
+            with self._lock:
+                dependencies = [key[1] for key in self.live if key[0] == str(case_dir)]
+            def after(ctx):
+                while self.wait_for(case_dir, dependencies, timeout=0.2):
+                    if ctx.cancelled():
+                        return {'partial': True, 'cancelled': True}
+                if ctx.cancelled():
+                    return {'partial': True, 'cancelled': True}
+                return fn(ctx)
+            return self._submit(case_dir, kind, after)
 
     def _submit(self, case_dir, kind, fn, evidence_id=None, run_id="", on_cancel=None,
                 scan_context=None):

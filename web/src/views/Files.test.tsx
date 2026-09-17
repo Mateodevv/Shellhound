@@ -111,7 +111,7 @@ describe('manual file review workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: classification === 'malware' ? 'Malware' : classification === 'dropper' ? 'Dropper' : 'Webshell' }))
     await screen.findByText('Classification saved in the case.')
     expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases/case-1/files/review', {
-      path: FIRST_PATH, state: 'confirmed', classification, note: '',
+      path: FIRST_PATH, state: 'confirmed', classification, note: '', share_content: true,
     })
     expect(screen.getByText(classification === 'malware' ? 'Malware' : classification === 'dropper' ? 'Dropper' : 'Webshell')).toBeInTheDocument()
     expect(qc.getQueryState(['opencti', 'case-1'])?.isInvalidated).toBe(true)

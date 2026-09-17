@@ -67,9 +67,11 @@ it('previews and saves the analyst format correction and source timezone', async
   vi.mocked(post).mockImplementation(async url => url.endsWith('/preview') ? { sources: [{ ...source, format: 'text', ambiguous: true }], formats } : {})
   const done = vi.fn()
   renderWithProviders(<LogImport slug="demo" path="C:/Sample logs" onClose={vi.fn()} onDone={done} />)
-  const select = await screen.findByRole('combobox')
+  const select = await screen.findByRole('combobox', { name: /Format for/ })
   fireEvent.change(select, { target: { value: 'xferlog' } })
-  fireEvent.change(screen.getByLabelText('Source timezone (when not recorded)'), { target: { value: '+02:00' } })
+  fireEvent.change(screen.getByLabelText('Source timezone (when not recorded)'), { target: { value: 'custom' } })
+  fireEvent.change(screen.getByLabelText('Choose time zone…'), { target: { value: '+02:00' } })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add these log sources' })).toBeEnabled())
   fireEvent.click(screen.getByRole('button', { name: 'Add these log sources' }))
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/demo/log-sources/register', {
     path: 'C:/Sample logs', label: '', timezone: '+02:00', formats: { [source.id]: 'xferlog' },

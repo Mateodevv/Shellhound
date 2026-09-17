@@ -201,9 +201,9 @@ export function Timeline({ slug, gotoView }: { slug: string; gotoView: Navigate 
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
         onClose={() => { setSelected(null); triage.clearCollected() }}
-        onSave={(state, note, classifications) => {
+        onSave={(state, note, classifications, shareContent) => {
           if (!selected) return Promise.reject(new Error('No artifact selected'))
-          return triage.decideAsync([selected.artifact], state, note, undefined, classifications)
+          return triage.decideAsync([selected.artifact], state, note, undefined, classifications, shareContent)
         }} />
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}
         onClose={() => setTraceIps(null)} />

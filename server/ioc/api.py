@@ -56,6 +56,17 @@ def register(app, resolve_case, auth, hub):
             if write:
                 conn.commit()
                 hub.publish({"type": "invalidate", "scope": "iocs"})
+                # Only newly recorded explicit file/hash assessments seed content
+                # reuse. Default IOC badges never become analyst decisions.
+                from server import backups
+                before = conn.total_changes
+                backups.seed_ioc_assessments(conn)
+                changed = conn.total_changes != before
+                conn.commit()
+                if changed:
+                    from server.jobs import manager
+                    case = resolve_case(slug)
+                    manager.submit_after_current(case, 'backup_comparison', lambda ctx: backups.build(case, ctx, []))
             return result
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from None

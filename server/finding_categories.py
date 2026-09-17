@@ -4,7 +4,7 @@ An artifact belongs to the category of its leading observation: current rows
 first, then severity, line and ID. Supporting detections stay attached to it.
 """
 from server import db
-from server.artifacts import MUTED_CLAUSE, art_sql
+from server.artifacts import art_sql
 
 
 CATEGORY_ORDER = (
@@ -70,65 +70,38 @@ def categorized_art_sql(muted=()):
 
 
 def top_findings(conn, muted=()):
-    """Three whole-case groups, with bounded output even for large cases."""
-    # An analyst's confirmation outranks an informational rule's severity.
-    eligible = f"triage != 'dismissed' AND {MUTED_CLAUSE}"
-    summary = conn.execute(f"""
-        WITH art AS ({art_sql(muted)})
-        SELECT COALESCE(SUM(CASE WHEN {eligible} AND worst = 3
-                                    AND triage != 'confirmed' THEN 1 ELSE 0 END), 0)
-                   AS informational,
-               COALESCE(SUM(CASE WHEN triage != 'dismissed' AND NOT {MUTED_CLAUSE}
-                                    THEN 1 ELSE 0 END), 0) AS hidden
-        FROM art
-    """).fetchone()
-    order = "CASE category " + " ".join(
-        f"WHEN {_literal(category)} THEN {index}"
-        for index, category in enumerate(CATEGORY_ORDER)
-    ) + " ELSE 99 END"
-    rows = db.rows(conn, f"""
-        WITH art AS ({categorized_art_sql(muted)}), eligible AS (
-            SELECT * FROM art
-            WHERE {eligible} AND (worst < 3 OR triage = 'confirmed')
-        ), grouped AS (
-            SELECT category, MIN(worst) AS worst,
-                   SUM(triage = 'confirmed') AS confirmed,
-                   SUM(triage IN ('new', 'reviewed')) AS awaiting_review,
-                   SUM(findings = 0 AND retired > 0) AS historical,
-                   SUM(artifact_kind = 'file') AS files,
-                   SUM(artifact_kind = 'client') AS clients,
-                   SUM(artifact_kind = 'table') AS tables,
-                   SUM(artifact_kind = 'dump') AS dumps,
-                   SUM(artifact_kind = 'log_observation') AS log_observations
-            FROM eligible GROUP BY category
-        ), examples AS (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY category
-                ORDER BY CASE triage WHEN 'confirmed' THEN 0 ELSE 1 END,
-                         worst, lower(artifact), artifact
-            ) AS position FROM eligible
-        )
-        SELECT grouped.*, example.artifact, example.artifact_kind,
-               example.lead_rule AS rule, example.lead_source AS source,
-               COUNT(*) OVER () AS total_groups
-        FROM grouped JOIN examples example USING (category)
-        WHERE example.position = 1
-        ORDER BY CASE WHEN grouped.confirmed > 0 THEN 0 ELSE 1 END,
-                 grouped.worst, {order}
-        LIMIT 3
-    """)
-    groups = []
+    """Three whole-case categories counted in the same review units as Findings."""
+    from server.artifacts import grouped_review_artifacts
+    from server.log_evidence import artifact_label
+    rows = grouped_review_artifacts(conn, db.rows(
+        conn, f'WITH art AS ({categorized_art_sql(muted)}) SELECT * FROM art'))
+    informational = sum(row['triage'] != 'dismissed' and row['review_visible']
+                        and row['worst'] == 3 and row['triage'] != 'confirmed' for row in rows)
+    hidden = sum(row['triage'] != 'dismissed' and not row['review_visible'] for row in rows)
+    categories = {}
     for row in rows:
-        from server.log_evidence import artifact_label
-        display_name = artifact_label(conn, row["artifact"]) if row["artifact_kind"] == "log_observation" else ""
+        if (row['triage'] == 'dismissed' or not row['review_visible']
+                or (row['worst'] == 3 and row['triage'] != 'confirmed')):
+            continue
+        categories.setdefault(row['category'], []).append(row)
+    groups = []
+    for category, members in categories.items():
+        example = min(members, key=lambda row: (row['triage'] != 'confirmed', row['worst'],
+                                               row['artifact'].lower(), row['artifact']))
+        kinds = {}
+        for row in members:
+            kinds[row['artifact_kind']] = kinds.get(row['artifact_kind'], 0) + 1
+        display_name = artifact_label(conn, example['artifact']) if example['artifact_kind'] == 'log_observation' else ''
         groups.append({
-            "category": row["category"], "worst": row["worst"],
-            "confirmed": row["confirmed"], "awaiting_review": row["awaiting_review"],
-            "historical": row["historical"],
-            "kinds": {kind: row[column] for kind, column in (
-                ("file", "files"), ("client", "clients"), ("table", "tables"),
-                ("dump", "dumps"), ("log_observation", "log_observations")) if row[column]},
-            "example": {**{key: row[key] for key in ("artifact", "artifact_kind", "rule", "source")}, "display_name": display_name},
+            'category': category, 'worst': min(row['worst'] for row in members),
+            'confirmed': sum(row['triage'] == 'confirmed' for row in members),
+            'awaiting_review': sum(row['triage'] in ('new', 'reviewed') for row in members),
+            'historical': sum(row['findings'] == 0 and row['retired'] > 0 for row in members),
+            'kinds': kinds,
+            'example': {'artifact': example['artifact'], 'artifact_kind': example['artifact_kind'],
+                        'rule': example['lead_rule'], 'source': example['lead_source'], 'display_name': display_name},
         })
-    return {"groups": groups, "total_groups": rows[0]["total_groups"] if rows else 0,
-            "informational": summary["informational"], "hidden": summary["hidden"]}
+    order = {category: index for index, category in enumerate(CATEGORY_ORDER)}
+    groups.sort(key=lambda group: (not group['confirmed'], group['worst'], order.get(group['category'], 99)))
+    return {'groups': groups[:3], 'total_groups': len(groups),
+            'informational': informational, 'hidden': hidden}

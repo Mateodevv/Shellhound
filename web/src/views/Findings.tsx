@@ -36,7 +36,7 @@ import {
 } from '../format'
 import {
   Button, Card, EmptyState, Modal, SearchInput, SeverityBadge,
-  Toast, TriageBadge,
+  Toast, TriageBadge, Tag,
 } from '../components/ui/ui'
 import { InfoDot, Tooltip } from '../components/ui/Tooltip'
 import { FileViewer } from '../components/review/FileViewer'
@@ -293,6 +293,7 @@ export function Findings({ slug, gotoView }: {
     if (category) p.set('category', category)
     if (summaryGroup) p.set('summary_group', summaryGroup)
     p.set('limit', String(LIST_CAP))
+    p.set('group_backups', 'true')
     return p.toString()
   }, [hiddenSeverity, hiddenTriage, hiddenSource, showRetired, search, category, summaryGroup])
 
@@ -355,7 +356,7 @@ export function Findings({ slug, gotoView }: {
     const byCat = new Map<string, CatGroup>()
     const categoryLabels = findingCategories(tr)
     for (const row of data?.artifacts ?? []) {
-      const items = byArtifact.get(row.artifact) ?? []
+      const items = (row.backup_members ?? [row.artifact]).flatMap(path => byArtifact.get(path) ?? [])
       const lead = items[0]
       // The server assigns one primary category from the complete artifact,
       // before filtering or limiting its findings. Keep the fallback for
@@ -1082,6 +1083,8 @@ export function Findings({ slug, gotoView }: {
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <ArtifactName artifact={a.artifact} kind={a.artifact_kind} roots={roots} label={a.display_name} />
+                        {(a.backup_count ?? 0) > 1 && <Tag>{tr('backups.seen', { n: a.backup_count! })}</Tag>}
+                        {a.review_conflict && <Tag tone="warn">{tr('backups.conflict')}</Tag>}
                         <TriageBadge state={a.triage} label={tr(`triage.${a.triage}`)} />
                         {/* A decided thing that was then not seen again must
                             say so right here -- a confirmed shell that is no
@@ -1175,9 +1178,9 @@ export function Findings({ slug, gotoView }: {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, m) => { setTraceMarks(m); setTraceIps(ips) }}
         onClose={closeArtifact}
-        onSave={(state, note, classifications) => {
+        onSave={(state, note, classifications, shareContent) => {
           if (!selected) return Promise.reject(new Error('No artifact selected'))
-          return t.decideAsync([selected.artifact], state, note, undefined, classifications)
+          return t.decideAsync([selected.artifact], state, note, undefined, classifications, shareContent)
         }}
         onSavedNext={(result) => {
           if (!selected || result.updated === 0) return

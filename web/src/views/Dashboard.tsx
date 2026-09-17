@@ -78,6 +78,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
   const evidence = caseInfo.evidence_items.filter((item) => item.kind !== 'reference')
   const hasEvidence = evidence.length > 0
   const confirmed = data.triage.confirmed ?? 0
+  const hasConfirmed = data.has_confirmed_findings ?? confirmed > 0
   const outstanding = (data.triage.new ?? 0) + (data.triage.reviewed ?? 0)
   const hunt = data.hunt_summary?.matched ? data.hunt_summary : null
   const dismissed = data.triage.dismissed ?? 0
@@ -89,14 +90,14 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
     && evidence.every((item) => item.scanned_at)
     && Boolean(primary && ['triage', 'warnings', 'report'].includes(primary.id))
   const failed = !active && !analysisComplete && hasFailedCheck(evidence, jobs)
-  const verdict = confirmed > 0 ? 'confirmed' : outstanding > 0 ? 'inProgress'
+  const verdict = hasConfirmed ? 'confirmed' : outstanding > 0 ? 'inProgress'
     : !analysisComplete ? 'pendingAnalysis' : dismissed > 0 ? 'reviewedClear' : 'noFindings'
-  const assessmentSub = confirmed ? copy.assessmentConfirmedSub
+  const assessmentSub = hasConfirmed ? copy.assessmentConfirmedSub
     : outstanding ? copy.assessmentInProgressSub : !hasEvidence ? copy.assessmentEmptySub : !analysisComplete ? copy.assessmentPendingSub
     : dismissed ? copy.assessmentReviewedSub : copy.assessmentNoFindingsSub
-  const assessmentTone = confirmed ? 'danger' : !analysisComplete || outstanding || hunt ? 'warn' : 'ok'
+  const assessmentTone = hasConfirmed ? 'danger' : !analysisComplete || outstanding || hunt ? 'warn' : 'ok'
   const coverageTone = analysisComplete ? 'ok' : failed ? 'danger' : 'warn'
-  const AssessmentIcon = confirmed ? ShieldAlert : assessmentTone === 'ok' ? ShieldCheck : FileSearch
+  const AssessmentIcon = hasConfirmed ? ShieldAlert : assessmentTone === 'ok' ? ShieldCheck : FileSearch
   const CoverageIcon = analysisComplete ? Check : failed ? AlertTriangle : FileSearch
   const coverageTitle = !hasEvidence ? copy.coverageEmpty : analysisComplete ? copy.coverageComplete
     : active ? copy.coverageRunning : failed ? copy.coverageFailed : copy.coveragePending
@@ -138,10 +139,10 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
             <AssessmentIcon size={21} className="shrink-0" />
             <h3 className="text-xs font-semibold uppercase tracking-wider">{copy.conclusion}</h3>
           </div>
-          <p className="mt-3 text-xl font-semibold leading-snug">{hunt && analysisComplete && !confirmed && !outstanding
+          <p className="mt-3 text-xl font-semibold leading-snug">{hunt && analysisComplete && !hasConfirmed && !outstanding
             ? tr(hunt.fresh ? 'dashboard.hunt.assessment' : 'dashboard.hunt.historicalAssessment')
-            : hasEvidence || confirmed || outstanding ? tr(`dashboard.brief.${verdict}`) : copy.assessmentEmpty}</p>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">{hunt && analysisComplete && !confirmed && !outstanding
+            : hasEvidence || hasConfirmed || outstanding ? tr(`dashboard.brief.${verdict}`) : copy.assessmentEmpty}</p>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">{hunt && analysisComplete && !hasConfirmed && !outstanding
             ? tr('dashboard.hunt.assessmentSub') : assessmentSub}</p>
           {(outstanding > 0 || confirmed > 0) && <div className="mt-5 flex flex-wrap gap-3 border-t border-current/20 pt-4">
             {outstanding > 0 && <button type="button" aria-label={outstanding === 1 ? copy.outstandingOne : copy.outstandingCount.replace('{n}', formatCount(outstanding))}
@@ -157,7 +158,7 @@ export function Dashboard({ slug, gotoView }: { slug: string; gotoView: Navigate
               <span className="text-sm font-semibold">{copy.confirmed}</span><ArrowRight size={16} className="shrink-0" />
             </button>}
           </div>}
-          {dismissed > 0 && !outstanding && !confirmed && <button type="button" className={`${linkClass} mt-4 self-start`}
+          {dismissed > 0 && !outstanding && !hasConfirmed && <button type="button" className={`${linkClass} mt-4 self-start`}
             onClick={() => gotoView('findings', { triage: 'dismissed', severity: allSeverities })}>{copy.openDismissed}<ArrowRight size={14} /></button>}
         </Card>
         <Card className="min-w-0 p-5 sm:p-6" style={statusTones[coverageTone]}>

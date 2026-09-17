@@ -7,6 +7,7 @@ import { absoluteTime, formatCount } from '../../format'
 import { useT } from '../../i18n'
 import { safeCtiUrl, useOpenCtiSettings } from '../../opencti'
 import { Button } from '../ui/ui'
+import { InfoDot } from '../ui/Tooltip'
 
 type History = { entries: Enrichment[] } | Enrichment[]
 const entriesOf = (history?: History) => Array.isArray(history) ? history : history?.entries ?? []
@@ -53,7 +54,9 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
   const configurationError = settings.isError || cti.isError
 
   return <section aria-label={tr('enrich.virustotal')} className="mt-3 space-y-2 border-t border-[var(--line)] pt-3 text-[11px]">
-    <div className="font-semibold text-[12px]">{tr('fileReputation.title')}</div>
+    <div className="flex items-center gap-1 font-semibold text-[12px]">{tr('fileReputation.title')}
+      <InfoDot label={tr('fileReputation.help')} body={tr('fileReputation.sends')} hint={tr('fileReputation.meaning')} />
+    </div>
     {cti.data?.configured ? <>
       <p className="text-[var(--muted)]">{tr('fileReputation.opencti')}</p>
       <a className="inline-flex items-center gap-1 rounded text-[var(--accent-text)] hover:underline" href={boxUrl}>{tr('cti.toBox')}<ExternalLink size={12} /></a>
@@ -63,7 +66,6 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
         {tr(run.isPending ? 'direct.running' : entry ? 'fileReputation.refresh' : 'enrich.ask', { service: tr('enrich.virustotal') })}
         <kbd aria-hidden="true" className="ml-1 rounded border border-current/20 px-1 text-[10px] font-normal opacity-65">V</kbd>
       </Button>
-      <p className="leading-relaxed text-[var(--muted)]">{tr('fileReputation.sends')}</p>
       {!ready && !configurationError && !settings.isPending && !cti.isPending && <p className="text-[var(--muted)]">{tr(validHash ? 'fileReputation.setup' : 'fileReputation.noHash')}</p>}
     </>}
     {configurationError && <div role="alert" className="text-[var(--review-text)]">
@@ -86,6 +88,5 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
       <p className="text-[var(--muted)]">{tr('direct.fetched', { at: absoluteTime(entry.fetched) })}</p>
       {report && <a className="inline-flex items-center gap-1 rounded font-medium hover:underline" href={report} target="_blank" rel="noreferrer noopener">{tr('direct.openReport')}<ExternalLink size={12} /></a>}
     </div>}
-    {entry && <p className="leading-relaxed text-[var(--muted)]">{tr('fileReputation.meaning')}</p>}
   </section>
 }
