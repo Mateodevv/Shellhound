@@ -416,6 +416,12 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       } else if (key === 'f' && ((kind === 'file' && fileAvailable) || (kind === 'dump' && !!ctx?.dump))) {
         event.preventDefault(); event.stopImmediatePropagation()
         setExpanded(value => !value)
+      } else if (key === 'v' && kind === 'file' && contextReady) {
+        const lookup = workspaceRef.current?.querySelector<HTMLButtonElement>('button[aria-keyshortcuts="V"]')
+        if (lookup && !lookup.disabled) {
+          event.preventDefault(); event.stopImmediatePropagation()
+          lookup.click()
+        }
       }
     }
   }

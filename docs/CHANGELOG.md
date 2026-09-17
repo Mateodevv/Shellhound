@@ -8,6 +8,8 @@ All notable changes to SHELLHOUND. Format after
 
 ### Fixed — evidence review cues
 
+- Add **V** to ask or refresh VirusTotal during file review, with a visible key
+  hint and protection against typing, held keys, and duplicate pending requests.
 - Center the first-sign flag on its chart interval while retaining the exact date.
 - Highlight Linked IPs in red when a related address is already in the IOC box.
 

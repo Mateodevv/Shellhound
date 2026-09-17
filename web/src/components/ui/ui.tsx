@@ -184,7 +184,7 @@ export function Chip({ active, onClick, children, count, dimmed }: {
 }
 
 export function Button({ children, onClick, variant = 'default', disabled, className, title, style, type,
-                         onMouseLeave, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls, 'aria-pressed': ariaPressed }: {
+                         onMouseLeave, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls, 'aria-pressed': ariaPressed, 'aria-keyshortcuts': ariaKeyShortcuts }: {
   children: ReactNode
   onClick?: () => void
   variant?: 'default' | 'primary' | 'special' | 'danger' | 'ghost' | 'incident' | 'review' | 'outline'
@@ -193,6 +193,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
   title?: string
   type?: 'button' | 'submit' | 'reset'
   'aria-label'?: string
+  'aria-keyshortcuts'?: string
   /** For the case where a button has to stand out from the surface it sits
    *  on -- a utility class would lose against the variant. */
   style?: React.CSSProperties
@@ -214,6 +215,7 @@ export function Button({ children, onClick, variant = 'default', disabled, class
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
       aria-controls={ariaControls}
+      aria-keyshortcuts={ariaKeyShortcuts}
       style={style}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium',

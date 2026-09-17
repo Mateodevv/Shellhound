@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRef } from 'react'
 import { ExternalLink, LoaderCircle, RefreshCw, Search } from 'lucide-react'
 import { api, post, type Enrichment } from '../../api'
 import { useDirectSettings } from '../../directEnrichment'
@@ -27,6 +28,7 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
   const entry = entriesOf(history.data).find(matches)
   const ready = validHash && !settings.isError && !cti.isError
     && cti.data?.configured === false && settings.data?.services?.virustotal?.configured === true
+  const lookupPending = useRef(false)
   const run = useMutation({
     onMutate: () => qc.cancelQueries({ queryKey: ['enrichment', slug] }),
     mutationFn: () => post<Enrichment>(`/api/cases/${slug}/enrich`, {
@@ -37,7 +39,13 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
         entries: [...entriesOf(previous).filter(item => !matches(item)), result],
       }))
     },
+    onSettled: () => { lookupPending.current = false },
   })
+  const lookup = () => {
+    if (!ready || history.isPending || lookupPending.current) return
+    lookupPending.current = true
+    run.mutate()
+  }
   const result = entry?.result
   const score = result?.known && Number.isInteger(result.score) && result.score! >= 0 ? result.score : undefined
   const tone = score == null ? 'var(--muted)' : score === 0 ? 'var(--ok)' : 'var(--danger-text)'
@@ -50,9 +58,10 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
       <p className="text-[var(--muted)]">{tr('fileReputation.opencti')}</p>
       <a className="inline-flex items-center gap-1 rounded text-[var(--accent-text)] hover:underline" href={boxUrl}>{tr('cti.toBox')}<ExternalLink size={12} /></a>
     </> : <>
-      <Button type="button" className="w-full justify-center" disabled={!ready || history.isPending || run.isPending} onClick={() => run.mutate()}>
+      <Button type="button" aria-keyshortcuts="V" className="w-full justify-center" disabled={!ready || history.isPending || run.isPending} onClick={lookup}>
         {run.isPending ? <LoaderCircle size={13} className="animate-spin" /> : entry ? <RefreshCw size={13} /> : <Search size={13} />}
         {tr(run.isPending ? 'direct.running' : entry ? 'fileReputation.refresh' : 'enrich.ask', { service: tr('enrich.virustotal') })}
+        <kbd aria-hidden="true" className="ml-1 rounded border border-current/20 px-1 text-[10px] font-normal opacity-65">V</kbd>
       </Button>
       <p className="leading-relaxed text-[var(--muted)]">{tr('fileReputation.sends')}</p>
       {!ready && !configurationError && !settings.isPending && !cti.isPending && <p className="text-[var(--muted)]">{tr(validHash ? 'fileReputation.setup' : 'fileReputation.noHash')}</p>}

@@ -592,6 +592,8 @@ AbuseIPDB key enables explicit direct lookups instead.
 During file review, **Ask VirusTotal** sits beneath SHA-256; files no longer
 need a separate Enrichment tab or prior IOC collection. A click sends only the
 displayed hash to retrieve an existing report, never file contents or a new scan.
+Press **V** in the file review window to ask or refresh VirusTotal. The shortcut
+respects the button's availability and does not run while typing or holding a key.
 Saved reports show their retrieval date and provider link. Zero malicious
 verdicts are green, positive counts red, and unknown reports or unavailable
 counts neutral. Green does not establish that the file is safe, and no result

@@ -291,6 +291,76 @@ describe('artifact context and classification', () => {
 })
 
 describe('deliberate decision submission', () => {
+  function fileLookup({ configured = false, keyAvailable = true, hash = 'a'.repeat(64) } = {}) {
+    vi.mocked(api).mockImplementation(async path => {
+      if (path === '/api/opencti/settings') return { configured } as never
+      if (path === '/api/settings') return { services: { virustotal: { configured: keyAvailable } } } as never
+      if (path.endsWith('/enrichment')) return { entries: [] } as never
+      return context({ file: { exists: false, hashes: { sha256: hash } } }) as never
+    })
+    return mount()
+  }
+
+  it('asks and refreshes VirusTotal with V without repeated requests or changing the decision', async () => {
+    const { onSave } = fileLookup()
+    fireEvent.keyDown(window, { key: 'v' })
+    expect(post).not.toHaveBeenCalled()
+    const button = await screen.findByRole('button', { name: 'Ask VirusTotal' })
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(button).toHaveAttribute('aria-keyshortcuts', 'V')
+    await userEvent.click(screen.getByRole('radio', { name: 'Skip for now' }))
+    let finish!: (value: unknown) => void
+    vi.mocked(post).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    act(() => {
+      fireEvent.keyDown(window, { key: 'v' })
+      fireEvent.keyDown(window, { key: 'v' })
+      fireEvent.keyDown(window, { key: 'v', repeat: true })
+    })
+    await waitFor(() => expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases/case/enrich', {
+      service: 'virustotal', kind: 'hash', value: 'a'.repeat(64), refresh: false,
+    }))
+    fireEvent.keyDown(window, { key: 'v' })
+    expect(post).toHaveBeenCalledTimes(1)
+    const report = { service: 'virustotal', kind: 'hash', value: 'a'.repeat(64), fetched: '2026-09-17T12:00:00Z', result: { known: true, score: 0, of: 72 } }
+    await act(async () => finish(report))
+    expect(await screen.findByRole('button', { name: 'Refresh VirusTotal' })).toBeEnabled()
+    vi.mocked(post).mockResolvedValue(report)
+    fireEvent.keyDown(window, { key: 'v' })
+    await waitFor(() => expect(post).toHaveBeenLastCalledWith('/api/cases/case/enrich', expect.objectContaining({ refresh: true })))
+    expect(onSave).not.toHaveBeenCalled()
+    expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeChecked()
+  })
+
+  it('ignores V while typing, with modifiers, during composition, and behind another dialog', async () => {
+    const { unmount } = fileLookup()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Ask VirusTotal' })).toBeEnabled())
+    for (const flag of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey', 'repeat', 'isComposing']) {
+      fireEvent.keyDown(window, { key: 'v', [flag]: true })
+    }
+    const input = document.createElement('textarea')
+    screen.getByRole('dialog').append(input)
+    fireEvent.keyDown(input, { key: 'v' })
+    input.remove()
+    const overlay = document.createElement('div')
+    overlay.setAttribute('role', 'dialog')
+    document.body.append(overlay)
+    fireEvent.keyDown(window, { key: 'v' })
+    overlay.remove()
+    expect(post).not.toHaveBeenCalled()
+    unmount()
+    fireEvent.keyDown(window, { key: 'v' })
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { configured: true }, { keyAvailable: false }, { hash: 'invalid-hash' },
+  ])('does not bypass unavailable direct lookup settings with V: %j', async settings => {
+    fileLookup(settings)
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Skip for now' })).toBeEnabled())
+    fireEvent.keyDown(window, { key: 'v' })
+    expect(post).not.toHaveBeenCalled()
+  })
+
   it('scrolls the active pane with held arrow keys without changing the decision', async () => {
     vi.mocked(api).mockImplementation(async url => url.includes('/file?')
       ? { mode: 'raw', size: 20, offset: 0, length: 20, window: 262144, eof: true, from_line: 1, lines: ['Safe preview'] }
