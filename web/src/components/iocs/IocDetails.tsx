@@ -1,3 +1,4 @@
+import { IocVulnerability } from './IocVulnerability'
 import { directSupported, useDirectSettings } from '../../directEnrichment'
 import { DirectEnrichment } from '../enrichment/DirectEnrichment'
 import { useT } from '../../i18n'
@@ -8,8 +9,8 @@ import { safeCtiUrl, useOpenCti } from '../../opencti'
 import { OpenCtiToolbar, OpenCtiScore, OpenCtiDetails, GroupedActions } from '../enrichment/OpenCti'
 import { Button, Modal, CopyButton, Tabs } from '../ui/ui'
 import { TraceWindow } from '../logview/TraceWindow'
-import { FileViewer } from '../review/FileViewer'
-import { ArrowLeft, ArrowRight, ExternalLink, FileCode2, Search, Route, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
+import { FileContentPane } from '../review/FileViewer'
+import { ArrowLeft, ArrowRight, ExternalLink, FileCode2, Search, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
 import { IocDeleteDialog } from './IocDeleteDialog'
 import { IocEditDialog } from './IocEditDialog'
 import { InfoDot, Tooltip } from '../ui/Tooltip'
@@ -68,14 +69,15 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
   const canEnrich = canDirect || (cti.configured && !!data?.object && (
     ['ip', 'domain', 'url', 'email', 'hash', 'file', 'vulnerability'].includes(data.object.type)
     || (data.object.type === 'user' && !!data.object.context)))
-  const tab = requestedTab === 'Enrichment' && canEnrich ? 'Enrichment' : 'Overview'
+  const canContent = ['file', 'path'].includes(data?.object.type ?? '')
+  const canTrace = data?.object.type === 'ip'
+  const canCve = data?.object.type === 'vulnerability'
+  const tab = requestedTab === 'CVE details' && canCve ? 'CVE details' : requestedTab === 'Trace' && canTrace ? 'Trace' : requestedTab === 'Content' && canContent ? 'Content' : requestedTab === 'Enrichment' && canEnrich ? 'Enrichment' : 'Overview'
   const setTab = (value: string) => { setLocalTab(value); onTab?.(value) }
   const [editOpen, setEditOpen] = useState(false)
   const [viewPath, setViewPath] = useState<string | null>(null)
-  const [chooseLocation, setChooseLocation] = useState(false)
-  const [traceOpen, setTraceOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  useEffect(() => { setViewPath(null); setChooseLocation(false); setTraceOpen(false) }, [slug, id])
+  useEffect(() => { setViewPath(null) }, [slug, id])
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['iocs'] })
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
@@ -92,10 +94,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     : object?.type === 'path' && current?.resolved
       ? [{ path: current.resolved, label: object.value, evidenceId: null }] : []
   const associatedFiles = object?.type === 'hash' ? iocs.filter(i => i.type === 'file' && object.file_ids?.includes(i.id)) : []
-  const openFile = () => {
-    if (fileLocations.length === 1) setViewPath(fileLocations[0].path)
-    else setChooseLocation(true)
-  }
+  const contentPath = fileLocations.find(location => location.path === viewPath)?.path ?? (fileLocations.length === 1 ? fileLocations[0].path : null)
   const activity = observed.filter(o => ['http-request', 'pattern-hunt'].includes(o.kind))
   const times = activity.flatMap(o => [o.first_seen, o.last_seen]).filter(Boolean).sort()
   const showActivity = object?.type === 'ip' || times.length > 0
@@ -153,10 +152,6 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
           <Button type="button" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 size={14} />{tr('iocDelete.single')}</Button>
         </GroupedActions>}
         leadingAction={<>
-          {['file', 'path'].includes(object.type) && <Tooltip body={tr(fileLocations.length ? 'iocAction.contentHelp' : 'iocAction.noContent')}>
-            <span><Button type="button" variant="special" disabled={!fileLocations.length} onClick={openFile}><FileCode2 size={14} />{tr('iocAction.content')}</Button></span>
-          </Tooltip>}
-          {object.type === 'ip' && <Button type="button" variant="special" onClick={() => setTraceOpen(true)}><Route size={14} />{tr('artifact.openTrace')}</Button>}
           {gotoView && (['domain', 'url'].includes(object.type) || (object.type === 'path' && object.path_context === 'http-request')) &&
             <Button type="button" variant="special" onClick={() => gotoView('logs', { search: object.value })}><Search size={14} />{tr('iocAction.searchLogs')}</Button>}
           {onNavigate && associatedFiles.map(file => <Button type="button" variant="special" key={file.id} onClick={() => onNavigate(file.id)}><FileCode2 size={14} />{tr('iocAction.associatedFile', { name: iocName(file) })}</Button>)}
@@ -172,7 +167,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     {object && editOpen && <IocEditDialog slug={slug} object={object} assessments={data?.assessments} edits={data?.edits} onClose={() => setEditOpen(false)} />}
 
     <div className="overflow-x-auto" aria-label={tr('iocWorkspace.detail_tabs')}>
-      <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(canEnrich ? ['Enrichment'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
+      <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(canCve ? ['CVE details'] : []), ...(canTrace ? ['Trace'] : []), ...(canContent ? ['Content'] : []), ...(canEnrich ? ['Enrichment'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
     </div>
 
     {failure && <p role="alert" className="text-[var(--danger-text)]">{String(failure instanceof Error ? failure.message : failure)}</p>}
@@ -202,23 +197,10 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         {cti.configured && <OpenCtiScore lookup={cti.data?.lookups?.find(entry => entry.ioc_id === id)} loading={cti.isPending} error={Boolean(cti.error)} />}
         <IocField name={tr('iocTags.title')} help={tr(cti.configured ? 'iocTags.help' : 'iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
       </div>
-      {object.file && <details className="rounded-lg border border-[var(--line)] p-3">
-          <summary className="flex cursor-pointer items-center gap-2">
-            {tr('iocWorkspace.hashes')}
-            <InfoDot body={descriptions.Hashes} />
-          </summary>
-          <div className="mt-3 space-y-2">
-            {Object.entries(object.file.hashes).map(([algorithm, hash]) => <div key={algorithm}>
-              <strong>{algorithm}</strong>
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 break-all">{hash}</code>
-                <CopyButton value={hash} label={`Copy ${algorithm}`} />
-              </div>
-            </div>)}
+      {object.file && <div className="space-y-2">
             <Button disabled={verifyFile.isPending} onClick={() => verifyFile.mutate()}>{tr('iocWorkspace.verify_available_file_metadata')}</Button>
             {verifyFile.data && <p role="status">{verifyFile.data.verified_locations} {tr('iocWorkspace.verified')} {verifyFile.data.unavailable_or_changed_locations} {tr('iocWorkspace.unavailable_or_changed')}</p>}
-          </div>
-        </details>}
+        </div>}
       {object.legacy_warning && <details className="text-[var(--review-text)]">
         <summary className="cursor-pointer">{tr('iocWorkspace.review_legacy_metadata')}</summary>
         <p>{object.legacy_warning}</p>
@@ -260,14 +242,20 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       <OpenCtiDetails lookup={lookup} object={object} slug={slug} loading={cti.isPending} error={Boolean(cti.error)} />
     </section>}
 
-    {chooseLocation && <Modal open onClose={() => setChooseLocation(false)} layer={2} title={tr('iocAction.chooseLocation')}>
-      <div className="flex flex-col gap-2">{fileLocations.map(location => <Button key={location.path} type="button" className="justify-start text-left" onClick={() => { setChooseLocation(false); setViewPath(location.path) }}>
-        <FileCode2 size={14} /><span className="min-w-0 break-all">{location.label}</span>
-        {location.evidenceId != null && <span className="shrink-0 text-[var(--muted)]">{tr('iocAttr.source', { id: location.evidenceId })}</span>}
-      </Button>)}</div>
-    </Modal>}
-    {traceOpen && object?.type === 'ip' && <TraceWindow slug={slug} ips={[object.value]} layer={2} onClose={() => setTraceOpen(false)} />}
-    <FileViewer slug={slug} path={viewPath} layer={2} onClose={() => setViewPath(null)} />
+    {object && tab === 'CVE details' && <IocVulnerability key={`${slug}:${id}:${object.value}`} slug={slug} id={id} value={object.value} descriptions={(lookup?.entities ?? []).map(entity => entity.description || '').filter(Boolean)} />}
+    {object && tab === 'Content' && <section aria-label={tr('iocWorkspace.tab.Content')} className="space-y-3">
+      {!fileLocations.length && <p className="text-[var(--muted)]">{tr('iocAction.noContent')}</p>}
+      {fileLocations.length > 1 && <div className="space-y-2">
+        <p className="font-semibold">{tr('iocAction.chooseLocation')}</p>
+        <div className="flex flex-wrap gap-2">{fileLocations.map(location => <Button key={location.path}
+          aria-pressed={contentPath === location.path} onClick={() => setViewPath(location.path)}>
+          <FileCode2 size={14} /><span className="break-all">{location.label}</span>
+          {location.evidenceId != null && <span>{tr('iocAttr.source', { id: location.evidenceId })}</span>}
+        </Button>)}</div>
+      </div>}
+      {contentPath && <div className="h-[65vh] min-h-80"><FileContentPane key={`${slug}:${id}:${contentPath}`} slug={slug} path={contentPath} /></div>}
+    </section>}
+    {object && tab === 'Trace' && canTrace && <TraceWindow key={`${slug}:${id}`} slug={slug} ips={[object.value]} embedded onClose={() => setTab('Overview')} />}
     {deleteOpen && object && <IocDeleteDialog slug={slug} objects={[object]} onClose={() => setDeleteOpen(false)} onDeleted={ids => {
       onDirtyChange?.(false)
       if (onDeleted) onDeleted(ids); else onClose()

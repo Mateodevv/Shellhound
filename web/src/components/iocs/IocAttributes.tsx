@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { Ioc } from '../../api'
 import { useT } from '../../i18n'
 import { useGeo } from '../../geo'
+import { CopyButton } from '../ui/ui'
 import { IocField } from './IocField'
 import { valueAttributes } from './iocAttributeValues'
 import { iocName, observationTime } from './iocPresentation'
@@ -21,6 +22,7 @@ export function IocAttributes({ object, observations, iocs, relationships, onNav
   const field = (key: string, value: ReactNode) => <IocField key={key} name={tr(`iocAttr.${key}`)} help={tr(`iocAttr.${key}Help`)}>{value || tr('iocAttr.missing')}</IocField>
   const active = observations.filter(o => o.active)
   const file = object.file
+  const sha256 = file?.hashes?.['SHA-256'] || (/^[a-f0-9]{64}$/i.test(object.value) ? object.value : '')
   const locations = active.filter(o => o.kind === 'file-location' && o.path)
     .filter((o, i, all) => o.evidence_id == null || all.findIndex(other => other.path === o.path && other.evidence_id === o.evidence_id) === i)
   const relatedFiles = iocs.filter(ioc => object.file_ids?.includes(ioc.id))
@@ -38,6 +40,7 @@ export function IocAttributes({ object, observations, iocs, relationships, onNav
     {object.type === 'hash' && field('linkedFiles', relatedFiles.length ? <div className="space-y-1">{relatedFiles.map(item => <button type="button" key={item.id} disabled={!onNavigate} onClick={() => onNavigate?.(item.id)} className="block max-w-full break-all text-left text-[var(--accent-text)]">{iocName(item)}</button>)}</div> : tr('iocAttr.noLinkedFile'))}
     {object.type === 'file' && <>
       {field('names', file?.names.length ? file.names.join(' · ') : '')}
+      {field('sha256', sha256 ? <div className="flex items-center gap-2"><code className="min-w-0 break-all">{sha256}</code><CopyButton value={sha256} label={tr('copy.hash')} /></div> : '')}
       {field('size', file?.size == null ? '' : `${file.size.toLocaleString()} bytes`)}
       {field('classification', file?.classifications?.length ? file.classifications.map(value => tr(`artifact.class.${value}`)).join(', ') : file?.classification || tr('iocAttr.unclassified'))}
       {field('verified', file?.verified_at ? observationTime(file.verified_at) : tr('iocAttr.unverified'))}

@@ -53,7 +53,7 @@ describe('Structured IOC details', () => {
       : url.includes('/file?') ? { mode: 'raw', size: 6, window: 262144, offset: 0, length: 6, eof: true, lines: ['sample'], from_line: 1 }
       : { configured: false })
     renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
-    const button = await screen.findByRole('button', { name: 'View file content' })
+    const button = await screen.findByRole('tab', { name: 'Content' })
     expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?'))).toBe(false)
     fireEvent.click(button)
     expect(await screen.findByText('sample')).toBeVisible()
@@ -69,30 +69,31 @@ describe('Structured IOC details', () => {
       : url.includes('/file?') ? { mode: 'raw', size: 6, window: 262144, offset: 0, length: 6, eof: true, lines: ['sample'], from_line: 1 }
       : { configured: false })
     renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
-    fireEvent.click(await screen.findByRole('button', { name: 'View file content' }))
-    expect(await screen.findByRole('dialog', { name: 'Choose evidence location' })).toBeVisible()
+    fireEvent.click(await screen.findByRole('tab', { name: 'Content' }))
+    expect(await screen.findByText('Choose evidence location')).toBeVisible()
     expect(screen.queryByRole('button', { name: /source-3/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /source-2\/sample.txt/ }))
     expect(await screen.findByText('sample')).toBeVisible()
     expect(api).toHaveBeenCalledWith('/api/cases/synthetic/file?path=C%3A%2Fsynthetic%2Fsource-2%2Fsample.txt&mode=raw&offset=0')
   })
 
-  it('offers a trace popup for the selected IP without requiring OpenCTI', async () => {
+  it('offers an embedded trace tab for the selected IP without requiring OpenCTI', async () => {
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? detail : { configured: false })
     vi.mocked(post).mockImplementation(async url => url.endsWith('/timeline') ? { timeline: [] } : { total: 0, methods: [], rows: [] })
     renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip]} onClose={() => {}} embedded />)
-    const button = await screen.findByRole('button', { name: 'Open trace' })
+    const button = await screen.findByRole('tab', { name: 'Trace' })
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(button)
-    expect(await screen.findByRole('dialog')).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value] })))
   })
 
-  it('leaves unavailable file content disabled and passes domain searches to access logs', async () => {
+  it('does not load unavailable file content and passes domain searches to access logs', async () => {
     const file = { ...ip, type: 'file', value: 'sample.txt' }
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file } : { configured: false })
     const view = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file]} onClose={() => {}} embedded />)
-    expect(await screen.findByRole('button', { name: 'View file content' })).toBeDisabled()
+    fireEvent.click(await screen.findByRole('tab', { name: 'Content' }))
+    expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('/file?'))).toBe(false)
     view.unmount()
     const domain = { ...ip, type: 'domain', value: 'example.test' }
     const navigate = vi.fn()
@@ -140,12 +141,12 @@ describe('Structured IOC details', () => {
       { client: ip.value, epoch: 1, tz: 0, method: 'GET', uri: '/documentation', status: 200, agent: 'Synthetic browser' },
     ] })
     renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} embedded />)
-    const trace = await screen.findByRole('button', { name: 'Open trace' })
+    const trace = await screen.findByRole('tab', { name: 'Trace' })
     expect(post).not.toHaveBeenCalled()
     fireEvent.click(trace)
     expect(await screen.findByText('/documentation')).toBeVisible()
-    expect(screen.getByRole('dialog')).toBeVisible()
-    expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Trace' })).toBeVisible()
     expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value], offset: 0 }))
     fireEvent.change(screen.getByPlaceholderText('URI or user agent…'), { target: { value: 'documentation' } })
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/trace', expect.objectContaining({ ips: [ip.value], search: 'documentation' })))
@@ -162,7 +163,7 @@ describe('Structured IOC details', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Enrichment' }))
     expect(screen.getByText('Saved provider details')).toBeVisible()
     expect(screen.getByText('Example provider')).toBeVisible()
-    expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
+    expect(!!screen.queryByRole('tab', { name: 'Trace' })).toBe(type === 'ip')
     if (type === 'vulnerability') {
       expect(screen.getByText('2.50%')).toBeVisible()
       expect(screen.getByText('80.00%')).toBeVisible()
@@ -270,7 +271,7 @@ describe('Structured IOC details', () => {
     await screen.findByRole('heading', { name: ip.value })
     expect(post).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Enrichment'])
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Trace', 'Enrichment'])
     expect(post).not.toHaveBeenCalled()
   })
 

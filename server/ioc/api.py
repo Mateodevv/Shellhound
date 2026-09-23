@@ -79,6 +79,16 @@ def register(app, resolve_case, auth, hub):
     def detail(slug: str, ioc_id: int):
         return run(slug, lambda conn: ioc_model.detail(conn, ioc_id))
 
+    @app.post("/api/cases/{slug}/iocs/{ioc_id}/cve", dependencies=[auth])
+    def public_cve(slug: str, ioc_id: int):
+        from server.integrations.cve import fetch_record
+        def load(conn):
+            item = ioc_model.detail(conn, ioc_id)["object"]
+            if item["type"] != "vulnerability":
+                raise ValueError("Public CVE lookup requires a vulnerability object.")
+            return fetch_record(item["value"])
+        return run(slug, load)
+
     @app.post("/api/cases/{slug}/iocs/delete", dependencies=[auth])
     def delete_selected(slug: str, body: DeleteObjectsBody):
         return run(slug, lambda conn: ioc_model.delete_objects(conn, body.ids), write=True)
