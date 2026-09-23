@@ -552,9 +552,9 @@ export function Actors({ slug }: { slug: string; gotoView: Navigate }) {
         onView={(path, line) => setViewing({ path, line })}
         onTrace={(ips, marks) => { setTraceMarks(marks); setTraceIps(ips) }}
         onClose={() => { setArtifact(null); triage.clearCollected() }}
-        onSave={(state, note, classifications) => {
+        onSave={(state, note, classifications, shareContent) => {
           if (!artifact) return Promise.reject(new Error('No artifact selected'))
-          return triage.decideAsync([artifact.artifact], state, note, undefined, classifications)
+          return triage.decideAsync([artifact.artifact], state, note, undefined, classifications, shareContent)
         }} />
 
       <TraceWindow slug={slug} ips={traceIps} layer={1} marks={traceMarks}

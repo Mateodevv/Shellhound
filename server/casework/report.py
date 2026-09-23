@@ -130,9 +130,12 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
             conn, "SELECT artifact, artifact_kind, severity, rule, rule_id, "
                   "triage_note, triaged_at FROM findings WHERE triage = 'confirmed' "
                   "ORDER BY severity, artifact, id")
+        from server.backups import grouping
+        memberships = grouping(conn)
         grouped = OrderedDict()
         for finding in findings:
-            key = (finding["artifact_kind"], finding["artifact"])
+            member = memberships.get(finding['artifact']) if finding['artifact_kind'] == 'file' else None
+            key = (finding["artifact_kind"], member['key'] if member else finding["artifact"])
             item = grouped.setdefault(key, {
                 "artifact": finding["artifact"], "kind": finding["artifact_kind"],
                 "severity": finding["severity"], "rules": [], "notes": [],
@@ -146,6 +149,10 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
                 item["rules"].append(rule)
             if finding["triage_note"] and finding["triage_note"] not in item["notes"]:
                 item["notes"].append(finding["triage_note"])
+            if member:
+                occurrence = f"Backup: {member['label']} — {member['relative_path']}"
+                if occurrence not in item['notes']:
+                    item['notes'].append(occurrence)
         decisions = []
         for item in grouped.values():
             if item["kind"] == "log_observation":

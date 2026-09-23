@@ -2,6 +2,8 @@
 import { useT } from '../i18n'
 import { SkippedFiles } from '../components/review/SkippedFiles'
 import { LogImport, LogSourceList } from '../components/logview/LogSources'
+import { BackupPanel } from '../components/backups/BackupPanel'
+import { SourceTimezone } from '../components/SourceTimezone'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -14,7 +16,7 @@ import {
   type EvidenceItem, type Job, type PickPath,
 } from '../api'
 import { absoluteTime, evidenceName, formatBytes, formatCount, relativeTime } from '../format'
-import { Button, Card, ConfirmDialog, EmptyState, ProgressBar, Section, Tag } from '../components/ui/ui'
+import { Button, Card, ConfirmDialog, EmptyState, Modal, ProgressBar, Section, Tag } from '../components/ui/ui'
 import { InfoDot, Tooltip } from '../components/ui/Tooltip'
 import { explain } from '../explain'
 import type { ViewId } from '../App'
@@ -46,6 +48,8 @@ export function Evidence({ slug }: {
 
   const [browsing, setBrowsing] = useState<null | 'webroot' | 'logs' | 'access_logs' | 'sql_dump'>(null)
   const [logImport, setLogImport] = useState('')
+  const [webrootImport, setWebrootImport] = useState('')
+  const [webrootZone, setWebrootZone] = useState('auto')
   const [preferredPath, setPreferredPath] = useState('')
   const [pathSeededFor, setPathSeededFor] = useState('')
   const [analysisMenuOpen, setAnalysisMenuOpen] = useState(false)
@@ -57,9 +61,9 @@ export function Evidence({ slug }: {
   }
 
   const addEvidence = useMutation({
-    mutationFn: (v: { kind: string; path: string }) =>
+    mutationFn: (v: { kind: string; path: string; source_timezone?: string }) =>
       post(`/api/cases/${slug}/evidence`, v),
-    onSuccess: invalidate,
+    onSuccess: () => { setWebrootImport(''); invalidate() },
   })
   const removeEvidence = useMutation({
     mutationFn: (id: number) => del(`/api/cases/${slug}/evidence/${id}`),
@@ -354,8 +358,11 @@ export function Evidence({ slug }: {
         </div>
       </Section>
 
+      <BackupPanel key={slug} slug={slug} evidence={evidence} />
+
       {evidence.some(e => e.kind === 'logs') && <Section title={tr('logEvidence.sources')} sub={tr('logEvidence.sourcesHelp')}><LogSourceList slug={slug} /></Section>}
       {logImport && <LogImport key={logImport} slug={slug} path={logImport} onClose={() => setLogImport('')} onDone={() => { setLogImport(''); invalidate() }} />}
+      {webrootImport && <Modal open onClose={() => setWebrootImport('')} title={tr('backups.webrootAdd')}><div className="space-y-4"><p className="mono break-all text-sm">{webrootImport}</p><SourceTimezone value={webrootZone} onChange={setWebrootZone} filesystem />{addEvidence.error && <p role="alert">{addEvidence.error.message}</p>}<div className="flex justify-end gap-2"><Button onClick={() => setWebrootImport('')}>{tr('common.cancel')}</Button><Button variant="primary" disabled={addEvidence.isPending} onClick={() => addEvidence.mutate({ kind: 'webroot', path: webrootImport, source_timezone: webrootZone })}>{tr('common.save')}</Button></div></div></Modal>}
       {browsing && (
         <PathBrowser
           kind={browsing}
@@ -363,6 +370,7 @@ export function Evidence({ slug }: {
           onClose={() => setBrowsing(null)}
           onPick={(path, browsedPath) => {
             if (browsing === 'logs' || browsing === 'access_logs') setLogImport(path)
+            else if (browsing === 'webroot') { setWebrootZone('auto'); setWebrootImport(path) }
             else addEvidence.mutate({ kind: browsing, path })
             setPreferredPath(browsedPath)
             setBrowsing(null)
@@ -584,7 +592,7 @@ export function CloseCase({ slug, caseName, onClosed }: {
 // Every kind the analysis can start. A kind without an entry here would fall
 // back to its raw identifier, which is how `errorlog` and `yara` ended up in
 // the job list under their internal names.
-const JOB_KINDS = ['log_events', 'index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
+const JOB_KINDS = ['backup_comparison', 'log_events', 'index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
                    'yara', 'sigma']
 
 interface RunGroup { id: string; created: string; jobs: Job[] }

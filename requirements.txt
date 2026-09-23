@@ -15,3 +15,5 @@ yara-python>=4.3
 # (server/sigma.py); it used to arrive only as a transitive extra of
 # uvicorn[standard], which is not something to depend on.
 PyYAML>=6.0
+# Named source time zones on Windows; bundled for offline use after setup.
+tzdata>=2025.2

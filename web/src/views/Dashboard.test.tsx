@@ -71,6 +71,13 @@ function mount() {
 }
 
 describe('case overview dashboard', () => {
+  it('keeps confirmed compromise visible while conflicting backup decisions need review', async () => {
+    mockCase({ ...DATA, has_confirmed_findings: true, triage: { new: 1, confirmed: 0 } })
+    const { gotoView } = mount()
+    expect(await screen.findByText('Compromise confirmed')).toBeVisible()
+    fireEvent.click(within(screen.getByRole('region', { name: 'Case status' })).getByRole('button', { name: /finding.*need.*review/ }))
+    expect(gotoView).toHaveBeenLastCalledWith('findings', { triage: 'new,reviewed', severity: '0,1,2,3' })
+  })
   it('opens the exact review queue from its compact header action and status counts', async () => {
     mockCase({ ...DATA, triage: { new: 3, reviewed: 1, confirmed: 2 } })
     const { gotoView } = mount()

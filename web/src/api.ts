@@ -127,6 +127,7 @@ export interface EvidenceItem {
   bytes?: number
   meta_at?: string
   meta_partial?: number
+  source_timezone?: string
 }
 
 export interface LogIndexStatus {
@@ -220,6 +221,10 @@ export type TriageState = 'new' | 'reviewed' | 'confirmed' | 'dismissed'
  *  over its findings. THAT is the unit decisions are made about -- the
  *  findings below it are the reasoning. */
 export interface ArtifactRow {
+  backup_members?: string[]
+  backup_count?: number
+  version_key?: string
+  review_conflict?: boolean
   display_name?: string
   artifact: string
   artifact_kind: 'file' | 'table' | 'client' | 'dump' | 'log_observation'
@@ -965,6 +970,7 @@ export interface DashboardChronology {
 }
 
 export interface Dashboard {
+  has_confirmed_findings?: boolean
   incident_summary?: {
     first_action: number | null
     last_action: number | null
@@ -1519,6 +1525,7 @@ export interface TriageLink {
 }
 
 export interface TriageResult {
+  content_assessment?: { applied: string[]; conflicts: string[]; job?: number; incomplete?: boolean }
   updated: number
   artifacts: number
   collected: { value: string; type: string; hits?: number; ok_hits?: number }[]

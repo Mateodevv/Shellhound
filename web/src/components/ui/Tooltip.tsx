@@ -18,9 +18,10 @@ interface Props {
   wide?: boolean
   className?: string
   as?: 'span' | 'div'
+  label?: string
 }
 
-export function Tooltip({ children, title, body, hint, wide, className, as = 'span' }: Props) {
+export function Tooltip({ children, title, body, hint, wide, className, as = 'span', label }: Props) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, above: false })
   const ref = useRef<HTMLElement>(null)
@@ -70,6 +71,7 @@ export function Tooltip({ children, title, body, hint, wide, className, as = 'sp
         onFocus={show}
         onBlur={hide}
         tabIndex={0}
+        aria-label={label}
       >
         {children}
       </Tag>
@@ -106,9 +108,9 @@ export function Tooltip({ children, title, body, hint, wide, className, as = 'sp
 
 /** A small question mark that explains on hover. For column heads and key
  *  figures, where the text itself has no room for the explanation. */
-export function InfoDot({ title, body, hint, wide }: Omit<Props, 'children'>) {
+export function InfoDot({ title, body, hint, wide, label }: Omit<Props, 'children'>) {
   return (
-    <Tooltip title={title} body={body} hint={hint} wide={wide}>
+    <Tooltip title={title} body={body} hint={hint} wide={wide} label={label}>
       <HelpCircle
         size={12}
         className="cursor-help text-[var(--muted)]/70 transition-colors hover:text-[var(--accent)]"

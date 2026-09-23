@@ -8,9 +8,9 @@
 //
 // Its own file, because a hook next to a component breaks Fast Refresh for
 // the whole file.
-import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { post, type RetainedIoc, type TriageLink, type TriageResult } from '../../api'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, post, type Job, type RetainedIoc, type TriageLink, type TriageResult } from '../../api'
 
 export interface TriageController {
   /** Decide artifacts. `propagate: false` for undos and suggestions -- those
@@ -20,7 +20,7 @@ export interface TriageController {
   /** Awaitable form for review windows that must save successfully before
    *  advancing or closing. Uses the exact same payload and receipts. */
   decideAsync: (artifacts: string[], state: string, note?: string,
-                propagate?: boolean, classifications?: string[]) => Promise<TriageResult>
+                propagate?: boolean, classifications?: string[], shareContent?: boolean) => Promise<TriageResult>
   saving: boolean
   /** Take a propagation back: every artifact returns to the state the
    *  server supplied. */
@@ -31,7 +31,7 @@ export interface TriageController {
    * receipt, stale-IOC and refresh handling as an ordinary triage call. */
   recordResult: (result: TriageResult) => void
   /** For TriageFollowUp. */
-  notice: { linked: TriageLink[]; suggested: TriageLink[] } | null
+  notice: { linked: TriageLink[]; suggested: TriageLink[]; content?: TriageResult['content_assessment'] } | null
   dismissNotice: () => void
   reviewing: TriageLink[] | null
   review: (links: TriageLink[] | null) => void
@@ -49,9 +49,19 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
   const [collected, setCollected] = useState<TriageResult['collected']>([])
   const [nothingToDecide, setNothingToDecide] = useState(false)
   const [notice, setNotice] = useState<
-    { linked: TriageLink[]; suggested: TriageLink[] } | null>(null)
+    { linked: TriageLink[]; suggested: TriageLink[]; content?: TriageResult['content_assessment'] } | null>(null)
   const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
   const [retained, setRetained] = useState<RetainedIoc[] | null>(null)
+  const contentJobs = useQuery({ queryKey: ['jobs', slug], enabled: !!notice?.content?.job,
+    queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`), refetchInterval: notice?.content?.job ? 1500 : false })
+  useEffect(() => {
+    const id = notice?.content?.job
+    const job = contentJobs.data?.find(row => row.id === id)
+    if (!id || !job || !['done', 'failed', 'cancelled'].includes(job.state)) return
+    const completed = job.stats.content_assessment as TriageResult['content_assessment']
+    setNotice(old => old?.content?.job === id ? { ...old, content: completed ?? { applied: [], conflicts: [], incomplete: true } } : old)
+    for (const key of ['findings', 'artifact', 'dashboard', 'backups', 'backup-history', 'iocs']) qc.invalidateQueries({ queryKey: [key] })
+  }, [contentJobs.data, notice?.content?.job, qc])
 
   const refresh = () => {
     // EVERY view that shows a triage state. The file browser, the database
@@ -60,7 +70,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     // something else happened to refetch them.
     for (const key of ['findings', 'artifact', 'dashboard', 'iocs', 'actors',
                        'chain', 'first-sign', 'timeline-preview', 'browse', 'database', 'cms', 'file',
-                       'search', 'opencti', 'log-events', 'log-context']) {
+                       'search', 'opencti', 'log-events', 'log-context', 'backups', 'backup-history']) {
       qc.invalidateQueries({ queryKey: [key] })
     }
   }
@@ -70,8 +80,8 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     setCollected(result.collected)
     setRetained(result.retained_iocs?.length ? result.retained_iocs : null)
     setNotice(
-      (result.linked?.length || result.suggested?.length)
-        ? { linked: result.linked ?? [], suggested: result.suggested ?? [] }
+      (result.linked?.length || result.suggested?.length || result.content_assessment?.applied.length || result.content_assessment?.conflicts.length || result.content_assessment?.job)
+        ? { linked: result.linked ?? [], suggested: result.suggested ?? [], content: result.content_assessment }
         : null)
     refresh()
     onDecided?.()
@@ -79,7 +89,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
 
   const mutation = useMutation({
     mutationFn: (v: {
-      artifacts: string[]; state: string; note?: string; propagate?: boolean; classifications?: string[]
+      artifacts: string[]; state: string; note?: string; propagate?: boolean; classifications?: string[]; share_content?: boolean
     }) => post<TriageResult>(`/api/cases/${slug}/triage`, v),
     onSuccess: (result) => {
       // A DECISION THAT RECORDED NOTHING IS NOT A DECISION. The server
@@ -103,9 +113,9 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     nothingToDecide,
     dismissNothingToDecide: () => setNothingToDecide(false),
     decide: (artifacts, state, note, propagate) =>
-      mutation.mutate({ artifacts, state, note, propagate }),
-    decideAsync: (artifacts, state, note, propagate, classifications) =>
-      mutation.mutateAsync({ artifacts, state, note, propagate, ...(classifications !== undefined ? { classifications } : {}) }),
+      mutation.mutate({ artifacts, state, note, propagate, ...(propagate !== false && ['confirmed', 'dismissed'].includes(state) ? { share_content: true } : {}) }),
+    decideAsync: (artifacts, state, note, propagate, classifications, shareContent = false) =>
+      mutation.mutateAsync({ artifacts, state, note, propagate, ...(shareContent && ['confirmed', 'dismissed', 'new'].includes(state) ? { share_content: true } : {}), ...(classifications !== undefined ? { classifications } : {}) }),
     saving: mutation.isPending,
     // Grouped by state so that it stays one call per group.
     // `propagate: false`, otherwise taking it back triggers a new wave.

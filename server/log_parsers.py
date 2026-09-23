@@ -64,7 +64,7 @@ def text_lines(path, *, preview=False):
 
 
 def zone(value):
-    if not value:
+    if not value or value in ('auto', 'unknown'):
         return None
     if value in ("UTC", "Z"):
         return timezone.utc

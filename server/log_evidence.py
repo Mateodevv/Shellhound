@@ -110,12 +110,32 @@ def lzma_error():
     return lzma.LZMAError
 
 
-def preview(path):
+def preview(path, timezone='auto'):
+    from server import source_time
+    from server.engines.accesslog import AccessLogParser, fast_epoch
     rows = []
     for filename, identity in files([path]):
         detected = _detect(filename)
+        examples = []
+        try:
+            access = AccessLogParser()
+            for _, line in parsers.text_lines(filename, preview=True):
+                parsed = parsers.parse_line(detected['format'], line)
+                if parsed and parsed['raw_time']:
+                    examples.append(source_time.example(parsed['raw_time'], timezone))
+                elif detected['format'] == 'access':
+                    record = access.parse(line)
+                    if record:
+                        stamp = record.get('time', '')
+                        absolute = fast_epoch(stamp)
+                        if absolute:
+                            examples.append(source_time.example(stamp, timezone, absolute[0]))
+                if len(examples) == 2:
+                    break
+        except (OSError, ValueError, EOFError, lzma_error()):
+            pass
         rows.append({"id": _hash(identity)[:24], "path": filename, "name": Path(filename).name,
-                     **detected, "family": parsers.FAMILIES[detected["format"]]})
+                     **detected, "family": parsers.FAMILIES[detected["format"]], 'time_examples': examples})
     return {"sources": rows, "formats": parsers.FORMATS}
 
 

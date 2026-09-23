@@ -35,6 +35,12 @@ it('looks up only the displayed hash on an explicit click, without requiring or 
   await waitFor(() => expect(button).toBeEnabled())
   expect(post).not.toHaveBeenCalled()
   expect(vi.mocked(api).mock.calls.some(([path]) => path.endsWith('/iocs'))).toBe(false)
+  expect(screen.queryByText(/Sends only this SHA-256/)).not.toBeInTheDocument()
+  const help = screen.getByLabelText('About VirusTotal lookup')
+  fireEvent.focus(help)
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('No file upload.')
+  expect(post).not.toHaveBeenCalled()
+  fireEvent.blur(help)
   fireEvent.click(button)
   await waitFor(() => expect(post).toHaveBeenCalledExactlyOnceWith('/api/cases/demo/enrich', {
     service: 'virustotal', kind: 'hash', value: HASH, refresh: false,
