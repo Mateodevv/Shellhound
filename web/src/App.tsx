@@ -334,7 +334,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
         </div>
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto md:col-start-2 md:row-start-1 md:row-span-2">
-        <div key={view} className={clsx('mx-auto animate-fade-in', running.length > 0 && 'pt-16! sm:pt-16!', (view === 'hunt' || view === 'iocbox')
+        <div key={view} className={clsx('mx-auto animate-fade-in', running.length > 0 && 'pt-16! sm:pt-16!', (view === 'hunt' || view === 'iocbox' || view === 'logs')
           ? 'max-w-none p-2 sm:p-3'
           : 'max-w-[1400px] px-3 py-4 sm:px-6 sm:py-5')}>
           {view !== 'settings' && <div className="mb-4 flex flex-col gap-2 empty:hidden">

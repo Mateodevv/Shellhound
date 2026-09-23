@@ -5,12 +5,13 @@
 // narrow the case by time, field, path shape and measured signal. Every
 // operation remains a structured server query; no SQL or query-language text
 // from the browser is ever executed.
-import { useEffect, useRef, useState } from 'react'
+import './accessLogs.css'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Activity, Bookmark, ChevronLeft, ChevronRight, Clock3, Download,
-  Filter, Minus, Pin, Plus, Radar, Save, Search, ShieldAlert, Trash2, X,
+  Filter, Minus, Pin, Plus, Radar, Save, Search, ShieldAlert, Trash2, X, MoreHorizontal, Maximize2,
 } from 'lucide-react'
 import {
   api, del, downloadUrl, post,
@@ -24,7 +25,7 @@ import { formatBytes, formatCount, formatLogTime, formatSpan } from '../format'
 import { useT } from '../i18n'
 import { IpFlag } from '../components/ui/IpFlag'
 import { TraceWindow } from '../components/logview/TraceWindow'
-import { Button, Card, EmptyState, Modal, SearchInput } from '../components/ui/ui'
+import { Button, Card, CopyButton, EmptyState, Modal, SearchInput } from '../components/ui/ui'
 
 type AccessTab = 'requests' | 'patterns' | 'segments'
 
@@ -95,12 +96,35 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
   const [saveName, setSaveName] = useState('')
   const [basketOpen, setBasketOpen] = useState(false)
   const [clipNote, setClipNote] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [timeOpen, setTimeOpen] = useState(false)
+  const [savedOpen, setSavedOpen] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    try { const width = Number(localStorage.getItem('shellhound.logs.inspectorWidth')); return width >= 320 && width <= 560 ? width : 380 } catch { return 380 }
+  })
+  const [workspaceWidth, setWorkspaceWidth] = useState(1200)
+  const maxInspector = Math.max(320, Math.min(560, workspaceWidth - 568))
+  const displayWidth = Math.min(inspectorWidth, maxInspector)
+  const resizeInspector = (width: number) => {
+    const next = Math.round(Math.max(320, Math.min(maxInspector, width)))
+    setInspectorWidth(next)
+    try { localStorage.setItem('shellhound.logs.inspectorWidth', String(next)) } catch { /* Storage may be unavailable. */ }
+  }
+
 
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
   const indexReady = caseInfo?.log_index?.fresh === true
+  useEffect(() => {
+    const node = workspaceRef.current
+    if (!node || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(entries => setWorkspaceWidth(entries[0].contentRect.width))
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [indexReady, selectedRequest])
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -233,99 +257,42 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
       sub={caseInfo.log_index.reason || tr('logs.index.sub')} />
   }
 
-  return <div className="flex flex-col gap-4">
-    <header className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="text-lg font-bold">{tr('logs.title')}</h1>
-        <p className="mt-0.5 max-w-3xl text-[13px] text-[var(--muted)]">{tr('logs.sub')}</p>
-      </div>
+  return <div className="access-workspace flex min-h-0 flex-1 flex-col gap-3">
+    {(searchQuery.error || overviewQuery.error || saveMutation.error || clipMutation.error) && <p role="alert" className="text-[13px] text-[var(--danger-text)]">{String((searchQuery.error || overviewQuery.error || saveMutation.error || clipMutation.error)?.message)}</p>}
+    <div className="shrink-0 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setBasketOpen(true)}>
-          <Pin size={14} /> {tr('logs.basket')} ({clipsQuery.data?.length ?? 0})
-        </Button>
-        <a href={downloadUrl(`/api/cases/${slug}/access/export?filters=${exportFilters}`)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-3 py-1.5 text-[13px] font-medium hover:border-[var(--accent)]/60">
-          <Download size={14} /> {tr('logs.export')}
-        </a>
+        <div className="min-w-[220px] flex-1"><SearchInput className="w-full" value={searchDraft} onChange={setSearchDraft} placeholder={tr('logs.search')} /></div>
+        <Button aria-expanded={timeOpen} onClick={() => setTimeOpen(!timeOpen)}><Clock3 size={14} />{query.from_epoch !== null || query.to_epoch !== null ? `${inputTime(query.from_epoch).replace('T', ' ') || '…'} – ${inputTime(query.to_epoch).replace('T', ' ') || '…'} UTC` : tr('logs.timeScope')}</Button>
+        <Button aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}><Filter size={14} />{tr('logs.workspace.filters')}</Button>
+        <Button onClick={() => setBasketOpen(true)}><Pin size={14} />{tr('logs.basket')} ({clipsQuery.data?.length ?? 0})</Button>
+        <details className="relative"><summary aria-label={tr('logs.workspace.actions')} className="cursor-pointer list-none rounded-lg border border-[var(--line)] p-2"><MoreHorizontal size={18} /></summary>
+          <div className="absolute right-0 top-full z-20 mt-1 flex min-w-56 flex-col gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-2 shadow-xl" onClick={event => { const details = event.currentTarget.parentElement as HTMLDetailsElement; details.open = false }}>
+            <Button variant="ghost" onClick={() => setSaveOpen(true)}><Save size={14} />{tr('logs.save')}</Button>
+            <Button variant="ghost" onClick={() => setSavedOpen(true)}><Bookmark size={14} />{tr('logs.saved')}</Button>
+            <a href={downloadUrl(`/api/cases/${slug}/access/export?filters=${exportFilters}`)} className="inline-flex items-center gap-2 rounded px-3 py-2 text-[13px]"><Download size={14} />{tr('logs.export')}</a>
+          </div>
+        </details>
       </div>
-    </header>
-
-    <Card className="p-3">
+      {timeOpen && <div className="flex flex-wrap gap-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-3">
+        {(['from_epoch', 'to_epoch'] as const).map(key => <label key={key} className="text-[12px]">{tr(key === 'from_epoch' ? 'logs.fromUtc' : 'logs.toUtc')}<input type="datetime-local" value={inputTime(query[key])} onChange={event => setField(key, epochTime(event.target.value))} className="ml-2 rounded border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1" /></label>)}
+      </div>}
+      {filtersOpen && <section aria-label={tr('logs.workspace.filters')} className="space-y-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-3">
+        <button type="button" aria-pressed={query.signals_only} onClick={() => setField('signals_only', !query.signals_only)} className="inline-flex items-center gap-2 rounded border border-[var(--line)] px-3 py-2 text-[13px]"><ShieldAlert size={14} />{tr('logs.signalsOnly')}{query.signals_only && ' ✓'}</button>
+        <FacetPanel overview={overview} query={query} onInclude={includeValue} onExclude={excludeValue} onStatus={status => setField('status', status)} onMethod={method => setField('method', method)} />
+      </section>}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-[240px] flex-1">
-          <SearchInput value={searchDraft} onChange={setSearchDraft}
-            placeholder={tr('logs.search')} />
-        </div>
-        <select value={query.method} onChange={(event) => setField('method', event.target.value)}
-          aria-label={tr('logs.facets.method')}
-          className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] outline-none">
-          <option value="">{tr('logs.method.all')}</option>
-          {(overview?.facets.methods ?? []).map((item) => (
-            <option key={String(item.value)} value={String(item.value)}>{String(item.value)}</option>
-          ))}
-        </select>
-        <select value={query.sort} onChange={(event) =>
-          setField('sort', event.target.value as AccessLogQuery['sort'])}
-          aria-label={tr('common.sort')}
-          className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] outline-none">
-          <option value="time_desc">{tr('logs.sort.newest')}</option>
-          <option value="time">{tr('logs.sort.oldest')}</option>
-        </select>
-        <button type="button" onClick={() => setField('signals_only', !query.signals_only)}
-          aria-pressed={query.signals_only}
-          className={clsx('inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold',
-            query.signals_only
-              ? 'border-[var(--sev-high)]/50 bg-[var(--danger-soft)] text-[var(--danger-text)]'
-              : 'border-[var(--line)] bg-[var(--panel-2)] text-[var(--muted)]')}>
-          <ShieldAlert size={13} /> {tr('logs.signalsOnly')}
-        </button>
-        <Button variant="ghost" onClick={() => setSaveOpen(!saveOpen)}>
-          <Save size={14} /> {tr('logs.save')}
-        </Button>
-        {activeCount > 0 && <Button variant="ghost" onClick={reset}>
-          <X size={13} /> {tr('logs.reset')} ({activeCount})
-        </Button>}
+        <ActiveFilters query={query} overview={overview} onRemove={removeValue} onStatus={() => setField('status', '')} onMethod={() => setField('method', '')} onTime={() => setQuery(current => ({ ...current, from_epoch: null, to_epoch: null }))} />
+        {query.signals_only && <Button variant="ghost" onClick={() => setField('signals_only', false)}>{tr('logs.signalsOnly')} ×</Button>}
+        {query.search && <Button variant="ghost" onClick={() => { setSearchDraft(''); setField('search', '') }}>{query.search} ×</Button>}
+        {activeCount > 0 && <Button variant="ghost" onClick={reset}>{tr('logs.workspace.clear')}</Button>}
       </div>
+    </div>
+    <Modal open={saveOpen} onClose={() => setSaveOpen(false)} title={tr('logs.save')}><div className="flex gap-2"><input value={saveName} onChange={event => setSaveName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && saveName.trim() && !saveMutation.isPending) saveMutation.mutate() }} placeholder={tr('logs.saveName')} className="min-w-0 flex-1 rounded border border-[var(--line)] bg-[var(--panel-2)] p-2" /><Button disabled={!saveName.trim() || saveMutation.isPending} onClick={() => saveMutation.mutate()}>{tr('logs.saveCta')}</Button></div></Modal>
+    <Modal open={savedOpen} onClose={() => setSavedOpen(false)} title={tr('logs.saved')}><SavedSearches rows={savedQuery.data ?? []} onLoad={row => { loadSaved(row); setSavedOpen(false) }} onDelete={id => deleteSaved.mutate(id)} />{!savedQuery.data?.length && <p>{tr('logs.workspace.noSaved')}</p>}</Modal>
 
-      <div className="mt-2 flex flex-wrap items-end gap-2 border-t border-[var(--line-soft)] pt-2">
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-          {tr('logs.fromUtc')}
-          <input type="datetime-local" value={inputTime(query.from_epoch)}
-            onChange={(event) => setField('from_epoch', epochTime(event.target.value))}
-            className="mt-1 block rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1 text-[11px] normal-case tracking-normal text-[var(--fg)]" />
-        </label>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-          {tr('logs.toUtc')}
-          <input type="datetime-local" value={inputTime(query.to_epoch)}
-            onChange={(event) => setField('to_epoch', epochTime(event.target.value))}
-            className="mt-1 block rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1 text-[11px] normal-case tracking-normal text-[var(--fg)]" />
-        </label>
-        {saveOpen && <div className="ml-auto flex min-w-[260px] items-center gap-2">
-          <input value={saveName} onChange={(event) => setSaveName(event.target.value)}
-            onKeyDown={(event) => { if (event.key === 'Enter' && saveName.trim()) saveMutation.mutate() }}
-            placeholder={tr('logs.saveName')}
-            className="min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] outline-none focus:border-[var(--accent)]" />
-          <Button variant="primary" disabled={!saveName.trim() || saveMutation.isPending}
-            onClick={() => saveMutation.mutate()}>{tr('logs.saveCta')}</Button>
-        </div>}
-      </div>
-
-      <ActiveFilters query={query} overview={overview} onRemove={removeValue}
-        onStatus={() => setField('status', '')} onMethod={() => setField('method', '')}
-        onTime={() => setQuery((current) => ({ ...current, from_epoch: null, to_epoch: null }))} />
-    </Card>
-
-    <div className="grid min-w-0 gap-3 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_360px]">
-      <aside className="min-w-0 space-y-3">
-        <SavedSearches rows={savedQuery.data ?? []} onLoad={loadSaved}
-          onDelete={(id) => deleteSaved.mutate(id)} />
-        <FacetPanel overview={overview} query={query}
-          onInclude={includeValue} onExclude={excludeValue}
-          onStatus={(status) => setField('status', status)}
-          onMethod={(method) => setField('method', method)} />
-      </aside>
-
-      <main className="min-w-0">
+    <div ref={workspaceRef} className={clsx('access-split', selectedRequest !== null && 'has-inspector')} style={{ '--inspector-width': `${displayWidth}px` } as CSSProperties}>
+      <div className="access-results">
+        <div className="flex flex-wrap items-center justify-between gap-2">
         <nav className="mb-2 inline-flex rounded-xl border border-[var(--line)] bg-[var(--panel)] p-1"
           aria-label={tr('logs.views')}>
           {(['requests', 'patterns', 'segments'] as AccessTab[]).map((value) => (
@@ -339,6 +306,8 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
             </button>
           ))}
         </nav>
+        <select value={query.sort} onChange={event => setField('sort', event.target.value as AccessLogQuery['sort'])} aria-label={tr('common.sort')} className="rounded-lg border border-[var(--line)] bg-[var(--panel-2)] px-2 py-1.5 text-[13px]"><option value="time_desc">{tr('logs.sort.newest')}</option><option value="time">{tr('logs.sort.oldest')}</option></select>
+        </div>
         {tab === 'requests' && <RequestTable data={data} loading={searchQuery.isFetching}
           selected={selectedRequest} onSelect={setSelectedRequest} />}
         {tab === 'patterns' && <PatternTable result={patternsQuery.data}
@@ -366,8 +335,12 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
             }}>{tr('logs.next')} <ChevronRight size={14} /></Button>
           </div>
         )}
-      </main>
+      </div>
 
+      {selectedRequest !== null && <div role="separator" tabIndex={0} aria-label={tr('logs.workspace.resize')} aria-orientation="vertical" aria-valuemin={320} aria-valuemax={maxInspector} aria-valuenow={displayWidth} className="access-divider"
+        onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); resizeInspector(event.key === 'Home' ? 320 : event.key === 'End' ? maxInspector : displayWidth + (event.key === 'ArrowLeft' ? 20 : -20)) } }}
+        onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerMove={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeInspector((workspaceRef.current?.getBoundingClientRect().right ?? 0) - event.clientX) }} />}
       <RequestInspector context={contextQuery.data} loading={contextQuery.isFetching}
         visible={selectedRequest !== null} onClose={() => setSelectedRequest(null)}
         onSelect={setSelectedRequest}
@@ -549,8 +522,8 @@ function FacetPanel({ overview, query, onInclude, onExclude, onStatus, onMethod 
 }) {
   const tr = useT()
   return <Card className="p-2.5">
-    <details>
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)] hover:text-[var(--fg)]">
+    <details open>
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] font-semibold text-[var(--muted)]">
         <Filter size={12} /> {tr('logs.facets')}
       </summary>
       <div className="mt-3 border-t border-[var(--line-soft)] pt-3">
@@ -623,21 +596,20 @@ function RequestTable({ data, loading, selected, onSelect }: {
 }) {
   const tr = useT()
   if (!data && loading) return <LoadingBlock />
-  return <Card className="min-w-0 overflow-hidden">
+  return <Card className="access-table-card min-w-0 overflow-hidden">
     <div className="flex items-center justify-between border-b border-[var(--line)] px-3 py-2 text-[11px] text-[var(--muted)]">
       <span>{formatCount(data?.total ?? 0)} {tr('logs.requests')}</span>
       {loading && <span>{tr('common.loading')}</span>}
     </div>
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[840px] border-collapse text-[11px]">
-        <thead><tr className="border-b border-[var(--line)] text-left text-[9.5px] uppercase tracking-wider text-[var(--muted)]">
+    <div className="access-table-scroll">
+      <table className="w-full border-collapse text-[13px]">
+        <thead className="sticky top-0 z-10 bg-[var(--panel-2)]"><tr className="border-b border-[var(--line)] text-left text-[12px] text-[var(--muted)]">
           <th className="px-2 py-1.5">{tr('table.time')}</th>
           <th className="px-2 py-1.5">{tr('logs.table.client')}</th>
           <th className="px-2 py-1.5">{tr('table.method')}</th>
           <th className="px-2 py-1.5">URI</th>
           <th className="px-2 py-1.5 text-right">Status</th>
           <th className="px-2 py-1.5 text-right">{tr('logs.table.size')}</th>
-          <th className="px-2 py-1.5">{tr('logs.table.source')}</th>
         </tr></thead>
         <tbody className="mono">
           {(data?.rows ?? []).map((row) => <tr key={row.request_id}
@@ -649,12 +621,11 @@ function RequestTable({ data, loading, selected, onSelect }: {
             <td className="whitespace-nowrap px-2 py-1.5 text-[var(--muted)]">{formatLogTime(row.epoch, row.tz)}</td>
             <td className="whitespace-nowrap px-2 py-1.5"><span className="inline-flex items-center gap-1.5"><IpFlag ip={row.client} />{row.client}</span></td>
             <td className="px-2 py-1.5">{row.method}</td>
-            <td className="max-w-[420px] truncate px-2 py-1.5" title={row.uri}>
+            <td className="w-full min-w-40 max-w-0 truncate px-2 py-2" title={row.uri}>
               <span className={row.signals.length ? 'font-semibold text-[var(--danger-text)]' : ''}>{row.uri}</span>
             </td>
             <td className={clsx('px-2 py-1.5 text-right tabular', statusTone(row.status))}>{row.status}</td>
             <td className="whitespace-nowrap px-2 py-1.5 text-right text-[var(--muted)]">{row.size === null ? '—' : formatBytes(row.size)}</td>
-            <td className="max-w-[140px] truncate px-2 py-1.5 text-[var(--muted)]" title={`${row.source}:${row.line_no}`}>{row.source}:{row.line_no}</td>
           </tr>)}
         </tbody>
       </table>
@@ -753,70 +724,44 @@ function RequestInspector({ context, loading, visible, onClose, onSelect,
   clipping: boolean
 }) {
   const tr = useT()
-  if (!visible) return <aside className="hidden xl:block">
-    <Card className="sticky top-20 flex min-h-56 items-center justify-center p-6 text-center text-[12px] text-[var(--muted)]">
-      <div><Search size={26} className="mx-auto mb-2 opacity-50" />{tr('logs.inspector.empty')}</div>
-    </Card>
-  </aside>
-  return <aside className="fixed inset-0 z-40 overflow-y-auto bg-[var(--bg)] p-3 xl:sticky xl:top-20 xl:z-auto xl:max-h-[calc(100vh-6rem)] xl:bg-transparent xl:p-0">
-    <Card className="min-h-full p-3 xl:min-h-0">
-      <div className="mb-3 flex items-center justify-between gap-2 border-b border-[var(--line)] pb-2">
-        <div className="text-[12px] font-semibold">{tr('logs.inspector.title')}</div>
-        <button type="button" onClick={onClose} aria-label={tr('common.close')}
-          className="cursor-pointer rounded p-1 text-[var(--muted)] hover:bg-[var(--panel-2)]"><X size={14} /></button>
-      </div>
-      {loading && !context ? <LoadingBlock /> : context && <>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mono inline-flex items-center gap-1.5 text-[13px] font-semibold"><IpFlag ip={context.request.client} />{context.request.client}</span>
-          <span className={clsx('rounded px-1.5 py-0.5 text-[11px] font-bold', statusBg(context.request.status))}>{context.request.status}</span>
-          <span className="mono text-[11px] text-[var(--muted)]">{context.request.method}</span>
-        </div>
-        <div className="mt-1 text-[10.5px] text-[var(--muted)]">{formatLogTime(context.request.epoch, context.request.tz, { withZone: true })}</div>
-        <div className="mono mt-3 break-all rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[11px] font-semibold">{context.request.uri}</div>
-
-        <section className="mt-3">
-          <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{tr('logs.inspector.why')}</h3>
-          {context.request.signals.length
-            ? <SignalChips signals={context.request.signals} />
-            : <p className="text-[11px] text-[var(--muted)]">{tr('logs.inspector.noSignals')}</p>}
-        </section>
-
-        <div className="mt-3 grid grid-cols-2 gap-2 text-[10.5px]">
-          <Info label={tr('logs.table.size')} value={context.request.size === null ? '—' : formatBytes(context.request.size)} />
-          <Info label={tr('logs.table.source')} value={`${context.request.source}:${context.request.line_no}`} />
-          <Info label="Referrer" value={context.request.referrer || '—'} wide />
-          <Info label="User-Agent" value={context.request.agent || '—'} wide />
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          <Button variant="ghost" onClick={() => onFilterClient(context.request.client)}><Plus size={12} />IP</Button>
-          <Button variant="ghost" onClick={() => onFilterPath(context.request.uri)}><Plus size={12} />URI</Button>
-          {context.request.agent && <Button variant="ghost" onClick={() => onFilterAgent(context.request.agent)}><Plus size={12} />UA</Button>}
-          <Button variant="ghost" onClick={() => onTrace(context.request)}><Activity size={12} />Trace</Button>
-          <Button variant="ghost" onClick={() => onCreatePattern(context.request.request_id)}>
-            <Radar size={12} />{tr('logs.inspector.createPattern')}
-          </Button>
-        </div>
-
-        <section className="mt-3">
-          <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{tr('logs.inspector.raw')}</h3>
-          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[9.5px] leading-relaxed">{context.raw_line || tr('logs.inspector.rawMissing')}</pre>
-          {context.raw_truncated && <p className="mt-1 text-[9.5px] text-[var(--warning-text)]">{tr('logs.inspector.rawTruncated')}</p>}
-        </section>
-
-        <ContextRows before={context.before} selected={context.request} after={context.after} onSelect={onSelect} />
-
-        <section className="mt-3 border-t border-[var(--line)] pt-3">
-          <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{tr('logs.pin.title')}</h3>
-          <textarea value={clipNote} onChange={(event) => setClipNote(event.target.value)}
-            placeholder={tr('logs.pin.note')} rows={2}
-            className="w-full resize-none rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[11px] outline-none focus:border-[var(--accent)]" />
-          <Button variant="primary" className="mt-1.5" disabled={clipping}
-            onClick={() => onClip(context.request.request_id)}><Pin size={12} /> {tr('logs.pin.cta')}</Button>
-        </section>
-      </>}
-    </Card>
-  </aside>
+  const [rawOpen, setRawOpen] = useState(false)
+  const [desktop, setDesktop] = useState(() => window.matchMedia('(min-width: 1280px)').matches)
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1280px)')
+    const update = () => setDesktop(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  useEffect(() => { setRawOpen(false) }, [context?.request.request_id, visible])
+  if (!visible) return null
+  const contents = <div className="space-y-4 text-[13px]">
+    {loading && !context ? <LoadingBlock /> : context ? <>
+      <section className="space-y-2">
+        <div className="mono break-all font-semibold">{context.request.method} {context.request.uri}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className={clsx('rounded px-2 py-1 font-semibold', statusBg(context.request.status))}>{context.request.status}</span><span className="mono inline-flex items-center gap-2"><IpFlag ip={context.request.client} />{context.request.client}<CopyButton value={context.request.client} label={tr('logs.workspace.copyIp')} /></span></div>
+        <p className="text-[var(--muted)]">{formatLogTime(context.request.epoch, context.request.tz, { withZone: true })} · {context.request.size === null ? '—' : formatBytes(context.request.size)}</p>
+      </section>
+      <section className="space-y-3 border-t border-[var(--line)] pt-3">
+        <div><div className="mb-1 flex items-center justify-between gap-2"><h3 className="font-semibold">{tr('logs.workspace.userAgent')}</h3>{context.request.agent && context.request.agent !== '-' && <CopyButton value={context.request.agent} label={tr('logs.workspace.copyAgent')} />}</div><p className="whitespace-pre-wrap break-all">{context.request.agent && context.request.agent !== '-' ? context.request.agent : tr('logs.workspace.notRecorded')}</p></div>
+        <div><h3 className="mb-1 font-semibold">{tr('logs.workspace.referrer')}</h3><p className="break-all text-[var(--muted)]">{context.request.referrer && context.request.referrer !== '-' ? context.request.referrer : tr('logs.workspace.notRecorded')}</p></div>
+      </section>
+      <section className="border-t border-[var(--line)] pt-3">
+        <div className="mb-2 flex items-center gap-2"><h3 className="mr-auto font-semibold">{tr('logs.inspector.raw')}</h3>{context.raw_line && <><CopyButton value={context.raw_line} label={tr('logs.workspace.copyRaw')} /><Button variant="ghost" onClick={() => setRawOpen(true)}><Maximize2 size={13} />{tr('logs.workspace.expand')}</Button></>}</div>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[12px] leading-relaxed">{context.raw_line || tr('logs.inspector.rawMissing')}</pre>
+        {context.raw_truncated && <p className="mt-1 text-[12px] text-[var(--warning-text)]">{tr('logs.inspector.rawTruncated')}</p>}
+      </section>
+      <ContextRows before={context.before} selected={context.request} after={context.after} onSelect={onSelect} />
+      <section className="space-y-2 border-t border-[var(--line)] pt-3">
+        <div className="flex flex-wrap gap-1.5"><Button variant="ghost" onClick={() => onFilterClient(context.request.client)}><Plus size={12} />IP</Button><Button variant="ghost" onClick={() => onFilterPath(context.request.uri)}><Plus size={12} />URI</Button>{context.request.agent && <Button variant="ghost" onClick={() => onFilterAgent(context.request.agent)}><Plus size={12} />{tr('logs.workspace.userAgent')}</Button>}<Button variant="special" onClick={() => onTrace(context.request)}><Activity size={12} />Trace</Button></div>
+        <textarea aria-label={tr('logs.pin.note')} value={clipNote} onChange={event => setClipNote(event.target.value)} placeholder={tr('logs.pin.note')} rows={2} className="w-full resize-none rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[13px]" />
+        <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={clipping} onClick={() => onClip(context.request.request_id)}><Pin size={13} />{tr('logs.pin.cta')}</Button><Button onClick={() => onCreatePattern(context.request.request_id)}><Radar size={13} />{tr('logs.inspector.createPattern')}</Button></div>
+      </section>
+    </> : <p role="status">{tr('logs.workspace.unavailable')}</p>}
+  </div>
+  return <>
+    {desktop ? <aside className="access-inspector rounded-lg border border-[var(--line)] bg-[var(--panel)] p-3" aria-label={tr('logs.inspector.title')}><div className="mb-3 flex items-center justify-between gap-2 border-b border-[var(--line)] pb-2"><h2 className="font-semibold">{tr('logs.inspector.title')}</h2><Button variant="ghost" onClick={onClose} aria-label={tr('common.close')}><X size={16} /></Button></div>{contents}</aside> : <Modal open onClose={onClose} title={tr('logs.inspector.title')}>{contents}</Modal>}
+    <Modal open={rawOpen} onClose={() => setRawOpen(false)} title={tr('logs.inspector.raw')} layer={1}><div className="space-y-3"><CopyButton value={context?.raw_line || ''} label={tr('logs.workspace.copyRaw')} /><pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--panel-2)] p-3 text-[13px] leading-relaxed">{context?.raw_line}</pre>{context?.raw_truncated && <p>{tr('logs.inspector.rawTruncated')}</p>}</div></Modal>
+  </>
 }
 
 function ContextRows({ before, selected, after, onSelect }: {
@@ -831,7 +776,7 @@ function ContextRows({ before, selected, after, onSelect }: {
     <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">{tr('logs.context')}</h3>
     <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--line)]">
       {rows.map((row) => <button key={row.request_id} type="button" onClick={() => onSelect(row.request_id)}
-        className={clsx('grid w-full cursor-pointer grid-cols-[62px_34px_minmax(0,1fr)_34px] items-center gap-1 border-b border-[var(--line-soft)] px-1.5 py-1 text-left text-[9.5px] last:border-0 hover:bg-[var(--panel-2)]',
+        className={clsx('grid w-full cursor-pointer grid-cols-[62px_34px_minmax(0,1fr)_34px] items-center gap-1 border-b border-[var(--line-soft)] px-1.5 py-1 text-left text-[12px] last:border-0 hover:bg-[var(--panel-2)]',
           row.request_id === selected.request_id && 'bg-[var(--accent-soft)]')}>
         <span className="tabular text-[var(--muted)]">{formatLogTime(row.epoch, row.tz).slice(11)}</span>
         <span>{row.method}</span>
@@ -840,13 +785,6 @@ function ContextRows({ before, selected, after, onSelect }: {
       </button>)}
     </div>
   </section>
-}
-
-function Info({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
-  return <div className={clsx('min-w-0 rounded-lg bg-[var(--panel-2)] p-2', wide && 'col-span-2')}>
-    <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--muted)]">{label}</div>
-    <div className="mt-0.5 break-all text-[10.5px]">{value}</div>
-  </div>
 }
 
 function BasketModal({ slug, open, onClose, clips, onDelete }: {

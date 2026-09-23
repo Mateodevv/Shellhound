@@ -1,0 +1,14 @@
+.logs-page { min-height: calc(100dvh - 32px); }
+.access-split { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 440px; }
+.access-results { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.access-table-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.access-table-scroll { overflow: auto; flex: 1; max-height: calc(100dvh - 280px); min-height: 320px; }
+.access-divider { display: none; }
+.access-inspector { min-width: 0; font-size: 13px; }
+@media (min-width: 1280px) {
+ .access-split.has-inspector { grid-template-columns: minmax(560px, 1fr) 8px var(--inspector-width); }
+ .access-divider { display: block; cursor: col-resize; touch-action: none; border-inline: 1px solid var(--line); margin-inline: 2px; }
+ .access-divider:hover, .access-divider:focus-visible { background: var(--accent); outline: none; }
+ .access-inspector { overflow-y: auto; max-height: calc(100dvh - 230px); }
+}
+@media (max-width: 767px) { .access-table-scroll table { min-width: 700px; } }

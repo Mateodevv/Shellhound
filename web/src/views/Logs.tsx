@@ -23,12 +23,12 @@ export function Logs({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const sourceQuery = useLogSources(slug)
   const requested = url.searchParams.get('section') || FAMILIES.find(f => sourceQuery.data?.sources.some(s => s.family === f)) || 'access'
   const family = FAMILIES.includes(requested as typeof FAMILIES[number]) ? requested : 'access'
-  return <div className="space-y-5">
-    <Section title={tr('logEvidence.title')} sub={tr('logEvidence.sub')}
+  return <div className="logs-page flex min-h-0 flex-col gap-3">
+    <Section title={tr('logEvidence.title')}
       right={<Button onClick={() => gotoView('evidence')}>{tr('logEvidence.add')}<ArrowRight size={14} /></Button>}>{null}</Section>
     <div className="flex flex-wrap gap-2" role="tablist" aria-label={tr('logEvidence.types')}>
       {FAMILIES.map(value => <button key={value} role="tab" aria-selected={family === value}
-        className={`rounded-lg border px-4 py-2 text-sm transition-colors ${family === value ? 'border-[var(--accent)] bg-[var(--review-soft)] text-[var(--accent)]' : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'}`}
+        className={`border-b-2 px-3 py-2 text-sm transition-colors ${family === value ? 'border-[var(--accent)] bg-[var(--review-soft)] text-[var(--accent)]' : 'border-[var(--line)] text-[var(--muted)] hover:text-[var(--fg)]'}`}
         onClick={() => gotoView('logs', { section: value })}>{tr(`logEvidence.family.${value}`)}
         {!!sourceQuery.data?.sources.filter(s => s.family === value).length && <span className="ml-2 text-xs opacity-70">{sourceQuery.data.sources.filter(s => s.family === value).length}</span>}</button>)}
     </div>
