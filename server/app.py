@@ -4975,10 +4975,35 @@ def create_app(config: Config) -> FastAPI:
             else:
                 conn.execute("DELETE FROM cms_version_overrides "
                              "WHERE scope = ? AND key = ?", (scope, key))
+            from server.ioc.software import sync_inventory
+            sync_inventory(conn)
             conn.commit()
         finally:
             conn.close()
         return {"ok": True, "version": body.version.strip()[:60]}
+
+    class CmsSoftwareBody(BaseModel):
+        expected_path: str
+
+    @app.post("/api/cases/{slug}/cms/items/{item_id}/ioc", dependencies=[auth])
+    def collect_cms_item(slug: str, item_id: int, body: CmsSoftwareBody):
+        from server.ioc.software import collect
+        conn = db.connect(case_dir_or_404(slug))
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = db.one(conn, "SELECT i.*,s.root,s.cms FROM cms_items i JOIN cms_installs s ON s.id=i.install_id WHERE i.id=?", (item_id,))
+            if not row:
+                raise HTTPException(404, "Unknown extension")
+            if row['path'] != body.expected_path:
+                raise HTTPException(409, "Inventory changed. Refresh before adding this extension.")
+            override = db.one(conn, "SELECT version FROM cms_version_overrides WHERE scope='item' AND key=?", (_item_key(row['root'], row),))
+            identifier = collect(conn, row['name'], override['version'] if override else row['version'], row['cms'], row['type'])
+            ioc_model.observe(conn, identifier, 'software-inventory', source_ref=_item_key(row['root'], row), local_path=row['path'], detail=row['type'])
+            conn.commit()
+        finally:
+            conn.close()
+        hub.publish({"type": "invalidate", "scope": "iocs"})
+        return {"id": identifier}
 
     @app.patch("/api/cases/{slug}/cms/items/{item_id}", dependencies=[auth])
     def set_item_version(slug: str, item_id: int, body: VersionBody):

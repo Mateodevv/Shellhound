@@ -327,7 +327,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
     def test_explicit_file_classifications_reach_preview_and_can_be_corrected(self):
         sample = self._inert_evidence()
         route = f"/api/cases/{self.slug}/files/review"
-        self.assertEqual(400, self.request("POST", route, {"path": str(sample),
+        self.assertEqual(200, self.request("POST", route, {"path": str(sample),
             "state": "confirmed", "classification": "malware"})[0])
         self.assertEqual(400, self.request("POST", route, {"path": str(sample),
             "state": "confirmed", "classification": "c2", "note": "Invalid classification"})[0])

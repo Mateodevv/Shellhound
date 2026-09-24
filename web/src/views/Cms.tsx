@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
-  api, patch, type CaseDetail, type CmsInstall, type CmsItem,
+  api, patch, post, type CaseDetail, type CmsInstall, type CmsItem,
   type VersionFacts,
 } from '../api'
 import {
@@ -193,7 +193,7 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
       </Card>
 
       {installs.map((inst) => (
-        <InstallCard key={inst.id} install={inst} visible={visible}
+        <InstallCard key={inst.id} slug={slug} install={inst} visible={visible}
           filtering={Boolean(search || hiddenTypes.size || hiddenVersion.size)}
           onOpenArtifact={(stub) => { t.clearCollected(); setSelected(stub) }}
           onEditVersion={setVersionTarget} />
@@ -233,7 +233,8 @@ export function Cms({ slug }: { slug: string; gotoView: (v: ViewId) => void }) {
   )
 }
 
-function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersion }: {
+function InstallCard({ slug, install, visible, filtering, onOpenArtifact, onEditVersion }: {
+  slug: string
   install: CmsInstall
   visible: (i: CmsItem) => boolean
   filtering: boolean
@@ -241,6 +242,10 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
   onEditVersion: (t: VersionTarget) => void
 }) {
   const tr = useT()
+  const qc = useQueryClient()
+  const [added, setAdded] = useState<Set<number>>(new Set())
+  const collect = useMutation({ mutationFn: (item: CmsItem) => post(`/api/cases/${slug}/cms/items/${item.id}/ioc`, {expected_path:item.path}), onSuccess: (_data, item) => { setAdded(old => new Set([...old, item.id])); qc.invalidateQueries({queryKey:['iocs',slug]}) } })
+
   const unknown = install.items.filter((i) => i.version === '(unknown)').length
   const flagged = install.items.filter((i) => i.flagged > 0).length
   // Collapsed groups. A filter or a search expands everything -- otherwise
@@ -327,6 +332,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
         </div>
       </div>
 
+      {collect.error && <p role="alert" className="px-4 py-2 text-[var(--danger-text)]">{collect.error.message}</p>}
       {/* ---- one list, groups as collapsible bands ---- */}
       {sections.map(([base, list]) => {
         const open = filtering || !collapsed.has(base)
@@ -403,6 +409,7 @@ function InstallCard({ install, visible, filtering, onOpenArtifact, onEditVersio
                     </button>
                   </Tooltip>
                 )}
+                <Button disabled={collect.isPending || added.has(item.id)} onClick={() => collect.mutate(item)}>{tr(added.has(item.id) ? 'cms.iocAdded' : 'cms.addIoc')}</Button>
                 {/* Keep the measured value visible, but name the action too:
                     an unlabeled pencil/version field is easy to mistake for
                     static metadata. */}

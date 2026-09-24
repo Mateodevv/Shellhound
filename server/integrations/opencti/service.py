@@ -6,6 +6,9 @@ same receipt instead of inventing a new case or repeating completed uploads.
 """
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
 import hashlib
 import json
 import threading
@@ -80,7 +83,7 @@ def _unsupported(row):
 
 
 def _lookup_row(client, row):
-    if row["type"] == "user" and row.get("context"):
+    if row["type"] == "software" or row["type"] == "user" and row.get("context"):
         match = client.find_existing_shared(graph._observable(row, row["value"]))
         resolved = client.resolve(match["id"]) if match else None
         return [resolved] if resolved else []
@@ -501,27 +504,30 @@ def _wait_taxii(client, work_id, ctx):
     return status
 
 
-def _mapping(case_dir, obj, remote, destination, *, reused=False):
-    conn = db.connect(case_dir)
-    try:
-        stored = obj
-        if not obj.get("x_shellhound_case_reference"):
-            # Existing shared content is not proof of Shellhound authorship.
-            # Preserve proven imports across later reuse and token rotation;
-            # older unlabelled mappings remain conservatively unproven.
-            prior = db.one(conn, "SELECT object_json FROM opencti_mappings WHERE source_id=? AND destination=?",
-                           (obj["id"], destination))
-            imported = not reused or (prior and json.loads(prior["object_json"]).get("_shellhound_origin") == "imported")
-            stored = {**obj, "_shellhound_origin": "imported" if imported else "reused"}
-        conn.execute("INSERT OR REPLACE INTO opencti_mappings VALUES (?,?,?,?,?,?,?)",
-                     (obj["id"], remote.get("id", ""), remote.get("standard_id", ""),
-                      _digest(graph._stable(obj)), _json(stored), db.now(), destination))
-        conn.commit()
-    finally:
-        conn.close()
+def _mapping(case_dir, obj, remote, destination, *, reused=False, conn=None):
+    if conn is None:
+        owned = db.connect(case_dir)
+        try:
+            _mapping(case_dir, obj, remote, destination, reused=reused, conn=owned)
+            owned.commit()
+        finally:
+            owned.close()
+        return
+    stored = obj
+    if not obj.get("x_shellhound_case_reference"):
+        # Existing shared content is not proof of Shellhound authorship.
+        # Preserve proven imports across later reuse and token rotation;
+        # older unlabelled mappings remain conservatively unproven.
+        prior = db.one(conn, "SELECT object_json FROM opencti_mappings WHERE source_id=? AND destination=?",
+                       (obj["id"], destination))
+        imported = not reused or (prior and json.loads(prior["object_json"]).get("_shellhound_origin") == "imported")
+        stored = {**obj, "_shellhound_origin": "imported" if imported else "reused"}
+    conn.execute("INSERT OR REPLACE INTO opencti_mappings VALUES (?,?,?,?,?,?,?)",
+                 (obj["id"], remote.get("id", ""), remote.get("standard_id", ""),
+                  _digest(graph._stable(obj)), _json(stored), db.now(), destination))
 
 
-def _prepare_shared(client, case_dir, receipt, payload):
+def _prepare_shared(client, case_dir, receipt, payload, *, lookup=None, ctx=None):
     """Reuse exact shared entities without resubmitting their mutable fields.
 
     Keep the reviewed graph in the receipt. The wire graph only rewrites
@@ -532,15 +538,23 @@ def _prepare_shared(client, case_dir, receipt, payload):
         return
     case_types = {"incident", "x-opencti-case-incident", "report", "note", "indicator", "relationship", "malware"}
     reused = {}
-    for obj in payload["objects"]:
-        if obj["type"] in case_types and obj.get("x_shellhound_case_reference") == payload["case_reference"]:
-            continue
-        existing = client.find_existing_shared(obj)
-        if existing:
-            if not existing.get("id") or not existing.get("standard_id"):
-                raise ValueError("A shared OpenCTI match has no stable identity; transfer was not started.")
-            reused[obj["id"]] = {"id": existing["id"], "standard_id": existing["standard_id"]}
-            _mapping(case_dir, obj, existing, payload["mapping_destination"], reused=True)
+    candidates = [obj for obj in payload["objects"]
+                  if not (obj["type"] in case_types and obj.get("x_shellhound_case_reference") == payload["case_reference"])]
+    # Only independent reads run concurrently; bounded chunks avoid queuing an
+    # entire export after cancellation. Each worker owns its HTTP client.
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="opencti-preflight") as pool:
+        for offset in range(0, len(candidates), 4):
+            if ctx and ctx.cancelled():
+                return
+            chunk = candidates[offset:offset + 4]
+            for obj, existing in zip(chunk, pool.map(lookup or client.find_existing_shared, chunk)):
+                if existing:
+                    if not existing.get("id") or not existing.get("standard_id"):
+                        raise ValueError("A shared OpenCTI match has no stable identity; transfer was not started.")
+                    reused[obj["id"]] = {"id": existing["id"], "standard_id": existing["standard_id"]}
+                    _mapping(case_dir, obj, existing, payload["mapping_destination"], reused=True)
+            if ctx:
+                ctx.progress((offset + len(chunk)) / max(1, len(candidates)), "Checking existing objects")
     remap = {source: remote["standard_id"] for source, remote in reused.items()}
 
     def rewrite(value, key=""):
@@ -590,7 +604,18 @@ def _queue_export(root, case_dir, receipt):
                 raise ValueError("Case data changed while transfer was queued; create a fresh preview.")
             _manual_only(client)
             _save_export(case_dir, receipt, payload, "running")
-            _prepare_shared(client, case_dir, receipt, payload)
+            worker_clients = threading.local()
+            def lookup(obj):
+                if not hasattr(worker_clients, "client"):
+                    worker_clients.client = OpenCTIClient(config)
+                return worker_clients.client.find_existing_shared(obj)
+            phase_started = time.monotonic()
+            _prepare_shared(client, case_dir, receipt, payload, lookup=lookup, ctx=ctx)
+            payload.setdefault("timings", {})["preflight_seconds"] = round(time.monotonic() - phase_started, 3)
+            if ctx.cancelled():
+                _save_export(case_dir, receipt, payload, "paused")
+                return {"export_id": receipt["id"], "state": "paused"}
+            phase_started = time.monotonic()
             reviewed_objects = {o["id"]: o for o in payload["objects"]}
             objects = {o["id"]: o for o in payload["wire_objects"]}
             for index, batch in enumerate(payload["batches"]):
@@ -599,6 +624,7 @@ def _queue_export(root, case_dir, receipt):
                     return {"export_id": receipt["id"], "state": "paused"}
                 if batch["state"] == "complete":
                     continue
+                ctx.progress(index / (len(payload["batches"]) + 1), "Importing reviewed objects")
                 batch_objects = [objects[key] for key in batch["ids"]]
                 if not batch.get("work_id"):
                     batch["state"] = "submitting"
@@ -634,16 +660,25 @@ def _queue_export(root, case_dir, receipt):
                     raise ValueError("TAXII still reports pending objects; the transfer is not complete.")
                 batch["state"] = "verifying"
                 # Completion requires visible imported objects, not merely HTTP 202.
-                for source_id in batch.get("verify_ids", batch["ids"]):
-                    obj = objects[source_id]
-                    remote = client.resolve(obj["id"])
-                    if not remote:
-                        batch["state"] = "unverified"
-                        raise ValueError("Import finished but an object is not visible to the integration account. Check markings and access rights.")
-                    _mapping(case_dir, reviewed_objects[obj["id"]], remote, payload["mapping_destination"])
+                ctx.progress(index / (len(payload["batches"]) + 1), "Verifying imported objects")
+                verify_ids = batch.get("verify_ids", batch["ids"])
+                verified = client.resolve_many(verify_ids)
+                mapping_conn = db.connect(case_dir)
+                try:
+                    for source_id in verify_ids:
+                        obj = objects[source_id]
+                        remote = verified.get(source_id)
+                        if not remote:
+                            batch["state"] = "unverified"
+                            raise ValueError("Import finished but an object is not visible to the integration account. Check markings and access rights.")
+                        _mapping(case_dir, reviewed_objects[obj["id"]], remote, payload["mapping_destination"], conn=mapping_conn)
+                    mapping_conn.commit()
+                finally:
+                    mapping_conn.close()
                 batch["state"] = "complete"
                 _save_export(case_dir, receipt, payload)
                 ctx.progress((index + 1) / (len(payload["batches"]) + 1), "Importing reviewed objects")
+            payload["timings"]["import_verify_seconds"] = round(time.monotonic() - phase_started, 3)
             for sample in payload["samples"]:
                 if sample.get("state") == "complete":
                     continue
@@ -732,6 +767,7 @@ def _queue_export(root, case_dir, receipt):
                                      "Supporting evidence and the complete relationship context are available in the linked Shellhound case container and Notes."),
                             "state": "new"})
                 _save_export(case_dir, receipt, payload)
+            phase_started = checkpoint = time.monotonic()
             for index, entry in enumerate(payload["descriptions"]):
                 if entry["state"] in ("complete", "unavailable"):
                     continue
@@ -751,8 +787,14 @@ def _queue_export(root, case_dir, receipt):
                     _save_export(case_dir, receipt, payload)
                     continue
                 entry["state"] = "complete"
-                _save_export(case_dir, receipt, payload)
+                # Description merging is idempotent; save periodically and on
+                # every exit/error, rather than serialize the graph per object.
+                if (index + 1) % 25 == 0 or time.monotonic() - checkpoint >= 5:
+                    _save_export(case_dir, receipt, payload)
+                    checkpoint = time.monotonic()
                 ctx.progress((index + 1) / max(1, len(payload["descriptions"])), "Updating observable descriptions")
+            payload["timings"]["descriptions_seconds"] = round(time.monotonic() - phase_started, 3)
+            logging.getLogger("shellhound.opencti.export").info("Export phase timings: %s", payload["timings"])
             _save_export(case_dir, receipt, payload, "complete")
             return {"export_id": receipt["id"], "objects": len(objects), "state": "complete"}
         except Exception as exc:
@@ -862,7 +904,7 @@ def enrichment_preview(root, case_dir, ioc_ids=None):
         entities.append({"ioc_id": row["id"], "id": matches[0]["id"] if matches else None,
                          "value": row["value"], "type": row["type"], "requires_creation": not matches,
                          "requires_transfer": not matches and row["type"] == "user"})
-        if not matches and row["type"] == "user":
+        if not matches and row["type"] in ("user", "software"):
             warnings.append(f"Transfer IOC {row['id']} (account) before starting enrichment, or remove it from this selection.")
     types = {_ioc_entity_type(row) for row in rows if not _unsupported(row)}
     connectors = [c for c in _connectors(client) if c.get("active") and not c.get("auto")
@@ -874,7 +916,7 @@ def enrichment_preview(root, case_dir, ioc_ids=None):
 
 def _ioc_entity_type(row):
     return {"ip": "IPv6-Addr" if ":" in row["value"] else "IPv4-Addr", "hash": "StixFile", "file": "StixFile", "vulnerability": "Vulnerability",
-            "domain": "Domain-Name", "url": "Url", "email": "Email-Addr", "user": "User-Account"}.get(row["type"], "")
+            "domain": "Domain-Name", "url": "Url", "email": "Email-Addr", "user": "User-Account", "software": "Software"}.get(row["type"], "")
 
 
 def _scope_matches(connector, entity_type):
@@ -976,8 +1018,8 @@ def enrich(root, case_dir, ioc_ids, connector_ids, create_missing=False):
                 continue
             matches = _lookup_row(client, row)
             if not matches:
-                if row["type"] == "user":
-                    raise ValueError("Transfer this account to OpenCTI before requesting enrichment.")
+                if row["type"] in ("user", "software"):
+                    raise ValueError("Transfer this object to OpenCTI before requesting enrichment.")
                 if not create_missing:
                     raise ValueError("An unknown IOC requires explicit permission to create an OpenCTI object. Review enrichment again.")
                 _manual_only(client)

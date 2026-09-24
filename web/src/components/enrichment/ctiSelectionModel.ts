@@ -1,9 +1,9 @@
-export const iocCategories = ['all', 'ip', 'file', 'hash', 'domains', 'vulnerability', 'other']
+import { iocGroups } from '../iocs/iocGroups'
+export const iocCategories = iocGroups.map(group => group.id)
 export function inIocCategory(type: string, category: string) {
   if (category === 'all') return true
-  if (category === 'domains') return type === 'domain' || type === 'url'
-  if (category === 'other') return !['ip', 'file', 'hash', 'domain', 'url', 'vulnerability'].includes(type)
-  return type === category
+  if (category === 'other') return !iocGroups.some(group => group.id !== 'other' && group.types.includes(type))
+  return iocGroups.find(group => group.id === category)?.types.includes(type) ?? false
 }
 export function selectBatch<T>(current: T[], eligible: T[], checked: boolean): T[] {
   const scope = new Set(eligible)

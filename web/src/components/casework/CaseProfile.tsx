@@ -1,6 +1,6 @@
 import { useState, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, SlidersHorizontal } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import { api, patch, type CaseInfo } from '../../api'
 import { newCaseProfile, useOpenCtiSettings, type CaseProfile, type CaseProfileChanges } from '../../opencti'
 import { AffectedOrganizationFields } from './AffectedOrganizationFields'
@@ -77,27 +77,6 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
     <CtiField label={tr('cti.marking')}><select className={ctiInput} value={profile.marking} onChange={(e) => change('marking', e.target.value)}>
       {['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'].map((marking) => <option key={marking}>{marking}</option>)}
     </select><span>{tr('cti.markingHint')}</span></CtiField>
-    </div></div>
-    <div hidden={section !== 'all' && section !== 'technical'}><div className="flex flex-col gap-4">
-    <fieldset className="flex flex-col gap-2"><legend className="mb-2 text-[13px] font-semibold">{tr('cti.software')}</legend>
-      {profile.software.map((item, index) => <div key={index} className="flex gap-2">
-        <input aria-label={tr('cti.softwareName')} placeholder={tr('cti.softwareName')} className={ctiInput} value={item.name} onChange={(e) => change('software', profile.software.map((v, n) => n === index ? { ...v, name: e.target.value } : v))} required={section === 'all' || section === 'technical'} />
-        <input aria-label={tr('cti.version')} placeholder={tr('cti.version')} className={ctiInput} value={item.version} onChange={(e) => change('software', profile.software.map((v, n) => n === index ? { ...v, version: e.target.value } : v))} />
-        <Button type="button" aria-label={tr('common.remove')} onClick={() => change('software', profile.software.filter((_, n) => n !== index))}><Trash2 size={14} /></Button>
-      </div>)}
-      <Button type="button" onClick={() => change('software', [...profile.software, { name: '', version: '' }])}><Plus size={13} />{tr('common.add')}</Button>
-    </fieldset>
-    <fieldset className="flex flex-col gap-2"><legend className="mb-2 text-[13px] font-semibold">{tr('cti.vulns')}</legend>
-      {profile.vulnerabilities.map((item, index) => <div key={index} className="flex flex-col gap-2 rounded-lg border border-[var(--line)] p-3">
-        <div className="flex gap-2"><input aria-label={tr('cti.vulnName')} placeholder={tr('cti.vulnName')} className={ctiInput} value={item.name} onChange={(e) => change('vulnerabilities', profile.vulnerabilities.map((v, n) => n === index ? { ...v, name: e.target.value } : v))} required={section === 'all' || section === 'technical'} />
-          <Button type="button" aria-label={tr('common.remove')} onClick={() => change('vulnerabilities', profile.vulnerabilities.filter((_, n) => n !== index))}><Trash2 size={14} /></Button></div>
-        <select aria-label={tr('cti.vulns')} className={ctiInput} value={item.status} onChange={(e) => change('vulnerabilities', profile.vulnerabilities.map((v, n) => n === index ? { ...v, status: e.target.value as 'confirmed' | 'suspected' } : v))}>
-          <option value="suspected">{tr('cti.suspected')}</option><option value="confirmed">{tr('cti.confirmed')}</option>
-        </select>
-        <textarea aria-label={tr('cti.vulnDescription')} placeholder={tr('cti.vulnDescription')} className={ctiInput} value={item.description} onChange={(e) => change('vulnerabilities', profile.vulnerabilities.map((v, n) => n === index ? { ...v, description: e.target.value } : v))} />
-      </div>)}
-      <Button type="button" onClick={() => change('vulnerabilities', [...profile.vulnerabilities, { name: '', status: 'suspected', description: '' }])}><Plus size={13} />{tr('common.add')}</Button>
-    </fieldset>
     </div></div>
   </>
 }

@@ -80,7 +80,7 @@ def identity(value, kind, context="", path_context="unknown"):
     elif kind == "email" and "@" in value:
         local, domain = value.rsplit("@", 1)
         normalized = local + "@" + domain.lower()
-    scope = context if kind in ("path", "user", "other") else ""
+    scope = context if kind in ("path", "user", "other", "software") else ""
     if kind == "path" and path_context != "unknown":
         scope = [context, path_context]
     return json.dumps([kind, normalized, scope],
@@ -157,10 +157,10 @@ def migrate(conn):
             conn.execute(f"ALTER TABLE ioc_links ADD COLUMN {name} {decl}")
     conn.executescript(SCHEMA)
     # Defaults change once; explicit analyst decisions remain authoritative.
-    conn.execute("UPDATE iocs SET assessment='malicious' WHERE assessment='unassessed' "
+    conn.execute("UPDATE iocs SET assessment='malicious' WHERE assessment='unassessed' AND type!='software' "
                  "AND NOT EXISTS(SELECT 1 FROM ioc_assessments a WHERE a.ioc_id=iocs.id)")
-    conn.executescript("""CREATE TRIGGER IF NOT EXISTS iocs_default_assessment AFTER INSERT ON iocs
-        WHEN NEW.assessment='unassessed' BEGIN
+    conn.executescript("""DROP TRIGGER IF EXISTS iocs_default_assessment; CREATE TRIGGER iocs_default_assessment AFTER INSERT ON iocs
+        WHEN NEW.assessment='unassessed' AND NEW.type!='software' BEGIN
           UPDATE iocs SET assessment='malicious' WHERE id=NEW.id;
         END;""")
     conn.executescript("""CREATE TRIGGER IF NOT EXISTS iocs_identity AFTER INSERT ON iocs
@@ -322,6 +322,9 @@ def enrich_rows(conn, rows):
     for m in db.rows(conn, "SELECT * FROM ioc_file_members"):
         members.setdefault(m["ioc_id"], []).append(m["file_id"])
     for row in rows:
+        if row['type'] == 'software':
+            from server.ioc.software import properties
+            row['software'] = properties(row)
         row["account_sources"] = json.loads(row.get("account_sources", "[]"))
         row["assessment_manual"] = row["id"] in assessed
         row["first_seen"] = spans.get(row["id"], {}).get("first_seen")

@@ -14,7 +14,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-IOC_TYPES = ("ip", "hash", "url", "domain", "email", "path", "user", "other", "file", "vulnerability")
+IOC_TYPES = ("ip", "hash", "url", "domain", "email", "path", "user", "other", "file", "vulnerability", "software")
 
 # provenance
 TAG_ANALYST = "analyst"
@@ -319,6 +319,13 @@ def to_stix(iocs, case_name="", links=()):
     # an edge onto a non-existent object makes the bundle invalid.
     stix_ids = {}
     for i in iocs:
+        if i['type'] == 'software':
+            from server.ioc.software import properties
+            from server.integrations.opencti.graph import _sco
+            obj = _sco('software', properties(i))
+            objects.append(obj)
+            stix_ids[i['id']] = obj['id']
+            continue
         pattern = _stix_pattern(i["value"], i["type"])
         if pattern is None:
             continue

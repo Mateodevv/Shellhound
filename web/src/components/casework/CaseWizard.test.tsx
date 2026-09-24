@@ -64,20 +64,9 @@ it('collects a granular profile, preserves back navigation and saves it in one e
   fireEvent.change(screen.getByLabelText('Incident start'), { target: { value: '2026-09-01' } })
   fireEvent.change(screen.getByLabelText('Incident end'), { target: { value: '2026-09-08' } })
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-  const software = screen.getByRole('group', { name: 'Affected software' })
-  fireEvent.click(within(software).getByRole('button', { name: 'Add' }))
-  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText('Software name'), { target: { value: 'Joomla' } })
-  fireEvent.change(screen.getByLabelText('Version'), { target: { value: '5.2' } })
-  const vulnerabilities = screen.getByRole('group', { name: 'Vulnerabilities' })
-  fireEvent.click(within(vulnerabilities).getByRole('button', { name: 'Add' }))
-  fireEvent.change(screen.getByLabelText('CVE or vulnerability name'), { target: { value: 'CVE-2026-12345' } })
-  fireEvent.change(screen.getByRole('combobox', { name: 'Vulnerabilities' }), { target: { value: 'confirmed' } })
-  fireEvent.change(screen.getByLabelText('Vulnerability context'), { target: { value: 'Verified by the incident response team' } })
+  expect(screen.queryByLabelText('Software name')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-  expect(screen.getByText('Technology', { selector: 'span' })).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-  expect(screen.getByLabelText('Software name')).toHaveValue('Joomla')
+  expect(screen.getByLabelText('Incident start')).toHaveValue('2026-09-01')
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
   expect(screen.getByRole('heading', { name: 'Review' })).toBeVisible()
   expect(screen.getByText('Technology, Manufacturing')).toBeVisible()
@@ -89,13 +78,13 @@ it('collects a granular profile, preserves back navigation and saves it in one e
     name: 'Synthetic incident', reference: 'SYN-2026-001', profile: {
       organization_id: '', organization_name: 'Synthetic Research GmbH', pseudonym: '', state: 'DE-BE', city: 'Berlin', subsectors: [{ name: 'Software', sector: 'Technology' }], summary: 'Investigation of suspicious requests',
       sectors: ['Technology', 'Manufacturing'], countries: ['DE'], first_seen: '2026-09-01', last_seen: '2026-09-08',
-      marking: 'TLP:AMBER+STRICT', software: [{ name: 'Joomla', version: '5.2' }],
-      vulnerabilities: [{ name: 'CVE-2026-12345', status: 'confirmed', description: 'Verified by the incident response team' }],
+      marking: 'TLP:AMBER+STRICT', software: [],
+      vulnerabilities: [],
     },
   })
 })
 
-it('resets dependent locations and validates chronology and requires context for vulnerabilities without a CVE', async () => {
+it('resets dependent locations and validates chronology', async () => {
   await open(); fillCase(); await fillAffected()
   fireEvent.change(screen.getByLabelText('Country *'), { target: { value: '' } })
   expect(screen.getByLabelText('State')).toHaveValue('')
@@ -107,12 +96,7 @@ it('resets dependent locations and validates chronology and requires context for
   expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
   fireEvent.change(screen.getByLabelText('Incident end'), { target: { value: '2026-09-09' } })
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-  fireEvent.click(within(screen.getByRole('group', { name: 'Vulnerabilities' })).getByRole('button', { name: 'Add' }))
-  fireEvent.change(screen.getByLabelText('CVE or vulnerability name'), { target: { value: 'Custom plugin flaw' } })
-  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText('Vulnerability context'), { target: { value: 'Unsafe file upload observed' } })
-  expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
-  expect(screen.getByRole('combobox', { name: 'Vulnerabilities' })).toHaveValue('suspected')
+  expect(screen.queryByRole('group', { name: 'Vulnerabilities' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
   expect(post).not.toHaveBeenCalled()
 })
@@ -157,7 +141,6 @@ it('keeps custom sectors local until export and saves a new subsector with its p
   fireEvent.click(screen.getByRole('button', { name: 'Add to case' }))
   expect(screen.getByText('Custom Industry → Custom specialization', { selector: 'span' })).toBeVisible()
   expect(post).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
   fireEvent.click(screen.getByRole('button', { name: 'Next' }))
   fireEvent.click(screen.getByRole('button', { name: 'Create case' }))
   await waitFor(() => expect(post).toHaveBeenCalledOnce())

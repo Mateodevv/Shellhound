@@ -115,6 +115,8 @@ def create_case(workspace, name, reference="", notes="", profile=None):
     try:
         conn.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)",
                          _meta_values(identity))
+        from server.ioc.software import migrate_profile
+        migrate_profile(conn, identity.get("profile") or {})
         conn.commit()
     finally:
         conn.close()
@@ -211,6 +213,8 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
             "INSERT INTO meta (key, value) VALUES (?,?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             _meta_values(identity))
+        from server.ioc.software import migrate_profile
+        migrate_profile(conn, identity.get("profile") or {})
         conn.commit()
     finally:
         conn.close()

@@ -9,6 +9,7 @@ export function IocTypeBadge({ type, value = '' }: { type: string; value?: strin
     ipv6: { label: tr('iocBadge.ipv6'), icon: Hexagon, tone: 'rose' },
     file: { label: tr('iocBadge.file'), icon: Hexagon, tone: 'green' },
     hash: { label: tr('iocBadge.hash'), icon: FileCode, tone: 'green' },
+    software: { label: tr('iocBadge.software'), icon: Hexagon, tone: 'purple' },
     vulnerability: { label: tr('iocBadge.cve'), icon: Bug, tone: 'yellow' },
     domain: { label: tr('iocBadge.domain'), icon: Hexagon, tone: 'blue' },
     url: { label: tr('iocBadge.url'), icon: Link, tone: 'blue' },

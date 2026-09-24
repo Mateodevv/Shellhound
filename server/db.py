@@ -544,7 +544,7 @@ _ADDED_COLUMNS = {
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
-CASE_SCHEMA_VERSION = 20
+CASE_SCHEMA_VERSION = 21
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -703,6 +703,15 @@ def _upgrade(conn):
             DELETE FROM ioc_relationship_events WHERE link_id = OLD.id;
         END;
     """)
+    if previous_version < 21:
+        from server.ioc.software import sync_inventory, migrate_profile
+        sync_inventory(conn)
+        stored_profile = conn.execute("SELECT value FROM meta WHERE key='profile'").fetchone()
+        profile = json.loads(stored_profile[0] or '{}') if stored_profile else {}
+        identity_path = Path(conn.execute('PRAGMA database_list').fetchone()[2]).parent / 'case.json'
+        if identity_path.is_file():
+            profile = json.loads(identity_path.read_text(encoding='utf-8')).get('profile') or profile
+        migrate_profile(conn, profile)
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

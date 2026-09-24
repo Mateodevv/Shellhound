@@ -2,7 +2,7 @@ import { translate } from '../../i18n'
 import type { Ioc } from '../../api'
 import type { OpenCtiLookup } from '../../opencti'
 
-export const iocName = (ioc: Ioc) => ioc.file?.names[0] || ioc.value
+export const iocName = (ioc: Ioc) => ioc.file?.names[0] || (ioc.type === 'software' && ioc.software?.version ? `${ioc.value} · ${ioc.software.version}` : ioc.value)
 export const assessmentTone = (state?: string) => state === 'malicious' ? 'text-[var(--danger-text)]' : state === 'suspicious' ? 'text-[var(--review-text)]' : state === 'benign' ? 'text-[var(--ok)]' : 'text-[var(--muted)]'
 export const ctiLabel = (lookup?: OpenCtiLookup) => lookup?.stale ? 'Outdated result' : lookup ? ({ known: 'Known in OpenCTI', own: 'Own exports only', unknown: 'No visible match', unsupported: 'Context only', error: 'Check failed' }[lookup.status]) : 'Not checked'
 export const descriptions: Record<string, string> = {

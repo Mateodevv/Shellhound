@@ -334,6 +334,8 @@ def scan(case_dir, targets, ctx=None, authoritative=True):
                     stats["items"] += 1
                     if ext_version == "(unknown)":
                         stats["unknown_versions"] += 1
+        from server.ioc.software import sync_inventory
+        sync_inventory(conn)
         conn.commit()
     finally:
         conn.close()

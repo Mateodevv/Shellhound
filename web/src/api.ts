@@ -666,6 +666,7 @@ export interface IocLink {
 }
 
 export interface Ioc {
+  software?: { name: string; version?: string; vendor?: string }
   account_sources?: { source_key: string; registered: string; cms: string; table: string }[]
   assessment_manual?: boolean
   assessment?: 'unassessed' | 'suspicious' | 'malicious' | 'benign'

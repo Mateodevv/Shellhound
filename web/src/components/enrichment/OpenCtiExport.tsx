@@ -89,8 +89,6 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
       {item(tr('cti.subsectors'), profile?.subsectors?.map(entry => entry.name).join(', ') || '')}{item(tr('cti.country'), profile?.countries.join(', ') || '')}
       {item(tr('cti.state'), profile?.state || '')}{item(tr('cti.city'), profile?.city || '')}
       {item(tr('cti.firstSeen'), profile?.first_seen || '')}{item(tr('cti.lastSeen'), profile?.last_seen || '')}
-      {item(tr('cti.software'), profile?.software.map(entry => [entry.name, entry.version].filter(Boolean).join(' ')).join(', ') || '')}
-      {item(tr('cti.vulns'), profile?.vulnerabilities.map(entry => entry.name).join(', ') || '')}
     </dl></section>}
     {wizard && step === 3 && <section aria-label={tr('transferWizard.step.review')} className="h-full space-y-4 overflow-y-auto pr-2">
       <CaseProfileChanges changes={preview.profile_changes} updating={dirty} />

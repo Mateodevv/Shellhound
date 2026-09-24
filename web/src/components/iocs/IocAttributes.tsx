@@ -35,6 +35,7 @@ export function IocAttributes({ object, observations, iocs, relationships, onNav
       {field('pathKind', tr(`iocAttr.path.${['http-request', 'system', 'local-evidence'].includes(object.path_context || '') ? object.path_context : 'unknown'}`))}
       {field('scope', object.context)}
     </>}
+    {object.type === 'software' && <>{field('version', object.software?.version)}{field('vendor', object.software?.vendor)}</>}
     {object.type === 'user' && field('accountContext', object.context)}
     {object.type === 'other' && field('context', object.context)}
     {object.type === 'hash' && field('linkedFiles', relatedFiles.length ? <div className="space-y-1">{relatedFiles.map(item => <button type="button" key={item.id} disabled={!onNavigate} onClick={() => onNavigate?.(item.id)} className="block max-w-full break-all text-left text-[var(--accent-text)]">{iocName(item)}</button>)}</div> : tr('iocAttr.noLinkedFile'))}
@@ -50,6 +51,6 @@ export function IocAttributes({ object, observations, iocs, relationships, onNav
       {field('cveRecord', /^CVE-\d{4}-\d{4,}$/i.test(object.value) ? <a href={`https://www.cve.org/CVERecord?id=${encodeURIComponent(object.value.toUpperCase())}`} target="_blank" rel="noopener noreferrer" className="text-[var(--accent-text)]">{object.value.toUpperCase()} ↗</a> : '')}
       {field('cveEvidence', linkKinds.some(k => knownCveKinds.includes(k)) ? <div className="space-y-1">{knownCveKinds.filter(k => linkKinds.includes(k)).map(k => <p key={k}>{tr(`iocAttr.cve.${k}`)} · {relationships.filter(r => r.active && r.kind === k).length}</p>)}</div> : '')}
     </>}
-    {!!object.context && !['path', 'user', 'other'].includes(object.type) && field('context', object.context)}
+    {!!object.context && !['path', 'user', 'other', 'software'].includes(object.type) && field('context', object.context)}
   </>
 }

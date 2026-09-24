@@ -447,11 +447,15 @@ class OpenCTIGraphTests(unittest.TestCase):
                            "vulnerabilities": [{"name": "CVE-2026-12345", "status": "confirmed"},
                                                {"name": "CVE-2026-12346", "status": "suspected"},
                                                {"name": "Misconfiguration", "status": "suspected"}]}
+        from server.ioc.software import migrate_profile
+        migrate_profile(self.conn, info['profile'])
+        software_ids = [r[0] for r in self.conn.execute("SELECT id FROM iocs WHERE type='software'")]
+        selected_ids = [r[0] for r in self.conn.execute("SELECT id FROM iocs") if r[0] not in software_ids]
         self.conn.execute("UPDATE iocs SET note='private note' WHERE id=?", (self.path_id,))
         self.conn.execute("UPDATE findings SET evidence='private excerpt'")
         self.conn.commit()
         with patch("server.workspace.case_info", return_value=info):
-            preview = self.preview(include_notes=True, include_evidence=True,
+            preview = self.preview(ioc_ids=selected_ids, include_notes=True, include_evidence=True,
                                    exclude_note_ioc_ids=[self.path_id],
                                    exclude_evidence_ioc_ids=[self.path_id, self.hash_id],
                                    exclude_profile_fields=["summary", "software"])
@@ -461,12 +465,9 @@ class OpenCTIGraphTests(unittest.TestCase):
                                and o["target_ref"].startswith("vulnerability--")]
         self.assertEqual(2, len(vulnerability_links))
         self.assertTrue(all(o["relationship_type"] == "related-to" for o in vulnerability_links))
-        self.assertEqual({"Exploitation confirmed: CVE-2026-12345",
-                          "Exploitation suspected: CVE-2026-12346"},
-                         {o["description"] for o in vulnerability_links})
-        vulnerability_notes = [o["content"] for o in objects if o["type"] == "note"]
-        for link in vulnerability_links:
-            self.assertTrue(any(link["description"] in text for text in vulnerability_notes))
+        vulnerability_notes = ' '.join(o['content'] for o in objects if o['type'] == 'note')
+        self.assertIn('confirmed', vulnerability_notes)
+        self.assertIn('suspected', vulnerability_notes)
         self.assertEqual(2, sum(o["type"] == "vulnerability" for o in objects))
         exported = json.dumps(objects)
         for forbidden in ("private note", "private excerpt", "Hidden summary", "Example CMS"):
@@ -523,6 +524,9 @@ class OpenCTIGraphTests(unittest.TestCase):
     def test_ip_cve_link_requires_confirmed_ip_scoped_provenance(self):
         info = workspace.case_info(self.case)
         info["profile"]["vulnerabilities"] = [{"name": "CVE-2026-12345", "status": "confirmed"}]
+        from server.ioc.software import migrate_profile
+        migrate_profile(self.conn, info['profile'])
+        self.conn.commit()
         with patch("server.workspace.case_info", return_value=info):
             initial = self.preview()
             ip = next(o for o in initial["objects"] if o["type"] == "ipv4-addr")

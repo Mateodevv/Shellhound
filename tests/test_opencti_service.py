@@ -52,6 +52,7 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.push.return_value = {"id": "taxii-work-1"}
         self.client.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
         self.client.resolve.side_effect = lambda source: {"id": "remote-" + source, "standard_id": source}
+        self.client.resolve_many.side_effect = lambda ids: {source: self.client.resolve(source) for source in ids}
         self.client.lookup.return_value = []
         self.client.work.return_value = {"status": "complete", "errors": []}
         self.client.enrich.return_value = {"id": "enrichment-work-1"}
@@ -77,6 +78,32 @@ class OpenCTIServiceTests(unittest.TestCase):
         result = service.transfer(self.root, self.case, self.preview(**options)["preview_id"])
         self.jobs.run()
         return result
+
+    def test_export_uses_batched_verification_and_records_phase_times(self):
+        result = self.export()
+        self.assertTrue(self.client.resolve_many.called)
+        payload = self.receipt(result["export_id"])["payload"]
+        self.assertEqual("complete", self.receipt(result["export_id"])["state"])
+        self.assertEqual({"preflight_seconds", "import_verify_seconds", "descriptions_seconds"}, set(payload["timings"]))
+
+    def test_preflight_reads_are_bounded_and_cancellation_stops_next_chunk(self):
+        barrier = threading.Barrier(4)
+        context = _Context()
+        visited = []
+        lock = threading.Lock()
+        def lookup(obj):
+            with lock:
+                visited.append(obj["id"])
+            barrier.wait(timeout=5)
+            context.cancel_event.set()
+            return None
+        payload = {"objects": [{"id": str(i), "type": "ipv4-addr"} for i in range(20)],
+                   "case_reference": "test", "mapping_destination": "test"}
+        with patch.object(service, "_save_export") as save:
+            service._prepare_shared(self.client, self.case, {}, payload, lookup=lookup, ctx=context)
+        self.assertEqual(4, len(visited))
+        self.assertNotIn("preflight_complete", payload)
+        save.assert_not_called()
 
     def add_file(self):
         root = self.root / "evidence"

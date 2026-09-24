@@ -5,7 +5,7 @@ import { api, post, type CaseInfo } from '../../api'
 import type { Geography } from './AffectedOrganizationFields'
 import { useOpenCtiSettings, newCaseProfile } from '../../opencti'
 import { useT } from '../../i18n'
-import { Button, Modal, Tag } from '../ui/ui'
+import { Button, Modal } from '../ui/ui'
 import { CaseProfileFields, CtiError, CtiField, ctiInput } from './CaseProfile'
 
 export function CaseWizard({ onClose, onCreated }: { onClose: () => void; onCreated: (info: CaseInfo) => void }) {
@@ -22,16 +22,15 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
   const [name, setName] = useState('')
   const [reference, setReference] = useState('')
   const [profile, setProfile] = useState(newCaseProfile)
-  const steps = configured ? ['case', 'affected', 'technical', 'review'] : ['case', 'review']
+  const steps = configured ? ['case', 'affected', 'review'] : ['case', 'review']
   const current = steps[step]
   const invalidCountries = profile.countries.some(value => !/^[A-Za-z]{2}$/.test(value))
   const invalidDates = !!profile.first_seen && !!profile.last_seen && profile.first_seen > profile.last_seen
   const caseValid = Boolean(name.trim() && (!configured || (reference.trim() && profile.summary.trim())))
   const affectedValid = Boolean((profile.organization_name?.trim() || (profile.organization_id && profile.pseudonym)) && profile.sectors.length && profile.countries.length && !invalidCountries && !invalidDates)
   const geography = useQuery({ queryKey: ['profile-geography'], queryFn: () => api<Geography>('/api/profile/geography'), enabled: configured, staleTime: Infinity })
-  const technicalValid = profile.software.every(item => item.name.trim()) && profile.vulnerabilities.every(item => item.name.trim() && (/^CVE-\d{4}-\d{4,}$/i.test(item.name.trim()) || item.description.trim()))
-  const valid = caseValid && (!configured || (affectedValid && technicalValid))
-  const stepValid = current === 'case' ? caseValid : current === 'affected' ? affectedValid : current === 'technical' ? technicalValid : valid
+  const valid = caseValid && (!configured || affectedValid)
+  const stepValid = current === 'case' ? caseValid : current === 'affected' ? affectedValid : valid
   const save = useMutation({
     mutationFn: () => post<CaseInfo>('/api/cases', { name: name.trim(), reference: reference.trim(), profile }),
     onSuccess: info => { qc.invalidateQueries({ queryKey: ['state'] }); onCreated(info) },
@@ -60,9 +59,8 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
             <CtiField label={`${tr('cti.caseId')}${configured ? ' *' : ''}`}><input required={configured} maxLength={200} className={ctiInput} value={reference} onChange={e => setReference(e.target.value)} /></CtiField>
             <CtiField label={`${tr('cti.summary')}${configured ? ' *' : ''}`}><textarea required={configured} maxLength={10000} rows={4} className={ctiInput} value={profile.summary} onChange={e => setProfile({ ...profile, summary: e.target.value })} /></CtiField>
           </>}
-          {configured && <CaseProfileFields profile={profile} onChange={setProfile} section={current === 'affected' || current === 'technical' ? current : 'hidden'} requiredContext />}
+          {configured && <CaseProfileFields profile={profile} onChange={setProfile} section={current === 'affected' ? current : 'hidden'} requiredContext />}
           {current === 'affected' && <CtiError error={invalidCountries ? tr('wizard.countriesError') : invalidDates ? tr('cti.dateError') : null} />}
-          {current === 'technical' && !technicalValid && <CtiError error={tr('wizard.technicalError')} />}
           {current === 'review' && <>
             <dl className="grid gap-5 sm:grid-cols-2">
               {summaryItem(tr('wizard.name'), name)}{summaryItem(tr('cti.caseId'), reference)}
@@ -74,12 +72,9 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
                 {summaryItem(tr('cti.state'), geography.data?.states[profile.countries[0]]?.find(item => item.code === profile.state)?.name || profile.state || '')}
                 {summaryItem(tr('cti.city'), profile.city || '')}
                 {summaryItem(tr('cti.firstSeen'), profile.first_seen)}{summaryItem(tr('cti.lastSeen'), profile.last_seen)}
-                {summaryItem(tr('cti.software'), profile.software.map(item => `${item.name}${item.version ? ` · ${item.version}` : ''}`).join('\n'))}
               </>}
             </dl>
-            {configured && <section className="space-y-2"><h3 className="text-[13px] font-semibold">{tr('cti.vulns')}</h3>
-              {profile.vulnerabilities.length ? profile.vulnerabilities.map((item, index) => <div key={index} className="rounded-lg border border-[var(--line)] p-3 text-[13px]"><div className="flex flex-wrap items-center gap-2"><strong>{item.name}</strong><Tag tone={item.status === 'confirmed' ? 'danger' : 'warn'}>{tr(item.status === 'confirmed' ? 'cti.confirmed' : 'cti.suspected')}</Tag></div>{item.description && <p className="mt-2 whitespace-pre-wrap">{item.description}</p>}</div>) : <p className="text-[13px]">{tr('wizard.unknown')}</p>}
-            </section>}
+
             <p className="rounded-lg bg-[var(--panel-2)] p-3 text-[12px] text-[var(--muted)]">{tr(configured ? 'wizard.savedLocally' : 'wizard.savedLocally.local')}</p>
           </>}
         </div>

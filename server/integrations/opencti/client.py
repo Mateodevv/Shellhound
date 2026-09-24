@@ -485,6 +485,28 @@ class OpenCTIClient:
         data = self._graphql(query, {"id": _identifier(source_id)})
         return self._entity(data.get("stixObjectOrStixRelationship"))
 
+    def resolve_many(self, source_ids):
+        """Verify visibility/identity only, in bounded GraphQL alias batches."""
+        ids = list(dict.fromkeys(_identifier(value) for value in source_ids))
+        result = {}
+        # OpenCTI limits this root field to two calls per operation.
+        for offset in range(0, len(ids), 2):
+            batch = ids[offset:offset + 2]
+            variables = {f"id{i}": value for i, value in enumerate(batch)}
+            arguments = ",".join(f"${key}:String!" for key in variables)
+            fields = " ".join(
+                f"o{i}:stixObjectOrStixRelationship(id:$id{i}) {{ "
+                "... on StixObject { id standard_id } "
+                "... on StixCoreRelationship { id standard_id } "
+                "... on StixSightingRelationship { id standard_id } "
+                "... on StixRefRelationship { id standard_id } }"
+                for i in range(len(batch)))
+            data = self._graphql(f"query ShellhoundVerify({arguments}) {{ {fields} }}", variables)
+            for i, source in enumerate(batch):
+                remote = data.get(f"o{i}")
+                result[source] = remote if isinstance(remote, dict) and remote.get("id") and remote.get("standard_id") else None
+        return result
+
     def _shared_matches(self, collection, filters, *, types=None, file=False):
         """Minimal, exact reads used before a TAXII import can deduplicate objects."""
         if collection not in ("stixCyberObservables", "vulnerabilities", "identities", "locations"):
@@ -561,6 +583,12 @@ class OpenCTIClient:
                                            code="file_identity")
                     existing = candidate
             return existing
+        if kind == "software":
+            filters = [exact("name", obj["name"])]
+            for field in ("version", "vendor"):
+                filters.append(exact(field, obj.get(field, "")))
+            matches = self._shared_matches("stixCyberObservables", filters, types=["Software"])
+            return checked(matches[0]) if matches else None
         if kind == "user-account":
             matches = self._shared_matches("stixCyberObservables", [exact("user_id", obj["user_id"])], types=["User-Account"])
             return checked(matches[0]) if matches else None

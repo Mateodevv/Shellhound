@@ -14,7 +14,7 @@ import { IocTypeBadge } from '../components/iocs/IocTypeBadge'
 import { ctiLabel, iocName } from '../components/iocs/iocPresentation'
 import { useOpenCti } from '../opencti'
 
-const groups = [{ name: 'All', types: [] }, { name: 'IPs', types: ['ip'] }, { name: 'Files', types: ['file'] }, { name: 'Domains / URLs', types: ['domain', 'url'] }, { name: 'CVEs', types: ['vulnerability'] }, { name: 'Hashes', types: ['hash'] }, { name: 'Emails', types: ['email'] }, { name: 'Users', types: ['user'] }, { name: 'Paths', types: ['path'] }, { name: 'Other', types: ['other'] }]
+import { iocGroups as groups } from '../components/iocs/iocGroups'
 const field = 'min-w-0 rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-2 py-2 text-[12px]'
 const defaults = { group: 'All', search: '', assessment: '', origin: '', status: '', type: '', sort: 'newest', page: 1, size: 50, width: 360, scroll: 0, active: null as number | null, tab: 'Overview' }
 type Session = typeof defaults

@@ -281,6 +281,9 @@ def _observable(row, sanitized):
         if row["file"]["size"] is not None:
             props["size"] = row["file"]["size"]
         return _sco("file", props)
+    if kind == "software":
+        from server.ioc.software import properties
+        return _sco("software", properties(row))
     if kind == "hash":
         if not re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", value):
             raise ValueError("Invalid hash is retained as context.")
@@ -483,29 +486,7 @@ def build_preview(case_dir, options=None):
             relation(['city-area', city_id], city_id, parent_id, 'located-at', 'City within the selected area.')
             relation(['organization-city', city_id], org_id or incident_id, city_id,
                      'located-at' if org_id else 'related-to', 'City of an affected organization.')
-    for software in profile.get("software") or []:
-        fields = {k: clean.text(software[k]) for k in ("name", "version") if software.get(k)}
-        if fields.get("name"):
-            soft_id = add(_sco("software", fields))
-            relation(["software", fields], incident_id, soft_id, description="Software affected in this case; exploitation is not implied.")
-    for index, vulnerability in enumerate(profile.get("vulnerabilities") or []):
-        name = clean.text(vulnerability.get("name", ""))
-        status = "confirmed" if vulnerability.get("status") == "confirmed" else "suspected"
-        description = f"Exploitation {status}: {name}"
-        if vulnerability.get("description"):
-            description += "\n" + clean.text(vulnerability["description"])
-        if re.fullmatch(r"CVE-\d{4}-\d{4,}", name, re.I):
-            name = name.upper()
-            # OpenCTI deduplicates vulnerabilities by their CVE name.
-            vuln_id = add(sdo("vulnerability", ["cve", name], name=name,
-                              external_references=[{"source_name": "cve", "external_id": name}]))
-            # OpenCTI does not allow Incident -> exploits -> Vulnerability.
-            # Keep the exploitation assessment in the owned link and Note.
-            relation(["vulnerability", name], incident_id, vuln_id,
-                     "related-to", description)
-            note(f"vulnerability:{name}", description, [incident_id, vuln_id])
-        else:
-            note(f"vulnerability:{index}", description, [incident_id])
+
     if options.get("include_notes") and info.get("notes") and "case_notes" not in (options.get("exclude_profile_fields") or []):
         note("case-notes", clean.text(info["notes"]), [incident_id])
 
@@ -571,7 +552,11 @@ def build_preview(case_dir, options=None):
         if value != str(row["value"]):
             row_warnings.append("Local paths or credentials were removed from this value.")
         try:
-            observable = _observable(row, value)
+            if row['type'] == 'software':
+                from server.ioc.software import properties
+                observable = _sco('software', {key: clean.text(val) for key, val in properties(row).items()})
+            else:
+                observable = _observable(row, value)
         except (ValueError, UnicodeError):
             observable = None
             row_warnings.append("The value is not a valid observable and is retained as case context.")
@@ -593,6 +578,8 @@ def build_preview(case_dir, options=None):
             ids.append(observable["id"])
             if chosen:
                 add(observable)
+                if row['type'] == 'vulnerability':
+                    relation(['case-vulnerability', observable['id']], incident_id, observable['id'], description='Vulnerability recorded in this case; exploitation is not implied.')
         primary = ids[0] if ids else incident_id
         context = f"Shellhound IOC {ioc_id}: {row['type']} — {value}"
         context += "\nCase assessment: " + row.get("assessment", "unassessed")

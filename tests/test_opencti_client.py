@@ -34,6 +34,31 @@ class OpenCTIClientTests(unittest.TestCase):
     def _payload(self, index=-1):
         return json.loads(self._request(index).data)
 
+    def test_export_verification_batches_minimal_reads_and_preserves_missing(self):
+        ids = [f"ipv4-addr--00000000-0000-4000-8000-{i:012d}" for i in range(51)]
+        replies = []
+        for offset in range(0, len(ids), 2):
+            replies.append({"data": {f"o{i}": {"id": f"remote-{offset+i}", "standard_id": source}
+                                     for i, source in enumerate(ids[offset:offset+2])}})
+        replies[1]["data"]["o0"] = None
+        self._responses(*replies)
+        result = self.client.resolve_many(ids + ids[:1])
+        self.assertEqual(26, self.client._opener.open.call_count)
+        self.assertEqual(51, len(result))
+        self.assertIsNone(result[ids[2]])
+        self.assertEqual(ids[-1], result[ids[-1]]["standard_id"])
+        for index in range(26):
+            query = self._payload(index)["query"]
+            self.assertNotIn("description", query)
+            self.assertNotIn("createdBy", query)
+            self.assertNotIn("mutation", query)
+            self.assertLessEqual(len(self._payload(index)["variables"]), 2)
+
+    def test_export_verification_propagates_graphql_errors(self):
+        self._responses({"errors": [{"message": "denied"}]})
+        with self.assertRaises(api.OpenCTIError):
+            self.client.resolve_many(["ipv4-addr--00000000-0000-4000-8000-000000000001"])
+
     def test_sector_catalogue_paginates_and_preserves_parents_without_mutations(self):
         root = {"id": "root", "name": "Technology", "isSubSector": False, "parentSectors": {"edges": []}}
         sub = {"id": "sub", "name": "Software", "isSubSector": True,
