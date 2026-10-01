@@ -97,7 +97,9 @@ def install(app, auth, case_dir_or_404, manager):
     def prepare(slug: str, body: Prepare):
         case = case_dir_or_404(slug)
         def validate(conn):
-            if body.snapshot_ids is not None and set(body.snapshot_ids) - {s['id'] for s in backups.settings(conn)['snapshots']}:
+            available = {s['id'] for s in backups.settings(conn)['snapshots']}
+            selected = available if body.snapshot_ids is None else set(body.snapshot_ids)
+            if not selected or selected - available:
                 raise backups.BackupError('Choose existing backups')
         try:
             with manager.case_operation(case):

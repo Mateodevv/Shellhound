@@ -63,7 +63,7 @@ def register(app, resolve_case, auth, hub):
                 backups.seed_ioc_assessments(conn)
                 changed = conn.total_changes != before
                 conn.commit()
-                if changed:
+                if changed and conn.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone():
                     from server.jobs import manager
                     case = resolve_case(slug)
                     manager.submit_after_current(case, 'backup_comparison', lambda ctx: backups.build(case, ctx, []))

@@ -1166,9 +1166,7 @@ def create_app(config: Config) -> FastAPI:
 
         check = db.connect(case_dir)
         try:
-            prepare_backups = bool(webroots and (check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone()
-                                                or check.execute('SELECT 1 FROM content_assessments LIMIT 1').fetchone()
-                                                or check.execute("SELECT 1 FROM ioc_assessments a JOIN iocs i ON i.id=a.ioc_id WHERE i.type IN ('file','hash') LIMIT 1").fetchone()))
+            prepare_backups = bool(webroots and check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone())
         finally:
             check.close()
         if prepare_backups:
@@ -2073,9 +2071,14 @@ def create_app(config: Config) -> FastAPI:
         finally:
             if connection is None:
                 conn.close()
+        backup_check = db.connect(case_dir)
+        try:
+            has_backups = bool(backup_check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone())
+        finally:
+            backup_check.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
         content_result = {'applied': [], 'conflicts': []}
-        if shared_hashes:
+        if shared_hashes and has_backups:
             content_result['job'] = manager.submit(case_dir, 'backup_comparison', lambda ctx: backups.build(case_dir, ctx, []))
         return {"updated": len(rows), "artifacts": len(artifacts),
                 "collected": _dedupe_collected(collected),

@@ -190,9 +190,14 @@ def _walk(root, ctx, errors, max_entries=None):
 def build(case_dir, ctx=None, snapshot_ids=None):
     conn = db.connect(case_dir)
     try:
+        snapshots = settings(conn)['snapshots']
+        if not snapshots:
+            if snapshot_ids:
+                raise BackupError('Choose existing backups')
+            return {'files': 0, 'failed_sources': 0, 'partial': False,
+                    'content_assessment': {'applied': [], 'conflicts': []}}
         seed_ioc_assessments(conn)
         conn.commit()
-        snapshots = settings(conn)['snapshots']
         if snapshot_ids is not None:
             wanted = set(snapshot_ids)
             if wanted - {s['id'] for s in snapshots}:

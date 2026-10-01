@@ -66,6 +66,38 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual(200, status, result)
         return result
 
+    def test_prepare_without_registered_backups_does_not_start_work(self):
+        self.root_source()
+        self.site()
+        for body in ({}, {"snapshot_ids": []}):
+            status, result = self.request("POST", self.prefix + "/backups/prepare", body)
+            self.assertEqual(400, status, result)
+        self.assertEqual([], self.jobs())
+
+    def test_assessments_without_backups_do_not_schedule_or_scan_content(self):
+        _, root = self.root_source()
+        path = root / "example.txt"
+        copy = root / "copy.txt"
+        copy.write_bytes(path.read_bytes())
+        self.finding(path)
+        self.finding(copy)
+        response = self.ok("POST", "/triage", {"artifacts": [str(path)], "state": "dismissed",
+                                                "share_content": True})
+        self.assertNotIn("job", response["content_assessment"])
+        with closing(db.connect(self.case)) as conn:
+            ioc = db.add_ioc(conn, hashlib.sha256(path.read_bytes()).hexdigest(), "hash")
+            conn.commit()
+        self.ok("POST", f"/iocs/{ioc}/assessments", {"state": "benign", "reason": "Verified synthetic content"})
+        self.assertEqual([], self.jobs())
+        with patch.object(backups, "hash_file", side_effect=AssertionError("Unexpected scan")):
+            result = backups.build(self.case)
+        self.assertEqual(0, result["files"])
+        self.assertEqual("new", self.state(copy)["triage"])
+        run = self.ok("POST", "/analyze", {"mode": "all"})
+        self.assertFalse(any(job['kind'] == 'backup_comparison' for job in self.jobs()))
+        for job in self.jobs():
+            self.wait(job['id'])
+
     def root_source(self, name="backup", *, case=None, files=None):
         self.serial += 1
         root = self.root / f"{name} {self.serial}"
@@ -266,6 +298,8 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual(400, self.request("GET", self.prefix + f"/backups/diff?left={left}&right={right}&path=nested%2Fitem.txt")[0])
 
     def test_shared_confirmation_discovers_renamed_copies_only_inside_this_case(self):
+        backup_evidence, backup_root = self.root_source(name="registered copy")
+        self.snapshot(self.site(), backup_evidence, backup_root)
         _, first = self.root_source(files={"original.txt": "Shared harmless content\n"})
         _, second = self.root_source(files={"renamed.txt": "Shared harmless content\n", "different.txt": "Different\n"})
         _, foreign = self.root_source(case=self.other, files={"foreign.txt": "Shared harmless content\n"})
@@ -288,6 +322,8 @@ class BackupApiTests(unittest.TestCase):
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM content_assessments").fetchone()[0])
 
     def test_shared_benign_decision_preserves_conflicting_independent_review(self):
+        backup_evidence, backup_root = self.root_source(name="registered copy")
+        self.snapshot(self.site(), backup_evidence, backup_root)
         paths = []
         for state, note in (("new", "Source note"), ("reviewed", "Preserve copy note"), ("confirmed", "Independent confirmation")):
             _, root = self.root_source()
@@ -320,6 +356,8 @@ class BackupApiTests(unittest.TestCase):
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM content_assessments").fetchone()[0])
 
     def test_manual_file_review_shares_verified_content_without_confirming_requests(self):
+        backup_evidence, backup_root = self.root_source(name="registered copy")
+        self.snapshot(self.site(), backup_evidence, backup_root)
         _, first = self.root_source()
         _, second = self.root_source()
         source, copy = first / "example.txt", second / "example.txt"
@@ -355,6 +393,8 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual([], self.jobs())
 
     def test_explicit_benign_ioc_assessment_reaches_existing_identical_file(self):
+        backup_evidence, backup_root = self.root_source(name="registered copy")
+        self.snapshot(self.site(), backup_evidence, backup_root)
         _, root = self.root_source()
         path = root / "example.txt"
         self.finding(path)
@@ -369,6 +409,8 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual("dismissed", self.state(path)["triage"])
 
     def test_ioc_assessment_waits_for_running_work_and_inventories_its_completed_output(self):
+        backup_evidence, backup_root = self.root_source(name="registered copy")
+        self.snapshot(self.site(), backup_evidence, backup_root)
         _, root = self.root_source()
         path = root / "example.txt"
         self.finding(path)
