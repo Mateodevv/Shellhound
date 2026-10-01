@@ -164,7 +164,7 @@ export interface Job {
   accepted_count?: number
   current_accepted_count?: number
   warnings_current?: boolean
-  scan_context?: { mode: 'full' | 'new' | 'retry' | 'hunt_batch'; parent_job_id?: number }
+  scan_context?: { mode: 'full' | 'new' | 'retry' | 'hunt_batch' | 'testcase'; parent_job_id?: number; size?: 'small' | 'large' }
   progress_details?: {
     phase: 'discovering' | 'scanning' | 'finalizing' | 'patterns'
     completed: number

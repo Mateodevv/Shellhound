@@ -78,8 +78,8 @@ $summary = $total > 10 ? 'Several sample items' : 'A few sample items';
 '''
 
 
-def generate(workspace, *, analyse=True):
-    case = workspaces.create_case(workspace, 'Training case', notes=(
+def generate(workspace, *, analyse=True, case=None):
+    case = case or workspaces.create_case(workspace, 'Training case', notes=(
         'SYNTHETIC TRAINING DATA. The registered webroot, access logs and SQL dump are ready for review; '
         'then review findings and run Pattern Hunt. No analyst decisions have been made. '
         'Files contain harmless training markers, not malware.'))

@@ -32,7 +32,9 @@ import os
 import re
 import sqlite3
 import time
-from collections import Counter, deque
+from collections import Counter, deque, OrderedDict
+import copy
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -1642,6 +1644,42 @@ def trace(case_dir, ips, from_epoch=None, to_epoch=None, limit=5000,
 # known clients. The explorer starts with the whole case and progressively
 # narrows it by measured fields. Keeping that distinction prevents an empty
 # client selector from accidentally turning a trace export into "all logs".
+# Bounded aggregates; rebuilding or changing the index invalidates every entry.
+_ACCESS_CACHE = OrderedDict()
+_ACCESS_CACHE_LOCK = threading.Lock()
+
+
+def _access_cache_key(case_dir, conn, filters, kind):
+    path = db.log_db_path(case_dir)
+    stat = path.stat()
+    wal = Path(str(path) + '-wal')
+    try:
+        wal_stat = wal.stat()
+    except FileNotFoundError:
+        wal_stat = None
+    scope = {k: v for k, v in filters.items() if k not in ('cursor', 'limit', 'sort')}
+    return (str(path.resolve()), stat.st_ino, stat.st_mtime_ns, stat.st_size,
+            (wal_stat.st_mtime_ns, wal_stat.st_size) if wal_stat else None,
+            _index_fingerprint(conn), kind, _json.dumps(scope, sort_keys=True))
+
+
+def _access_cached(key):
+    with _ACCESS_CACHE_LOCK:
+        value = _ACCESS_CACHE.get(key)
+        if value is not None:
+            _ACCESS_CACHE.move_to_end(key)
+            return copy.deepcopy(value)
+    return None
+
+
+def _cache_access(key, value):
+    with _ACCESS_CACHE_LOCK:
+        _ACCESS_CACHE[key] = copy.deepcopy(value)
+        _ACCESS_CACHE.move_to_end(key)
+        while len(_ACCESS_CACHE) > 64:
+            _ACCESS_CACHE.popitem(last=False)
+
+
 _ACCESS_JOINS = (
     "JOIN ips i ON i.id = r.ip "
     "LEFT JOIN strings u ON u.id = r.uri "
@@ -1654,7 +1692,7 @@ _ACCESS_JOINS = (
 _ACCESS_SIGNAL_SQL = (
     "(r.uri IN (SELECT id FROM strings WHERE access_uri_signal(text) = 1) "
     "OR r.agent IN (SELECT id FROM strings WHERE access_agent_signal(text) = 1) "
-    "OR access_alert_signal(r.ip, u.text) = 1)"
+    "OR (r.ip, r.uri) IN (SELECT ip, uri FROM access_alert_examples))"
 )
 
 
@@ -1698,21 +1736,17 @@ def _prepare_access_conn(conn):
         "access_agent_signal", 1,
         lambda value: 1 if value and SCANNER_UA_RE.search(str(value)) else 0,
         deterministic=True)
-    # Alert examples are tiny (one explanatory sample per alert) while the
-    # request table can contain millions of rows. A correlated SQL subquery
-    # re-read those examples for every request. Freeze them into this
-    # read-only connection instead: exact request-to-alert explanation stays
-    # the same and lookup becomes O(1).
-    alert_examples = {
-        (int(row[0]), str(row[1]).lower())
-        for row in conn.execute(
-            "SELECT ip_id, example FROM alerts WHERE example != ''")
-    }
-    conn.create_function(
-        "access_alert_signal", 2,
-        lambda ip_id, uri: 1 if (
-            int(ip_id or 0), str(uri or "").lower()) in alert_examples else 0,
-        deterministic=True)
+    # Resolve explanatory examples once per distinct string. Membership then
+    # stays inside SQLite instead of invoking Python once per request.
+    examples = {}
+    for row in conn.execute("SELECT ip_id, example FROM alerts WHERE example != ''"):
+        examples.setdefault(str(row[1]).lower(), set()).add(int(row[0]))
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS access_alert_examples (ip INTEGER, uri INTEGER, PRIMARY KEY(ip,uri)) WITHOUT ROWID")
+    conn.execute("DELETE FROM access_alert_examples")
+    if examples:
+        conn.executemany("INSERT OR IGNORE INTO access_alert_examples VALUES (?,?)",
+            ((ip, row[0]) for row in conn.execute("SELECT id,text FROM strings")
+             for ip in examples.get(str(row[1]).lower(), ())))
 
 
 def _access_joins_for(filters, extra=()):
@@ -1735,10 +1769,6 @@ def _access_joins_for(filters, extra=()):
     if _access_values(filters, "agents") \
             or _access_values(filters, "exclude_agents"):
         needed.add("agent")
-    if str(filters.get("search") or "").strip():
-        needed.update(("ip", "uri", "agent", "referrer"))
-    if filters.get("signals_only"):
-        needed.add("uri")
     joins = []
     if "ip" in needed:
         joins.append("JOIN ips i ON i.id = r.ip")
@@ -1834,8 +1864,10 @@ def _access_clause(filters, cursor=False):
         escaped = (search.replace("\\", "\\\\")
                    .replace("%", "\\%").replace("_", "\\_"))
         like = f"%{escaped}%"
-        where.append("(u.text LIKE ? ESCAPE '\\' OR a.text LIKE ? ESCAPE '\\' "
-                     "OR f.text LIKE ? ESCAPE '\\' OR i.ip LIKE ? ESCAPE '\\')")
+        where.append("(r.uri IN (SELECT id FROM strings WHERE text LIKE ? ESCAPE '\\') "
+                     "OR r.agent IN (SELECT id FROM strings WHERE text LIKE ? ESCAPE '\\') "
+                     "OR r.referrer IN (SELECT id FROM strings WHERE text LIKE ? ESCAPE '\\') "
+                     "OR r.ip IN (SELECT id FROM ips WHERE ip LIKE ? ESCAPE '\\'))")
         params.extend([like, like, like, like])
 
     if filters.get("signals_only"):
@@ -1913,18 +1945,23 @@ def access_search(case_dir, filters=None, limit=200):
                             "server_errors": 0, "first_epoch": None,
                             "last_epoch": None}}
     try:
+        conn.execute("BEGIN")
         _prepare_access_conn(conn)
+        key = _access_cache_key(case_dir, conn, filters, 'summary')
+        summary_row = _access_cached(key)
         base_clause, base_params = _access_clause(filters, cursor=False)
-        summary_row = conn.execute(
-            f"""SELECT count(*) AS total,
-                       min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
-                       max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch,
-                       sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
-                       sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirects,
-                       sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS client_errors,
-                       sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END) AS server_errors
-                FROM requests r {_ACCESS_JOINS} WHERE {base_clause}""",
-            base_params).fetchone()
+        if summary_row is None:
+            summary_row = dict(conn.execute(
+                f"""SELECT count(*) AS total,
+                           min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
+                           max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch,
+                           sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
+                           sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirects,
+                           sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS client_errors,
+                           sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END) AS server_errors
+                    FROM requests r {_access_joins_for(filters)} WHERE {base_clause}""",
+                base_params).fetchone())
+            _cache_access(key, summary_row)
         clause, params = _access_clause(filters, cursor=True)
         order = ("r.epoch ASC, r.rowid ASC"
                  if str(filters.get("sort") or "time_desc") == "time"
@@ -1967,6 +2004,11 @@ def access_overview(case_dir, filters=None):
         return {"total": 0, "timeline": [], "bucket_seconds": 0,
                 "facets": {}}
     try:
+        conn.execute("BEGIN")
+        cache_key = _access_cache_key(case_dir, conn, filters, 'overview')
+        cached = _access_cached(cache_key)
+        if cached is not None:
+            return cached
         _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         base_joins = _access_joins_for(filters)
@@ -1979,7 +2021,7 @@ def access_overview(case_dir, filters=None):
         width = _nice_bucket((last or 0) - (first or 0)) if first and last else 0
         timeline = []
         if width:
-            timeline_joins = _access_joins_for(filters, ("uri",))
+            timeline_joins = _access_joins_for(filters)
             for row in conn.execute(
                     f"""SELECT (r.epoch / ?) * ? AS start_epoch,
                                count(*) AS requests,
@@ -2003,26 +2045,23 @@ def access_overview(case_dir, filters=None):
             f"SELECT r.method AS value, count(*) AS count FROM requests r "
             f"{base_joins} WHERE {clause} AND r.method != '' "
             f"GROUP BY r.method ORDER BY count DESC LIMIT 12")
-        client_joins = _access_joins_for(filters, ("ip",))
-        clients = facet(
-            f"SELECT i.ip AS value, count(*) AS count FROM requests r "
-            f"{client_joins} WHERE {clause} GROUP BY r.ip "
-            f"ORDER BY count DESC LIMIT 12")
-        path_joins = _access_joins_for(filters, ("uri",))
-        paths = facet(
-            f"SELECT u.text AS value, count(*) AS count FROM requests r "
-            f"{path_joins} WHERE {clause} AND u.text != '' GROUP BY r.uri "
-            f"ORDER BY count DESC LIMIT 12")
-        agent_joins = _access_joins_for(filters, ("agent",))
-        agents = facet(
-            f"SELECT a.text AS value, count(*) AS count FROM requests r "
-            f"{agent_joins} WHERE {clause} AND a.text != '' GROUP BY r.agent "
-            f"ORDER BY count DESC LIMIT 10")
-        source_joins = _access_joins_for(filters, ("source",))
-        sources = facet(
-            f"SELECT s.id AS value, s.path AS path, count(*) AS count "
-            f"FROM requests r {source_joins} WHERE {clause} GROUP BY r.source "
-            f"ORDER BY count DESC LIMIT 12")
+        def dimension(field, table, column, limit, nonempty=False):
+            # Aggregate integer IDs first; resolve labels only for the distinct
+            # groups, not for every request in the complete log index.
+            condition = f"WHERE d.{column} != ''" if nonempty else ""
+            tie_order = 'DESC' if nonempty else 'ASC'
+            return facet(f"SELECT d.{column} AS value, g.count FROM "
+                         f"(SELECT r.{field} AS id, count(*) AS count FROM requests r "
+                         f"{base_joins} WHERE {clause} GROUP BY r.{field}) g "
+                         f"JOIN {table} d ON d.id=g.id {condition} "
+                         f"ORDER BY g.count DESC, g.id {tie_order} LIMIT {limit}")
+        clients = dimension('ip', 'ips', 'ip', 12)
+        paths = dimension('uri', 'strings', 'text', 12, True)
+        agents = dimension('agent', 'strings', 'text', 10, True)
+        sources = facet(f"SELECT s.id AS value, s.path, g.count FROM "
+                       f"(SELECT r.source AS id, count(*) AS count FROM requests r "
+                       f"{base_joins} WHERE {clause} GROUP BY r.source) g "
+                       f"LEFT JOIN sources s ON s.id=g.id ORDER BY g.count DESC, g.id ASC LIMIT 12")
         for item in sources:
             item["label"] = os.path.basename(item.pop("path", "") or "")
 
@@ -2037,11 +2076,13 @@ def access_overview(case_dir, filters=None):
             {"value": name, "count": int((status_row[index] if status_row else 0) or 0)}
             for index, name in enumerate(("2xx", "3xx", "4xx", "5xx"))
         ]
-        return {"total": int(total or 0), "timeline": timeline,
+        result = {"total": int(total or 0), "timeline": timeline,
                 "bucket_seconds": width,
                 "facets": {"status": statuses, "methods": methods,
                            "clients": clients, "paths": paths,
                            "agents": agents, "sources": sources}}
+        _cache_access(cache_key, result)
+        return result
     finally:
         conn.close()
 

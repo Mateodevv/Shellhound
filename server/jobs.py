@@ -158,6 +158,11 @@ class JobManager:
                     conn.executemany("UPDATE jobs SET state='failed', finished=?, error=? WHERE id=?",
                                      ((db.now(), "Interrupted before completion. Run analysis again.", job_id)
                                       for job_id in stale))
+                    if any(r['id'] in stale for r in db.rows(conn, "SELECT id FROM jobs WHERE kind='generate_testcase'")):
+                        from server.casework.performance_case import manifest
+                        manifest(case_dir, state='interrupted', message='Generation interrupted. Create a new testcase; incomplete data is not analyzed automatically.')
+                        conn.executemany("UPDATE jobs SET error=? WHERE id=? AND kind='generate_testcase'",
+                                         (("Testcase generation interrupted. Create a new testcase; incomplete evidence is not analyzed automatically.", job_id) for job_id in stale))
                     refresh_receipts(conn)
                     conn.commit()
             finally:

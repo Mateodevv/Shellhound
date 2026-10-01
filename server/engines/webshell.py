@@ -31,6 +31,8 @@ import stat
 import yara
 
 from server import bundled_rules, db, ruleswitch
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from server.paths import display_path, io_path
 from server.engines.fsutil import (
     ScanProgress, canonical_file, discover_scan_files, record_skip, sha256_of,
@@ -329,6 +331,33 @@ def scan_file(file_path, root=None, *, max_bytes=None):
     return findings, None, None
 
 
+def _parallel_scans(files, limits, progress):
+    """Bound read-ahead; only the caller writes findings, in discovery order."""
+    def inspect(entry):
+        path, root = entry
+        limit = limits.get(canonical_file(path)) if limits else None
+        return scan_file(path, root) if limit is None else scan_file(path, root, max_bytes=limit)
+
+    pending = deque()
+    entries = iter(files)
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix='file-check') as pool:
+        try:
+            for _ in range(8):
+                entry = next(entries, None)
+                if entry is None or progress.cancelled():
+                    break
+                pending.append((entry, pool.submit(inspect, entry)))
+            while pending and not progress.cancelled():
+                entry, future = pending.popleft()
+                yield entry, future
+                following = next(entries, None)
+                if following is not None and not progress.cancelled():
+                    pending.append((following, pool.submit(inspect, following)))
+        finally:
+            for _entry, future in pending:
+                future.cancel()
+
+
 def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
          file_targets=None):
     """Scan every file under `targets`; write findings straight into case.db.
@@ -375,7 +404,8 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
         for path in hashes:
             hashes_by_path.setdefault(canonical_file(path), []).append(path)
         flagged = set()
-        for i, (file_path, root) in enumerate(files):
+        scans = _parallel_scans(files, limits, progress)
+        for i, ((file_path, root), future) in enumerate(scans):
             if progress.cancelled():
                 break
             progress.update(0.02 + (i / max(total, 1)) * 0.93,
@@ -383,11 +413,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
                             "scanning", i, total)
             stats["scanned"] += 1
             try:
-                limit = limits.get(canonical_file(file_path))
-                if limit is None:
-                    findings, skip_reason, inert = scan_file(file_path, root)
-                else:
-                    findings, skip_reason, inert = scan_file(file_path, root, max_bytes=limit)
+                findings, skip_reason, inert = future.result()
             except yara.TimeoutError:
                 findings, skip_reason, inert = [], "content scan timed out after 20 seconds", None
             except MemoryError:
@@ -464,5 +490,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
         if authoritative and not retry and complete:
             db.complete_file_scan(conn, "webshell", run)
     finally:
+        if 'scans' in locals():
+            scans.close()
         conn.close()
     return stats

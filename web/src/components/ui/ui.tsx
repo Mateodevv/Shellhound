@@ -389,7 +389,7 @@ const FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]), texta
  *  lies below, something one comes back to -- otherwise a trace feels like a
  *  change of subject rather than a glance to the side. */
 export function Modal({ open, onClose, title, children, layer = 0,
-                        contained = false, bodyClassName, headerMeta, headerDivider }: {
+                          contained = false, bodyClassName, headerMeta, headerDivider, maxWidth }: {
   open: boolean
   onClose: () => void
   title: ReactNode
@@ -405,6 +405,7 @@ export function Modal({ open, onClose, title, children, layer = 0,
   headerMeta?: ReactNode
   /** Replaces the title's ordinary divider, e.g. with review progress. */
   headerDivider?: ReactNode
+  maxWidth?: number
 }) {
   const tr = useT()
   const titleId = useId()
@@ -457,7 +458,7 @@ export function Modal({ open, onClose, title, children, layer = 0,
         aria-modal="true"
         aria-labelledby={titleId}
         style={{
-          width: `min(${1280 - inset * 70}px, ${96 - inset * 3}vw)`,
+          width: `min(${(maxWidth ?? 1280) - inset * 70}px, ${96 - inset * 3}vw)`,
           height: contained ? `${92 - inset * 3}vh` : undefined,
           maxHeight: `${92 - inset * 3}vh`,
         }}>

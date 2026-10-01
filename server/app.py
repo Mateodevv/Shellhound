@@ -257,6 +257,20 @@ def create_app(config: Config) -> FastAPI:
         from server.casework.testcase import generate
         return workspace.case_info(generate(config.workspace))
 
+    class TestcaseBody(BaseModel):
+        size: str = "small"
+        run_analysis: StrictBool = True
+
+    @app.post("/api/testcase/jobs", dependencies=[auth])
+    def generate_testcase_job(body: TestcaseBody):
+        from server.casework.performance_case import enqueue
+        try:
+            return enqueue(config.workspace, manager, _analyze, size=body.size, run_analysis=body.run_analysis)
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
     # How long a "how much evidence is this?" scan may take. A webroot can
     # hold six figures of files and a log directory gigabytes; the answer is
     # for ORIENTATION ("57 MB, 1.744 Dateien"), so a partial count that
@@ -447,12 +461,29 @@ def create_app(config: Config) -> FastAPI:
 
     # --- evidence -----------------------------------------------------------
 
+    def guard_testcase_edit(fn):
+        # A generated case has an atomic evidence-publication phase. Keep its
+        # inputs stable through generation and the following regular analysis.
+        from functools import wraps
+        @wraps(fn)
+        def guarded(slug, *args, **kwargs):
+            case = case_dir_or_404(slug)
+            if not (case / "testcase-generation.json").exists():
+                return fn(slug, *args, **kwargs)
+            try:
+                with manager.case_operation(case):
+                    return fn(slug, *args, **kwargs)
+            except CaseBusy as exc:
+                raise HTTPException(409, str(exc)) from None
+        return guarded
+
     class NewEvidence(BaseModel):
         kind: str
         path: str
         source_timezone: str = 'auto'
 
     @app.post("/api/cases/{slug}/evidence", dependencies=[auth])
+    @guard_testcase_edit
     def add_evidence(slug: str, body: NewEvidence, lang: str = lang_dep):
         case_dir = case_dir_or_404(slug)
         if body.kind not in EVIDENCE_KINDS:
@@ -479,6 +510,7 @@ def create_app(config: Config) -> FastAPI:
         source_timezone: str | None = None
 
     @app.patch("/api/cases/{slug}/evidence/{evidence_id}", dependencies=[auth])
+    @guard_testcase_edit
     def rename_evidence(slug: str, evidence_id: int, body: PatchEvidence):
         """Give this piece of evidence a name a human recognises."""
         case_dir = case_dir_or_404(slug)
@@ -500,6 +532,7 @@ def create_app(config: Config) -> FastAPI:
             conn.close()
 
     @app.delete("/api/cases/{slug}/evidence/{evidence_id}", dependencies=[auth])
+    @guard_testcase_edit
     def remove_evidence(slug: str, evidence_id: int):
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)

@@ -15,6 +15,7 @@ import { Button, Card, ConfirmDialog, EmptyState, Tag } from '../components/ui/u
 import { Tooltip } from '../components/ui/Tooltip'
 import { WorkspaceSettingsDialog } from '../components/settings/WorkspaceSettingsDialog'
 import { StartGeoBanner } from '../components/settings/GeoBanner'
+import { TestcaseDialog } from '../components/casework/TestcaseDialog'
 import { CaseWizard } from '../components/casework/CaseWizard'
 
 interface State { workspace: string; cases: CaseInfo[] }
@@ -37,10 +38,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
   const [importPath, setImportPath] = useState('')
   const [showImport, setShowImport] = useState(false)
 
-  const generateTestcase = useMutation({
-    mutationFn: () => post<CaseInfo>('/api/testcase', {}),
-    onSuccess: (result) => { void qc.invalidateQueries({ queryKey: ['state'] }); onOpen(result.slug) },
-  })
+  const [testcaseOpen, setTestcaseOpen] = useState(false)
   const importCase = useMutation({
     mutationFn: (body: { file?: string; path?: string }) =>
       post<ImportResult>('/api/import', body),
@@ -101,8 +99,8 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           {data && <Tag>{data.cases.length}</Tag>}
         </h2>
         <div className="flex flex-wrap gap-2">
-          <Tooltip hint={tr('start.testcaseHelp')}><Button disabled={generateTestcase.isPending} onClick={() => generateTestcase.mutate()}>
-            <FlaskConical size={15} />{tr(generateTestcase.isPending ? 'start.generatingTestcase' : 'start.generateTestcase')}
+          <Tooltip hint={tr('start.testcaseHelp')}><Button onClick={() => setTestcaseOpen(true)}>
+            <FlaskConical size={15} />{tr('start.generateTestcase')}
           </Button></Tooltip>
           <Button variant="primary" onClick={() => setCreating(true)}>
             <Plus size={15} /> {tr('start.newCase')}
@@ -113,7 +111,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
         </div>
       </div>
 
-      {generateTestcase.error && <p role="alert" className="mb-3 text-sm text-[var(--danger-text)]">{generateTestcase.error.message}</p>}
+      {testcaseOpen && <TestcaseDialog onClose={() => setTestcaseOpen(false)} onOpen={onOpen} />}
       <div className="flex flex-col gap-2">
         {isLoading && <div className="text-[var(--muted)]">{tr('common.loading')}</div>}
         {data?.cases.map((c, i) => (
