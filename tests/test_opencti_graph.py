@@ -167,7 +167,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.conn.execute("UPDATE iocs SET note='A new analyst observation' WHERE id=?", (self.ip_id,))
         self.conn.commit()
         third = self.preview(include_notes=True)
-        self.assertNotEqual(second["fingerprint"], third["fingerprint"])
+        self.assertEqual(second["fingerprint"], third["fingerprint"])
 
     def test_persistent_source_identity_survives_value_correction_but_not_delete_and_reuse(self):
         first = self.preview(indicator_ids=[self.ip_id])
@@ -199,7 +199,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertTrue(any(o["type"] == "malware" for o in revoked))
         self.assertTrue(all(o["type"] in {"note", "indicator", "relationship", "malware"} for o in revoked))
         self.assertNotIn("malware--external", {o["id"] for o in withdrawn})
-        self.assertTrue(any(o["type"] == "note" and not o.get("revoked") for o in withdrawn))
+        self.assertFalse(any(o["type"] == "note" for o in withdrawn))
         self.assertEqual([], graph.withdrawal_objects(previous, previous, "SYN-2026-001"))
 
     def test_reconfirmation_creates_stable_new_generation_without_unrevoking_history(self):
@@ -254,8 +254,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         file_ids = {o["id"] for o in preview["objects"] if o["type"] == "file"}
         relationships = [o for o in preview["objects"] if o["type"] == "relationship"]
         self.assertFalse(any(o["source_ref"] in file_ids and o["target_ref"] in file_ids for o in relationships))
-        requested = next(o for o in relationships if " requested " in o.get("description", ""))
-        self.assertTrue(requested["target_ref"].startswith("note--"))
+        self.assertFalse(any(" requested " in o.get("description", "") for o in relationships))
 
     def test_generic_manual_file_confirmation_does_not_invent_webshell_type(self):
         self.conn.execute("UPDATE findings SET source='analyst',rule_id='analyst.file_review',rule='Manual file review'")
@@ -264,7 +263,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertNotIn("malware", [o["type"] for o in preview["objects"]])
         hashed = next(r for r in preview["iocs"] if r["id"] == self.hash_id)
         self.assertTrue(hashed["indicator_suggested"])
-        self.assertIn("Associated file confirmed", json.dumps(preview["objects"]))
+        self.assertFalse(any(o["type"] == "note" for o in preview["objects"]))
 
     def test_explicit_manual_file_classifications_export_verified_file_and_malware(self):
         for statement, malware_type, name in (
@@ -327,7 +326,7 @@ class OpenCTIGraphTests(unittest.TestCase):
                 preview = self.preview()
                 self.assertNotIn("malware", [o["type"] for o in preview["objects"]])
                 self.assertIn("file", [o["type"] for o in preview["objects"]])
-                self.assertIn("Associated file confirmed", json.dumps(preview["objects"]))
+                self.assertFalse(any(o["type"] == "note" for o in preview["objects"]))
 
     def test_explicit_manual_malware_classification_supersedes_older_webshell_scan(self):
         db.upsert_finding(self.conn, "analyst", 0, "Manual file review", "file", str(self.file),
@@ -355,14 +354,31 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertEqual(1, len(malware))
         self.assertEqual(["webshell"], malware[0]["malware_types"])
 
-    def test_case_notes_can_be_excluded_while_including_ioc_notes(self):
+    def test_legacy_evidence_flags_cannot_leak_relationship_or_finding_excerpts(self):
+        data = graph._read_case(self.case)
+        data["links"].append({"id": 999, "src_id": self.ip_id, "dst_id": self.hash_id,
+                              "kind": "used", "note": "PRIVATE_EDGE_NOTE", "origin": "manual"})
+        data["relationship_evidence"].append({"link_id": 999, "reference": "PRIVATE_REFERENCE",
+                                                "detail": "PRIVATE_EXCERPT", "first_seen": "", "last_seen": ""})
+        for finding in data["findings"]:
+            finding["evidence"] = "PRIVATE_FINDING_EXCERPT"
+        with patch.object(graph, "_read_case", return_value=data):
+            preview = self.preview(include_notes=True, include_evidence=True)
+        exported = json.dumps(preview["objects"])
+        for marker in ("PRIVATE_EDGE_NOTE", "PRIVATE_REFERENCE", "PRIVATE_EXCERPT", "PRIVATE_FINDING_EXCERPT"):
+            self.assertNotIn(marker, exported)
+        self.assertTrue(any(o["type"] == "relationship" and " used " in o.get("description", "")
+                            for o in preview["objects"]))
+        self.assertFalse(any(o["type"] == "note" for o in preview["objects"]))
+
+    def test_legacy_flags_cannot_enable_case_or_ioc_notes(self):
         workspace.update_case(self.case, notes="Private case narrative")
         self.conn.execute("UPDATE iocs SET note='Allowed IOC narrative' WHERE id=?", (self.ip_id,))
         self.conn.commit()
         preview = self.preview(include_notes=True, exclude_profile_fields=["case_notes"])
         exported = json.dumps(preview["objects"])
         self.assertNotIn("Private case narrative", exported)
-        self.assertIn("Allowed IOC narrative", exported)
+        self.assertNotIn("Allowed IOC narrative", exported)
 
     def test_root_collision_is_ambiguous_without_structured_hash_provenance(self):
         second = self.root / "second-evidence"
@@ -466,13 +482,12 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertEqual(2, len(vulnerability_links))
         self.assertTrue(all(o["relationship_type"] == "related-to" for o in vulnerability_links))
         vulnerability_notes = ' '.join(o['content'] for o in objects if o['type'] == 'note')
-        self.assertIn('confirmed', vulnerability_notes)
-        self.assertIn('suspected', vulnerability_notes)
+        self.assertEqual('', vulnerability_notes)
         self.assertEqual(2, sum(o["type"] == "vulnerability" for o in objects))
         exported = json.dumps(objects)
         for forbidden in ("private note", "private excerpt", "Hidden summary", "Example CMS"):
             self.assertNotIn(forbidden, exported)
-        self.assertIn("Misconfiguration", exported)
+        self.assertNotIn("Misconfiguration", exported)
 
     def test_observables_have_clear_case_descriptions_and_explicit_incident_relationships(self):
         preview = self.preview(indicator_ids=[self.hash_id])
@@ -496,7 +511,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertNotIn("uploads/example.php", file["x_opencti_description"])
         self.assertTrue(any(r["source_ref"].startswith("malware--") and r["target_ref"] == file["id"] for r in links))
 
-    def test_description_respects_exclusions_and_keeps_detailed_evidence_in_notes(self):
+    def test_descriptions_never_include_private_notes(self):
         self.conn.execute("UPDATE iocs SET origin='private origin', note='long private analyst narrative' WHERE id=?", (self.ip_id,))
         self.conn.commit()
         preview = self.preview(include_notes=True, include_evidence=True, exclude_note_ioc_ids=[self.ip_id],
@@ -509,16 +524,14 @@ class OpenCTIGraphTests(unittest.TestCase):
         ip = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
         self.assertNotIn("private origin", ip["x_opencti_description"])
         self.assertNotIn("long private analyst narrative", ip["x_opencti_description"])
-        self.assertTrue(any("long private analyst narrative" in o.get("content", "") for o in preview["objects"]))
+        self.assertNotIn("long private analyst narrative", json.dumps(preview["objects"]))
 
     def test_ip_requests_stay_at_the_path_instead_of_projecting_to_collected_bytes(self):
         preview = self.preview(indicator_ids=[self.hash_id])
         ip = next(o for o in preview["objects"] if o["type"] == "ipv4-addr")
         links = [o for o in preview["objects"] if o["type"] == "relationship" and o["source_ref"] == ip["id"]]
         self.assertFalse(any(o["target_ref"].startswith(("file--", "malware--")) for o in links))
-        requested = next(o for o in links if " requested " in o["description"])
-        self.assertTrue(requested["target_ref"].startswith("note--"))
-        self.assertIn("does not identify", requested["description"])
+        self.assertFalse(any(" requested " in o["description"] for o in links))
 
 
     def test_ip_cve_link_requires_confirmed_ip_scoped_provenance(self):
@@ -573,13 +586,11 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.conn.commit()
         preview = self.preview(include_notes=True, exclude_note_ioc_ids=[self.hash_id])
         rows = {r["id"]: r for r in preview["iocs"]}
-        file_notes = {i for i in rows[file_id]["object_ids"] if i.startswith("note--")}
-        self.assertEqual(file_notes, {i for i in rows[self.hash_id]["object_ids"] if i.startswith("note--")})
-        self.assertTrue(file_notes.isdisjoint(rows[self.path_id]["object_ids"]))
-        context = next(o for o in preview["objects"] if o["id"] in file_notes)
-        self.assertIn(f"Shellhound IOC {file_id}", context["content"])
-        self.assertIn(f"Shellhound IOC {self.hash_id}", context["content"])
-        self.assertNotIn("private hash rationale", context["content"])
+        file_objects = {i for i in rows[file_id]["object_ids"] if i.startswith("file--")}
+        self.assertTrue(file_objects)
+        self.assertEqual(file_objects, {i for i in rows[self.hash_id]["object_ids"] if i.startswith("file--")})
+        self.assertFalse(any(o["type"] == "note" for o in preview["objects"]))
+        self.assertNotIn("private hash rationale", json.dumps(preview["objects"]))
         self.assertFalse(any(":ioc-link:" in r.get("external_id", "") for o in preview["objects"] for r in o.get("external_references", [])))
         ids = {o["id"] for o in preview["objects"]}
         for obj in preview["objects"]:
@@ -588,20 +599,14 @@ class OpenCTIGraphTests(unittest.TestCase):
                     self.assertIn(obj[key], ids)
             self.assertTrue(set(obj.get("object_refs", [])) <= ids)
 
-    def test_consolidated_note_supersedes_legacy_context_without_changing_assessment(self):
+    def test_legacy_notes_are_neither_reexported_nor_withdrawn(self):
         current = self.preview()["objects"]
-        note = next(o for o in current if o.get("x_shellhound_supersedes") and o.get("x_shellhound_context_kind") == "content")
-        old = {**note, "id": note["x_shellhound_supersedes"][0]}
-        old.pop("x_shellhound_supersedes")
-        withdrawals = graph.withdrawal_objects([old], current, "SYN-2026-001")
-        previous = next(o for o in withdrawals if o["id"] == old["id"])
-        self.assertTrue(previous["revoked"])
-        self.assertTrue(previous["x_shellhound_superseded"])
-        self.assertIn("structural replacement", previous["content"])
-        self.assertNotIn("no longer supported", previous["content"])
-        self.assertNotIn("revoked", note)
+        old = {"type": "note", "id": graph._id("note", "legacy"),
+               "content": "Private historical narrative", "x_shellhound_case_reference": "SYN-2026-001"}
+        self.assertEqual([], graph.withdrawal_objects([old], current, "SYN-2026-001"))
+        self.assertNotIn("revoked", old)
 
-    def test_same_ip_keeps_distinct_case_assessments_on_notes(self):
+    def test_same_ip_keeps_distinct_case_links_without_notes(self):
         first = self.preview()
         other = workspace.create_case(self.root / "cases", "Second case", "PIM-9999")
         conn = db.connect(other)
@@ -617,16 +622,16 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.assertEqual(ip1["id"], ip2["id"])
         for preview, ip, assessment in ((first, ip1, "malicious"), (second, ip2, "benign")):
             self.assertNotIn(assessment, ip["x_opencti_description"])
-            note = next(o for o in preview["objects"] if o["type"] == "note" and ip["id"] in o["object_refs"])
-            self.assertIn("Case assessment: " + assessment, note["content"])
-            self.assertIn(preview["incident_id"], note["object_refs"])
+            self.assertFalse(any(o["type"] == "note" for o in preview["objects"]))
+            self.assertTrue(any(o["type"] == "relationship" and o["source_ref"] == preview["incident_id"]
+                                and o["target_ref"] == ip["id"] for o in preview["objects"]))
         self.assertNotEqual(first["case_id"], second["case_id"])
 
     def test_classification_without_detection_or_usage_keeps_labels_only(self):
         initial = self.preview()
         self.assertFalse(any(o["type"] == "malware" for o in initial["objects"]))
         self.assertTrue(any(r["indicator_default"] for r in initial["iocs"]))
-        self.assertTrue(any("Confirmed file classification" in o.get("content", "") for o in initial["objects"]))
+        self.assertFalse(any(o["type"] == "note" for o in initial["objects"]))
         selected = self.preview(indicator_ids=[self.hash_id])
         self.assertEqual(1, sum(o["type"] == "malware" for o in selected["objects"]))
         self.assertFalse(any(o["type"] == "malware" for o in self.preview(ioc_ids=[self.ip_id], indicator_ids=[self.hash_id])["objects"]))

@@ -10,13 +10,6 @@ def context_plan(payload, sample):
     def content_target(obj):
         if obj["type"] == "malware":
             return file_id in obj.get("sample_refs", [])
-        if obj["type"] == "note":
-            refs = set(obj.get("object_refs", []))
-            return (file_id in refs and refs <= {file_id, incident_id}
-                    and obj.get("x_shellhound_context_kind") != "path" and
-                    any(r.get("source_name") == "Shellhound" and
-                        any(part in r.get("external_id", "") for part in (":ioc:", ":context:"))
-                        for r in obj.get("external_references", [])))
         return obj["type"] == "incident" and obj["id"] == incident_id
     targets = [o["id"] for o in objects if file and not o.get("revoked") and content_target(o)]
     withdrawals = [o["id"] for o in objects if o.get("revoked") and content_target(o)]

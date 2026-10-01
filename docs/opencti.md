@@ -28,7 +28,7 @@ or missing locations are reported; verification does not upload content.
 
 Path context distinguishes HTTP paths, investigated system paths and local evidence
 paths. Local paths never appear in OpenCTI transfers. Account context identifies the
-system in which a username is meaningful; unscoped usernames remain case Notes.
+system in which a username is meaningful; unscoped usernames stay local and appear with an export warning.
 The context itself is not sent as an account identifier: a stable scoped digest is
 used to prevent merging unrelated accounts.
 
@@ -46,8 +46,8 @@ optionally an observation and a time range. A CVE can be added to the box by its
 identifier. Request-path context, observed use, execution, exploitation attempts
 and confirmed exploitation remain distinct assertions. An HTTP 2xx response alone
 establishes neither execution nor exploitation. The adapter preserves unsupported
-relationship semantics in a case-owned `related-to` with the reviewed evidence
-in its description. It does not generate an additional Note for every edge.
+relationship semantics in a case-owned `related-to` with a short generated
+description. Analyst notes and supporting evidence excerpts are not exported.
 
 Pattern Hunt tests (individual and batch) automatically add every matched IP and
 link it to valid CVE identifiers explicitly entered in the pattern's CVE field.
@@ -61,8 +61,7 @@ reviewed action; tests never contact OpenCTI or enrichment services.
 Withdrawal requires a reason and is visible in history. A repeated automatic
 collection does not silently undo a withdrawn relationship. The next reviewed
 transfer withdraws earlier owned statements while preserving shared objects and
-other sources' assertions. Notes/evidence exclusions also apply to assessment
-reasons and relationship evidence.
+other sources' assertions. Assessment reasons and relationship evidence remain local.
 
 Schema 15 preserves existing IOC IDs, source UIDs, notes and export receipts.
 Explicit historical SHA-256 provenance creates file records without inventing
@@ -157,11 +156,11 @@ come from one verified snapshot; ambiguous evidence roots or changed file
 versions are visible problems instead of guessed associations.
 
 Each exported observable has a neutral description with the case ID and a pointer
-to the investigation. Assessments, classification, provenance and evidence stay
-in case-owned Notes and retain the preview's exclusions. File/hash entries that
-resolve to the same content share one context Note. Paths retain separate
-occurrence Notes; common profile Notes are consolidated into one case-context
-Note. No context from an unselected IOC is included. Descriptions use one managed
+to the investigation. STIX Notes and evidence excerpts are never exported,
+including automatic IOC context, analyst notes and withdrawal summary Notes.
+Legacy inclusion flags are ignored. File/hash entries resolving to the same
+content share a File object. Entries without a standalone STIX representation
+remain local with an export warning. Descriptions use one managed
 section per case; repeat exports replace that section while preserving other
 authors and other cases. A shared observable with a different marking requires
 review before adding case context to its description. Description failures are
@@ -169,7 +168,7 @@ recorded as partial transfers and can be resumed without repeating imports or
 sample uploads. Previously uploaded, hash-matched samples also receive context.
 
 Every observable is directly associated with the Incident. An IP requesting a
-path stays connected to that path's context. That request is not projected onto
+path remains local when the path has no standalone STIX object. It is not projected onto
 the File, Malware or Artifact collected later. A separate, evidence-backed use
 or execution relationship can express stronger knowledge.
 A direct IP-to-CVE link requires a confirmed, active IP-scoped finding naming
@@ -192,11 +191,9 @@ reviewed content require a new preview. Deleting local rows does not delete
 shared OpenCTI objects. A later preview identifies withdrawn owned assertions;
 reactivated assertions receive a new generation when STIX revocation is terminal.
 
-Older Report-based export receipts can still be resumed. New exports use the Case
-container and leave old Reports as history. Consolidated Notes replace earlier
-owned context Notes; they do not erase the previous assessments. Old, owned
-Report-scoped Artifact context edges are retired before the Case-scoped edges are
-added, avoiding duplicate active relationships. Third-party edges are untouched.
+Saved transfers from model versions before 3 require a fresh preview and cannot
+be resumed. New exports use the Case container. Existing remote Notes and their
+relationships are neither re-exported nor deleted. Old Reports remain history.
 
 ## Original samples and privacy
 
@@ -204,7 +201,7 @@ Samples are off by default. Enable optional uploads in Settings, then select eac
 original in the preview. The upload limit is 25 MiB per file. The worker verifies
 the exact selected bytes and SHA-256, uploads an Artifact through GraphQL, and
 links it to the File (`obs_content` and `related-to`) and Case container. Only
-reviewed content-specific Notes, confirmed Malware and the Incident are inherited
+confirmed Malware and the Incident are inherited
 by the Artifact; path requests, IP addresses and CVEs are not copied. An upload failure does not erase a completed
 metadata transfer. Archive extraction and script execution are not performed by
 Shellhound.

@@ -87,7 +87,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(ids[:2], result['deleted_ids'])
         self.assertEqual([ids[2]], [row['id'] for row in self.request('GET', base)[1]])
 
-    def test_database_user_keeps_registration_in_ioc_details_and_export_context(self):
+    def test_database_user_keeps_registration_local_without_exporting_notes(self):
         conn = db.connect(self.case)
         try:
             account_id = conn.execute("INSERT INTO db_accounts(dump_id,cms,tbl,user_id,login,email,registered) "
@@ -111,7 +111,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual("account-of", detail["relationships"][0]["kind"])
         _, preview = self.request("POST", base + "/opencti/preview", {})
         notes = [obj["content"] for obj in preview["objects"] if obj["type"] == "note"]
-        self.assertTrue(any("Account registration: 2024-02-03 04:05:06 (joomla / cms_users)" in note for note in notes))
+        self.assertEqual([], notes)
 
     def test_structured_ioc_api_validation_and_offline_details(self):
         base = f"/api/cases/{self.slug}"

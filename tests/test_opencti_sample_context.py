@@ -27,14 +27,14 @@ class SampleContextTests(unittest.TestCase):
         path = {**note, "id": "note--path", "x_shellhound_context_kind": "path"}
         current = {"case_id": "case--a", "incident_id": "incident--a", "objects": [file, note, path]}
         sample = {"file_id": "file--a", "sha256": "a" * 64, "remote_id": "artifact", "state": "complete"}
-        self.assertEqual(["note--content"], context_plan(current, sample)["target_ids"])
+        self.assertEqual([], context_plan(current, sample)["target_ids"])
         old = {**current, "case_id": None, "report_id": "report--a", "samples": [sample], "mapping_destination": "same"}
         current["mapping_destination"] = "same"
         plans = legacy_context_plans([old, old, {**old, "mapping_destination": "other"}], current)
         self.assertEqual(1, len(plans))
         self.assertEqual("report--a", plans[0]["container_id"])
         self.assertEqual([], plans[0]["target_ids"])
-        self.assertEqual(["note--content"], plans[0]["withdraw_ids"])
+        self.assertEqual([], plans[0]["withdraw_ids"])
         self.assertEqual([], legacy_context_plans([old], old))
 
     def test_only_reviewed_content_context_is_selected(self):
@@ -51,7 +51,7 @@ class SampleContextTests(unittest.TestCase):
             {"id": "malware--other", "type": "malware", "sample_refs": ["file--other"]},
         ]}
         sample = {"file_id": "file--a", "sha256": "a" * 64, "remote_id": "artifact"}
-        self.assertEqual(["incident--a", "malware--a", "note--content"], context_plan(payload, sample)["target_ids"])
+        self.assertEqual(["incident--a", "malware--a"], context_plan(payload, sample)["target_ids"])
         self.assertEqual([], context_plan(payload, {**sample, "sha256": "b" * 64})["target_ids"])
         payload["objects"][2]["revoked"] = True
         self.assertEqual(["malware--a"], context_plan(payload, sample)["withdraw_ids"])

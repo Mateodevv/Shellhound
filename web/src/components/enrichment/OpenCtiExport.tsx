@@ -26,7 +26,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
   const setStep = (value: number) => { setLocalStep(value); onStepChange?.(value) }
   const steps = ['context', 'iocs', 'samples', 'review']
   const contextVersion = JSON.stringify([caseInfo?.reference, caseInfo?.profile])
-  const [options, setOptions] = useState<OpenCtiOptions>(() => ({ ...initialOptions, exclude_relationship_ids: [],
+  const [options, setOptions] = useState<OpenCtiOptions>(() => ({ ...initialOptions, include_notes: false, include_evidence: false, exclude_relationship_ids: [],
     indicator_ids: [...new Set([...initialOptions.indicator_ids, ...webshellIndicatorDefaults(initial, initialOptions)])] }))
   const [preview, setPreview] = useState(initial)
   const [reviewedOptions, setReviewedOptions] = useState(JSON.stringify([initialOptions, contextVersion]))
@@ -64,7 +64,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
       sample_ids: checked ? previous.sample_ids : previous.sample_ids.filter(id => !initial.samples.some(sample => sample.id === id && removed.some(ioc => ioc.object_ids.includes(sample.file_id)))) }
   })
   const usableSamples = initial.samples.filter(sample => sample.available && initial.iocs.some(ioc => selected(ioc.id) && ioc.object_ids.includes(sample.file_id)))
-  const columnCount = 5 + Number(options.include_notes) + Number(options.include_evidence)
+  const columnCount = 5
   const profile = caseInfo?.profile
   const item = (label: string, value: string) => <div className="min-w-0"><dt className="text-[12px] font-semibold text-[var(--muted)]">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-words text-[13px]">{value || tr('wizard.unknown')}</dd></div>
   const selectedCount = initial.iocs.filter(ioc => selected(ioc.id)).length
@@ -74,9 +74,6 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
     <div className="shrink-0 space-y-3">
     <p>{tr(wizard ? `transferWizard.help.${steps[step]}` : 'cti.simplePreviewBody')}</p><div className="flex items-center gap-2"><Tag>{preview.case_reference || tr('cti.caseId')}</Tag></div>
     {preview.errors.map((error) => <CtiError key={error} error={error} />)}
-    <div hidden={wizard && step !== 1}><div className="flex flex-wrap gap-3"><label className="flex gap-2"><input type="checkbox" checked={options.include_notes} onChange={(e) => change('include_notes', e.target.checked)} />{tr('cti.previewNotes')}</label><InfoDot body={tr('cti.previewNotesHelp')} />
-      <label className="flex gap-2"><input type="checkbox" checked={options.include_evidence} onChange={(e) => change('include_evidence', e.target.checked)} />{tr('cti.previewEvidence')}</label><InfoDot body={tr('cti.previewEvidenceHelp')} />
-    </div></div>
     </div>
     <div hidden={wizard && step !== 1} className="shrink-0 space-y-1 [&_[role=tab]]:shrink-0 [&_[role=tab]]:whitespace-nowrap">
     <div className="overflow-x-auto"><Tabs active={tab} onChange={setTab} tabs={[...iocCategories.map(id => ({ id, label: tr(`cti.category.${id}`), badge: <span className="ml-1 text-[10px]">{initial.iocs.filter(ioc => inIocCategory(ioc.type, id)).length}</span> })), ...(!wizard ? [{ id: 'samples', label: tr('cti.samples'), badge: <span className="ml-1 text-[10px]">{initial.samples.length}</span> }, { id: 'profile', label: tr('profileChanges.title') }] : [])]} /></div>
@@ -94,7 +91,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
       <CaseProfileChanges changes={preview.profile_changes} updating={dirty} />
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {item(tr('cti.caseId'), preview.case_reference)}{item(tr('cti.iocs'), String(selectedCount))}{item(tr('cti.indicator'), String(options.indicator_ids.length))}
-        {item(tr('cti.samples'), String(options.sample_ids.length))}{item(tr('cti.previewNotes'), tr(options.include_notes ? 'transferWizard.included' : 'transferWizard.excluded'))}{item(tr('cti.previewEvidence'), tr(options.include_evidence ? 'transferWizard.included' : 'transferWizard.excluded'))}
+        {item(tr('cti.samples'), String(options.sample_ids.length))}
       </dl>
       <p className="rounded-lg border border-[var(--line)] p-3">{tr('cti.caseModel')} {tr('transferWizard.relationships')}</p>
       <div className="flex flex-wrap gap-2">{[...new Set(preview.objects.map(object => object.type))].map(type => <Tag key={type}>{type === 'x-opencti-case-incident' ? tr('cti.caseContainer') : type} · {preview.objects.filter(object => object.type === type).length}</Tag>)}</div>
@@ -106,12 +103,10 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
     <div hidden={wizard || tab !== 'notices'} role="tabpanel" aria-label={tr('cti.notices')} className="h-full overflow-y-auto [scrollbar-gutter:stable] space-y-2">{preview.warnings.map(warning => <p key={warning} className="rounded border border-[var(--line)] p-3 text-[var(--review-text)]">{warning}</p>)}</div>
     <div hidden={!category} role="tabpanel" aria-label={tr('cti.iocs')} className="h-full overflow-auto [scrollbar-gutter:stable]">
       <table className={selectionTable}>
-        <colgroup><col style={{ width: 48 }} /><col /><col style={{ width: 100 }} /><col style={{ width: '28%' }} />{options.include_notes && <col style={{ width: 80 }} />}{options.include_evidence && <col style={{ width: 90 }} />}<col style={{ width: 160 }} /></colgroup>
+        <colgroup><col style={{ width: 48 }} /><col /><col style={{ width: 100 }} /><col style={{ width: '28%' }} /><col style={{ width: 160 }} /></colgroup>
         <thead className={selectionHead}><tr>
           <th><SelectColumn label={tr('cti.iocs')} states={visible.map(ioc => selected(ioc.id))} onChange={checked => chooseIocs(visible.map(ioc => ioc.id), checked)} /></th>
           <th>{tr('iocTable.object')}</th><th>{tr('iocTable.type')}</th><th>{tr('iocTags.title')}</th>
-          {options.include_notes && <th className="text-left"><div className="flex items-center gap-2"><SelectColumn label={tr('cti.notes')} states={included.map(ioc => !options.exclude_note_ioc_ids.includes(ioc.id))} onChange={checked => change('exclude_note_ioc_ids', selectBatch(options.exclude_note_ioc_ids, included.map(ioc => ioc.id), !checked))} />{tr('cti.notes')}</div></th>}
-          {options.include_evidence && <th className="text-left"><div className="flex items-center gap-2"><SelectColumn label={tr('cti.evidence')} states={included.map(ioc => !options.exclude_evidence_ioc_ids.includes(ioc.id))} onChange={checked => change('exclude_evidence_ioc_ids', selectBatch(options.exclude_evidence_ioc_ids, included.map(ioc => ioc.id), !checked))} />{tr('cti.evidence')}</div></th>}
           <th className="text-left"><div className="flex items-center gap-2"><SelectColumn label={tr('cti.indicator')} states={indicators.map(ioc => options.indicator_ids.includes(ioc.id))} onChange={checked => change('indicator_ids', selectBatch(options.indicator_ids, indicators.map(ioc => ioc.id), checked))} />{tr('cti.indicator')}</div></th>
         </tr></thead>
         <tbody>{visible.map(ioc => <tr key={ioc.id}>
@@ -119,8 +114,6 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
           <td><span className="break-all font-normal tabular-nums">{ioc.value}</span>{ioc.warnings.map(warning => <p key={warning} className="text-[var(--review-text)]">{warning}</p>)}</td>
           <td><Tag>{ioc.type}</Tag></td>
           <td><div className="flex flex-wrap items-center gap-1">{ioc.tags?.slice(0, 2).map(tag => <IocTag key={tag} value={tag} />)}{(ioc.tags?.length ?? 0) > 2 && <Tooltip body={ioc.tags!.slice(2).join(' · ')}><span className="rounded bg-[var(--panel-2)] px-1.5 py-0.5 text-[11px] text-[var(--muted)]" aria-label={tr('cti.moreTags', { n: ioc.tags!.length - 2 })}>+{ioc.tags!.length - 2}</span></Tooltip>}</div></td>
-          {options.include_notes && <td className="text-left"><input type="checkbox" aria-label={tr('cti.optionFor', { option: tr('cti.notes'), value: ioc.value })} disabled={!selected(ioc.id)} checked={selected(ioc.id) && !options.exclude_note_ioc_ids.includes(ioc.id)} onChange={e => change('exclude_note_ioc_ids', toggled(options.exclude_note_ioc_ids, ioc.id, !e.target.checked))} /></td>}
-          {options.include_evidence && <td className="text-left"><input type="checkbox" aria-label={tr('cti.optionFor', { option: tr('cti.evidence'), value: ioc.value })} disabled={!selected(ioc.id)} checked={selected(ioc.id) && !options.exclude_evidence_ioc_ids.includes(ioc.id)} onChange={e => change('exclude_evidence_ioc_ids', toggled(options.exclude_evidence_ioc_ids, ioc.id, !e.target.checked))} /></td>}
           <td className="relative text-left">{ioc.indicator_supported ? <><input type="checkbox" aria-label={tr('cti.optionFor', { option: tr('cti.indicator'), value: ioc.value })} disabled={!selected(ioc.id)} checked={options.indicator_ids.includes(ioc.id)} onChange={e => change('indicator_ids', toggled(options.indicator_ids, ioc.id, e.target.checked))} />{ioc.indicator_suggested && <span className="absolute ml-2"><InfoDot body={tr('cti.suggested')} /></span>}</> : '—'}</td>
         </tr>)}{!visible.length && <tr><td colSpan={columnCount}>{tr('iocWorkspace.no_matching_objects')}</td></tr>}</tbody>
       </table>

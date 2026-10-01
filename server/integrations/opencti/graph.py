@@ -2,7 +2,7 @@
 
 Only ``resolve_sample`` returns bytes; previews never carry original files or
 workstation paths. A hash is an observation, not a malware attribution. Case
-assertions live in owned Notes/relationships. IOC tags are exported as labels.
+assertions live in owned relationships. IOC tags are exported as labels.
 """
 import hashlib
 from server.file_classifications import all_saved as saved_file_classifications
@@ -301,14 +301,13 @@ def _observable(row, sanitized):
     if kind == "url":
         url = urlsplit(value)
         if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
-            raise ValueError("Invalid URL or embedded credentials; retained as sanitized context.")
+            raise ValueError("Invalid URL or embedded credentials; no observable exported.")
         return _sco("url", {"value": sanitized})
     if kind == "user" and row.get("context"):
         # Scoped account IDs prevent unrelated systems' admin accounts merging.
         return _sco("user-account", {"user_id": _digest([row["context"], value]),
                                      "account_login": sanitized})
-    # A username alone is not globally unique. A case-owned context Note
-    # deliberately prevents merging two unrelated systems' 'admin' accounts.
+    # Unscoped usernames cannot safely become shared STIX accounts.
     return None
 
 
@@ -323,51 +322,6 @@ def _pattern(obj):
     return None
 
 
-def _consolidate_context(objects, rows, reference, incident_id):
-    """One case-owned content Note per immutable object; paths stay occurrences.
-
-    Never merge path/request context into a File Note: an Artifact may inherit
-    the latter, but must not inherit claims about historical HTTP requests.
-    """
-    groups = {}
-    for obj in list(objects.values()):
-        if obj["type"] != "note":
-            continue
-        kind = obj.get("x_shellhound_context_kind")
-        refs = [r for r in obj["object_refs"] if r != incident_id]
-        if kind == "path" or (kind == "content" and (len(refs) != 1 or not refs[0].startswith("file--"))):
-            continue
-        key = refs[0] if kind == "content" and len(refs) == 1 else (
-            obj["id"] if kind == "content" else "case-context")
-        groups.setdefault(key, []).append(obj)
-    remap = {}
-    for key, members in groups.items():
-        # Context-only IOC Notes keep their occurrence identity, even when
-        # they cannot be expressed as a shared STIX observable.
-        if key == members[0]["id"]:
-            continue
-        merged = dict(members[0])
-        merged["id"] = _id("note", [reference, "context", key])
-        merged["abstract"] = f"{reference}: " + ("Case context" if key == "case-context" else "Object context")
-        merged["content"] = "\n\n".join(dict.fromkeys(m["content"] for m in members))
-        merged["object_refs"] = list(dict.fromkeys(r for m in members for r in m["object_refs"]))
-        merged["external_references"] = [{"source_name": "Shellhound", "external_id": f"{reference}:context:{key}"}]
-        merged["labels"] = sorted({label for m in members for label in m.get("labels", [])})
-        merged["x_shellhound_supersedes"] = [m["id"] for m in members]
-        for member in members:
-            remap[member["id"]] = merged["id"]
-            del objects[member["id"]]
-        objects[merged["id"]] = merged
-    for obj in objects.values():
-        for key in ("source_ref", "target_ref"):
-            if key in obj:
-                obj[key] = remap.get(obj[key], obj[key])
-        if "object_refs" in obj:
-            obj["object_refs"] = list(dict.fromkeys(remap.get(r, r) for r in obj["object_refs"]))
-    for row in rows:
-        row["object_ids"] = list(dict.fromkeys(remap.get(r, r) for r in row["object_ids"]))
-
-
 def build_preview(case_dir, options=None):
     """Return selected STIX objects plus every review row, including exclusions.
 
@@ -376,7 +330,8 @@ def build_preview(case_dir, options=None):
     ``fingerprint`` covers selection, sanitized content and verified snapshots.
     """
     from server.workspace import case_info
-    options = options or {}
+    # Legacy callers cannot re-enable removed free-text disclosures.
+    options = {**(options or {}), "include_notes": False, "include_evidence": False}
     data = _read_case(case_dir)
     info = case_info(case_dir)
     profile = {k: v for k, v in (info.get("profile") or {}).items()
@@ -412,18 +367,13 @@ def build_preview(case_dir, options=None):
     def sdo(kind, key, **fields):
         obj = {"type": kind, "spec_version": "2.1", "id": _id(kind, key),
                "created": stamp, "modified": modified, "created_by_ref": author_id, **fields}
-        if kind in ("incident", "x-opencti-case-incident", "report", "note", "indicator", "relationship", "malware"):
+        if kind in ("incident", "x-opencti-case-incident", "report", "indicator", "relationship", "malware"):
             obj["x_shellhound_case_reference"] = reference
         return obj
 
     def relation(key, source, target, kind="related-to", description=""):
         return add(sdo("relationship", [reference, key], relationship_type=kind,
                        source_ref=source, target_ref=target, description=description or kind))
-
-    def note(key, content, refs):
-        return add(sdo("note", [reference, key], content=content,
-                       object_refs=list(dict.fromkeys(refs)),
-                       external_references=[{"source_name": "Shellhound", "external_id": f"{reference}:{key}"}]))
 
     author = sdo("identity", "shellhound", name="Shellhound", identity_class="system")
     author.pop("created_by_ref")
@@ -487,16 +437,11 @@ def build_preview(case_dir, options=None):
             relation(['organization-city', city_id], org_id or incident_id, city_id,
                      'located-at' if org_id else 'related-to', 'City of an affected organization.')
 
-    if options.get("include_notes") and info.get("notes") and "case_notes" not in (options.get("exclude_profile_fields") or []):
-        note("case-notes", clean.text(info["notes"]), [incident_id])
-
     files, file_warnings = _files(data, clean)
     selected = None if options.get("ioc_ids") is None else set(options["ioc_ids"])
     indicator_ids = set(options.get("indicator_ids") or [])
     sample_ids = set(options.get("sample_ids") or [])
     excluded_links = set(options.get("exclude_relationship_ids") or [])
-    excluded_notes = set(options.get("exclude_note_ioc_ids") or [])
-    excluded_evidence = set(options.get("exclude_evidence_ioc_ids") or [])
     rows, samples, associations = [], {}, {}
     source_keys = {r["id"]: (r.get("source_uid") or _digest([r["type"], r["value"]])) for r in data["iocs"]}
     confirmed_files = {f["artifact"] for f in data["findings"] if f["artifact_kind"] == "file"
@@ -559,7 +504,7 @@ def build_preview(case_dir, options=None):
                 observable = _observable(row, value)
         except (ValueError, UnicodeError):
             observable = None
-            row_warnings.append("The value is not a valid observable and is retained as case context.")
+            row_warnings.append("The value is not a valid observable and remains local.")
         verified = files.get(ioc_id, [])
         if verified:
             observable = _sco("file", {"hashes": verified[0]["hashes"], "size": verified[0]["size"]})
@@ -581,55 +526,13 @@ def build_preview(case_dir, options=None):
                 if row['type'] == 'vulnerability':
                     relation(['case-vulnerability', observable['id']], incident_id, observable['id'], description='Vulnerability recorded in this case; exploitation is not implied.')
         primary = ids[0] if ids else incident_id
-        context = f"Shellhound IOC {ioc_id}: {row['type']} — {value}"
-        context += "\nCase assessment: " + row.get("assessment", "unassessed")
-        for account in row.get("account_sources", []):
-            context += "\nAccount registration: " + clean.text(account["registered"] or "Not recorded")
-            context += " (" + clean.text(" / ".join(filter(None, [account["cms"], account["table"]]))) + ")"
-        if row.get("file") and row["file"]["names"]:
-            context += "\nFile names: " + clean.text(", ".join(row["file"]["names"]))
-        if row.get("path_context") not in (None, "unknown"):
-            context += "\nPath context: " + row["path_context"]
         if row.get("legacy_warning"):
             row_warnings.append(row["legacy_warning"])
-        if ioc_id in active_confirmed:
-            context += "\nAssociated file confirmed by the analyst; no malware family is inferred from its name."
-        if options.get("include_notes") and ioc_id not in excluded_notes:
-            for key in ("origin", "note"):
-                if row.get(key):
-                    context += f"\n{key.title()}: {clean.text(row[key])}"
-            for assessment in data["assessments"]:
-                if assessment["ioc_id"] == ioc_id:
-                    context += f"\nAssessment {assessment['created']}: {assessment['state']} — {clean.text(assessment['reason'])}"
-        sources = [s for s in data["sources"] if s["ioc_id"] == ioc_id]
-        if sources and not any(s["active"] for s in sources):
-            context += "\nPrevious confirmation has been withdrawn; this is retained historical context."
+        sources = [source for source in data["sources"] if source["ioc_id"] == ioc_id]
+        if sources and not any(source["active"] for source in sources):
             row_warnings.append("Previous confirmation has been withdrawn.")
-        if options.get("include_evidence") and ioc_id not in excluded_evidence:
-            artifacts = {s["artifact"] for s in sources}
-            for f in data["findings"]:
-                if f["artifact"] in artifacts:
-                    context += "\n" + clean.text(f["rule"]) + ": " + clean.text(f["evidence"])
-            for observation in data["observations"]:
-                if observation["ioc_id"] == ioc_id and row.get("path_context") != "local-evidence":
-                    context += "\nObservation: " + clean.text(_json({k: observation[k] for k in (
-                        "kind", "evidence_id", "finding_id", "source_ref", "path", "first_seen", "last_seen", "count", "detail", "active")}))
-        context_refs = [incident_id] if row["type"] == "path" else [incident_id, primary]
-        context_obj = sdo("note", [reference, f"ioc:{source_key}"], content=context,
-                          abstract=f"{reference}: {row['type']} context — {value}",
-                          x_shellhound_context_kind="path" if row["type"] == "path" else "content",
-                          object_refs=list(dict.fromkeys(context_refs)),
-                          external_references=[{"source_name": "Shellhound", "external_id": f"{reference}:ioc:{source_key}"}])
-        if tags:
-            context_obj["labels"] = tags
-        ids.append(context_obj["id"])
-        if chosen:
-            add(context_obj)
-            if row["type"] == "path" and verified:
-                objects[context_obj["id"]]["content"] += (
-                    f"\nCurrent verified bytes at {value}: SHA-256 {verified[0]['sha256']}. "
-                    "Historical requests and collected hashes for this path may refer to earlier contents.")
-                objects[context_obj["id"]]["object_refs"].append(primary)
+        if not ids:
+            row_warnings.append("No standalone STIX object is available; context Notes are no longer exported.")
         pattern = _pattern(observable) if observable else None
         if chosen and ioc_id in indicator_ids:
             if pattern:
@@ -649,8 +552,6 @@ def build_preview(case_dir, options=None):
             # multiple confirmed occurrences describe the same verified bytes.
             classification = next((kind for kind in ("webshell", "malware")
                                    if verified[0]["sha256"] in classified_hashes[kind]), "")
-        if chosen and classification:
-            objects[context_obj["id"]]["content"] += f"\nConfirmed file classification in this case: {classification}."
         if chosen and classification and verified and verified[0]["sha256"] in meaningful_hashes:
             classified_sha = row["value"] if row["type"] == "file" else verified[0]["sha256"]
             label = "web shell" if classification == "webshell" else "malware"
@@ -681,8 +582,8 @@ def build_preview(case_dir, options=None):
                 errors.append(f"Sample for IOC {ioc_id} is unavailable.")
         # A path names an occurrence, not immutable content. Historical hash
         # and HTTP request links must never be redirected to today's bytes.
-        associations[ioc_id] = primary if observable and row["type"] != "path" else context_obj["id"]
-        row_objects[ioc_id] = [observable, context_obj, {"confirmed_classification": classification}]
+        associations[ioc_id] = primary if observable and row["type"] != "path" else None
+        row_objects[ioc_id] = [observable, {"confirmed_classification": classification}]
         rows.append({"id": ioc_id, "source_uid": source_key, "type": row["type"], "value": value, "selected": chosen,
                      "object_ids": ids, "tags": tags, "indicator_supported": bool(pattern),
                      "indicator_default": bool(pattern and classification == "webshell" and row.get("assessment") != "benign"),
@@ -694,15 +595,15 @@ def build_preview(case_dir, options=None):
     edge_rows = []
     selected_ids = {r["id"] for r in rows if r["selected"]}
     for link in data["links"]:
-        chosen = link["id"] not in excluded_links and link["src_id"] in selected_ids and link["dst_id"] in selected_ids
-        edge_note = clean.text(link["note"]) if options.get("include_notes") else ""
+        chosen = (link["id"] not in excluded_links and link["src_id"] in selected_ids and link["dst_id"] in selected_ids
+                  and bool(associations.get(link["src_id"])) and bool(associations.get(link["dst_id"])))
         edge_rows.append({"id": link["id"], "src_id": link["src_id"], "dst_id": link["dst_id"],
-                          "kind": link["kind"], "note": edge_note, "selected": chosen})
+                          "kind": link["kind"], "note": "", "selected": chosen})
         if chosen:
             source_key = link.get("source_uid") or _digest([source_keys[link["src_id"]], source_keys[link["dst_id"]], link["kind"]])
             src, dst = associations[link["src_id"]], associations[link["dst_id"]]
             label = f"IOC {link['src_id']} {link['kind']} IOC {link['dst_id']}"
-            description = label + ("\n" + edge_note if edge_note else "")
+            description = label
             description += "\nAssertion source: " + link.get("origin", "automatic")
             if link["kind"] in ("requested", "request-context"):
                 description += "\nPath-based request association only; file content at request time and execution are not established."
@@ -710,17 +611,10 @@ def build_preview(case_dir, options=None):
                 description += "\nEvidence of an exploitation attempt; successful exploitation is not asserted."
             elif link["kind"] == "exploitation-confirmed":
                 description += "\nAnalyst-confirmed exploitation, supported by the selected case evidence."
-            if (options.get("include_evidence") and link["src_id"] not in excluded_evidence
-                    and link["dst_id"] not in excluded_evidence):
-                for support in data["relationship_evidence"]:
-                    if support["link_id"] == link["id"]:
-                        description += "\nEvidence: " + clean.text(support["reference"] + ": " + support["detail"])
-                        if support["first_seen"] or support["last_seen"]:
-                            description += "\nObserved: " + support["first_seen"] + " — " + support["last_seen"]
             if link["kind"] in ("hash-of", "requested"):
                 description += "\nHistorical collection relationship; it does not identify the path's current file contents or prove execution."
             # 'requested' is evidence of an HTTP request, not 'communicates-with'
-            # malware infrastructure. Preserve exact semantics in the Note.
+            # malware infrastructure. Preserve exact semantics in the relationship.
             refs = [incident_id, src, dst]
             if src != dst:
                 refs.append(relation(["ioc-link", source_key], src, dst, description=description))
@@ -730,10 +624,6 @@ def build_preview(case_dir, options=None):
                     if malware["type"] == "malware" and dst_obj["id"] in malware.get("sample_refs", []):
                         refs.append(relation(["file-malware-assertion", source_key, malware["id"]],
                                              src_obj["id"], malware["id"], description=description))
-            # The owned relationship already carries the complete reviewed
-            # evidence. A second Note would duplicate every edge in the graph.
-            if src == dst and objects[src]["type"] == "note":
-                objects[src]["content"] += "\n\n" + description
 
     # A case-wide CVE does not attribute its exploitation to every observed IP.
     # Only a confirmed, explicitly IP-scoped CVE finding supports a direct link.
@@ -754,8 +644,6 @@ def build_preview(case_dir, options=None):
             for name in sorted({value.upper() for value in named} & cves.keys()):
                 description = (f"Confirmed IP-scoped finding references {name}. "
                                "This links the IP to a CVE-specific finding; successful exploitation is not inferred.")
-                if options.get("include_evidence") and row["id"] not in excluded_evidence:
-                    description += "\nRule: " + rule
                 rel = relation(["ip-cve-finding", row["source_uid"], name, finding["id"]],
                                observable["id"], cves[name], description=description)
                 # The CVE-scoped evidence is retained on the relationship.
@@ -782,7 +670,7 @@ def build_preview(case_dir, options=None):
             sentences.append("Its content was verified from selected case evidence.")
         elif obj["type"] == "file":
             sentences.append("This File observable is identified by the recorded file hashes.")
-        closing = "Assessments, provenance and evidence are recorded in the linked Shellhound Incident Response case and its context Notes; they apply to that investigation."
+        closing = "This association applies to the linked Shellhound Incident Response case; it is not a global assessment."
         return " ".join(sentences[:4] + [closing])
 
     for obj in list(objects.values()):
@@ -802,7 +690,6 @@ def build_preview(case_dir, options=None):
         errors.append("A selected sample no longer belongs to this preview; refresh before transfer.")
     if selected is not None and selected - {r["id"] for r in rows}:
         errors.append("A selected IOC no longer exists; refresh before transfer.")
-    _consolidate_context(objects, rows, reference, incident_id)
     refs = [key for key in objects if key != author_id]
     add(sdo("x-opencti-case-incident", [reference, "case"], name=reference,
             description=clean.text(profile.get("summary") or "CMS forensics and incident investigation in Shellhound."),
@@ -813,7 +700,7 @@ def build_preview(case_dir, options=None):
         row["fingerprint"] = _digest(_stable({"objects": row_objects[row["id"]], "links": related,
                                              "profile": clean.text(_json(profile)),
                                              "indicators": row["id"] in indicator_ids}))
-    result = {"model_version": 2, "case_reference": reference, "incident_id": incident_id, "case_id": case_id,
+    result = {"model_version": 3, "case_reference": reference, "incident_id": incident_id, "case_id": case_id,
               "objects": list(objects.values()), "iocs": rows, "relationships": edge_rows,
               "samples": list(samples.values()), "warnings": warnings, "errors": errors}
     result["fingerprint"] = _digest(_stable(result))
@@ -854,12 +741,12 @@ def withdrawal_objects(previous, current, reference):
 
     The service must compare against a *full* fresh graph using the previous
     export's disclosure options, so deselection alone is never a withdrawal.
-    Append the returned objects to the export and put the withdrawal Note in
-    the current case container's object_refs. Previous snapshots are local receipts,
-    not arbitrary remote objects.
+    Append revocations to the export, outside the active case object_refs.
+    Previous snapshots are local receipts, not arbitrary remote objects.
+    Historical Notes and their relationships are left untouched.
     """
     live = {obj["id"] for obj in current}
-    allowed = {"note", "indicator", "relationship", "malware"}
+    allowed = {"indicator", "relationship", "malware"}
     owned_author = _id("identity", "shellhound")
     stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     withdrawn = []
@@ -869,27 +756,17 @@ def withdrawal_objects(previous, current, reference):
             continue
         if obj.get("created_by_ref") != owned_author or obj.get("x_shellhound_case_reference") != reference:
             continue
+        if any(str(obj.get(key, "")).startswith("note--") for key in ("source_ref", "target_ref")):
+            continue
         copy = dict(obj)
         copy.update(revoked=True, modified=stamp)
-        field = "content" if obj["type"] == "note" else "description"
+        field = "description"
         if obj["id"] in superseded:
             copy["x_shellhound_superseded"] = True
-            copy[field] = str(obj.get(field) or "") + "\nSuperseded by consolidated case context; this is a structural replacement, not a changed assessment."
+            copy[field] = "Superseded by current case modeling; this is a structural replacement, not a changed assessment."
         else:
-            copy[field] = str(obj.get(field) or "") + "\nWithdrawn: this statement is no longer supported by the current Shellhound case."
+            copy[field] = "Withdrawn: this statement is no longer supported by the current Shellhound case."
         withdrawn.append(copy)
-    if withdrawn:
-        ids = sorted(obj["id"] for obj in withdrawn)
-        incident_id = _id("incident", [reference, "incident"])
-        note = {"type": "note", "spec_version": "2.1", "id": _id("note", [reference, "withdrawal", ids]),
-                "created": stamp, "modified": stamp, "created_by_ref": owned_author,
-                "x_shellhound_case_reference": reference,
-                "x_shellhound_withdrawal": True,
-                "content": "Shellhound withdrew earlier case assertions. Shared observables and third-party assessments were retained.",
-                "object_refs": [incident_id] + ids,
-                "object_marking_refs": withdrawn[0].get("object_marking_refs", [MARKINGS["TLP:AMBER+STRICT"]]),
-                "external_references": [{"source_name": "Shellhound", "external_id": reference + ":withdrawal:" + _digest(ids)}]}
-        withdrawn.append(note)
     return withdrawn
 
 
@@ -902,7 +779,7 @@ def reactivate_objects(previous, current):
     generation. No external/shared object is assigned a new identifier.
     """
     from datetime import timedelta
-    owned = {"note", "indicator", "relationship", "malware"}
+    owned = {"indicator", "relationship", "malware"}
     history = {}
     for obj in previous:
         original = obj.get("x_shellhound_original_id", obj["id"])

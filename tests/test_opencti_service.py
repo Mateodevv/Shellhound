@@ -79,6 +79,19 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.jobs.run()
         return result
 
+    def test_legacy_transfer_is_blocked_before_any_remote_call(self):
+        result = service.transfer(self.root, self.case, self.preview()["preview_id"])
+        self.jobs.pending[-1][1]["on_cancel"]()
+        payload = self.receipt(result["export_id"])["payload"]
+        payload["model_version"] = 2
+        self.conn.execute("UPDATE opencti_exports SET payload=? WHERE id=?", (json.dumps(payload), result["export_id"]))
+        self.conn.commit()
+        self.client.reset_mock()
+        service.retry(self.root, self.case, result["export_id"])
+        with self.assertRaisesRegex(ValueError, "fresh preview"):
+            self.jobs.run()
+        self.assertEqual([], self.client.mock_calls)
+
     def test_export_uses_batched_verification_and_records_phase_times(self):
         result = self.export()
         self.assertTrue(self.client.resolve_many.called)
@@ -217,7 +230,7 @@ class OpenCTIServiceTests(unittest.TestCase):
         context_args = self.client.sync_sample_context.call_args.args
         self.assertEqual("artifact-remote", context_args[1])
         self.assertTrue(any(i.startswith("incident--") for i in context_args[3]))
-        self.assertTrue(any(i.startswith("note--") for i in context_args[3]))
+        self.assertFalse(any(i.startswith("note--") for i in context_args[3]))
         self.client.upload_sample.assert_called_once()
         calls = self.client.update_case_description.call_args_list
         self.assertTrue(any(c.args[0] == "artifact-remote" and "Original file bytes explicitly selected" in c.args[2] for c in calls))
@@ -429,8 +442,8 @@ class OpenCTIServiceTests(unittest.TestCase):
         case = next(o for o in current["objects"] if o["id"] == current["case_id"])
         self.assertNotIn(report["id"], {o["id"] for o in current["objects"]})
         self.assertNotIn(old_note["id"], case["object_refs"])
-        self.assertTrue(any(o["id"] == old_note["id"] and o.get("revoked") for o in current["objects"]))
-        self.assertTrue(any(o.get("x_shellhound_withdrawal") and o["id"] in case["object_refs"] for o in current["objects"]))
+        self.assertFalse(any(o["id"] == old_note["id"] for o in current["objects"]))
+        self.assertFalse(any(o.get("revoked") and o["id"] in case["object_refs"] for o in current["objects"]))
         self.assertTrue(any("Earlier Reports remain" in w for w in current["warnings"]))
 
     def test_shared_foreign_observable_is_referenced_without_overwriting_its_fields(self):

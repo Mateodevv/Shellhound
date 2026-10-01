@@ -222,11 +222,11 @@ describe('reviewed transfer', () => {
       .mockResolvedValue({ ...preview, preview_id: 'latest-preview' })
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={preview} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Update preview' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Include analyst notes' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Create Indicator:/ }))
     const transfer = screen.getByRole('button', { name: 'Transfer reviewed preview' })
     expect(transfer).toBeDisabled()
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Include evidence excerpts' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select ${file.value}` }))
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(transfer).toBeEnabled())
     await act(async () => { finishOld({ ...preview, preview_id: 'outdated-preview' }) })
@@ -237,7 +237,7 @@ describe('reviewed transfer', () => {
   it('blocks transfer on a failed automatic refresh and permits an explicit retry', async () => {
     vi.mocked(post).mockRejectedValueOnce(new Error('Preview temporarily unavailable')).mockResolvedValue(preview)
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={preview} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Include analyst notes' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Create Indicator:/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Preview temporarily unavailable')
     expect(screen.getByRole('button', { name: 'Transfer reviewed preview' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -246,15 +246,6 @@ describe('reviewed transfer', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
-  it.each([
-    ['Include analyst notes', 'Includes analyst notes attached to the selected IoCs'],
-    ['Include evidence excerpts', 'Includes evidence excerpts from findings and recorded observations'],
-  ])('explains %s on keyboard focus', async (name, description) => {
-    renderWithProviders(<OpenCtiExportDialog slug="case" initial={preview} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
-    fireEvent.focus(screen.getByRole('checkbox', { name }).closest('label')!.nextElementSibling!)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(description)
-    expect(post).not.toHaveBeenCalled()
-  })
   it('limits bulk column changes to the category and eligible rows, retaining other choices', async () => {
     const mixedPreview = { ...preview, iocs: [...preview.iocs,
       { ...preview.iocs[1], id: 3, type: 'ip', value: '198.51.100.3', indicator_supported: true },
@@ -278,18 +269,17 @@ describe('reviewed transfer', () => {
     expect(screen.getByRole('button', { name: 'Transfer reviewed preview' })).toBeDisabled()
   })
 
-  it('bulk-selects optional notes, excerpts and available samples only after explicit input', async () => {
+  it('omits notes and excerpts while allowing explicit selection of available samples', async () => {
     const samples = { ...preview, samples: [...preview.samples, { ...preview.samples[0], id: 'unavailable', display_path: 'missing.php', available: false }] }
     vi.mocked(post).mockResolvedValue(samples)
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={samples} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Include analyst notes' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Note' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Evidence' }))
+    expect(screen.queryByRole('checkbox', { name: 'Include analyst notes' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Include evidence excerpts' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /^Original samples \(optional\)/ }))
     expect(screen.getByRole('checkbox', { name: 'Select all: Original samples (optional)' })).not.toBeChecked()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all: Original samples (optional)' }))
     expect(screen.getByRole('checkbox', { name: /missing.php/ })).toBeDisabled()
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ exclude_note_ioc_ids: [1, 2], exclude_evidence_ioc_ids: [1, 2], sample_ids: ['sample-1'] })))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ include_notes: false, include_evidence: false, sample_ids: ['sample-1'] })))
   })
 
   it('shows batch outcomes and existing work IDs for a partial transfer', async () => {
@@ -332,7 +322,7 @@ describe('reviewed transfer', () => {
     vi.mocked(post).mockResolvedValue({ ...preview, preview_id: 'preview-2' })
     renderWithProviders(<OpenCtiExportDialog slug="case" initial={preview} initialOptions={initialExportOptions([1, 2])} onClose={() => {}} onQueued={() => {}} />)
     const submit = screen.getByRole('button', { name: 'Transfer reviewed preview' })
-    expect(screen.getByRole('checkbox', { name: 'Include evidence excerpts' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'Include evidence excerpts' })).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /^Create Indicator:/ })).not.toBeChecked()
     fireEvent.click(screen.getByRole('tab', { name: /^Original samples \(optional\)/ }))
     expect(screen.getByRole('checkbox', { name: 'Upload original sample: web/shell.php' })).not.toBeChecked()
@@ -341,7 +331,7 @@ describe('reviewed transfer', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /^Create Indicator:/ }))
     expect(submit).toBeDisabled()
     await waitFor(() => expect(submit).toBeEnabled())
-    expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [2], sample_ids: [], include_notes: false, include_evidence: true }))
+    expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/preview', expect.objectContaining({ indicator_ids: [2], sample_ids: [], include_notes: false, include_evidence: false }))
     fireEvent.click(submit)
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/export', { preview_id: 'preview-2' }))
   })

@@ -79,7 +79,7 @@ export interface OpenCtiEnrichmentPreview {
 
 export const initialExportOptions = (ids: number[]): OpenCtiOptions => ({
   ioc_ids: [...ids], exclude_relationship_ids: [], exclude_note_ioc_ids: [], exclude_evidence_ioc_ids: [], exclude_profile_fields: [],
-  indicator_ids: [], sample_ids: [], include_notes: false, include_evidence: true,
+  indicator_ids: [], sample_ids: [], include_notes: false, include_evidence: false,
 })
 
 export const openCtiKey = (slug: string) => ['opencti', slug]

@@ -417,7 +417,7 @@ def preview(root, case_dir, options=None):
     # would immediately invalidate its source IDs and fingerprint.
     conn = db.connect(case_dir)
     conn.close()
-    options = dict(options or {})
+    options = {**(options or {}), "include_notes": False, "include_evidence": False}
     result = graph.build_preview(case_dir, options)
     from server.casework import profile_changes as case_profile_changes
     result["graph_fingerprint"] = result["fingerprint"]
@@ -446,7 +446,7 @@ def preview(root, case_dir, options=None):
             row["object_ids"] = [remap.get(key, key) for key in row["object_ids"]]
         # Disclosure exclusions are not a retraction. Compare against every
         # still-supported assertion, including earlier optional Indicators.
-        full_options = {"ioc_ids": None, "include_notes": True, "include_evidence": True,
+        full_options = {"ioc_ids": None, "include_notes": False, "include_evidence": False,
                         "indicator_ids": [r["id"] for r in result["iocs"] if r["indicator_supported"]]}
         full = graph.build_preview(case_dir, full_options)
         full_objects = graph.reactivate_objects(previous, full["objects"])
@@ -457,13 +457,6 @@ def preview(root, case_dir, options=None):
             result["warnings"].append("Case description sections for deleted observations will be removed; other cases' text is retained.")
         withdrawals = graph.withdrawal_objects(previous, full_objects, result["case_reference"])
         result["objects"].extend(withdrawals)
-        for report in result["objects"]:
-            if report["type"] in ("report", "x-opencti-case-incident"):
-                # Import revocations, but keep obsolete entities out of the
-                # active Case graph. The summary Note retains their history.
-                history = [o["id"] for o in withdrawals
-                           if report["type"] == "report" or o.get("x_shellhound_withdrawal")]
-                report["object_refs"] = list(dict.fromkeys(report["object_refs"] + history))
         if withdrawals:
             result["warnings"].append("Previously exported case assertions are withdrawn in this transfer. Review the generated objects.")
     result["fingerprint"] = _digest(graph._stable({k: v for k, v in result.items() if k != "fingerprint"}))
@@ -597,6 +590,8 @@ def _queue_export(root, case_dir, receipt):
     def run(ctx):
         payload = json.loads(receipt["payload"])
         try:
+            if payload.get("model_version", 0) < 3 or any(obj.get("type") == "note" for obj in payload["objects"]):
+                raise ValueError("This saved transfer uses retired context Notes. Create a fresh preview before transferring.")
             client = OpenCTIClient(config)
             if _destination(settings.opencti_config(root)) != receipt["destination"]:
                 raise ValueError("OpenCTI connection changed; create a new preview.")
@@ -764,7 +759,7 @@ def _queue_export(root, case_dir, receipt):
                         payload["descriptions"].append({"source_id": sample["remote_id"],
                             "text": (f"Original file bytes explicitly selected from Shellhound case {payload['case_reference']}. "
                                      "The artifact SHA-256 matches the linked File observable. "
-                                     "Supporting evidence and the complete relationship context are available in the linked Shellhound case container and Notes."),
+                                     "The file is linked to the Shellhound case container."),
                             "state": "new"})
                 _save_export(case_dir, receipt, payload)
             phase_started = checkpoint = time.monotonic()
