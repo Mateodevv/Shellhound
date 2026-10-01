@@ -65,10 +65,11 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const selected = useMemo(() => new Set(session.selectedClusters), [session.selectedClusters])
   const enabledPatterns = patterns.filter((p) => p.enabled && !p.archived)
   const busyJob = jobs.data?.find((j) => ['queued', 'running'].includes(j.state))
-  const hasLogs = caseInfo.data?.evidence_items.some((item) => item.kind === 'access_logs')
+  const hasLogs = caseInfo.data?.has_access_logs
+    ?? Boolean(caseInfo.data?.evidence_items.some((item) => item.kind === 'access_logs'))
   const indexReady = Boolean(caseInfo.data?.log_index.exists && caseInfo.data.log_index.fresh)
   const runReady = !caseInfo.isPending && !jobs.isPending && !library.isPending
-    && !caseInfo.isError && !jobs.isError && !library.isError && indexReady && !busyJob
+    && !caseInfo.isError && !jobs.isError && !library.isError && hasLogs && indexReady && !busyJob
   const versions = useQuery({ queryKey: ['pattern-versions', draft?.sourceId], enabled: Boolean(draft?.sourceId),
     queryFn: () => api<{ versions: Array<Record<string, unknown>> }>(`/api/patterns/${draft!.sourceId}/versions`) })
   const seedRequestId = Number(new URLSearchParams(location.search).get('request')) || 0

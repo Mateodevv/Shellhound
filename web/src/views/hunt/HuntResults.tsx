@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Check, PencilLine, FileText, Users, CalendarDays
 import { api, post, type AccessLogRow, type AccessRequestContext, type HuntClusterPage, type HuntIpPage, type HuntTest } from '../../api'
 import { formatCount, formatLogTime } from '../../format'
 import { Button, Card, Tag } from '../../components/ui/ui'
+import { IpFlag } from '../../components/ui/IpFlag'
 import { TraceWindow } from '../../components/logview/TraceWindow'
 import { ErrorMessage } from './HuntRunOverview'
 
@@ -91,8 +92,8 @@ export function HuntResults({ slug, test, selected, ruleName, ruleMeaning, ruleN
                 </tr></thead><tbody>
                   {clients.data.clients.map((row) => <tr key={row.client} className="border-t border-[var(--line)] hover:bg-[var(--panel-2)]">
                     {compact && <td className="px-3"><input type="checkbox" aria-label={tr('hunt.workspace.selectIp', { ip: row.client })} checked={allIocs ? !iocSelection.has(row.client) : iocSelection.has(row.client)} disabled={collect.isPending} onChange={() => toggleIoc(row.client)} /></td>}
-                    <td className="px-4 py-3">{compact ? <span className="mono font-semibold">{row.client}</span> : <button type="button" onClick={() => chooseClient(row.client)}
-                      className="mono cursor-pointer text-left font-semibold text-[var(--accent-text)] underline-offset-4 hover:underline">{row.client}</button>}</td>
+                    <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><IpFlag ip={row.client} />{compact ? <span className="mono font-semibold">{row.client}</span> : <button type="button" onClick={() => chooseClient(row.client)}
+                      className="mono cursor-pointer text-left font-semibold text-[var(--accent-text)] underline-offset-4 hover:underline">{row.client}</button>}</span></td>
                     <td className="px-4 py-3 tabular-nums">{formatCount(row.requests)}</td><td className="px-4 py-3 tabular-nums">{formatCount(row.ok_hits)}</td>
                     <td className="whitespace-nowrap px-4 py-3">{timestamp(row.first_epoch, row.tz)}</td>
                     <td className="whitespace-nowrap px-4 py-3">{timestamp(row.last_epoch, row.tz)}</td>

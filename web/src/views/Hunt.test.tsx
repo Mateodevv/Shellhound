@@ -177,6 +177,33 @@ describe('Pattern Hunt investigation workflow', () => {
     expect(applied).toBeUndefined()
   })
 
+  it.each([true, false])('recognises access logs in a generic log source (index ready: %s)', async (fresh) => {
+    allRuns = []
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation((path) => /\/api\/cases\/[^/]+$/.test(path)
+      ? Promise.resolve({ evidence_items: [{ kind: 'logs' }], has_access_logs: true,
+        log_index: { exists: fresh, fresh } }) : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    const start = await screen.findByRole('button', { name: 'Run' })
+    expect(screen.queryByRole('button', { name: 'Add access logs' })).not.toBeInTheDocument()
+    if (fresh) await waitFor(() => expect(start).toBeEnabled())
+    else {
+      expect(start).toBeDisabled()
+      expect(await screen.findByRole('button', { name: 'View analysis' })).toBeVisible()
+    }
+  })
+
+  it('does not treat generic error logs or an orphaned index as access logs', async () => {
+    allRuns = []
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation((path) => /\/api\/cases\/[^/]+$/.test(path)
+      ? Promise.resolve({ evidence_items: [{ kind: 'logs' }], has_access_logs: false,
+        log_index: { exists: true, fresh: true } }) : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: 'Add access logs' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled()
+  })
+
   it('explains missing indexing beside the start action and still allows managing patterns', async () => {
     allRuns = []
     const original = vi.mocked(api).getMockImplementation()!
