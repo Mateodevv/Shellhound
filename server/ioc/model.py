@@ -343,7 +343,7 @@ def enrich_rows(conn, rows):
     return apply_labels(conn, rows)
 
 
-def collect_file(conn, artifact, digest, hash_id, path_id, classification="", findings=()):
+def collect_file(conn, artifact, digest, hash_id, path_id, classification="", findings=(), *, indexed_info=None):
     """Attach metadata only if a coherent read matches the recorded hash."""
     from server.integrations.opencti.graph import _snapshot
     from server.ioc.tags import finding_classification
@@ -351,7 +351,11 @@ def collect_file(conn, artifact, digest, hash_id, path_id, classification="", fi
     from server.file_classifications import saved
     explicit_classes = saved(conn, artifact)
     classification = next(iter(explicit_classes), '') if explicit_classes is not None else classification or finding_classification(findings)
-    snapshot, _ = _snapshot(artifact)
+    if indexed_info is not None:
+        snapshot = {'sha256': indexed_info['sha256'], 'size': indexed_info['size'],
+                    'hashes': {'SHA-256': indexed_info['sha256']}}
+    else:
+        snapshot, _ = _snapshot(artifact)
     verified = bool(snapshot and snapshot["sha256"] == digest.lower())
     file_id = register_file(conn, snapshot["hashes"] if verified else {"SHA-256": digest}, artifact,
                             hash_id=hash_id, path_id=path_id,

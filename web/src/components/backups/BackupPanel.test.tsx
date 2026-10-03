@@ -70,6 +70,16 @@ async function openHistory() {
 }
 
 describe('website backup workflow', () => {
+  it('explains an unscanned version on keyboard focus without claiming a clean scan', async () => {
+    renderWithProviders(<BackupPanel slug="backup-case" evidence={evidence} />)
+    const dialog = await openHistory()
+    expect(within(dialog).getAllByText('Not analyzed')).toHaveLength(2)
+    expect(within(dialog).queryByText('No detections in this version')).not.toBeInTheDocument()
+    fireEvent.focus(within(dialog).getAllByLabelText('About scan coverage')[0])
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Run analysis in Evidence & analysis')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('preparing a comparison only indexes the files')
+  })
+
   it('previews relative paths and registers the chosen root, date, named zone and coverage', async () => {
     renderWithProviders(<BackupPanel slug="backup-case" evidence={evidence} />)
     const add = await screen.findByRole('button', { name: 'Add backup' })

@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS content_files (
  marker TEXT NOT NULL, verified_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS content_files_hash ON content_files(sha256);
+CREATE TABLE IF NOT EXISTS file_scan_receipts (
+ engine TEXT NOT NULL, artifact TEXT NOT NULL, sha256 TEXT NOT NULL,
+ marker TEXT NOT NULL, run INTEGER NOT NULL, scanned_at TEXT NOT NULL,
+ job_id INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(engine, artifact)
+);
 CREATE TABLE IF NOT EXISTS content_assessments (
  sha256 TEXT PRIMARY KEY, state TEXT NOT NULL, note TEXT NOT NULL,
  classifications TEXT NOT NULL DEFAULT '[]', origin TEXT NOT NULL, updated TEXT NOT NULL

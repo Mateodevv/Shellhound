@@ -30,12 +30,12 @@ import stat
 
 import yara
 
-from server import bundled_rules, db, ruleswitch
+from server import bundled_rules, db, ruleswitch, file_scan_receipts
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from server.paths import display_path, io_path
 from server.engines.fsutil import (
-    ScanProgress, canonical_file, discover_scan_files, record_skip, sha256_of,
+    ScanProgress, canonical_file, discover_scan_files, record_skip,
 )
 from server.engines.scan_limits import scan_byte_limit, size_skip_reason
 
@@ -226,7 +226,7 @@ def _yara_findings(raw, kind):
     yield from out
 
 
-def scan_file(file_path, root=None, *, max_bytes=None):
+def scan_file(file_path, root=None, *, max_bytes=None, cancelled=None):
     """Scan one file. Returns (findings, skip_reason, inert) where findings is
     [(rule_id, severity, rule, line, evidence)].
 
@@ -267,11 +267,9 @@ def scan_file(file_path, root=None, *, max_bytes=None):
                              None, base_name))
         return findings, f"read error: {e}", None
 
-    if not (is_php or is_image or is_htaccess):
-        return findings, None, None
-
+    inspect_content = is_php or is_image or is_htaccess
     size = file_stat.st_size
-    if size > limit:
+    if inspect_content and size > limit:
         if is_php and in_upload_dir(site_path):
             findings.append(("webshell.too_large", 0,
                              "PHP in writable upload directory (too large to inspect)",
@@ -279,17 +277,23 @@ def scan_file(file_path, root=None, *, max_bytes=None):
         return findings, size_skip_reason("webshell", size, limit), None
 
     try:
-        with open(io_path(file_path), "rb") as f:
-            raw = f.read(limit + 1)
-    except OSError as e:
+        raw, content_identity = file_scan_receipts.read_file(
+            file_path, limit=limit if inspect_content else None,
+            keep_content=inspect_content, cancelled=cancelled)
+    except (OSError, ValueError) as e:
         if is_php and in_upload_dir(site_path):
             findings.append(("webshell.unreadable", 0,
                              "Unguarded-location PHP could not be read",
                              None, base_name))
         return findings, f"read error: {e}", None
 
-    if len(raw) > limit:
-        return findings, "file grew beyond the content scan size limit", None
+    def result(inert=None):
+        if not file_scan_receipts.unchanged(file_path, content_identity):
+            return findings, 'file changed during analysis; retry analysis', None
+        return file_scan_receipts.ScanResult(findings, None, inert, content_identity)
+
+    if not inspect_content:
+        return result()
 
     if is_image:
         # `<?PHP` and `<?Php` open PHP just as `<?php` does -- the language
@@ -309,11 +313,11 @@ def scan_file(file_path, root=None, *, max_bytes=None):
             findings.append(("webshell.php_in_image", 0,
                              "PHP code hidden inside image file", None,
                              f"'<?php' tag found in {ext} file"))
-        return findings, None, None
+        return result()
 
     if is_htaccess:
         findings.extend(_yara_findings(raw, "htaccess"))
-        return findings, None, None
+        return result()
 
     findings.extend(_yara_findings(raw, "content"))
 
@@ -326,9 +330,9 @@ def scan_file(file_path, root=None, *, max_bytes=None):
             reason = (f"no executable surface ({len(raw)} bytes"
                       + (", likely a directory stub)" if len(raw) <= INERT_STUB_BYTES
                          else ")"))
-            return findings, None, (abs_path, reason)
+            return result((abs_path, reason))
 
-    return findings, None, None
+    return result()
 
 
 def _parallel_scans(files, limits, progress):
@@ -336,7 +340,10 @@ def _parallel_scans(files, limits, progress):
     def inspect(entry):
         path, root = entry
         limit = limits.get(canonical_file(path)) if limits else None
-        return scan_file(path, root) if limit is None else scan_file(path, root, max_bytes=limit)
+        options = {'cancelled': progress.cancelled}
+        if limit is not None:
+            options['max_bytes'] = limit
+        return scan_file(path, root, **options)
 
     pending = deque()
     entries = iter(files)
@@ -361,8 +368,8 @@ def _parallel_scans(files, limits, progress):
 def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
          file_targets=None):
     """Scan every file under `targets`; write findings straight into case.db.
-    Flagged files are hashed (SHA-256) so the IOC box can carry both path and
-    hash without a second pass."""
+    Every successfully read file is indexed by its full SHA-256 from those
+    same bytes; clean files retain a receipt as well as flagged files."""
     stats = {"scanned": 0, "findings": 0, "flagged_files": 0, "inert": 0,
              "skipped": 0, "file_skips": 0}
     # Read ONCE. The answer cannot change mid-run, and a settings read per
@@ -412,8 +419,11 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
                             f"{i:,}/{total:,} files — {stats['findings']} findings",
                             "scanning", i, total)
             stats["scanned"] += 1
+            content_identity = None
             try:
-                findings, skip_reason, inert = future.result()
+                result = future.result()
+                findings, skip_reason, inert = result
+                content_identity = getattr(result, 'identity', None)
             except yara.TimeoutError:
                 findings, skip_reason, inert = [], "content scan timed out after 20 seconds", None
             except MemoryError:
@@ -421,10 +431,21 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
                     "not enough memory to scan this file; close other applications "
                     "and retry, or inspect it with a tool for larger files"), None
             abs_path = os.path.abspath(display_path(file_path))
+            if progress.cancelled():
+                break
+            if content_identity and not file_scan_receipts.unchanged(abs_path, content_identity):
+                findings, skip_reason, inert = [], 'file changed during analysis; retry analysis', None
+                content_identity = None
             identity = canonical_file(abs_path)
+            # Empty executemany calls begin a deferred transaction too. Own
+            # the writer lock before remember() reads inheritance, otherwise
+            # a sibling engine can commit and prevent its snapshot upgrade.
+            if not conn.in_transaction:
+                conn.execute('BEGIN IMMEDIATE')
             conn.executemany("DELETE FROM skipped WHERE id = ?",
                              ((row_id,) for row_id in skips_by_path.pop(identity, [])))
             if skip_reason:
+                file_scan_receipts.invalidate(conn, 'webshell', abs_path)
                 db.protect_file(conn, "webshell", abs_path, run)
             else:
                 conn.executemany("DELETE FROM inert_php WHERE id = ?",
@@ -453,10 +474,10 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
                 stats["skipped"] += 1
                 stats["file_skips"] += 1
             else:
-                if file_flagged:
-                    digest = sha256_of(abs_path)
-                    if digest:
-                        hashes[abs_path] = digest
+                if content_identity:
+                    file_scan_receipts.record(conn, 'webshell', abs_path, run, content_identity, ctx)
+                    if file_flagged:
+                        hashes[abs_path] = content_identity['sha256']
                 if retry:
                     db.complete_file(conn, "webshell", abs_path, run)
             if retry or i % 500 == 0:

@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { post, type Ioc } from '../../api'
+import { post, type Ioc, type TriageResult } from '../../api'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
 
 const field = 'mt-1 w-full rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 font-normal'
 
-export function IocEditDialog({ slug, object, assessments = [], edits = [], onClose }: { slug: string; object: Ioc; assessments?: { id: number; state: string; reason: string; created: string }[]; edits?: { previous_value: string; value: string; reason: string; created: string }[]; onClose: () => void }) {
+export function IocEditDialog({ slug, object, assessments = [], edits = [], onClose, onSaved }: { slug: string; object: Ioc; assessments?: { id: number; state: string; reason: string; created: string }[]; edits?: { previous_value: string; value: string; reason: string; created: string }[]; onClose: () => void; onSaved?: (content: TriageResult['content_assessment']) => void }) {
   const tr = useT()
   const qc = useQueryClient()
   const [value, setValue] = useState(object.value)
@@ -19,15 +19,16 @@ export function IocEditDialog({ slug, object, assessments = [], edits = [], onCl
   const needsReason = value.trim() !== object.value || assessment !== (object.assessment || 'malicious')
   const save = useMutation({ mutationFn: () => {
     const nextTags = tags === object.tags.join(', ') ? object.tags : [...new Set(tags.split(',').map(tag => tag.trim()).filter(Boolean))]
-    return post(`/api/cases/${slug}/iocs/${object.id}/edit`, {
+    return post<{ content_assessment?: TriageResult['content_assessment'] }>(`/api/cases/${slug}/iocs/${object.id}/edit`, {
       value, note, assessment, expected_value: object.value, expected_note: object.note,
       expected_assessment: object.assessment || 'malicious', reason,
       add_tags: nextTags.filter(tag => !object.tags.includes(tag)),
       remove_tags: object.tags.filter(tag => !nextTags.includes(tag)),
     })
-  }, onSuccess: () => {
+  }, onSuccess: result => {
     qc.invalidateQueries({ queryKey: ['iocs'] })
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
+    onSaved?.(result.content_assessment)
     onClose()
   } })
   const close = () => { if (!save.isPending && (!changed || window.confirm(tr('iocEdit.discard')))) onClose() }

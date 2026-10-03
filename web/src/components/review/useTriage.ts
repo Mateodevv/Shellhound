@@ -8,9 +8,9 @@
 //
 // Its own file, because a hook next to a component breaks Fast Refresh for
 // the whole file.
-import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, post, type Job, type RetainedIoc, type TriageLink, type TriageResult } from '../../api'
+import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { post, type RetainedIoc, type TriageLink, type TriageResult } from '../../api'
 
 export interface TriageController {
   /** Decide artifacts. `propagate: false` for undos and suggestions -- those
@@ -52,17 +52,6 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     { linked: TriageLink[]; suggested: TriageLink[]; content?: TriageResult['content_assessment'] } | null>(null)
   const [reviewing, setReviewing] = useState<TriageLink[] | null>(null)
   const [retained, setRetained] = useState<RetainedIoc[] | null>(null)
-  const contentJobs = useQuery({ queryKey: ['jobs', slug], enabled: !!notice?.content?.job,
-    queryFn: () => api<Job[]>(`/api/cases/${slug}/jobs`), refetchInterval: notice?.content?.job ? 1500 : false })
-  useEffect(() => {
-    const id = notice?.content?.job
-    const job = contentJobs.data?.find(row => row.id === id)
-    if (!id || !job || !['done', 'failed', 'cancelled'].includes(job.state)) return
-    const completed = job.stats.content_assessment as TriageResult['content_assessment']
-    setNotice(old => old?.content?.job === id ? { ...old, content: completed ?? { applied: [], conflicts: [], incomplete: true } } : old)
-    for (const key of ['findings', 'artifact', 'dashboard', 'backups', 'backup-history', 'iocs']) qc.invalidateQueries({ queryKey: [key] })
-  }, [contentJobs.data, notice?.content?.job, qc])
-
   const refresh = () => {
     // EVERY view that shows a triage state. The file browser, the database
     // and the CMS inventory all draw the badge and were never invalidated,
@@ -80,7 +69,7 @@ export function useTriage(slug: string, onDecided?: () => void): TriageControlle
     setCollected(result.collected)
     setRetained(result.retained_iocs?.length ? result.retained_iocs : null)
     setNotice(
-      (result.linked?.length || result.suggested?.length || result.content_assessment?.applied.length || result.content_assessment?.conflicts.length || result.content_assessment?.job)
+      (result.linked?.length || result.suggested?.length || result.content_assessment?.applied.length || result.content_assessment?.conflicts.length || result.content_assessment?.incomplete || result.content_assessment?.needs_index || result.content_assessment?.skipped_count)
         ? { linked: result.linked ?? [], suggested: result.suggested ?? [], content: result.content_assessment }
         : null)
     refresh()

@@ -308,13 +308,13 @@ class ScanRetryApiTests(unittest.TestCase):
         from server.events import hub
         real_scan = webshell.scan_file
         attempted = []
-        def fail_second(path, root):
+        def fail_second(path, root, **options):
             # Directory enumeration order differs across filesystems. Interrupt
             # the second actual attempt, regardless of which filename it has.
             attempted.append(path)
             if len(attempted) == 2:
                 raise RuntimeError("synthetic interruption after one committed file")
-            return real_scan(path, root)
+            return real_scan(path, root, **options)
         with patch.object(webshell, "scan_file", side_effect=fail_second), patch.object(hub, "publish") as publish:
             retry = self.retry(original, {"mode": "all"})
         jobs = self.client.get(self.url + "/jobs").json()

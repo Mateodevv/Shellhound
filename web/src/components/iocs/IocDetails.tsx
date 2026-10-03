@@ -13,6 +13,8 @@ import { FileContentPane } from '../review/FileViewer'
 import { ArrowLeft, ArrowRight, ExternalLink, FileCode2, Search, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
 import { IocDeleteDialog } from './IocDeleteDialog'
 import { IocEditDialog } from './IocEditDialog'
+import { useTriage } from '../review/useTriage'
+import { TriageFollowUp } from '../review/triage'
 import { InfoDot, Tooltip } from '../ui/Tooltip'
 import { descriptions, iocName, iocOrigins, observationTime } from './iocPresentation'
 import { IocField } from './IocField'
@@ -57,6 +59,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
 }) {
   const tr = useT()
   const qc = useQueryClient()
+  const copyReview = useTriage(slug)
   const { data, error, isPending } = useQuery({
     queryKey: ['iocs', slug, 'detail', id],
     queryFn: () => api<Detail>(`/api/cases/${slug}/iocs/${id}/detail`)
@@ -164,7 +167,11 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         onSettings={() => gotoView?.('settings')} />
     </header>}
 
-    {object && editOpen && <IocEditDialog slug={slug} object={object} assessments={data?.assessments} edits={data?.edits} onClose={() => setEditOpen(false)} />}
+    {object && editOpen && <IocEditDialog slug={slug} object={object} assessments={data?.assessments} edits={data?.edits} onClose={() => setEditOpen(false)} onSaved={content => {
+      copyReview.dismissNotice()
+      if (content) copyReview.recordResult({ updated: 1, artifacts: 0, collected: [], linked: [], suggested: [], retained_iocs: [], content_assessment: content })
+    }} />}
+    <TriageFollowUp t={copyReview} roots={[]} />
 
     <div className="overflow-x-auto" aria-label={tr('iocWorkspace.detail_tabs')}>
       <Tabs active={tab} onChange={setTab} tabs={['Overview', ...(canCve ? ['CVE details'] : []), ...(canTrace ? ['Trace'] : []), ...(canContent ? ['Content'] : []), ...(canEnrich ? ['Enrichment'] : [])].map(name => ({ id: name, label: tr(`iocWorkspace.tab.${name}`) }))} />
