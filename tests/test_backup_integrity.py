@@ -2,6 +2,7 @@
 import json
 from contextlib import closing
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from server import backups, db, file_classifications
@@ -129,6 +130,11 @@ class BackupIntegrityTests(unittest.TestCase):
         receipt = json.dumps({'last_attempt': {'run_id': 'synthetic-run', 'status': 'complete'}})
         self.conn.execute('UPDATE evidence SET scanned_at=?,stats=?', (db.now(), receipt))
         job = self.conn.execute("INSERT INTO jobs(kind,state,created,run_id) VALUES ('webshell','done',?,'synthetic-run')", (db.now(),)).lastrowid
+        self.conn.commit()
+        from server.engines import webshell
+        context = SimpleNamespace(job_id=job, cancelled=lambda: False, progress=lambda *args: None)
+        webshell.scan(self.fixture.case, [str(root) for root in self.fixture.roots], ctx=context)
+        self.conn.execute("DELETE FROM file_scan_receipts WHERE artifact=?", (self.origin,))
         self.conn.execute('INSERT INTO job_skips(job_id,ordinal,path,reason,category,root) VALUES (?,0,?,?,?,?)',
                           (job, self.origin, 'File exceeds configured size limit', 'file', str(self.fixture.roots[0])))
         self.conn.execute('INSERT INTO skip_reviews(job_id,ordinal,outcome_job_id,accepted_at) VALUES (?,0,0,?)', (job, db.now()))
@@ -138,6 +144,10 @@ class BackupIntegrityTests(unittest.TestCase):
         retry = self.conn.execute("INSERT INTO jobs(kind,state,created,scan_context) VALUES ('webshell','done',?,?)",
                                   (db.now(), json.dumps({'parent_job_id': job, 'mode': 'retry'}))).lastrowid
         self.conn.execute("INSERT INTO file_scan_results(job_id,ordinal,status,reason) VALUES (?,0,'resolved','')", (retry,))
+        self.conn.commit()
+        context.job_id = retry
+        webshell.scan(self.fixture.case, [], ctx=context,
+                      file_targets=[{'path': self.origin, 'root': str(self.fixture.roots[0])}])
         self.assertEqual(backups.history(self.conn, self.fixture.site, 'same.txt')['entries'][0]['scan_state'], 'no_detections')
 
     def test_cancelled_inventory_keeps_old_generation_and_retry_publishes_new(self):

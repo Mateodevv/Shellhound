@@ -6,6 +6,15 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — scan coverage and identical-copy review
+
+- Require successful per-file scan records before showing a backup version as
+  having no detections; new, changed and skipped versions remain unscanned.
+- Prepare copy identities during analysis, including cases without registered
+  backups. Save decisions using the prepared index without rescanning files.
+- Explain missing indexes and changed copies during review, while preserving
+  independent decisions and the assessment audit.
+
 ### Added — website backup comparison
 
 - Group identical website/path/content copies in Findings while retaining their

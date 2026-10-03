@@ -544,7 +544,7 @@ _ADDED_COLUMNS = {
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
-CASE_SCHEMA_VERSION = 21
+CASE_SCHEMA_VERSION = 22
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -554,7 +554,7 @@ CASE_SCHEMA_VERSION = 21
 _CURRENT_SCHEMA_TABLES = {
     "backup_sites", "backup_snapshots", "backup_generations", "backup_files",
     "content_files", "content_assessments", "content_assessment_history",
-    "content_inheritance", "content_exceptions",
+    "content_inheritance", "content_exceptions", "file_scan_receipts",
     "log_sources", "log_observations",
     "ioc_sources", "triage_events", "access_saved_queries", "access_clips",
     "hunt_tests", "hunt_applications", "hunt_application_clusters", "job_skips",

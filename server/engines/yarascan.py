@@ -28,7 +28,7 @@ import os
 import re
 import stat
 
-from server import db, settings as settingslib
+from server import db, settings as settingslib, file_scan_receipts
 from server.engines.fsutil import (
     ScanProgress, canonical_file, discover_scan_files, record_skip,
 )
@@ -350,6 +350,7 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True,
             limit = limits.get(canonical_file(file_path), MAX_SCAN_BYTES)
             skip_reason = ""
             matches = []
+            content_identity = None
             try:
                 file_stat = os.stat(io_path(file_path))
                 if not stat.S_ISREG(file_stat.st_mode):
@@ -359,21 +360,28 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True,
                 # Python handles Windows extended/Unicode paths; the native
                 # YARA filename API does not do so reliably. Preserve the
                 # selected byte ceiling even if the file grows after stat.
-                with open(io_path(file_path), "rb") as handle:
-                    content = handle.read(limit + 1)
-                if len(content) > limit:
-                    raise ValueError("file grew beyond the YARA scan size limit")
+                content, content_identity = file_scan_receipts.read_file(
+                    file_path, limit=limit, cancelled=progress.cancelled)
                 matches = compiled.match(data=content, timeout=20)
+                if not file_scan_receipts.unchanged(abs_path, content_identity):
+                    raise ValueError('file changed during analysis; retry analysis')
             except (OSError, ValueError, yara.Error) as e:
                 skip_reason = f"scan error: {str(e)[:160]}"
             except MemoryError:
                 skip_reason = ("not enough memory to scan this file; close other applications "
                                "and retry, or inspect it with a tool for larger files")
+            if progress.cancelled():
+                break
+            if skip_reason:
+                matches = []
             identity = canonical_file(abs_path)
+            if not conn.in_transaction:
+                conn.execute('BEGIN IMMEDIATE')
             if skip_reason or not broken:
                 conn.executemany("DELETE FROM skipped WHERE id = ?",
                                  ((row_id,) for row_id in skips_by_path.pop(identity, [])))
             if skip_reason:
+                file_scan_receipts.invalidate(conn, 'yarascan', abs_path)
                 db.protect_file(conn, "yarascan", abs_path, run)
                 record_skip(ctx, abs_path, skip_reason, root=root)
                 conn.execute(
@@ -381,6 +389,14 @@ def scan(case_dir, targets, workspace=None, ctx=None, authoritative=True,
                     ("yara", abs_path, skip_reason))
                 stats["skipped"] += 1
                 stats["file_skips"] += 1
+            elif content_identity:
+                # A broken rule is a coverage gap, even when other rules ran.
+                if not broken:
+                    file_scan_receipts.record(conn, 'yarascan', abs_path, run, content_identity, ctx)
+                else:
+                    from server import backups
+                    backups.remember(conn, abs_path, content_identity)
+                    file_scan_receipts.invalidate(conn, 'yarascan', abs_path)
             for match in list(matches)[:_MATCH_CAP]:
                 # The analyst's own rules have no catalogue id -- they are
                 # managed as FILES and switched off as files. The id column

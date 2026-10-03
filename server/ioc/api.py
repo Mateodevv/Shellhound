@@ -1,7 +1,9 @@
 """Local IOC detail and analyst assertion endpoints."""
 from fastapi import HTTPException
+from contextlib import ExitStack
 from pydantic import BaseModel, Field, StrictInt
 from server import db
+from server.jobs import CaseBusy
 from server.ioc import model as ioc_model
 
 
@@ -47,33 +49,43 @@ class EditObjectBody(BaseModel):
 
 
 def register(app, resolve_case, auth, hub):
-    def run(slug, action, *, write=False):
+    def run(slug, action, *, write=False, content_ioc=None):
         conn = db.connect(resolve_case(slug))
+        operation = ExitStack()
         try:
+            if content_ioc is not None:
+                item = db.one(conn, 'SELECT type FROM iocs WHERE id=?', (content_ioc,))
+                if item and item['type'] in ('file', 'hash'):
+                    from server.jobs import manager
+                    operation.enter_context(manager.case_operation(resolve_case(slug)))
             if write:
                 conn.execute("BEGIN IMMEDIATE")
             result = action(conn)
             if write:
-                conn.commit()
-                hub.publish({"type": "invalidate", "scope": "iocs"})
                 # Only newly recorded explicit file/hash assessments seed content
                 # reuse. Default IOC badges never become analyst decisions.
                 from server import backups
-                before = conn.total_changes
-                backups.seed_ioc_assessments(conn)
-                changed = conn.total_changes != before
+                changed = backups.seed_ioc_assessments(conn)
+                if changed:
+                    content = backups.inherit_all(conn, digests=changed)
+                    if result is None:
+                        result = {'ok': True}
+                    if isinstance(result, dict):
+                        result['content_assessment'] = content
                 conn.commit()
-                if changed and conn.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone():
-                    from server.jobs import manager
-                    case = resolve_case(slug)
-                    manager.submit_after_current(case, 'backup_comparison', lambda ctx: backups.build(case, ctx, []))
+                hub.publish({"type": "invalidate", "scope": "iocs"})
+                if changed:
+                    hub.publish({"type": "invalidate", "scope": "findings"})
             return result
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from None
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from None
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         finally:
             conn.close()
+            operation.close()
 
     @app.get("/api/cases/{slug}/iocs/{ioc_id}/detail", dependencies=[auth])
     def detail(slug: str, ioc_id: int):
@@ -99,11 +111,11 @@ def register(app, resolve_case, auth, hub):
 
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/edit", dependencies=[auth])
     def edit(slug: str, ioc_id: int, body: EditObjectBody):
-        return run(slug, lambda conn: ioc_model.edit_object(conn, ioc_id, **body.model_dump()), write=True)
+        return run(slug, lambda conn: ioc_model.edit_object(conn, ioc_id, **body.model_dump()), write=True, content_ioc=ioc_id)
 
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/assessments", dependencies=[auth])
     def assess(slug: str, ioc_id: int, body: AssessmentBody):
-        return run(slug, lambda conn: ioc_model.assess(conn, ioc_id, body.state, body.reason), write=True)
+        return run(slug, lambda conn: ioc_model.assess(conn, ioc_id, body.state, body.reason), write=True, content_ioc=ioc_id)
 
     @app.post("/api/cases/{slug}/iocs/{ioc_id}/verify-file", dependencies=[auth])
     def verify_file(slug: str, ioc_id: int):

@@ -24,6 +24,9 @@
 - On Windows, run the broader suite with `TEMP` and `TMP` pointing into an ignored
   folder under `workspace/defender-safe-temp`, because tests create synthetic attack probes.
 - Never commit case data, `.venv`, `.shellhound`, `web/dist`, or `server/static`.
+- **Codi reminder:** SQLite can start a deferred transaction even for an empty
+  `executemany`. Reserve the writer before scanner result batches read and write;
+  a sibling engine's commit otherwise prevents upgrading the read snapshot.
 - **Codi reminder:** all user-facing source launches must use the shared startup
   coordinator. A Git pull changes interface sources, not the built interface;
   preserve automatic freshness checks and never fall back to a staged wheel UI.

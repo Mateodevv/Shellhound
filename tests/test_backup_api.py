@@ -74,7 +74,7 @@ class BackupApiTests(unittest.TestCase):
             self.assertEqual(400, status, result)
         self.assertEqual([], self.jobs())
 
-    def test_assessments_without_backups_do_not_schedule_or_scan_content(self):
+    def test_unprepared_shared_decision_is_saved_with_feedback_and_no_work(self):
         _, root = self.root_source()
         path = root / "example.txt"
         copy = root / "copy.txt"
@@ -84,19 +84,43 @@ class BackupApiTests(unittest.TestCase):
         response = self.ok("POST", "/triage", {"artifacts": [str(path)], "state": "dismissed",
                                                 "share_content": True})
         self.assertNotIn("job", response["content_assessment"])
+        self.assertTrue(response['content_assessment']['needs_index'])
+        self.assertEqual('dismissed', self.state(path)['triage'])
         with closing(db.connect(self.case)) as conn:
             ioc = db.add_ioc(conn, hashlib.sha256(path.read_bytes()).hexdigest(), "hash")
             conn.commit()
         self.ok("POST", f"/iocs/{ioc}/assessments", {"state": "benign", "reason": "Verified synthetic content"})
         self.assertEqual([], self.jobs())
-        with patch.object(backups, "hash_file", side_effect=AssertionError("Unexpected scan")):
-            result = backups.build(self.case)
-        self.assertEqual(0, result["files"])
         self.assertEqual("new", self.state(copy)["triage"])
         run = self.ok("POST", "/analyze", {"mode": "all"})
-        self.assertFalse(any(job['kind'] == 'backup_comparison' for job in self.jobs()))
+        self.assertTrue(any(job['kind'] == 'content_index' for job in self.jobs()))
         for job in self.jobs():
             self.wait(job['id'])
+        self.assertEqual('dismissed', self.state(copy)['triage'])
+
+    def prepare_content(self):
+        with closing(db.connect(self.case)) as conn:
+            backups.index_content(conn)
+            conn.commit()
+
+    def test_history_requires_file_analysis_after_new_file_is_prepared(self):
+        evidence, root = self.root_source()
+        site = self.site()
+        self.snapshot(site, evidence, root)
+        def analyze():
+            result = self.ok('POST', '/analyze', {'mode': 'all'})
+            for item in result['started']:
+                self.wait(item['job'])
+        def scan_state(name):
+            return self.ok('GET', f'/backups/history?site_id={site}&path={name}')['entries'][0]['scan_state']
+        analyze()
+        self.assertEqual('no_detections', scan_state('example.txt'))
+        added = root / 'added-after-scan.txt'
+        added.write_text('Harmless later file\n', encoding='utf-8')
+        self.wait(self.ok('POST', '/backups/prepare', {})['job'])
+        self.assertEqual('not_analyzed', scan_state(added.name))
+        analyze()
+        self.assertEqual('no_detections', scan_state(added.name))
 
     def root_source(self, name="backup", *, case=None, files=None):
         self.serial += 1
@@ -298,19 +322,21 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual(400, self.request("GET", self.prefix + f"/backups/diff?left={left}&right={right}&path=nested%2Fitem.txt")[0])
 
     def test_shared_confirmation_discovers_renamed_copies_only_inside_this_case(self):
-        backup_evidence, backup_root = self.root_source(name="registered copy")
-        self.snapshot(self.site(), backup_evidence, backup_root)
         _, first = self.root_source(files={"original.txt": "Shared harmless content\n"})
         _, second = self.root_source(files={"renamed.txt": "Shared harmless content\n", "different.txt": "Different\n"})
         _, foreign = self.root_source(case=self.other, files={"foreign.txt": "Shared harmless content\n"})
         source, copy, outside = first / "original.txt", second / "renamed.txt", foreign / "foreign.txt"
         self.finding(source)
         self.finding(outside, case=self.other)
-        response = self.ok("POST", "/triage", {"artifacts": [str(source)], "state": "confirmed",
-                                                "note": "Explicit shared content decision", "classifications": ["malware"],
-                                                "share_content": True, "propagate": False})
-        completed = self.wait(response["content_assessment"]["job"])
-        self.assertIn(str(copy), completed["content_assessment"]["applied"])
+        self.prepare_content()
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Decision must reuse analysis hashes')), \
+                patch.object(backups, '_walk', side_effect=AssertionError('Decision must not enumerate roots')), \
+                patch('server.integrations.opencti.graph._snapshot', side_effect=AssertionError('Decision must not reread content')):
+            response = self.ok("POST", "/triage", {"artifacts": [str(source)], "state": "confirmed",
+                                                    "note": "Explicit shared content decision", "classifications": ["malware"],
+                                                    "share_content": True, "propagate": False})
+        self.assertIn(str(copy), response["content_assessment"]["applied"])
+        self.assertEqual([], self.jobs())
         self.assertEqual("confirmed", self.state(copy)["triage"])
         self.assertIsNone(self.state(second / "different.txt"))
         self.assertEqual("new", self.state(outside, self.other)["triage"])
@@ -332,9 +358,8 @@ class BackupApiTests(unittest.TestCase):
             self.finding(path, state=state, note=note, inventory=True)
         response = self.ok("POST", "/triage", {"artifacts": [str(paths[0])], "state": "dismissed",
                                                 "note": "Content is benign", "share_content": True})
-        completed = self.wait(response["content_assessment"]["job"])
-        self.assertIn(str(paths[1]), completed["content_assessment"]["applied"])
-        self.assertIn(str(paths[2]), completed["content_assessment"]["conflicts"])
+        self.assertIn(str(paths[1]), response["content_assessment"]["applied"])
+        self.assertIn(str(paths[2]), response["content_assessment"]["conflicts"])
         self.assertEqual({"triage": "dismissed", "triage_note": "Preserve copy note"}, self.state(paths[1]))
         self.assertEqual("confirmed", self.state(paths[2])["triage"])
         with closing(db.connect(self.case)) as conn:
@@ -355,17 +380,77 @@ class BackupApiTests(unittest.TestCase):
         with closing(db.connect(self.case)) as conn:
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM content_assessments").fetchone()[0])
 
+    def test_refreshed_inventory_cannot_attach_old_findings_to_new_content(self):
+        from server import file_scan_receipts
+        for engine in ('webshell', 'yarascan'):
+            with self.subTest(engine=engine):
+                _, root = self.root_source()
+                path = root / 'example.txt'
+                with closing(db.connect(self.case)) as conn:
+                    run = db.begin_run(conn, engine)
+                    info = backups.hash_file(path)
+                    file_scan_receipts.record(conn, engine, str(path), run, info)
+                    db.upsert_finding(conn, 'analyst', 1, 'Harmless scanned marker', 'file', str(path),
+                                      engine=engine, run=run, rule_id='fixture.scanned_marker')
+                    conn.commit()
+                path.write_text('Changed harmless content after the scan', encoding='utf-8')
+                self.prepare_content()
+                for share in (False, True):
+                    with patch.object(backups, 'hash_file', side_effect=AssertionError('Decision hashed changed content')):
+                        status, result = self.request('POST', self.prefix + '/triage', {
+                            'artifacts': [str(path)], 'state': 'confirmed', 'share_content': share})
+                    self.assertEqual(409, status, result)
+                    self.assertIn('changed since its scan', result['detail'])
+                    self.assertEqual('new', self.state(path)['triage'])
+                # A later failed scan preserves its earlier findings but drops
+                # the successful coverage receipt. No known hash is then proof
+                # that these findings describe the newly prepared bytes.
+                with closing(db.connect(self.case)) as conn:
+                    file_scan_receipts.invalidate(conn, engine, str(path))
+                    conn.commit()
+                for share in (False, True):
+                    status, result = self.request('POST', self.prefix + '/triage', {
+                        'artifacts': [str(path)], 'state': 'confirmed', 'share_content': share})
+                    self.assertEqual(409, status, result)
+                    self.assertIn('without a verified content version', result['detail'])
+                    self.assertEqual('new', self.state(path)['triage'])
+
+    def test_occurrence_confirmation_reuses_index_for_iocs_without_reading_content(self):
+        _, first = self.root_source()
+        _, second = self.root_source()
+        source, copy = first / 'example.txt', second / 'example.txt'
+        self.finding(source, inventory=True)
+        self.finding(copy, inventory=True)
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected decision hash')), \
+                patch.object(backups, '_walk', side_effect=AssertionError('Unexpected decision walk')), \
+                patch('server.integrations.opencti.graph._snapshot', side_effect=AssertionError('Unexpected content snapshot')):
+            response = self.ok('POST', '/triage', {'artifacts': [str(source)], 'state': 'confirmed',
+                                                   'classifications': ['malware'], 'share_content': False})
+        self.assertEqual('confirmed', self.state(source)['triage'])
+        self.assertEqual('new', self.state(copy)['triage'])
+        self.assertEqual([], self.jobs())
+        self.assertTrue(any(item['type'] == 'hash' for item in response['collected']))
+        with closing(db.connect(self.case)) as conn:
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM content_assessments').fetchone()[0])
+            file = db.one(conn, 'SELECT * FROM ioc_files WHERE classification=?', ('malware',))
+            self.assertIsNotNone(file)
+            self.assertTrue(file['verified_at'])
+
     def test_manual_file_review_shares_verified_content_without_confirming_requests(self):
         backup_evidence, backup_root = self.root_source(name="registered copy")
         self.snapshot(self.site(), backup_evidence, backup_root)
         _, first = self.root_source()
         _, second = self.root_source()
         source, copy = first / "example.txt", second / "example.txt"
-        response = self.ok("POST", "/files/review", {
-            "path": str(source), "state": "confirmed", "classification": "malware",
-            "note": "Harmless synthetic content assessment", "share_content": True,
-        })
-        self.wait(response["content_assessment"]["job"])
+        self.prepare_content()
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected review hash')), \
+                patch.object(backups, '_walk', side_effect=AssertionError('Unexpected review walk')), \
+                patch('server.integrations.opencti.graph._snapshot', side_effect=AssertionError('Unexpected review snapshot')):
+            response = self.ok("POST", "/files/review", {
+                "path": str(source), "state": "confirmed", "classification": "malware",
+                "note": "Harmless synthetic content assessment", "share_content": True,
+            })
+        self.assertNotIn('job', response['content_assessment'])
         self.assertEqual("confirmed", self.state(source)["triage"])
         self.assertEqual("confirmed", self.state(copy)["triage"])
         with closing(db.connect(self.case)) as conn:
@@ -375,6 +460,7 @@ class BackupApiTests(unittest.TestCase):
         _, root = self.root_source()
         source = root / "example.txt"
         self.finding(source, note="Keep the earlier observation")
+        self.prepare_content()
         with closing(db.connect(self.case)) as conn:
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('webshell_hashes',?)",
                          (json.dumps({str(source): hashlib.sha256(source.read_bytes()).hexdigest()}),))
@@ -393,27 +479,27 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual([], self.jobs())
 
     def test_explicit_benign_ioc_assessment_reaches_existing_identical_file(self):
-        backup_evidence, backup_root = self.root_source(name="registered copy")
-        self.snapshot(self.site(), backup_evidence, backup_root)
         _, root = self.root_source()
         path = root / "example.txt"
-        self.finding(path)
+        self.finding(path, inventory=True)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         with closing(db.connect(self.case)) as conn:
             ioc_id = db.add_ioc(conn, digest, "hash", origin="Harmless test hash")
             conn.commit()
-        self.ok("POST", f"/iocs/{ioc_id}/assessments", {"state": "benign", "reason": "Analyst verified this content"})
-        jobs = self.jobs()
-        self.assertEqual(1, len(jobs))
-        self.wait(jobs[0]["id"])
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected decision hash')), \
+                patch.object(backups, '_walk', side_effect=AssertionError('Unexpected decision walk')):
+            response = self.ok("POST", f"/iocs/{ioc_id}/assessments", {"state": "benign", "reason": "Analyst verified this content"})
+        self.assertIn(str(path), response['content_assessment']['applied'])
+        self.assertEqual([], self.jobs())
         self.assertEqual("dismissed", self.state(path)["triage"])
 
-    def test_ioc_assessment_waits_for_running_work_and_inventories_its_completed_output(self):
+    def test_ioc_assessment_uses_prepared_index_and_next_analysis_discovers_new_copy(self):
         backup_evidence, backup_root = self.root_source(name="registered copy")
         self.snapshot(self.site(), backup_evidence, backup_root)
         _, root = self.root_source()
         path = root / "example.txt"
         self.finding(path)
+        self.prepare_content()
         copy = root / "created by the running job.txt"
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         with closing(db.connect(self.case)) as conn:
@@ -428,17 +514,21 @@ class BackupApiTests(unittest.TestCase):
         blocker = self.manager.submit(self.case, "test-source-preparation", preparing)
         try:
             self.assertTrue(started.wait(3))
-            self.ok("POST", f"/iocs/{ioc_id}/assessments", {"state": "malicious", "reason": "Explicit content assessment"})
+            status, response = self.request("POST", self.prefix + f"/iocs/{ioc_id}/assessments", {"state": "malicious", "reason": "Explicit content assessment"})
+            self.assertEqual(409, status, response)
             jobs = self.jobs()
-            deferred = [job for job in jobs if job["kind"] == "backup_comparison"]
-            self.assertEqual(1, len(deferred))
-            self.assertIn(deferred[0]["state"], ("queued", "running"))
+            self.assertFalse(any(job['kind'] == 'backup_comparison' for job in jobs))
             self.assertEqual("new", self.state(path)["triage"])
+            with closing(db.connect(self.case)) as conn:
+                self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM ioc_assessments').fetchone()[0])
             self.assertFalse(copy.exists())
         finally:
             release.set()
         self.wait(blocker)
-        result = self.wait(deferred[0]["id"])
+        self.ok("POST", f"/iocs/{ioc_id}/assessments", {"state": "malicious", "reason": "Explicit content assessment"})
+        self.assertEqual('confirmed', self.state(path)['triage'])
+        self.assertIsNone(self.state(copy))
+        result = backups.build(self.case)
         self.assertEqual("confirmed", self.state(path)["triage"])
         self.assertEqual("confirmed", self.state(copy)["triage"])
         self.assertIn(str(copy), result["content_assessment"]["applied"])
