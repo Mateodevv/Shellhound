@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, post } from '../../api'
+import { RevealFileButton } from '../review/RevealFileButton'
 import type { BackupDiff, BackupEntry, BackupHistoryData } from '../../backupApi'
 import { useT } from '../../i18n'
 import { formatBytes } from '../../format'
@@ -57,7 +58,7 @@ export function BackupHistory({ slug, data, onOpenFile, persist = false }: {
         <details className="text-xs"><summary className="cursor-pointer">{tr('backups.source')}</summary><p className="mono mt-2 break-all">{entry.file.artifact}</p></details>
         {entry.inheritance && entry.inheritance.origin !== entry.file.artifact && <p className="text-[11px] text-[var(--review-text)]">{tr('backups.inherited')}</p>}
         {entry.assessment && <p className="text-xs text-[var(--muted)]">{tr('backups.hashAssessment')}: {tr(`triage.${entry.assessment.state}`)}{entry.assessment.note && ` · ${entry.assessment.note}`}</p>}
-        <div className="flex flex-wrap gap-2">{onOpenFile && <Button disabled={!entry.available || entry.stale} onClick={() => onOpenFile(entry.file!.artifact)}>{tr('artifact.openFile')}</Button>}
+        <div className="flex flex-wrap gap-2"><RevealFileButton key={entry.file.artifact} slug={slug} path={entry.file.artifact} disabled={!entry.available} />{onOpenFile && <Button disabled={!entry.available || entry.stale} onClick={() => onOpenFile(entry.file!.artifact)}>{tr('artifact.openFile')}</Button>}
           {!entry.finding && <Button disabled={!entry.available || entry.stale || add.isPending} onClick={() => add.mutate(entry.snapshot.id)}>{tr('backups.addFinding')}</Button>}</div>
       </>}
     </Card>)}</div>

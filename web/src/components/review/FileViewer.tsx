@@ -20,6 +20,7 @@ import { Button, CopyButton, Modal, Tag } from '../ui/ui'
 import { SyntaxText } from '../ui/SyntaxCode'
 import { useSyntaxLines } from '../../useSyntaxLines'
 import { syntaxLabel } from '../../syntax'
+import { RevealFileButton } from './RevealFileButton'
 
 export function FileContentPane({ slug, path, focusLine, showPath = true, compact = false, className }: {
   slug: string
@@ -75,6 +76,7 @@ export function FileContentPane({ slug, path, focusLine, showPath = true, compac
         </div>}
 
         <div className="flex flex-wrap items-center gap-2">
+          {showPath && <RevealFileButton key={`${slug}:${path}`} slug={slug} path={path} disabled={!data || isError} />}
           <div className="inline-flex overflow-hidden rounded-lg border border-[var(--line)]">
             {(['raw', 'hex'] as const).map((m) => (
               <button key={m}

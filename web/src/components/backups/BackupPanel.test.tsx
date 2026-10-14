@@ -70,6 +70,18 @@ async function openHistory() {
 }
 
 describe('website backup workflow', () => {
+  it('reveals the selected backup copy and disables unavailable copies', async () => {
+    historyData.entries[1].available = false
+    renderWithProviders(<BackupPanel slug="backup-case" evidence={evidence} />)
+    const dialog = await openHistory()
+    const buttons = within(dialog).getAllByRole('button', { name: 'Show in file manager' })
+    expect(buttons[0]).toBeEnabled()
+    expect(buttons[1]).toBeDisabled()
+    fireEvent.click(buttons[0])
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/backup-case/reveal-file',
+      { path: historyData.entries[0].file!.artifact }))
+  })
+
   it('explains an unscanned version on keyboard focus without claiming a clean scan', async () => {
     renderWithProviders(<BackupPanel slug="backup-case" evidence={evidence} />)
     const dialog = await openHistory()

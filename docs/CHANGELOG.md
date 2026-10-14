@@ -6,6 +6,11 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — reveal evidence files
+
+- Show the file-manager button directly in artifact details, file viewers and
+  backup history. Reveal the containing folder without opening the evidence file.
+
 ### Fixed — scan coverage and identical-copy review
 
 - Require successful per-file scan records before showing a backup version as

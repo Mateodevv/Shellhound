@@ -437,10 +437,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     </div>
     {kind !== 'log_observation' && <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
       {kind === 'client' ? <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
-        : <GroupedActions label={tr('review.open')} icon={<ExternalLink size={13} />}>
-          <Button variant="ghost" disabled={reveal.isPending || (kind === 'table' && (ctx?.table_sources?.length ?? 0) !== 1) || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(kind === 'table' ? ctx!.table_sources![0].dump_path : artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
+        : <><Button variant="ghost" disabled={reveal.isPending || (kind === 'table' && (ctx?.table_sources?.length ?? 0) !== 1) || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(kind === 'table' ? ctx!.table_sources![0].dump_path : artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
+        <GroupedActions label={tr('review.open')} icon={<ExternalLink size={13} />}>
           <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
-        </GroupedActions>}
+        </GroupedActions></>}
     </div>}
     {revealError && <p role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">{tr('artifact.revealError')}: {revealError}</p>}
   </Block>
