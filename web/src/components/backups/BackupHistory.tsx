@@ -6,6 +6,7 @@ import type { BackupDiff, BackupEntry, BackupHistoryData } from '../../backupApi
 import { useT } from '../../i18n'
 import { formatBytes } from '../../format'
 import { Button, Card, Modal, Tag, TriageBadge } from '../ui/ui'
+import { InfoDot } from '../ui/Tooltip'
 import { sourceInput } from '../SourceTimezone'
 
 export function BackupStatus({ entry }: { entry: BackupEntry }) {
@@ -16,6 +17,9 @@ export function BackupStatus({ entry }: { entry: BackupEntry }) {
   if (entry.finding && ['new', 'reviewed'].includes(entry.finding.triage)) return <Tag tone="warn">{tr('backups.detections')}</Tag>
   if (entry.finding) return <TriageBadge state={entry.finding.triage} label={tr(`triage.${entry.finding.triage}`)} />
   if (entry.assessment?.state === 'dismissed') return <TriageBadge state="dismissed" label={tr('triage.dismissed')} />
+  if (!entry.scan_state || entry.scan_state === 'not_analyzed') return <span className="inline-flex items-center gap-1.5 text-[var(--review-text)]">
+    {tr('backups.not_analyzed')}<InfoDot label={tr('backups.scanHelpTitle')} title={tr('backups.scanHelpTitle')} body={tr('backups.scanHelp')} />
+  </span>
   return <span className="text-[var(--muted)]">{tr(`backups.${entry.scan_state || 'not_analyzed'}`)}</span>
 }
 

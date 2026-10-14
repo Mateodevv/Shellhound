@@ -17,7 +17,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { post, type TriageLink, type TriageResult } from '../../api'
+import { api, post, type TriageLink, type TriageResult } from '../../api'
 import { testQueryClient } from '../../test/setup'
 import { useTriage } from './useTriage'
 
@@ -130,6 +130,19 @@ describe('what a decision invalidates', () => {
 })
 
 describe('the decision itself', () => {
+  it.each([
+    { applied: [], conflicts: [], needs_index: true },
+    { applied: [], conflicts: [], skipped_count: 2 },
+    { applied: [], conflicts: [], incomplete: true },
+  ])('keeps an incomplete copy receipt visible without starting a background check: %j', async content => {
+    const { result } = mount()
+    vi.mocked(post).mockResolvedValue({ ...RESULT, content_assessment: content })
+    await act(async () => { await result.current.decideAsync(['/a.txt'], 'dismissed', '', true, undefined, true) })
+    expect(result.current.notice?.content).toEqual(content)
+    expect(api).not.toHaveBeenCalled()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
   it('sends one call per previous state when a propagation is undone', async () => {
     // Everything that stood at `new` goes back to `new`, everything that
     // stood at `reviewed` back to `reviewed`. Grouping is not an

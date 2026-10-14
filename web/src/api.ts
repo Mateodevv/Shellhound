@@ -1526,7 +1526,7 @@ export interface TriageLink {
 }
 
 export interface TriageResult {
-  content_assessment?: { applied: string[]; conflicts: string[]; job?: number; incomplete?: boolean }
+  content_assessment?: { applied: string[]; conflicts: string[]; incomplete?: boolean; needs_index?: boolean; skipped_count?: number }
   updated: number
   artifacts: number
   collected: { value: string; type: string; hits?: number; ok_hits?: number }[]

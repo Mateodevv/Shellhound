@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1197,12 +1197,15 @@ def create_app(config: Config) -> FastAPI:
                 return log_evidence.build(case_dir, ctx)
             tasks.append(("log_events", run_additional_logs, kinds))
 
-        check = db.connect(case_dir)
-        try:
-            prepare_backups = bool(webroots and check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone())
-        finally:
-            check.close()
+        # Content identity belongs to analysis, including cases without backups.
+        prepare_backups = bool(webroots)
         if prepare_backups:
+            with closing(db.connect(case_dir)) as comparison_check:
+                preparation_kind = 'backup_comparison' if comparison_check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone() else 'content_index'
+                # A cancelled analysis must not leave the previous inventory
+                # claiming coverage for files this attempt never discovered.
+                comparison_check.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
+                comparison_check.commit()
             dependencies = []
             waiting = []
             for engine, fn, kinds in tasks:
@@ -1221,7 +1224,7 @@ def create_app(config: Config) -> FastAPI:
                         if ctx.cancelled():
                             return {'partial': True}
                 return backups.build(case_dir, ctx)
-            tasks = waiting + [('backup_comparison', prepare_comparison, ())]
+            tasks = waiting + [(preparation_kind, prepare_comparison, ())]
 
         if not tasks:
             raise HTTPException(400, "no evidence registered — add paths first")
@@ -2026,6 +2029,7 @@ def create_app(config: Config) -> FastAPI:
                            f"SELECT * FROM findings WHERE artifact IN ({marks}) "
                            f"ORDER BY severity, line", artifacts)
             shared_hashes = []
+            needs_index = False
             if body.share_content and body.state in ('confirmed', 'dismissed', 'new'):
                 for artifact, before in previous.items():
                     if before['artifact_kind'] == 'file':
@@ -2033,10 +2037,19 @@ def create_app(config: Config) -> FastAPI:
                             digest = backups.assess_content(conn, artifact, body.state, body.note or '', body.classifications)
                             if digest:
                                 shared_hashes.append(digest)
+                        except backups.ContentIndexNotReady:
+                            needs_index = True
                         except (OSError, backups.BackupError) as error:
                             raise HTTPException(409, str(error)) from None
             elif not body.share_content:
                 for artifact in artifacts:
+                    if body.state == 'confirmed' and previous.get(artifact, {}).get('artifact_kind') == 'file':
+                        try:
+                            backups.review_content(conn, artifact)
+                        except backups.ContentIndexNotReady:
+                            needs_index = True
+                        except backups.BackupError as error:
+                            raise HTTPException(409, str(error)) from None
                     inherited = db.one(conn, 'SELECT * FROM content_inheritance WHERE artifact=?', (artifact,))
                     if inherited:
                         conn.execute('INSERT OR IGNORE INTO content_exceptions VALUES (?,?)', (artifact, inherited['sha256']))
@@ -2075,18 +2088,13 @@ def create_app(config: Config) -> FastAPI:
             # along the links the log index can PROVE.
             linked, suggested = [], []
             if body.state == "confirmed":
-                hashes = {}
-                meta = db.one(conn, "SELECT value FROM meta WHERE key = 'webshell_hashes'")
-                if meta:
-                    hashes = json.loads(meta["value"] or "{}")
                 by_artifact = {}
                 for f in rows:
                     by_artifact.setdefault(f["artifact"], []).append(f)
                 touches = _touches(conn, case_dir, by_artifact)
                 for artifact, findings in by_artifact.items():
                     collected += _collect_confirmed(conn, case_dir, artifact,
-                                                    findings, hashes,
-                                                    touches.get(artifact, []))
+                                                    findings, touches.get(artifact, []))
                 if body.propagate:
                     linked, suggested = _propagate(conn, case_dir,
                                                    set(artifacts), touches)
@@ -2100,19 +2108,16 @@ def create_app(config: Config) -> FastAPI:
                 if formerly_confirmed:
                     retained_iocs = _retire_collected_iocs(
                         conn, formerly_confirmed)
+            content_result = backups.inherit_all(conn, digests=shared_hashes) if shared_hashes else {'applied': [], 'conflicts': [], 'skipped_count': 0}
+            if needs_index:
+                content_result['incomplete'] = True
+                if body.share_content:
+                    content_result['needs_index'] = True
             conn.commit()
         finally:
             if connection is None:
                 conn.close()
-        backup_check = db.connect(case_dir)
-        try:
-            has_backups = bool(backup_check.execute('SELECT 1 FROM backup_snapshots LIMIT 1').fetchone())
-        finally:
-            backup_check.close()
         hub.publish({"type": "invalidate", "scope": "findings"})
-        content_result = {'applied': [], 'conflicts': []}
-        if shared_hashes and has_backups:
-            content_result['job'] = manager.submit(case_dir, 'backup_comparison', lambda ctx: backups.build(case_dir, ctx, []))
         return {"updated": len(rows), "artifacts": len(artifacts),
                 "collected": _dedupe_collected(collected),
                 "linked": linked, "suggested": suggested,
@@ -2440,8 +2445,7 @@ def create_app(config: Config) -> FastAPI:
             })
         return out
 
-    def _collect_confirmed(conn, case_dir, artifact, findings, hashes,
-                           touches=()):
+    def _collect_confirmed(conn, case_dir, artifact, findings, touches=()):
         """The confirm chain for ONE artifact: the artifact into the box, plus
         the instant hunts that used to be follow-up jobs. Tags come from every
         rule that fired on it -- the decision was about all of them.
@@ -2483,10 +2487,14 @@ def create_app(config: Config) -> FastAPI:
                                  context=artifact, path_context="system")
             _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
-            # An explicit file review describes the bytes inspected now.
-            # Scanner confirmations still refer to their captured snapshot.
-            digest = (_sha256_of(artifact) if manual_webshell or manual_malware or explicit_classes is not None
-                      else hashes.get(artifact) or _sha256_of(artifact))
+            # Decisions reuse the identity analysis prepared; no content reads
+            # or hash calculations belong in this save request.
+            indexed_info = None
+            try:
+                indexed_info = backups.indexed_file(conn, artifact)
+            except backups.BackupError:
+                pass
+            digest = indexed_info['sha256'] if indexed_info else None
             file_id = None
             if digest:
                 hash_id = db.add_ioc(conn, digest, "hash",
@@ -2501,7 +2509,8 @@ def create_app(config: Config) -> FastAPI:
                 # tell it from.
                 db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
                 file_id = ioc_model.collect_file(conn, artifact, digest, hash_id, path_id,
-                                                 file_classification, findings)
+                                                 file_classification, findings,
+                                                 indexed_info=indexed_info)
                 out.append({"value": digest, "type": "hash"})
             # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))

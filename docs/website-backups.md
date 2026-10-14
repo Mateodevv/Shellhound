@@ -25,6 +25,12 @@ paths that produced no detection or have not been analyzed. **All changes** and
 locations, full SHA-256 hashes, analyst decisions, and selected-version text
 comparison. Backup, path, and pair selection survive page refresh.
 
+**No detections in this version** requires a successful scan of that exact file
+version. A previous scan of its folder is not enough. New or changed files,
+skipped files, and older cases without per-file scan records show **Not analyzed**;
+the question mark explains how to run analysis. Refreshing a comparison updates
+its file inventory, not its detection coverage.
+
 Text comparisons are local and escaped, limited to UTF-8 files of 1 MiB and
 12,000 lines. Binary or larger versions retain their hashes and original-file
 navigation. **Add to Findings** explicitly creates an unresolved observation;
@@ -45,11 +51,22 @@ confirmed copies while retaining the names and relative paths of their backups.
 
 ## Reusing content assessments
 
-Confirming or dismissing file content automatically reuses that assessment for
-identical copies in this case. Shellhound verifies the
-complete SHA-256, then checks registered webroots in a cancellable background
-job. Reuse includes renamed files, other folders and other websites in this
-case. The question-mark help beside file classification explains this behavior.
+Analysis prepares complete SHA-256 identities for files in the registered
+webroots, including cases with no registered backups. Confirming or dismissing
+file content reuses that index for identical copies in this case. Saving a
+decision does not walk webroots, reread file contents, or start another scan;
+it checks the indexed copies' file metadata before applying the assessment.
+Reuse includes renamed files, other folders and other websites in this case.
+The question-mark help beside file classification explains this behavior.
+
+After adding or changing evidence, run analysis to refresh the index. Changed
+or unavailable indexed copies do not receive the new assessment and are reported
+in the decision receipt. Changed file metadata withdraws an inherited decision
+pending reanalysis; missing sources retain their historical decisions. In an
+older case without a prepared identity, the selected decision
+can still be saved; run analysis, then save it again to share it with copies.
+Existing shared hash assessments are applied to newly indexed copies during
+analysis. Preparation can be cancelled through Analysis runs.
 
 Independent earlier decisions are preserved, with conflicts reported. Reuse
 records its origin and an audit entry; it does not independently confirm linked

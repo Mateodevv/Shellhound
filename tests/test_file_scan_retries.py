@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from server import db
+from server import db, file_scan_receipts
 from server.engines import fsutil, webshell, yarascan
 from server.engines.scan_limits import MAX_OVERRIDE_SCAN_BYTES
 
@@ -518,8 +518,6 @@ class FileScanRetryTests(unittest.TestCase):
                 case, _run = self.seed(engine)
                 files = self.targets(self.first)
                 files[0]["max_bytes"] = size
-                module = webshell if engine == "webshell" else yarascan
-
                 def grow_before_read(path, mode="r", *args, **kwargs):
                     if mode == "rb" and fsutil.canonical_file(path) == fsutil.canonical_file(self.first):
                         with builtins.open(path, "ab") as writer:
@@ -527,7 +525,7 @@ class FileScanRetryTests(unittest.TestCase):
                     return builtins.open(path, mode, *args, **kwargs)
 
                 ctx = RecordingContext()
-                with patch.object(module, "open", side_effect=grow_before_read, create=True):
+                with patch.object(file_scan_receipts, "open", side_effect=grow_before_read, create=True):
                     stats = self.run_scan(engine, case, ctx, files)
                 self.assertEqual(1, stats["file_skips"])
                 self.assertIn("grew beyond", ctx.skips[0][1])
@@ -541,15 +539,13 @@ class FileScanRetryTests(unittest.TestCase):
                 case, _run = self.seed(engine)
                 files = self.targets(self.first)
                 files[0]["max_bytes"] = webshell.MAX_CONTENT_SCAN_BYTES + 1
-                module = webshell if engine == "webshell" else yarascan
-
                 def fail_file_read(path, mode="r", *args, **kwargs):
                     if mode == "rb" and fsutil.canonical_file(path) == fsutil.canonical_file(self.first):
                         raise MemoryError("synthetic allocation failure")
                     return builtins.open(path, mode, *args, **kwargs)
 
                 ctx = RecordingContext()
-                with patch.object(module, "open", side_effect=fail_file_read, create=True):
+                with patch.object(file_scan_receipts, "open", side_effect=fail_file_read, create=True):
                     stats = self.run_scan(engine, case, ctx, files)
                 self.assertEqual(1, stats["file_skips"])
                 self.assertIn("not enough memory", ctx.skips[0][1])

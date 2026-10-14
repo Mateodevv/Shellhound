@@ -1,5 +1,7 @@
 """Website backup histories use harmless text, distinct content and explicit decisions."""
 import tempfile
+import os
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +72,86 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(db.one(self.conn, 'SELECT triage FROM findings WHERE artifact=?', (str(other),))['triage'], 'confirmed')
         self.assertEqual(backups.assessment(self.conn, digest)['classifications'], ['malware'])
         self.assertFalse(self.conn.execute('SELECT 1 FROM content_inheritance WHERE artifact=?', (str(self.roots[1] / 'changed.txt'),)).fetchone())
+
+    def test_analysis_prepares_content_without_backup_registration_and_reuses_receipts(self):
+        self.populate()
+        self.conn.execute('DELETE FROM backup_snapshots')
+        self.conn.commit()
+        result = backups.build(self.case)
+        self.assertFalse(result['partial'])
+        self.assertTrue(backups.inventory_ready(self.conn))
+        self.assertEqual(6, self.conn.execute('SELECT COUNT(*) FROM content_files').fetchone()[0])
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unchanged analysis receipt must be reused')):
+            backups.index_content(self.conn)
+
+    def test_decision_skips_changed_and_missing_copies_without_reading_or_discovering(self):
+        self.populate()
+        origin = str(self.roots[0] / 'same.txt')
+        changed = self.roots[1] / 'same.txt'
+        missing = self.roots[2] / 'same.txt'
+        self.finding(origin)
+        self.finding(changed, 'reviewed')
+        self.finding(missing)
+        self.prepare()
+        changed.write_text('Different harmless file\n', encoding='utf-8')
+        changed_stat = changed.stat()
+        os.utime(changed, ns=(changed_stat.st_atime_ns, changed_stat.st_mtime_ns + 1_000_000_000))
+        missing.unlink()
+        newly_added = self.roots[1] / 'later.txt'
+        newly_added.write_bytes((self.roots[0] / 'same.txt').read_bytes())
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected decision hash')), \
+                patch.object(backups, '_walk', side_effect=AssertionError('Unexpected decision discovery')):
+            digest = backups.assess_content(self.conn, origin, 'confirmed')
+            result = backups.inherit_all(self.conn, digests=[digest])
+        self.assertEqual(2, result['skipped_count'])
+        self.assertTrue(result['incomplete'])
+        self.assertEqual([], result['applied'])
+        self.assertEqual('reviewed', db.one(self.conn, 'SELECT triage FROM findings WHERE artifact=?', (str(changed),))['triage'])
+        self.assertIsNone(db.one(self.conn, 'SELECT triage FROM findings WHERE artifact=?', (str(newly_added),)))
+        self.prepare()
+        self.assertEqual('confirmed', db.one(self.conn, 'SELECT triage FROM findings WHERE artifact=?', (str(newly_added),))['triage'])
+
+    def test_stale_origin_is_rejected_without_rehashing(self):
+        self.populate()
+        origin = self.roots[0] / 'same.txt'
+        self.finding(origin)
+        self.prepare()
+        origin.write_text('New harmless version\n', encoding='utf-8')
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected decision hash')):
+            with self.assertRaisesRegex(backups.BackupError, 'changed'):
+                backups.assess_content(self.conn, str(origin), 'confirmed')
+        self.assertEqual(0, self.conn.execute('SELECT COUNT(*) FROM content_assessments').fetchone()[0])
+
+    def test_refreshed_content_index_cannot_share_an_old_scanner_decision(self):
+        self.populate()
+        origin = self.roots[0] / 'same.txt'
+        self.finding(origin)
+        self.prepare()
+        old_digest = backups.indexed_file(self.conn, str(origin))['sha256']
+        self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('webshell_hashes',?)",
+                          (json.dumps({str(origin): old_digest}),))
+        origin.write_text('New harmless version with a different length\n', encoding='utf-8')
+        backups.index_content(self.conn)
+        with patch.object(backups, 'hash_file', side_effect=AssertionError('Unexpected decision hash')):
+            with self.assertRaisesRegex(backups.BackupError, 'changed since its scan'):
+                backups.assess_content(self.conn, str(origin), 'confirmed')
+        self.assertEqual(0, self.conn.execute('SELECT COUNT(*) FROM content_assessments').fetchone()[0])
+
+    def test_cancelled_content_preparation_invalidates_previous_ready_receipt(self):
+        self.populate()
+        self.prepare()
+        self.assertTrue(backups.inventory_ready(self.conn))
+        class Cancelled:
+            def cancelled(self):
+                return True
+        with self.assertRaisesRegex(backups.BackupError, 'cancelled'):
+            backups.index_content(self.conn, Cancelled())
+        self.assertFalse(backups.inventory_ready(self.conn))
+        other = db.connect(self.case)
+        try:
+            self.assertFalse(backups.inventory_ready(other))
+        finally:
+            other.close()
 
     def test_grouping_retains_changed_versions_and_deduplicates_before_limit(self):
         self.populate()

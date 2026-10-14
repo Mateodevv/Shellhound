@@ -130,10 +130,11 @@ export function TriageFollowUp({ t, roots, layer = 1, onOpenIocs }: {
           <>{tr('triage.linkedFound.body')}</>
         )}
         {n?.content && <div className="mt-2 space-y-1">
-          {!!n.content.applied.length && <p>{tr('backups.appliedCopies', { n: n.content.applied.length })}</p>}
-          {!!n.content.job && <p>{tr('backups.checkingCopies')}</p>}
-          {n.content.incomplete && <p>{tr('backups.copiesIncomplete')}</p>}
-          {!n.content.job && !n.content.incomplete && !n.content.applied.length && !n.content.conflicts.length && <p>{tr('backups.noOtherCopies')}</p>}
+          {!!n.content.applied.length && <p>{plural(tr, n.content.applied.length, 'backups.appliedCopies.one', 'backups.appliedCopies.many', { n: n.content.applied.length })}</p>}
+          {n.content.needs_index && <p className="text-[var(--review-text)]">{tr('backups.copiesNeedIndex')}</p>}
+          {!!n.content.skipped_count && <p className="text-[var(--review-text)]">{tr('backups.copiesSkipped', { n: n.content.skipped_count })}</p>}
+          {n.content.incomplete && !n.content.needs_index && !n.content.skipped_count && <p className="text-[var(--review-text)]">{tr('backups.copiesIncomplete')}</p>}
+          {!n.content.incomplete && !n.content.needs_index && !n.content.skipped_count && !n.content.applied.length && !n.content.conflicts.length && <p>{tr('backups.noOtherCopies')}</p>}
           {!!n.content.conflicts.length && <><p>{tr('backups.keptConflicts', { n: n.content.conflicts.length })}</p><ul>{n.content.conflicts.slice(0, 4).map(path => <li key={path} className="mono break-all text-xs">{relativeToRoot(path, roots).rel}</li>)}</ul></>}
         </div>}
       </Toast>

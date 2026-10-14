@@ -26,6 +26,22 @@ beforeEach(() => {
 const show = () => renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} />)
 
 describe('Structured IOC details', () => {
+  it('shows copy reuse and incomplete-index feedback after an explicit hash assessment', async () => {
+    const hash = { ...ip, type: 'hash', value: 'a'.repeat(64) }
+    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: hash } : { configured: false, lookups: [] })
+    vi.mocked(post).mockResolvedValue({ content_assessment: { applied: ['/synthetic/copy.txt'], conflicts: [], incomplete: true } })
+    const { qc } = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[hash]} onClose={() => {}} embedded />)
+    qc.setQueryData(['findings', 'synthetic'], { seeded: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'IOC actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit IOC' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Assessment' }), { target: { value: 'benign' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), { target: { value: 'Harmless synthetic content' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Applied to 1 verified identical copy.')).toBeInTheDocument()
+    expect(screen.getByText(/The content index is incomplete/)).toBeInTheDocument()
+    expect(qc.getQueryState(['findings', 'synthetic'])?.isInvalidated).toBe(true)
+  })
+
   it('confirms individual deletion, retains the IOC on failure and closes only after success', async () => {
     const onDeleted = vi.fn()
     vi.mocked(del).mockRejectedValueOnce(new Error('Database unavailable')).mockResolvedValueOnce({ deleted_ids: [ip.id] })

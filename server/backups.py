@@ -21,6 +21,33 @@ class BackupError(ValueError):
     pass
 
 
+class ContentIndexNotReady(BackupError):
+    pass
+
+
+class ContentFileUnavailable(BackupError):
+    pass
+
+
+def indexed_file(conn, path):
+    """Use analysis' complete digest only while its file identity still matches."""
+    row = db.one(conn, 'SELECT * FROM content_files WHERE artifact=?', (path,))
+    if not row:
+        raise ContentIndexNotReady('Content index is not ready. Analyze the registered webroots, then apply the shared decision again')
+    try:
+        current = os.stat(io_path(path))
+    except OSError:
+        raise ContentFileUnavailable('Cannot verify the indexed file. Restore the source and analyze it again before sharing a content assessment') from None
+    if not stat.S_ISREG(current.st_mode) or marker(current) != row['marker']:
+        raise BackupError('The file changed since preparation. Analyze it again before sharing a content assessment')
+    return row
+
+
+def inventory_ready(conn):
+    prepared = db.one(conn, "SELECT value FROM meta WHERE key='content_inventory_sources'")
+    return bool(prepared and prepared['value'] == source_signature(conn))
+
+
 def marker(st):
     return f'{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}:{st.st_ino}'
 
@@ -191,11 +218,9 @@ def build(case_dir, ctx=None, snapshot_ids=None):
     conn = db.connect(case_dir)
     try:
         snapshots = settings(conn)['snapshots']
-        if not snapshots:
-            if snapshot_ids:
-                raise BackupError('Choose existing backups')
-            return {'files': 0, 'failed_sources': 0, 'partial': False,
-                    'content_assessment': {'applied': [], 'conflicts': []}}
+        if not snapshots and snapshot_ids:
+            raise BackupError('Choose existing backups')
+        conn.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
         seed_ioc_assessments(conn)
         conn.commit()
         if snapshot_ids is not None:
@@ -262,12 +287,13 @@ def build(case_dir, ctx=None, snapshot_ids=None):
                     return {'files': total, 'partial': True, 'cancelled': True}
                 failed += 1
         # All registered webroots participate in case-wide hash decisions, including ungrouped copies.
+        index_result = index_content(conn, ctx)
         content_result = {'applied': [], 'conflicts': []}
         if conn.execute('SELECT 1 FROM content_assessments LIMIT 1').fetchone():
-            index_content(conn, ctx)
             content_result = inherit_all(conn, ctx)
-            conn.commit()
-        return {'files': total, 'failed_sources': failed, 'partial': bool(failed) or incomplete, 'content_assessment': content_result}
+        conn.commit()
+        return {'files': total, 'failed_sources': failed, 'partial': bool(failed) or incomplete or index_result['incomplete'],
+                'content_index': index_result, 'content_assessment': content_result}
     except BackupError:
         if ctx and ctx.cancelled():
             conn.rollback()
@@ -278,7 +304,11 @@ def build(case_dir, ctx=None, snapshot_ids=None):
 
 
 def index_content(conn, ctx=None):
+    conn.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
+    if ctx:
+        conn.commit()
     seen = set()
+    failures = 0
     for root in db.rows(conn, "SELECT path FROM evidence WHERE kind='webroot'"):
         errors = []
         for path in _walk(root['path'], ctx, errors):
@@ -289,18 +319,27 @@ def index_content(conn, ctx=None):
             if ctx:
                 ctx.phase_progress(0, f'Checking identical content: {len(seen):,} files', 'hashing', len(seen), None)
             try:
-                remember(conn, path, hash_file(path, ctx))
+                try:
+                    indexed_file(conn, path)
+                except BackupError:
+                    remember(conn, path, hash_file(path, ctx))
                 if ctx and len(seen) % 100 == 0:
                     conn.commit()
             except (OSError, BackupError):
+                failures += 1
                 if ctx and ctx.cancelled():
                     raise
                 if ctx:
                     ctx.detailed_skip(path, 'Cannot verify file content; retry preparation', category='file', root=root['path'])
         for path, reason in errors:
+            failures += 1
             if ctx:
                 ctx.detailed_skip(path, reason, category='discovery', root=root['path'])
-    conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', ('content_inventory_sources', source_signature(conn)))
+    if not failures:
+        conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', ('content_inventory_sources', source_signature(conn)))
+    else:
+        conn.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
+    return {'files': len(seen), 'skipped_count': failures, 'incomplete': bool(failures)}
 
 
 def source_signature(conn):
@@ -309,6 +348,7 @@ def source_signature(conn):
 
 def seed_ioc_assessments(conn):
     """Only explicit analyst IOC assessments, never legacy/default malicious badges."""
+    changed = set()
     for item in db.rows(conn, "SELECT a.*,i.type,i.value FROM ioc_assessments a JOIN iocs i ON i.id=a.ioc_id "
                        "WHERE i.type IN ('file','hash') ORDER BY a.id"):
         digest = item['value'].lower()
@@ -322,7 +362,9 @@ def seed_ioc_assessments(conn):
         previous = db.one(conn, 'SELECT updated FROM content_assessments WHERE sha256=?', (digest,))
         if not previous or previous['updated'] <= item['created']:
             conn.execute('INSERT OR REPLACE INTO content_assessments VALUES (?,?,?,?,?,?)', values)
+            changed.add(digest)
         conn.execute('INSERT INTO content_assessment_history(sha256,state,note,classifications,origin,at) VALUES (?,?,?,?,?,?)', values)
+    return changed
 
 
 def assessment(conn, digest):
@@ -332,21 +374,35 @@ def assessment(conn, digest):
     return row
 
 
+def review_content(conn, artifact):
+    """Bind a decision to the scanned version, not just a refreshed inventory."""
+    info = indexed_file(conn, artifact)
+    scanned = db.one(conn, "SELECT value FROM meta WHERE key='webshell_hashes'")
+    old_digest = json.loads(scanned['value'] or '{}').get(artifact) if scanned else None
+    receipts = db.rows(conn, 'SELECT engine,sha256 FROM file_scan_receipts WHERE artifact=?', (artifact,))
+    receipt_engines = {row['engine'] for row in receipts}
+    for finding in db.rows(conn, f'SELECT DISTINCT f.engine FROM findings f {db.RETIRE_JOIN} '
+                           f"WHERE f.artifact=? AND f.engine IN ('webshell','yarascan') AND {db.LIVE_PREDICATE}", (artifact,)):
+        if finding['engine'] not in receipt_engines and not (finding['engine'] == 'webshell' and old_digest):
+            raise BackupError('The file has scan findings without a verified content version. Analyze it again before saving a content assessment')
+    changed = bool(old_digest and old_digest != info['sha256'])
+    for receipt in receipts:
+        if receipt['sha256'] != info['sha256'] and conn.execute(
+                f'SELECT 1 FROM findings f {db.RETIRE_JOIN} WHERE f.artifact=? AND f.engine=? '
+                f'AND {db.LIVE_PREDICATE} LIMIT 1', (artifact, receipt['engine'])).fetchone():
+            changed = True
+    if changed:
+        raise BackupError('The file changed since its scan. Analyze it again before saving a content assessment')
+    return info
+
+
 def assess_content(conn, artifact, state, note='', classifications=None):
     if state not in ('confirmed', 'dismissed', 'new'):
         return None
     if not registered(conn, artifact):
         raise BackupError('The file is outside the registered webroots')
-    try:
-        info = hash_file(artifact)
-    except OSError:
-        raise BackupError('Cannot verify the file content; restore the source before sharing its assessment') from None
-    remember(conn, artifact, info)
+    info = review_content(conn, artifact)
     digest = info['sha256']
-    scanned = db.one(conn, "SELECT value FROM meta WHERE key='webshell_hashes'")
-    old_digest = json.loads(scanned['value'] or '{}').get(artifact) if scanned else None
-    if old_digest and old_digest != digest:
-        raise BackupError('The file changed since its scan. Analyze it again before sharing a content assessment')
     if classifications is None:
         from server.file_classifications import current
         classifications = current(conn, artifact, db.rows(conn, 'SELECT * FROM findings WHERE artifact=?', (artifact,)))
@@ -363,23 +419,36 @@ def assess_content(conn, artifact, state, note='', classifications=None):
     return digest
 
 
-def inherit_all(conn, ctx=None):
+def inherit_all(conn, ctx=None, digests=None):
     from server.artifacts import ART_SQL
     from server.file_classifications import store
-    states = {r['artifact']: r for r in db.rows(conn, f'WITH art AS ({ART_SQL}) SELECT * FROM art')}
-    applied, conflicts = [], []
-    for row in db.rows(conn, 'SELECT f.*,a.state decision,a.note,a.classifications,a.origin FROM content_files f JOIN content_assessments a ON a.sha256=f.sha256'):
+    query = 'SELECT f.*,a.state decision,a.note,a.classifications,a.origin FROM content_files f JOIN content_assessments a ON a.sha256=f.sha256'
+    params = tuple(set(digests)) if digests is not None else ()
+    if digests is not None:
+        if not params:
+            return {'applied': [], 'conflicts': [], 'skipped_count': 0, 'incomplete': not inventory_ready(conn)}
+        query += ' WHERE f.sha256 IN (' + ','.join('?' * len(params)) + ')'
+    matching = query.replace('SELECT f.*,a.state decision,a.note,a.classifications,a.origin', 'SELECT f.artifact')
+    scoped_art = ART_SQL.replace('FROM findings f ', 'FROM selected_findings f ')
+    states = {r['artifact']: r for r in db.rows(conn,
+        f'WITH selected_findings AS (SELECT * FROM findings WHERE artifact IN ({matching})), art AS ({scoped_art}) SELECT * FROM art', params)}
+    applied, conflicts, skipped = [], [], 0
+    roots = [r['path'] for r in db.rows(conn, "SELECT path FROM evidence WHERE kind='webroot'")]
+    for row in db.rows(conn, query, params):
         path, digest, desired = row['artifact'], row['sha256'], row['decision']
-        if not registered(conn, path) or conn.execute('SELECT 1 FROM content_exceptions WHERE artifact=? AND sha256=?', (path, digest)).fetchone():
+        if not path_within_any(path, roots) or conn.execute('SELECT 1 FROM content_exceptions WHERE artifact=? AND sha256=?', (path, digest)).fetchone():
             continue
         try:
-            fresh = hash_file(path, ctx)
-        except (OSError, BackupError):
+            if ctx and ctx.cancelled():
+                raise BackupError('Comparison cancelled')
+            fresh = indexed_file(conn, path)
+        except (OSError, BackupError) as error:
             if ctx and ctx.cancelled():
                 raise
-            continue
-        if fresh['sha256'] != digest:
-            remember(conn, path, fresh)
+            skipped += 1
+            previous = db.one(conn, 'SELECT * FROM content_inheritance WHERE artifact=?', (path,))
+            if previous and not isinstance(error, (OSError, ContentFileUnavailable)):
+                restore_inheritance(conn, previous, 'Indexed file changed or became unavailable; analyze it again')
             continue
         old = states.get(path)
         previous = db.one(conn, 'SELECT * FROM content_inheritance WHERE artifact=?', (path,))
@@ -422,11 +491,13 @@ def inherit_all(conn, ctx=None):
                     conn.execute('INSERT INTO ioc_sources(ioc_id,artifact,role,active,added) VALUES (?,?,?,1,?) '
                                  'ON CONFLICT(ioc_id,artifact,role) DO UPDATE SET active=1', (ioc_id, path, role, db.now()))
                 db.link_iocs(conn, hash_id, path_id, 'hash-of')
-                ioc_model.collect_file(conn, path, digest, hash_id, path_id)
+                ioc_model.collect_file(conn, path, digest, hash_id, path_id, indexed_info=fresh)
             elif before == 'confirmed':
                 conn.execute('UPDATE ioc_sources SET active=0 WHERE artifact=?', (path,))
             applied.append(path)
-    return {'applied': applied, 'conflicts': conflicts}
+    ready = inventory_ready(conn)
+    return {'applied': applied, 'conflicts': conflicts, 'skipped_count': skipped,
+            'incomplete': bool(skipped) or not ready}
 
 
 def grouping(conn):
@@ -501,8 +572,55 @@ def history(conn, site_id, relative_path, *, states=None, snapshots=None):
                     continue
                 if skip_outcomes(conn, skipped_row['job_id']).get(skipped_row['ordinal'], {}).get('status') != 'resolved':
                     skipped = True
-            complete = evidence and evidence['scanned_at'] and attempt.get('status', 'complete') in ('complete', 'complete_with_warnings')
-            entry['scan_state'] = 'detections' if current and current['findings'] else 'not_analyzed' if skipped or not complete else 'no_detections'
+            # A folder completion date cannot prove that this version of this
+            # file was examined: a later inventory may include new content.
+            receipts = {r['engine']: r for r in db.rows(conn,
+                'SELECT * FROM file_scan_receipts WHERE artifact=? AND sha256=? AND marker=?',
+                (file['artifact'], file['sha256'], file['marker']))}
+            required = set()
+            for name, outcome in attempt.get('engines', {}).items():
+                if name not in ('webshell', 'yara'):
+                    continue
+                stats = outcome.get('stats', {})
+                # With no enabled custom rules there is no YARA content scan
+                # to require. A compile failure still requires fresh analysis.
+                if (name == 'yara' and outcome.get('state') == 'complete'
+                        and stats.get('rules') == 0 and not stats.get('broken_rules')
+                        and stats.get('available') is not False):
+                    continue
+                required.add(name)
+            if not required:
+                required = {'webshell'}
+            complete = not entry['stale'] and not skipped
+            valid = []
+            for name in required:
+                receipt = receipts.get('yarascan' if name == 'yara' else name)
+                outcome = attempt.get('engines', {}).get(name)
+                if outcome and outcome.get('state') not in ('complete', 'complete_with_warnings'):
+                    complete = False
+                if not receipt:
+                    complete = False
+                    continue
+                # Production receipts belong to the scheduled job or one of
+                # its targeted retries. Historical runs remain readable.
+                if attempt.get('run_id'):
+                    job = db.one(conn, 'SELECT run_id,scan_context FROM jobs WHERE id=?', (receipt['job_id'],))
+                    if job and json.loads(job['scan_context'] or '{}').get('mode') == 'retry':
+                        parent = json.loads(job['scan_context'] or '{}').get('parent_job_id')
+                        job = db.one(conn, 'SELECT run_id FROM jobs WHERE id=?', (parent,))
+                    if not job or job['run_id'] != attempt['run_id']:
+                        complete = False
+                        continue
+                valid.append(receipt)
+            detected = False
+            if not entry['stale']:
+                for receipt in valid:
+                    if conn.execute(f'SELECT 1 FROM findings f {db.RETIRE_JOIN} '
+                        f'WHERE f.artifact=? AND f.engine=? AND f.seen_run=? AND {db.LIVE_PREDICATE} LIMIT 1',
+                        (file['artifact'], receipt['engine'], receipt['run'])).fetchone():
+                        detected = True
+                        break
+            entry['scan_state'] = 'detections' if detected else 'no_detections' if complete else 'not_analyzed'
         entries.append(entry)
     return {'path': relative_path, 'site_id': site_id, 'entries': entries}
 
