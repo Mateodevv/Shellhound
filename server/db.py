@@ -544,7 +544,8 @@ _ADDED_COLUMNS = {
 # 14: Pattern Hunt test observations retain their explicit CVE context.
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
-CASE_SCHEMA_VERSION = 22
+# 23: index file scan receipts for artifact-scoped review and backup history.
+CASE_SCHEMA_VERSION = 23
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a

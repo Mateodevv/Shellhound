@@ -55,6 +55,26 @@ class FileScanReceiptTests(unittest.TestCase):
                              sum(len(list(root.glob('*'))) for root in self.fixture.roots))
             self.assertEqual(backups.history(conn, self.fixture.site, 'same.txt')['entries'][0]['scan_state'], 'no_detections')
 
+    def test_schema_22_upgrade_preserves_receipts_and_indexes_artifact_lookups(self):
+        self.scan()
+        receipts = db.rows(self.conn, 'SELECT * FROM file_scan_receipts ORDER BY engine,artifact')
+        self.conn.execute('DROP INDEX file_scan_receipts_artifact')
+        self.conn.execute("UPDATE meta SET value='22' WHERE key='schema_version'")
+        self.conn.commit()
+        with closing(db.connect(self.fixture.case)) as conn:
+            self.assertEqual(db.rows(conn, 'SELECT * FROM file_scan_receipts ORDER BY engine,artifact'), receipts)
+            self.assertEqual(db.one(conn, "SELECT value FROM meta WHERE key='schema_version'")['value'],
+                             str(db.CASE_SCHEMA_VERSION))
+            for query, params in (
+                ('SELECT engine,sha256 FROM file_scan_receipts WHERE artifact=?', (str(self.path),)),
+                ('SELECT * FROM file_scan_receipts WHERE artifact=? AND sha256=? AND marker=?',
+                 (str(self.path), receipts[0]['sha256'], receipts[0]['marker'])),
+            ):
+                plan = conn.execute('EXPLAIN QUERY PLAN ' + query, params).fetchall()
+                self.assertTrue(any('SEARCH' in row[3] and 'file_scan_receipts_artifact' in row[3]
+                                    for row in plan), plan)
+            self.assertEqual(backups.history(conn, self.fixture.site, 'same.txt')['entries'][0]['scan_state'], 'no_detections')
+
     def test_added_or_changed_file_requires_its_own_current_version_scan(self):
         self.scan()
         self.path.write_text('Different harmless text\n', encoding='utf-8')

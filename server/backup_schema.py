@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS file_scan_receipts (
  job_id INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(engine, artifact)
 );
+CREATE INDEX IF NOT EXISTS file_scan_receipts_artifact ON file_scan_receipts(artifact);
 CREATE TABLE IF NOT EXISTS content_assessments (
  sha256 TEXT PRIMARY KEY, state TEXT NOT NULL, note TEXT NOT NULL,
  classifications TEXT NOT NULL DEFAULT '[]', origin TEXT NOT NULL, updated TEXT NOT NULL
