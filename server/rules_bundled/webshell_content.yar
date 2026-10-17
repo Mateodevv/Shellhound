@@ -58,6 +58,55 @@ rule Webshell_Variable_Function_On_Request_Input
         $a
 }
 
+rule Webshell_Indirect_Request_Execution
+{
+    meta:
+        id = "webshell.indirect_input"
+        severity = "high"
+        name = "Request input reaches an indirect executable call"
+        what = "A request parameter is copied into a local variable and passed to an executable function, or selects the function that is called."
+        note = "YARA finds candidates; a bounded straight-line analyser verifies original source offsets and discards state at unknown statements or scope boundaries."
+    strings:
+        $call = /\b(eval|assert|system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|call_user_func)[ \t\r\n]*\(/ nocase
+        $variable = /\$[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*\(/
+        $source = /\$_(GET|POST|REQUEST|COOKIE|FILES|SERVER|ENV)\b|\$HTTP_(GET|POST|COOKIE|SERVER)_VARS\b|php:\/\/input|[gG][eE][tT][eE][nN][vV][ \t\r\n]*\([ \t\r\n]*['"](HTTP_|QUERY_STRING)/
+    condition:
+        $source and ($call or $variable)
+}
+
+rule Webshell_Obfuscated_Executable_Name
+{
+    meta:
+        id = "webshell.obfuscated_call"
+        severity = "medium"
+        name = "Statically resolved obfuscated executable function is called"
+        what = "A callable executable function name is assembled from literals or decoded locally, then invoked through that variable."
+        note = "Only bounded literal concatenation, PHP string escapes and literal base64/ROT13/reversal/hex decoding are resolved. No decoded content is executed or reparsed."
+    strings:
+        $variable = /\$[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*\(/
+        $callback = /\bcall_user_func[ \t\r\n]*\(/ nocase
+        $escape = /\\(x[0-9a-fA-F]{1,2}|[0-7]{1,3})/
+        $concat = /(['"]|\$[A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*\.[ \t\r\n]*(['"]|\$[A-Za-z_][A-Za-z0-9_]*)/
+        $decoder = /\b(base64_decode|str_rot13|strrev|hex2bin)[ \t\r\n]*\(/ nocase
+    condition:
+        ($variable or $callback) and ($escape or $concat or $decoder)
+}
+
+rule Webshell_Decoded_Variable_Execution
+{
+    meta:
+        id = "webshell.decoded_execution"
+        severity = "medium"
+        name = "Decoded content passed through a variable to eval/assert"
+        what = "A local variable receives decoded content and is passed to eval or assert. This records a code-loading pattern, not a verdict about intent or the target PHP version."
+        note = "The analyser follows one straight-line block with at most 128 tokens/8192 bytes per statement, 64 tracked variables, expression depth 8 and literal values up to 4096 bytes."
+    strings:
+        $call = /\b(eval|assert)[ \t\r\n]*\(/ nocase
+        $decoder = /\b(base64_decode|str_rot13|strrev|hex2bin)[ \t\r\n]*\(/ nocase
+    condition:
+        $call and $decoder
+}
+
 rule Webshell_Command_Execution_On_Request_Input
 {
     meta:

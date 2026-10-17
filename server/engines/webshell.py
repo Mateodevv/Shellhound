@@ -38,6 +38,7 @@ from server.engines.fsutil import (
     ScanProgress, canonical_file, discover_scan_files, record_skip,
 )
 from server.engines.scan_limits import scan_byte_limit, size_skip_reason
+from server.engines import php_indirect
 
 PHP_EXTS = {".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".phar", ".inc"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".svg", ".webp"}
@@ -266,6 +267,10 @@ def _yara_findings(raw, kind):
     matches = bundled_rules.compiled(kind).match(data=raw, timeout=20)
     if not matches:
         return
+    indirect = {}
+    if kind == "content" and any(match.meta.get("id") in php_indirect.RULE_IDS for match in matches):
+        for evidence in php_indirect.analyse(raw):
+            indirect[(evidence.rule_id, evidence.offset)] = evidence
     locations = _match_locations(raw, matches)
     comments = _CommentRanges(raw) if kind == "content" else None
     request_source = any(not comments.contains(m.start()) for m in _REQUEST_SOURCE.finditer(raw)) if comments else False
@@ -287,6 +292,11 @@ def _yara_findings(raw, kind):
         name = meta.get("name") or match.rule
         for string_match in match.strings:
             for instance in string_match.instances:
+                correlated = None
+                if rule_id in php_indirect.RULE_IDS:
+                    correlated = indirect.get((rule_id, instance.offset))
+                    if correlated is None:
+                        continue
                 if comments is not None:
                     if rule_id in ("webshell.var_func", "webshell.callback_input") and comments.contains(instance.offset):
                         continue
@@ -302,8 +312,16 @@ def _yara_findings(raw, kind):
                 seen.add((rule_id, line_no))
                 if line_no not in snippets:
                     snippets[line_no] = _line_snippet(raw, begin)
-                out.append((rule_id, severity, name, line_no,
-                            snippets[line_no]))
+                evidence_text = snippets[line_no]
+                if correlated is not None:
+                    context = ('callable selected by request' if correlated.function == b'request-selected callable'
+                               else 'resolved call: ' + correlated.function.decode('ascii'))
+                    if correlated.source is not None:
+                        context += '; request source at line ' + str(raw.count(b'\n', 0, correlated.source) + 1)
+                    if correlated.decoded_at is not None:
+                        context += '; decoded at line ' + str(raw.count(b'\n', 0, correlated.decoded_at) + 1)
+                    evidence_text += ' [' + context + ']'
+                out.append((rule_id, severity, name, line_no, evidence_text))
     # By line, so a file reads top to bottom like it used to.
     out.sort(key=lambda row: (row[3], row[0]))
     yield from out
