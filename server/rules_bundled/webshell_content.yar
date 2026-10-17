@@ -112,7 +112,7 @@ rule Webshell_Callback_From_Request
         name = "Callback taken straight from the request"
         what = "The function to call is named by the request. Whatever the browser can spell, it can call."
     strings:
-        $a = /call_user_func(_array)?[^\S\n]*\([^\S\n]*\$_/ nocase
+        $a = /call_user_func(_array)?[^\S\n]*\([^\S\n]*\$_(GET|POST|REQUEST|COOKIE|FILES|SERVER|ENV)\b/ nocase
     condition:
         $a
 }
@@ -190,6 +190,7 @@ rule Webshell_Hex_Octal_Obfuscation
         severity = "medium"
         name = "Hex/octal string obfuscation"
         what = "A long run of escaped byte literals -- a string written so it cannot be read."
+        note2 = "The engine confirms mostly printable decoded text; binary format signatures and crypto tables alone are not obfuscation evidence."
         note = "Case-sensitive by inheritance; the class already spells out a-fA-F."
     strings:
         $a = /(\\x[0-9a-fA-F]{2}|\\[0-7]{3}){10,}/
@@ -216,7 +217,8 @@ rule Webshell_Goto_Control_Flow
         id = "webshell.goto"
         severity = "medium"
         name = "goto-based control-flow obfuscation"
-        what = "goto is legal PHP and almost nobody writes it. Obfuscators emit it to make control flow unreadable."
+        what = "A dense set of generated goto labels can obscure control flow. Ordinary descriptive parser exits are not sufficient."
+        note = "The engine requires at least four distinct targets, including at least two targets containing digits."
     strings:
         $a = /\bgoto[^\S\n]+\w{1,20}[^\S\n]*;/ nocase
     condition:
@@ -229,7 +231,8 @@ rule Webshell_Standalone_Command_Execution
         id = "webshell.standalone_exec"
         severity = "medium"
         name = "Standalone command-execution shell"
-        what = "A command-execution function is present at all. On its own weak -- it counts in combination, which is why it is MEDIUM."
+        what = "Command execution appears alongside a request-input or network source. An isolated library helper is insufficient."
+        note = "The engine checks for request globals, legacy HTTP globals, HTTP getenv values, php://input or network socket APIs outside comments."
     strings:
         $a = /\b(shell_exec|passthru|proc_open|pcntl_exec)[^\S\n]*\(/ nocase
     condition:
