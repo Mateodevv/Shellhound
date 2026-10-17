@@ -6,17 +6,16 @@ effective discriminator is the CMS bootstrap guard (_JEXEC / ABSPATH): a PHP
 file in a writable upload directory is only flagged when the guard is ABSENT
 and the file has an executable surface.
 
-THE CONTENT RULES ARE YARA NOW (`server/rules_bundled/`). What is left in
-this file is everything YARA cannot express, and the split is not arbitrary:
+Content candidates come from YARA (`server/rules_bundled/`). Python adds
+location rules and lexical/context checks that byte patterns cannot express:
 
-  * A rule about a file's CONTENT is a YARA rule. That is what YARA is.
+  * YARA identifies content patterns; weak candidates need supporting context.
   * A rule about its LOCATION, its NAME, or the fact that it could not be
     read at all is not -- YARA is handed bytes and never learns where they
     came from. Those stay here.
 
-So `Double extension disguise` and `Unguarded PHP in writable upload
-directory` are Python, and every pattern that looks INSIDE a file is a
-bundled YARA rule the analyst can read and switch off.
+`Double extension disguise` and `Unguarded PHP in writable upload directory`
+are Python. Every bundled content rule remains visible and switchable.
 
 The names the findings carry are unchanged across that move, because they
 are part of the triage fingerprint: a decision somebody made about a file
@@ -27,6 +26,7 @@ import json
 import os
 import re
 import stat
+from bisect import bisect_right
 
 import yara
 
@@ -51,6 +51,71 @@ EXCLUDE_PATH_RE = re.compile(
     r"(^|[/\\])tmp[/\\]install_[^/\\]+[/\\]"
     r"|[/\\]media[/\\](system|vendor|legacy|templates|editors|com_\w+|mod_\w+|plg_\w+)[/\\]"
     r")")
+
+# A namespace such as src/Cache is source organization, not by itself evidence
+# of writable storage. Explicit upload/media locations still take precedence.
+LIBRARY_CACHE_RE = re.compile(r"(?i)(^|[/\\])(src|lib|vendor)[/\\](?:[^/\\]+[/\\])*cache[/\\]")
+EXPLICIT_STORAGE_RE = re.compile(r"(?i)(^|[/\\])(images|tmp|media|files|assets|upload|uploads)[/\\]")
+
+_PHP_OPEN = re.compile(rb"<\?(?:php\b|=|(?!xml\b))", re.I)
+_COMMENT_TOKENS = re.compile(
+    rb'''(?s)'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|'''
+    rb'''<<<[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))[ \t]*\r?\n|'''
+    rb'''/\*.*?(?:\*/|$)|//(?:(?!\?>)[^\r\n])*|\#(?!\[)(?:(?!\?>)[^\r\n])*|\?>''')
+_REQUEST_SOURCE = re.compile(
+    rb"\$_(?:GET|POST|REQUEST|COOKIE|FILES|SERVER|ENV|SESSION)\b"
+    rb"|\$HTTP_(?:GET|POST|COOKIE|SERVER|POST_FILES)_VARS\b|php://input"
+    rb"|\b(?i:getenv)\s*\(\s*['\"](?:HTTP_|QUERY_STRING\b)"
+    rb"|\b(?i:fsockopen|stream_socket_client|socket_connect)\s*\(")
+_GOTO_TARGET = re.compile(rb"\bgoto\s+([A-Za-z_]\w{0,63})\s*;", re.I)
+_ESCAPED_BYTE = re.compile(rb"\\x([0-9a-fA-F]{2})|\\([0-7]{3})")
+
+
+class _CommentRanges:
+    """Locate comments without mistaking quoted text or heredocs for comments.
+
+    This is a bounded lexical aid, not a PHP parser or an execution verdict.
+    Quotes are retained: obfuscation rules intentionally inspect literals.
+    """
+    def __init__(self, raw):
+        self.ranges = []
+        cursor = 0
+        active = False
+        while cursor < len(raw):
+            if not active:
+                opening = _PHP_OPEN.search(raw, cursor)
+                if opening is None:
+                    break
+                cursor = opening.end()
+                active = True
+            token = _COMMENT_TOKENS.search(raw, cursor)
+            if token is None:
+                break
+            if token[0] == b'?>':
+                active = False
+            elif token[0].startswith(b'<<<'):
+                label = next(group for group in token.groups() if group is not None)
+                closing = re.compile(rb'(?m)^[ \t]*' + re.escape(label) + rb'\b').search(raw, token.end())
+                # An unterminated heredoc consumes the rest of the literal,
+                # rather than repeatedly trying a backtracking whole-file regex.
+                cursor = closing.end() if closing else len(raw)
+                continue
+            elif token[0].startswith((b'/*', b'//', b'#')):
+                self.ranges.append((token.start(), token.end()))
+            cursor = token.end()
+        self.starts = [start for start, _end in self.ranges]
+
+    def contains(self, offset):
+        index = bisect_right(self.starts, offset) - 1
+        return index >= 0 and offset < self.ranges[index][1]
+
+
+def _textual_escaped_bytes(value):
+    """Distinguish escaped source/text from binary signatures and crypto tables."""
+    decoded = [int(m[1], 16) if m[1] else int(m[2], 8) % 256
+               for m in _ESCAPED_BYTE.finditer(value)]
+    return bool(decoded) and sum(32 <= b <= 126 or b in (9, 10, 13)
+                                 for b in decoded) / len(decoded) >= 0.85
 
 CMS_GUARD_RE = re.compile(
     rb"(?i)(_JEXEC|JPATH_PLATFORM|defined\(\s*['\"]_JEXEC|\bABSPATH\b|\bWPINC\b|restricted access)")
@@ -134,7 +199,8 @@ def _site_path(abs_path, root):
 
 
 def in_upload_dir(path_str):
-    return bool(UPLOAD_SEG_RE.search(path_str)) and not EXCLUDE_PATH_RE.search(path_str)
+    return bool(UPLOAD_SEG_RE.search(path_str) and not EXCLUDE_PATH_RE.search(path_str)
+                and (not LIBRARY_CACHE_RE.search(path_str) or EXPLICIT_STORAGE_RE.search(path_str)))
 
 
 def _match_locations(raw, matches):
@@ -201,6 +267,14 @@ def _yara_findings(raw, kind):
     if not matches:
         return
     locations = _match_locations(raw, matches)
+    comments = _CommentRanges(raw) if kind == "content" else None
+    request_source = any(not comments.contains(m.start()) for m in _REQUEST_SOURCE.finditer(raw)) if comments else False
+    goto_targets = {m[1] for m in _GOTO_TARGET.finditer(raw)
+                    if comments is None or not comments.contains(m.start())}
+    # Repeated descriptive exits are ordinary parser control flow. A dense set
+    # of distinct labels with digits is characteristic of generated flattening.
+    obfuscated_gotos = (len(goto_targets) >= 4
+                        and sum(any(48 <= c <= 57 for c in label) for label in goto_targets) >= 2)
     snippets = {}
     seen = set()
     out = []
@@ -213,6 +287,15 @@ def _yara_findings(raw, kind):
         name = meta.get("name") or match.rule
         for string_match in match.strings:
             for instance in string_match.instances:
+                if comments is not None:
+                    if rule_id in ("webshell.var_func", "webshell.callback_input") and comments.contains(instance.offset):
+                        continue
+                    if rule_id == "webshell.hex_octal" and not _textual_escaped_bytes(instance.matched_data):
+                        continue
+                    if rule_id == "webshell.goto" and not obfuscated_gotos:
+                        continue
+                    if rule_id == "webshell.standalone_exec" and not request_source:
+                        continue
                 line_no, begin = locations[instance.offset]
                 if (rule_id, line_no) in seen:
                     continue

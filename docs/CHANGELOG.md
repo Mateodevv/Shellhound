@@ -6,6 +6,15 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — CMS detection context
+
+- Avoid treating internal underscore variables and comment examples as request
+  callbacks or variable-function calls.
+- Distinguish library namespace cache directories from upload storage while
+  retaining content checks and explicit upload-directory warnings.
+- Require supporting context for command-execution and goto candidates, and
+  distinguish escaped text from binary format signatures and crypto constants.
+
 ### Changed — compact Pattern Hunt results
 
 - Show a flat IP table with compact totals, response counts, exact timestamps,
