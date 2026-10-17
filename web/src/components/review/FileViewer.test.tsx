@@ -1,11 +1,11 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, type FileContent } from '../../api'
+import { api, post, type FileContent } from '../../api'
 import { renderWithProviders } from '../../test/setup'
 import { FileContentPane } from './FileViewer'
 
 vi.mock('../../api', async (original) => ({
-  ...(await original<typeof import('../../api')>()), api: vi.fn(),
+  ...(await original<typeof import('../../api')>()), api: vi.fn(), post: vi.fn(),
 }))
 
 const SOURCE = 'C:\\Evidence folder\\sample notes.txt'
@@ -34,7 +34,18 @@ function lastRequest() {
   return request!
 }
 
-beforeEach(() => { vi.mocked(api).mockReset() })
+beforeEach(() => { vi.mocked(api).mockReset(); vi.mocked(post).mockReset() })
+
+it('reveals the selected source from the file viewer without opening its contents externally', async () => {
+  vi.mocked(api).mockResolvedValue(page())
+  vi.mocked(post).mockResolvedValue({ ok: true })
+  renderWithProviders(<FileContentPane {...INITIAL} />)
+  const button = screen.getByRole('button', { name: 'Show in file manager' })
+  await waitFor(() => expect(button).toBeEnabled())
+  expect(post).not.toHaveBeenCalled()
+  fireEvent.click(button)
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/sample/reveal-file', { path: SOURCE }))
+})
 
 describe('source file line navigation', () => {
   it('requests a distant source line and displays the returned byte range and line numbers', async () => {

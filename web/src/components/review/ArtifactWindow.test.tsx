@@ -645,7 +645,6 @@ describe('what the window states about the artifact', () => {
     expect(screen.queryByRole('link', { name: 'Open IOC Box' })).not.toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Open…' }))
     await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(
       '/api/cases/case/reveal-file', { path: SHELL }))

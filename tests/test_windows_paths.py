@@ -56,7 +56,7 @@ class WindowsEvidencePathTests(unittest.TestCase):
         self.assertEqual(self.normal_file, listing["files"][0]["path"])
         self.endpoints["/api/cases/{slug}/files/review"](
             self.case.name, SimpleNamespace(path=self.normal_file, state="reviewed",
-                                            classification="webshell", note="Synthetic"), "en")
+                                            classification="webshell", note="Synthetic", share_content=False), "en")
         conn = db.connect(self.case)
         try:
             self.assertEqual(self.normal_file, conn.execute("SELECT artifact FROM findings").fetchone()[0])
