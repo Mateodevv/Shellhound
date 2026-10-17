@@ -6,6 +6,13 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — compact Pattern Hunt results
+
+- Show a flat IP table with compact totals, response counts, exact timestamps,
+  activity duration and direct Trace/IOC actions. Request groups remain optional.
+- Sort by column across all results, including 2xx counts and duration, while
+  preserving paginated queries and saved-result freshness checks.
+
 ### Added — reveal evidence files
 
 - Show the file-manager button directly in artifact details, file viewers and

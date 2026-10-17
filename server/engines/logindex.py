@@ -2744,6 +2744,7 @@ def rule_clients(case_dir, rule, cursor="", limit=100, sort="requests",
     except ValueError as exc:
         raise ValueError("invalid hunt client cursor") from exc
     fields = {"client": "client COLLATE NOCASE", "requests": "requests",
+              "ok_hits": "ok_hits", "duration": "(last_epoch-first_epoch)",
               "first_hit": "first_epoch", "last_hit": "last_epoch"}
     if sort not in fields or direction not in {"asc", "desc"}:
         raise ValueError("invalid hunt client sort")
@@ -2762,7 +2763,7 @@ def rule_clients(case_dir, rule, cursor="", limit=100, sort="requests",
             "max(CASE WHEN r.epoch>0 THEN r.epoch END) last_epoch,max(r.tz) tz "
             "FROM requests r JOIN hunt_request hr ON hr.request_id=r.rowid "
             "JOIN ips i ON i.id=r.ip GROUP BY r.ip "
-            f"ORDER BY {fields[sort]} {direction.upper()},client COLLATE NOCASE "
+            f"ORDER BY {fields[sort]} {direction.upper()},requests DESC,client COLLATE NOCASE "
             "LIMIT ? OFFSET ?", (bounded + 1, offset))]
         has_more = len(rows) > bounded
         rows = rows[:bounded]
