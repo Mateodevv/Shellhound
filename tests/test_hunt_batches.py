@@ -120,6 +120,29 @@ class HuntBatchTests(unittest.TestCase):
         with self.assertRaises(logindex.StaleHuntIndex):
             list(logindex.iter_rule_clients(self.case, marker_rule(), expected_fingerprint="old-generation"))
 
+    def test_client_table_sorts_response_counts_and_duration_before_pagination(self):
+        self.log.write_text(
+            line('192.0.2.1', minute='01') + line('192.0.2.1', minute='03') +
+            line('192.0.2.2', minute='01', status=403) * 3 +
+            line('192.0.2.3', minute='01') + line('192.0.2.3', minute='06', status=404),
+            encoding='utf-8')
+        logindex.build(self.case, [str(self.log)])
+        run = self.finish(self.start())
+        test_id = run['patterns'][0]['test']['id']
+        url = f'{self.url}/hunt/tests/{test_id}/clients'
+        first = self.client.post(url, json={'sort': 'ok_hits', 'direction': 'desc', 'limit': 1}).json()
+        self.assertEqual(['192.0.2.1'], [r['client'] for r in first['clients']])
+        second = self.client.post(url, json={'sort': 'ok_hits', 'direction': 'desc', 'limit': 1,
+                                              'cursor': first['next_cursor']}).json()
+        self.assertEqual(['192.0.2.3'], [r['client'] for r in second['clients']])
+        for direction, expected in (
+            ('desc', ['192.0.2.3', '192.0.2.1', '192.0.2.2']),
+            ('asc', ['192.0.2.2', '192.0.2.1', '192.0.2.3']),
+        ):
+            response = self.client.post(url, json={'sort': 'duration', 'direction': direction})
+            self.assertEqual(200, response.status_code, response.text)
+            self.assertEqual(expected, [r['client'] for r in response.json()['clients']])
+
     def test_dashboard_links_latest_check_without_creating_or_combining_findings(self):
         patterns.add(self.config.workspace, [], name="Overlapping marker", rule=marker_rule("/mar"))
         run = self.finish(self.start())

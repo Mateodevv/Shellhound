@@ -73,6 +73,44 @@ beforeEach(() => {
 })
 
 describe('Pattern Hunt investigation workflow', () => {
+  it('shows a flat sortable IP table and loads detail groups only on request', async () => {
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` })
+    expect(screen.getByText('1 minute')).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: 'Duration' })).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: '2xx responses' })).toHaveAttribute('aria-sort', 'descending')
+    expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients',
+      expect.objectContaining({ sort: 'ok_hits', direction: 'desc', cursor: '' }))
+    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/clusters'))).toBe(false)
+    fireEvent.click(await screen.findByRole('button', { name: 'Duration' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients',
+      expect.objectContaining({ sort: 'duration', direction: 'desc', cursor: '' })))
+    fireEvent.click(await screen.findByRole('button', { name: 'Duration' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients',
+      expect.objectContaining({ sort: 'duration', direction: 'asc', cursor: '' })))
+    fireEvent.click(await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` }))
+    expect(await screen.findByRole('button', { name: 'Inspect first request' })).toBeVisible()
+  })
+
+  it('resets client pagination when changing the sort column', async () => {
+    const original = vi.mocked(post).getMockImplementation()!
+    vi.mocked(post).mockImplementation(async (path, body) => {
+      if (!path.endsWith('/clients')) return original(path, body)
+      const next = (body as { cursor: string }).cursor === 'client-page-2'
+      return { clients: [{ ...CLUSTER, client: next ? '192.0.2.10' : CLUSTER.client }],
+        total: 51, next_cursor: next ? null : 'client-page-2' }
+    })
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByRole('button', { name: 'Details for 192.0.2.10' })
+    fireEvent.click(screen.getByRole('button', { name: 'Matches' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/hunt/tests/41/clients',
+      expect.objectContaining({ sort: 'requests', direction: 'desc', cursor: '' })))
+    expect(await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
+  })
+
   it('shows one selected heading and a quiet empty result without an empty table', async () => {
     allRuns[0].patterns[0].test = { ...TEST, hits: 0, clients: 0 }
     allRuns[0].counts.matched = 0
@@ -261,7 +299,7 @@ describe('Pattern Hunt investigation workflow', () => {
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
-    fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
+    fireEvent.click(await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` }))
     await screen.findByLabelText('Select GET /training-marker 2xx')
     fireEvent.click(screen.getByLabelText('Select this page'))
     expect(screen.getByRole('button', { name: 'Add selected to Findings (1)' })).toBeEnabled()
@@ -403,7 +441,7 @@ describe('Pattern Hunt investigation workflow', () => {
     const { qc } = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Run history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect matches' }))
-    fireEvent.click(await screen.findByRole('button', { name: CLUSTER.client }))
+    fireEvent.click(await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect first request' }))
     expect(await screen.findByRole('button', { name: 'Activity after this request' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Request and surrounding activity' })).toHaveFocus()
