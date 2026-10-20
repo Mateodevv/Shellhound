@@ -6,6 +6,18 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — large access logs
+
+- Spill access-index import state to temporary SQLite tables with bounded
+  caches, retaining full URLs, client statistics and exact login bursts.
+- Keep initial request totals in the derived index and load traffic
+  distributions only when their panel or filters are open. Superseded browser
+  searches interrupt their SQLite worker instead of continuing in the background.
+- Avoid repeated regex passes for plain ASCII URLs, retaining the full
+  detectors for candidates and Unicode case matching.
+- Temporary disk space is required during import; high-cardinality logs may
+  import more slowly in exchange for avoiding memory growth and swapping.
+
 ### Added — bounded indirect PHP detection
 
 - Opt in through Settings → Detection → Extended indirect PHP detection.

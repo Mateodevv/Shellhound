@@ -23,6 +23,10 @@ class FirstSignLogAnchorTests(unittest.TestCase):
         self.next_string = 0
         self.strings = {}
         self.addCleanup(self.conn.close)
+        # The harmless replacement regexes need their own prefilter marker too.
+        hints = patch.object(logindex, '_URI_HINTS', (*logindex._URI_HINTS, '/sample-'))
+        hints.start()
+        self.addCleanup(hints.stop)
         for name, marker in (
                 ("SQLI_URI_RE", "/sample-sqli"),
                 ("TRAVERSAL_URI_RE", "/sample-traversal"),

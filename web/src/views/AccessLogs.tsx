@@ -97,6 +97,7 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
   const [basketOpen, setBasketOpen] = useState(false)
   const [clipNote, setClipNote] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [overviewOpen, setOverviewOpen] = useState(false)
   const [timeOpen, setTimeOpen] = useState(false)
   const [savedOpen, setSavedOpen] = useState(false)
   const workspaceRef = useRef<HTMLDivElement>(null)
@@ -143,26 +144,26 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
 
   const searchQuery = useQuery({
     queryKey: ['access-search', slug, query, cursor],
-    queryFn: () => post<AccessSearchResponse>(
-      `/api/cases/${slug}/access/search`, queryBody(query, cursor)),
+    queryFn: ({ signal }) => post<AccessSearchResponse>(
+      `/api/cases/${slug}/access/search`, queryBody(query, cursor), { signal }),
     enabled: indexReady,
   })
   const overviewQuery = useQuery({
     queryKey: ['access-overview', slug, query],
-    queryFn: () => post<AccessOverview>(
-      `/api/cases/${slug}/access/overview`, queryBody(query)),
-    enabled: indexReady,
+    queryFn: ({ signal }) => post<AccessOverview>(
+      `/api/cases/${slug}/access/overview`, queryBody(query), { signal }),
+    enabled: indexReady && (filtersOpen || overviewOpen),
   })
   const patternsQuery = useQuery({
     queryKey: ['access-patterns', slug, query],
-    queryFn: () => post<AccessPatternsResponse>(
-      `/api/cases/${slug}/access/patterns`, queryBody(query)),
+    queryFn: ({ signal }) => post<AccessPatternsResponse>(
+      `/api/cases/${slug}/access/patterns`, queryBody(query), { signal }),
     enabled: indexReady && tab === 'patterns',
   })
   const segmentsQuery = useQuery({
     queryKey: ['access-segments', slug, query],
-    queryFn: () => post<AccessSegmentsResponse>(
-      `/api/cases/${slug}/access/segments`, queryBody(query)),
+    queryFn: ({ signal }) => post<AccessSegmentsResponse>(
+      `/api/cases/${slug}/access/segments`, queryBody(query), { signal }),
     enabled: indexReady && tab === 'segments',
   })
   const contextQuery = useQuery({
@@ -353,7 +354,7 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
         onClip={(id) => clipMutation.mutate(id)} clipping={clipMutation.isPending} />
     </div>
 
-    <details className="rounded-xl border border-[var(--line)] bg-[var(--panel)]">
+    <details onToggle={event => setOverviewOpen(event.currentTarget.open)} className="rounded-xl border border-[var(--line)] bg-[var(--panel)]">
       <summary className="cursor-pointer px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] hover:text-[var(--fg)]">
         {tr('logs.overview.toggle')}
       </summary>

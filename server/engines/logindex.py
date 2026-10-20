@@ -59,6 +59,10 @@ from server.engines.fsutil import (get_files_recursive, is_compressed, record_sk
 #     means the source did not record it; it is never inferred.
 SCHEMA_VERSION = "12"
 _BATCH = 20000
+_BUILD_CACHE = 8192
+_BUILD_ACTORS = 1024
+_URI_HINTS = ('.', '%', "'", 'union', 'information_schema', 'concat',
+              'benchmark', 'sleep', 'administrator', 'wp-admin', 'com_')
 
 # --- detection patterns (evaluated once per distinct string) ----------------
 
@@ -254,6 +258,29 @@ CREATE TABLE days (
 """
 
 
+def _uri_flags(text):
+    # shortcut: ASCII prefilter; extend markers when URI regex alternatives change.
+    if text.isascii():
+        lower = text.lower()
+        if not any(marker in lower for marker in _URI_HINTS):
+            return 0
+    flags = 0
+    if LOGIN_POST_ENDPOINTS.search(text):
+        flags |= F_LOGIN
+    if SQLI_URI_RE.search(text):
+        flags |= F_SQLI
+    if TRAVERSAL_URI_RE.search(text):
+        flags |= F_TRAVERSAL
+    if CMS_DIR_PHP_RE.match(text):
+        flags |= F_CMS_DIR_PHP
+    if UPLOAD_PHP_RE.search(text):
+        flags |= F_UPLOAD_PHP
+    if (AUTHENTICATED_AREA_RE.search(text)
+            or WP_AUTHENTICATED_AREA_RE.search(text)):
+        flags |= F_ADMIN_AREA
+    return flags
+
+
 def _leaf(uri):
     """Last path segment without query string -- what a file name matches."""
     path = str(uri or "").split("?", 1)[0].split("#", 1)[0]
@@ -282,10 +309,9 @@ class _Actor:
                  "posts", "login_posts", "login_statuses",
                  "login_redirects",
                  "admin_ok",
-                 "scanner_uas", "sqli", "sqli_ok", "trav", "trav_ok",
+                 "sqli", "sqli_ok", "trav", "trav_ok",
                  "uphp", "uphp_ok", "cmsphp", "cmsphp_ok",
-                 "login_first", "login_last", "login_epochs",
-                 "agents", "examples", "answer_sizes")
+                 "login_first", "login_last", "examples", "answer_sizes")
 
     def __init__(self):
         self.requests = 0
@@ -301,7 +327,6 @@ class _Actor:
         self.login_statuses = Counter()
         self.login_redirects = 0
         self.admin_ok = 0
-        self.scanner_uas = set()
         self.sqli = 0
         self.sqli_ok = 0
         self.trav = 0
@@ -312,14 +337,6 @@ class _Actor:
         self.cmsphp_ok = 0
         self.login_first = None
         self.login_last = None
-        # Every login-POST timestamp, for the busiest-window count at
-        # flush. A LIST rather than a sliding deque: sources are read in
-        # file order, which is not time order across rotated logs, and a
-        # window that assumes sorted input silently under-counts. Login
-        # POSTs are a small subset of requests -- the largest single
-        # actor measured on a real corpus carried 714.
-        self.login_epochs = []
-        self.agents = set()
         self.examples = {}          # kind -> first matching uri
         # kind -> [min, max, sized, unsized] over the 2xx answers to this
         # outcome-gated kind. Four integers, never the full list: a big log
@@ -381,57 +398,102 @@ def build(case_dir, targets, ctx=None, workspace=None):
         # Derived data: durability off during the build, indexes after load.
         conn.execute("PRAGMA journal_mode = OFF")
         conn.execute("PRAGMA synchronous = OFF")
-        conn.execute("PRAGMA cache_size = -262144")          # 256 MiB
+        conn.execute("PRAGMA cache_size = -65536")  # 64 MiB, independent of input size
+        conn.execute("PRAGMA temp_store = FILE")
+        conn.execute("PRAGMA temp.cache_size = -16384")
         conn.executescript(_LOG_SCHEMA)
 
-        strings = {}          # text -> id (uris, leafs, referrers, agents, source names)
-        # Per-line regexes are the enemy: everything derivable from the URI
-        # STRING (leaf, detection flags) is computed once at intern time and
-        # served from this cache -- one dict hit per line afterwards.
-        uri_cache = {}        # uri text -> (uri_id, leaf_id, flags)
-        agent_cache = {}      # agent text -> (agent_id, is_scanner)
-        ips = {}              # ip -> id
-        actors = {}           # ip id -> _Actor
-        hours = Counter()     # (ip id, epoch-hour local) -> n
-        days = {}             # local epoch-day -> [requests, errors, new_clients]
-        batch = []
-
+        # High-cardinality URLs/clients must spill to disk, not grow Python dicts.
+        conn.executescript("""
+            CREATE TEMP TABLE string_keys (hash BLOB, id INTEGER,
+                PRIMARY KEY(hash, id)) WITHOUT ROWID;
+            CREATE TEMP TABLE actor_state (ip_id INTEGER PRIMARY KEY, state TEXT);
+            CREATE TEMP TABLE actor_agents (ip_id INTEGER, agent INTEGER,
+                PRIMARY KEY(ip_id, agent)) WITHOUT ROWID;
+            CREATE TEMP TABLE scanner_agents (agent INTEGER PRIMARY KEY);
+            CREATE TEMP TABLE login_times (ip_id INTEGER, epoch INTEGER);
+        """)
+        actors = OrderedDict()
+        hours, days = Counter(), {}
+        batch, login_times, agent_pairs = [], [], set()
+        summary = dict(total=0, first_epoch=None, last_epoch=None,
+                       ok=0, redirects=0, client_errors=0, server_errors=0)
         fast_epoch = accesslog.fast_epoch
 
+        @lru_cache(maxsize=_BUILD_CACHE)
         def intern(text):
-            got = strings.get(text)
-            if got is None:
-                got = strings[text] = len(strings) + 1
-            return got
+            key = hashlib.sha256(text.encode('utf-8', errors='surrogatepass')).digest()
+            # Compare the full string too: a hash collision must not merge evidence.
+            row = conn.execute("SELECT s.id FROM string_keys k JOIN strings s ON s.id=k.id "
+                               "WHERE k.hash=? AND s.text=?", (key, text)).fetchone()
+            if row is not None:
+                return row[0]
+            ident = conn.execute("INSERT INTO strings(text) VALUES (?)", (text,)).lastrowid
+            conn.execute("INSERT INTO string_keys VALUES (?,?)", (key, ident))
+            return ident
 
+        @lru_cache(maxsize=_BUILD_CACHE)
+        def ip_entry(ip):
+            conn.execute("INSERT OR IGNORE INTO ips(ip) VALUES (?)", (ip,))
+            return conn.execute("SELECT id FROM ips WHERE ip=?", (ip,)).fetchone()[0]
+
+        def save_actor(ip_id, actor):
+            state = [getattr(actor, key) for key in actor.__slots__]
+            conn.execute("INSERT OR REPLACE INTO actor_state VALUES (?,?)",
+                         (ip_id, _json.dumps(state)))
+
+        def get_actor(ip_id):
+            actor = actors.pop(ip_id, None)
+            if actor is None:
+                row = conn.execute("SELECT state FROM actor_state WHERE ip_id=?", (ip_id,)).fetchone()
+                actor = read_actor(row[0]) if row else _Actor()
+            if len(actors) >= _BUILD_ACTORS:
+                save_actor(*actors.popitem(last=False))
+            actors[ip_id] = actor
+            return actor
+
+        def read_actor(state):
+            actor = _Actor()
+            for key, value in zip(actor.__slots__, _json.loads(state)):
+                setattr(actor, key, value)
+            actor.login_statuses = Counter({int(k): v for k, v in actor.login_statuses.items()})
+            return actor
+
+        def iter_actors():
+            for ip_id, ip, state in conn.execute(
+                    "SELECT a.ip_id,i.ip,a.state FROM actor_state a JOIN ips i ON i.id=a.ip_id ORDER BY a.ip_id"):
+                yield ip_id, ip, read_actor(state)
+
+        def flush():
+            conn.executemany("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+            conn.executemany("INSERT OR IGNORE INTO actor_agents VALUES (?,?)", agent_pairs)
+            conn.executemany("INSERT INTO login_times VALUES (?,?)", login_times)
+            conn.executemany("INSERT INTO actor_hours VALUES (?,?,?) ON CONFLICT(ip_id,hour) "
+                             "DO UPDATE SET n=n+excluded.n",
+                             ((ip_id, hour, n) for (ip_id, hour), n in hours.items()))
+            conn.executemany("INSERT INTO days VALUES (?,?,?,?,?) ON CONFLICT(day) DO UPDATE SET "
+                             "requests=requests+excluded.requests,errors=errors+excluded.errors,ok=ok+excluded.ok",
+                             ((_day_iso(day), v[0], v[1], 0, v[3]) for day, v in days.items()))
+            batch.clear()
+            agent_pairs.clear()
+            login_times.clear()
+            hours.clear()
+            days.clear()
+
+        @lru_cache(maxsize=_BUILD_CACHE)
         def uri_entry(text):
-            got = uri_cache.get(text)
-            if got is None:
-                uri_id = intern(text)
-                leaf_id = intern(_leaf(text))
-                flags = 0
-                if LOGIN_POST_ENDPOINTS.search(text):
-                    flags |= F_LOGIN
-                if SQLI_URI_RE.search(text):
-                    flags |= F_SQLI
-                if TRAVERSAL_URI_RE.search(text):
-                    flags |= F_TRAVERSAL
-                if CMS_DIR_PHP_RE.match(text):
-                    flags |= F_CMS_DIR_PHP
-                if UPLOAD_PHP_RE.search(text):
-                    flags |= F_UPLOAD_PHP
-                if (AUTHENTICATED_AREA_RE.search(text)
-                        or WP_AUTHENTICATED_AREA_RE.search(text)):
-                    flags |= F_ADMIN_AREA
-                got = uri_cache[text] = (uri_id, leaf_id, flags)
-            return got
+            uri_id = intern(text)
+            leaf_id = intern(_leaf(text))
+            flags = _uri_flags(text)
+            return uri_id, leaf_id, flags
 
+        @lru_cache(maxsize=_BUILD_CACHE)
         def agent_entry(text):
-            got = agent_cache.get(text)
-            if got is None:
-                got = agent_cache[text] = (
-                    intern(text), bool(text and SCANNER_UA_RE.search(text)))
-            return got
+            agent_id = intern(text)
+            scanner = bool(text and SCANNER_UA_RE.search(text))
+            if scanner:
+                conn.execute("INSERT OR IGNORE INTO scanner_agents VALUES (?)", (agent_id,))
+            return agent_id
 
         done_size = 0
         # A CANCELLED BUILD IS A FRAGMENT AND HAS TO SAY SO. Everything below
@@ -512,12 +574,10 @@ def build(case_dir, targets, ctx=None, workspace=None):
                             epoch, tz = 0, None
                             file_undated += 1
                         ip = data["ip"]
-                        ip_id = ips.get(ip)
-                        if ip_id is None:
-                            ip_id = ips[ip] = len(ips) + 1
+                        ip_id = ip_entry(ip)
                         uri = data.get("uri") or "-"
                         uri_id, leaf_id, flags = uri_entry(uri)
-                        agent_id, is_scanner = agent_entry(data.get("user_agent") or "")
+                        agent_id = agent_entry(data.get("user_agent") or "")
                         try:
                             status = int(data["status"])
                         except (ValueError, TypeError):
@@ -550,9 +610,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         file_lines += 1
 
                         # --- actor accumulation (the one pass) -----------
-                        a = actors.get(ip_id)
-                        if a is None:
-                            a = actors[ip_id] = _Actor()
+                        a = get_actor(ip_id)
                         a.requests += 1
                         if size is None:
                             a.bytes_unknown += 1
@@ -588,7 +646,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                         a.login_first = epoch
                                     if a.login_last is None or epoch > a.login_last:
                                         a.login_last = epoch
-                                    a.login_epochs.append(epoch)
+                                    login_times.append((ip_id, epoch))
                             # Any method: reaching the backend is a GET.
                             if flags & F_ADMIN_AREA and ok:
                                 a.admin_ok += 1
@@ -616,9 +674,19 @@ def build(case_dir, targets, ctx=None, workspace=None):
                                     a.cmsphp_ok += 1
                                     a.note_size("cms_dir_php", size)
                                 a.examples.setdefault("cms_dir_php", uri)
-                        if is_scanner:
-                            a.scanner_uas.add(data.get("user_agent") or "")
-                        a.agents.add(agent_id)
+                        agent_pairs.add((ip_id, agent_id))
+                        summary['total'] += 1
+                        if epoch:
+                            summary['first_epoch'] = min(summary['first_epoch'] or epoch, epoch)
+                            summary['last_epoch'] = max(summary['last_epoch'] or epoch, epoch)
+                        if 200 <= status < 300:
+                            summary['ok'] += 1
+                        elif 300 <= status < 400:
+                            summary['redirects'] += 1
+                        elif 400 <= status < 500:
+                            summary['client_errors'] += 1
+                        elif status >= 500:
+                            summary['server_errors'] += 1
 
                         if epoch:
                             day = (epoch + tz) // 86400
@@ -634,10 +702,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
 
                         chars += len(line)
                         if len(batch) >= _BATCH:
-                            conn.executemany(
-                                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                batch)
-                            batch.clear()
+                            flush()
                             if ctx is not None:
                                 if ctx.cancelled():
                                     break
@@ -664,49 +729,41 @@ def build(case_dir, targets, ctx=None, workspace=None):
             stats["bytes"] += file_size
             done_size += file_size
 
-        if batch:
-            conn.executemany(
-                "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
-            batch.clear()
+        flush()
+        for ip_id, actor in actors.items():
+            save_actor(ip_id, actor)
+        actors.clear()
+        conn.execute("CREATE INDEX login_times_ip_epoch ON login_times(ip_id,epoch)")
 
-        if ctx is not None:
-            ctx.progress(0.86, "Writing interning tables…")
-        conn.executemany("INSERT INTO strings (id, text) VALUES (?,?)",
-                         ((i, t) for t, i in strings.items()))
-        conn.executemany("INSERT INTO ips (id, ip) VALUES (?,?)",
-                         ((i, ip) for ip, i in ips.items()))
+        def login_burst(ip_id):
+            # Group repeated seconds before the window; rotated files need not be sorted.
+            return conn.execute("SELECT COALESCE(max(burst),0) FROM (SELECT sum(n) OVER "
+                                "(ORDER BY epoch RANGE BETWEEN ? PRECEDING AND CURRENT ROW) burst "
+                                "FROM (SELECT epoch,count(*) n FROM login_times WHERE ip_id=? GROUP BY epoch))",
+                                (BF_WINDOW - 1, ip_id)).fetchone()[0]
 
         # --- actors + first-seen day ------------------------------------
         if ctx is not None:
             ctx.progress(0.88, "Computing actor statistics…")
-        ip_by_id = {i: ip for ip, i in ips.items()}
-        actor_rows = []
-        for ip_id, a in actors.items():
+        for ip_id, ip, a in iter_actors():
             if a.first is not None:
-                day = (a.first + a.tz) // 86400
-                if day in days:
-                    days[day][2] += 1
-            actor_rows.append((
-                ip_id, ip_by_id.get(ip_id, "?"), a.requests, a.first, a.last,
+                day = _day_iso((a.first + a.tz) // 86400)
+                conn.execute("UPDATE days SET new_clients=new_clients+1 WHERE day=?", (day,))
+            scanner_uas = [r[0] for r in conn.execute(
+                "SELECT s.text FROM actor_agents a JOIN scanner_agents sa ON sa.agent=a.agent "
+                "JOIN strings s ON s.id=a.agent WHERE a.ip_id=? ORDER BY s.text LIMIT 5", (ip_id,))]
+            agents = conn.execute("SELECT count(*) FROM actor_agents WHERE ip_id=?", (ip_id,)).fetchone()[0]
+            conn.execute("INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+                ip_id, ip, a.requests, a.first, a.last,
                 a.tz, a.err4, a.err5, a.bytes, a.bytes_unknown,
                 a.posts, a.login_posts,
                 a.login_redirects, a.admin_ok,
                 _json.dumps({str(k): v for k, v in a.login_statuses.items()}),
-                _json.dumps(sorted(a.scanner_uas)[:5]),
+                _json.dumps(scanner_uas),
                 a.sqli, a.sqli_ok, a.trav, a.trav_ok, a.uphp, a.uphp_ok,
                 a.cmsphp, a.cmsphp_ok, a.login_first, a.login_last,
-                _busiest_window(a.login_epochs),
-                len(a.agents)))
-        conn.executemany(
-            "INSERT INTO actors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            actor_rows)
-        conn.executemany(
-            "INSERT INTO actor_hours VALUES (?,?,?)",
-            ((ip_id, hour, n) for (ip_id, hour), n in hours.items()))
-        conn.executemany(
-            "INSERT INTO days VALUES (?,?,?,?,?)",
-            ((_day_iso(day), v[0], v[1], v[2], v[3])
-             for day, v in sorted(days.items())))
+                login_burst(ip_id) if a.login_posts else 0,
+                agents))
 
         # --- alerts (outcome-gated, see module docstring) ----------------
         if ctx is not None:
@@ -741,8 +798,8 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     if unsized else "")
             return f", responses {span}{tail}"
 
-        alert_rows = []
-        for ip_id, a in actors.items():
+        for ip_id, ip, a in iter_actors():
+            alert_rows = []
             if a.login_posts >= BF_THRESHOLD:
                 breakdown = ", ".join(
                     f"{s} ×{n}" for s, n in sorted(a.login_statuses.items()))
@@ -772,7 +829,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 # The burst is what the two do not share. Measured: the
                 # operators peaked at 8 and 10 login POSTs in their busiest
                 # 24 hours; the intruder reached 70 inside one hour.
-                burst = _busiest_window(a.login_epochs)
+                burst = conn.execute("SELECT login_burst FROM actors WHERE ip_id=?", (ip_id,)).fetchone()[0]
                 if a.admin_ok and burst >= BF_THRESHOLD:
                     alert_rows.append((
                         ip_id, "login_success", 0,
@@ -780,12 +837,15 @@ def build(case_dir, targets, ctx=None, workspace=None):
                         f"24 h, then {a.admin_ok} request(s) to the admin "
                         f"backend answered 2xx — a page an unauthenticated "
                         f"session does not get. Verify!", ""))
-            for ua in sorted(a.scanner_uas):
+            for (ua,) in conn.execute(
+                    "SELECT s.text FROM actor_agents a JOIN scanner_agents sa ON sa.agent=a.agent "
+                    "JOIN strings s ON s.id=a.agent WHERE a.ip_id=? ORDER BY s.text", (ip_id,)):
                 # INFORMATIONAL (severity 3): every host on the internet is
                 # scanned around the clock, so "a scanner said hello" is
                 # context, not a lead. It stays recorded and filterable; it
                 # just no longer competes with findings about THIS system.
-                alert_rows.append((ip_id, "scanner_ua", 3, f"UA: {ua}", ""))
+                conn.execute("INSERT INTO alerts(ip_id,kind,severity,detail,example) VALUES (?,?,?,?,?)",
+                             (ip_id, "scanner_ua", 3, f"UA: {ua}", ""))
             if a.uphp_ok:
                 alert_rows.append((
                     ip_id, "upload_php", 0,
@@ -813,11 +873,11 @@ def build(case_dir, targets, ctx=None, workspace=None):
                     f"{a.trav_ok} of {a.trav} path traversal patterns were "
                     f"answered 2xx{_answer_span(a, 'traversal')}",
                     a.examples.get("traversal", "")))
-        conn.executemany(
-            "INSERT INTO alerts (ip_id, kind, severity, detail, example) "
-            "VALUES (?,?,?,?,?)", alert_rows)
-        stats["alerts"] = len(alert_rows)
-        stats["clients"] = len(actors)
+            conn.executemany(
+                "INSERT INTO alerts (ip_id, kind, severity, detail, example) "
+                "VALUES (?,?,?,?,?)", alert_rows)
+        stats["alerts"] = conn.execute("SELECT count(*) FROM alerts").fetchone()[0]
+        stats["clients"] = conn.execute("SELECT count(*) FROM actors").fetchone()[0]
         stats["partial"] = cancelled
 
         if ctx is not None:
@@ -830,6 +890,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
         conn.execute("CREATE INDEX idx_req_source_line ON requests(source, line_no)")
         conn.executemany("INSERT INTO meta VALUES (?,?)", [
             ("schema", SCHEMA_VERSION),
+            ("access_summary", _json.dumps(summary)),
             # Row ids belong to this build, even when the source files did
             # not change. Historical request anchors must not cross builds.
             ("generation", uuid.uuid4().hex),
@@ -870,23 +931,6 @@ def _day_iso(epoch_day):
 # The alert KIND is the rule id, prefixed. It was already a stable string
 # stored in the log index, so inventing a second identifier beside it would
 # only create something to keep in sync.
-def _busiest_window(epochs):
-    """The most login POSTs that fall inside any BF_WINDOW seconds.
-
-    Two pointers over the sorted times: for each end, advance the start past
-    everything older than the window and take the largest span. O(n log n) for
-    the sort and O(n) for the walk, on a list that holds login POSTs only."""
-    if not epochs:
-        return 0
-    times = sorted(epochs)
-    best = start = 0
-    for end, t in enumerate(times):
-        while t - times[start] >= BF_WINDOW:
-            start += 1
-        best = max(best, end - start + 1)
-    return best
-
-
 def _span_words(seconds):
     """`3 s`, `47 min`, `8 h`, `23 d` -- one unit, the biggest that fits.
 
@@ -957,14 +1001,12 @@ def _write_alert_findings(case_dir, workspace=None, completed=True):
     if not log_db.is_file():
         return
     lconn = sqlite3.connect(f"file:{log_db.as_posix()}?mode=ro", uri=True)
+    conn = None
     try:
+        conn = db.connect(case_dir)
         alert_rows = lconn.execute(
             "SELECT a.kind, a.detail, i.ip FROM alerts a "
-            "JOIN ips i ON i.id = a.ip_id").fetchall()
-    finally:
-        lconn.close()
-    conn = db.connect(case_dir)
-    try:
+            "JOIN ips i ON i.id = a.ip_id")
         run = db.begin_run(conn, "logindex")
         off = ruleswitch.disabled_ids(workspace) if workspace else set()
         for kind, detail, ip in alert_rows:
@@ -978,7 +1020,9 @@ def _write_alert_findings(case_dir, workspace=None, completed=True):
         if completed:
             db.complete_run(conn, "logindex", run)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        lconn.close()
 
 
 # --- querying ---------------------------------------------------------------
@@ -1022,12 +1066,16 @@ def actor_spans(case_dir, ips):
         conn.close()
 
 
-def _open_ro(case_dir):
+def _open_ro(case_dir, *, cancelled=None):
     path = db.log_db_path(case_dir)
     if not path.is_file():
         return None
     conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA temp_store = FILE")
+    conn.execute("PRAGMA temp.cache_size = -4096")
+    if cancelled is not None:
+        conn.set_progress_handler(lambda: int(cancelled()), 1000)
     return conn
 
 
@@ -1697,17 +1745,10 @@ _ACCESS_SIGNAL_SQL = (
 
 
 def _access_uri_signals(uri):
-    value = str(uri or "")
-    out = []
-    if SQLI_URI_RE.search(value):
-        out.append("sqli")
-    if TRAVERSAL_URI_RE.search(value):
-        out.append("traversal")
-    if UPLOAD_PHP_RE.search(value):
-        out.append("upload_php")
-    if CMS_DIR_PHP_RE.match(value):
-        out.append("cms_dir_php")
-    return out
+    flags = _uri_flags(str(uri or ""))
+    return [name for flag, name in ((F_SQLI, 'sqli'), (F_TRAVERSAL, 'traversal'),
+                                    (F_UPLOAD_PHP, 'upload_php'), (F_CMS_DIR_PHP, 'cms_dir_php'))
+            if flags & flag]
 
 
 def _request_signals(uri, agent="", alerts=()):
@@ -1736,17 +1777,19 @@ def _prepare_access_conn(conn):
         "access_agent_signal", 1,
         lambda value: 1 if value and SCANNER_UA_RE.search(str(value)) else 0,
         deterministic=True)
-    # Resolve explanatory examples once per distinct string. Membership then
-    # stays inside SQLite instead of invoking Python once per request.
-    examples = {}
-    for row in conn.execute("SELECT ip_id, example FROM alerts WHERE example != ''"):
-        examples.setdefault(str(row[1]).lower(), set()).add(int(row[0]))
+    # Keep large alert/example sets in SQLite as well as the request index.
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS access_examples "
+                 "(text TEXT,ip INTEGER,PRIMARY KEY(text,ip)) WITHOUT ROWID")
+    conn.execute("DELETE FROM access_examples")
+    conn.executemany("INSERT OR IGNORE INTO access_examples VALUES (?,?)",
+                     ((str(row[1]).lower(), row[0]) for row in conn.execute(
+                         "SELECT ip_id,example FROM alerts WHERE example != ''")))
+    conn.create_function("access_example_key", 1, lambda value: str(value).lower(), deterministic=True)
     conn.execute("CREATE TEMP TABLE IF NOT EXISTS access_alert_examples (ip INTEGER, uri INTEGER, PRIMARY KEY(ip,uri)) WITHOUT ROWID")
     conn.execute("DELETE FROM access_alert_examples")
-    if examples:
-        conn.executemany("INSERT OR IGNORE INTO access_alert_examples VALUES (?,?)",
-            ((ip, row[0]) for row in conn.execute("SELECT id,text FROM strings")
-             for ip in examples.get(str(row[1]).lower(), ())))
+    if conn.execute("SELECT 1 FROM access_examples LIMIT 1").fetchone():
+        conn.execute("INSERT OR IGNORE INTO access_alert_examples "
+                     "SELECT e.ip,s.id FROM strings s JOIN access_examples e ON e.text=access_example_key(s.text)")
 
 
 def _access_joins_for(filters, extra=()):
@@ -1935,10 +1978,10 @@ def _public_access_rows(conn, rows):
     return out
 
 
-def access_search(case_dir, filters=None, limit=200):
+def access_search(case_dir, filters=None, limit=200, *, cancelled=None):
     """Search the complete access-log index with cursor pagination."""
     filters = dict(filters or {})
-    conn = _open_ro(case_dir)
+    conn = _open_ro(case_dir, cancelled=cancelled)
     if conn is None:
         return {"total": 0, "rows": [], "next_cursor": None,
                 "summary": {"ok": 0, "redirects": 0, "client_errors": 0,
@@ -1946,10 +1989,15 @@ def access_search(case_dir, filters=None, limit=200):
                             "last_epoch": None}}
     try:
         conn.execute("BEGIN")
-        _prepare_access_conn(conn)
+        if filters.get("signals_only"):
+            _prepare_access_conn(conn)
         key = _access_cache_key(case_dir, conn, filters, 'summary')
         summary_row = _access_cached(key)
         base_clause, base_params = _access_clause(filters, cursor=False)
+        if summary_row is None and base_clause == "1 = 1":
+            stored = conn.execute("SELECT value FROM meta WHERE key='access_summary'").fetchone()
+            if stored is not None:
+                summary_row = _json.loads(stored[0])
         if summary_row is None:
             summary_row = dict(conn.execute(
                 f"""SELECT count(*) AS total,
@@ -1996,10 +2044,10 @@ def _nice_bucket(span, wanted=72):
     return 90 * 86400
 
 
-def access_overview(case_dir, filters=None):
+def access_overview(case_dir, filters=None, *, cancelled=None):
     """Histogram and exact full-scope facets for the current search."""
     filters = dict(filters or {})
-    conn = _open_ro(case_dir)
+    conn = _open_ro(case_dir, cancelled=cancelled)
     if conn is None:
         return {"total": 0, "timeline": [], "bucket_seconds": 0,
                 "facets": {}}
@@ -2117,14 +2165,15 @@ def _uri_pattern(uri):
     return patterned or "/"
 
 
-def access_patterns(case_dir, filters=None, limit=80):
+def access_patterns(case_dir, filters=None, limit=80, *, cancelled=None):
     """Group exact URIs into readable shapes, then measure those shapes."""
     filters = dict(filters or {})
-    conn = _open_ro(case_dir)
+    conn = _open_ro(case_dir, cancelled=cancelled)
     if conn is None:
         return {"patterns": [], "sampled_uris": 0, "truncated": False}
     try:
-        _prepare_access_conn(conn)
+        if filters.get("signals_only"):
+            _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         candidates = conn.execute(
             f"""SELECT r.uri AS uri_id, u.text AS uri, count(*) AS requests
@@ -2169,7 +2218,7 @@ def access_patterns(case_dir, filters=None, limit=80):
         conn.close()
 
 
-def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
+def access_segments(case_dir, filters=None, gap_seconds=900, limit=100, *, cancelled=None):
     """Measured activity windows for a deliberately small client scope.
 
     They are called segments, never sessions: an access log has no authority
@@ -2180,11 +2229,12 @@ def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
         return {"segments": [], "requires_client": True, "truncated": False}
     if len(clients) > 5:
         raise ValueError("activity segments support at most five clients")
-    conn = _open_ro(case_dir)
+    conn = _open_ro(case_dir, cancelled=cancelled)
     if conn is None:
         return {"segments": [], "requires_client": False, "truncated": False}
     try:
-        _prepare_access_conn(conn)
+        if filters.get("signals_only"):
+            _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         raw = conn.execute(
             f"{_access_select()} WHERE {clause} "
@@ -3278,7 +3328,7 @@ def _first_sign_alert_anchors(conn, ip_id, kinds, deadline=None):
                     pending.remove("login_flood")
                 if "login_success" in pending:
                     login_window.append(anchor)
-                    # Match _busiest_window's exclusive upper boundary.
+                    # The login burst window excludes requests exactly BF_WINDOW apart.
                     while anchor[0] - login_window[0][0] >= BF_WINDOW:
                         login_window.popleft()
                     if len(login_window) >= BF_THRESHOLD:

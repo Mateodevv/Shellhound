@@ -1,5 +1,27 @@
 # Testing SHELLHOUND
 
+## Large access logs
+
+Run `python -m unittest tests.test_large_access_logs tests.test_performance_optimizations`
+with the project environment. These checks force cache eviction and batch
+flushes, compare complete indexed data, preserve all scanner agents and the
+exclusive login-burst boundary, and interrupt an actual SQLite query after
+the client disconnects. They also compare the ASCII prefilter with the full
+URI detectors, including Unicode case matching. Frontend checks live in `AccessLogs.test.tsx` and
+`api.diagnostics.test.ts`.
+
+For an offline scale check, run:
+
+    python -m tools.benchmark_access_logs --requests 750000 --uri-bytes 4000
+
+This creates about 3.09 GB of synthetic requests with distinct long URLs and
+50,000 clients in a temporary directory, verifies totals and removes all
+generated files afterward. Allow space for the source, the derived index and
+temporary database state. Output includes import/search time and peak process
+RSS on Linux/macOS. Add `--overview` to measure the optional distributions;
+they are intentionally excluded from initial page loading. Compare the same
+command on both revisions; timings depend on available CPU and disk.
+
 See [Development](development.md) for setup and the [repository map](repository-structure.md) for source locations.
 
 ## Case workflow acceptance

@@ -121,6 +121,30 @@ function mockApi() {
 }
 
 describe('access-log investigation workspace', () => {
+  it('loads distributions only on demand and aborts the previous page on a sort change', async () => {
+    mockApi()
+    const respond = vi.mocked(post).getMockImplementation()!
+    let pending = true
+    vi.mocked(post).mockImplementation((...args) => {
+      if (args[0].endsWith('/access/search') && pending) {
+        pending = false
+        return new Promise(() => {})
+      }
+      return respond(...args)
+    })
+    renderWithProviders(<AccessLogs slug="case-1" gotoView={vi.fn()} />)
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/access/search'))).toBe(true))
+    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/access/overview'))).toBe(false)
+    const first = vi.mocked(post).mock.calls.find(([path]) => path.endsWith('/access/search'))
+    const signal = first?.[2]?.signal
+    expect(signal).toBeInstanceOf(AbortSignal)
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sort' }), { target: { value: 'time' } })
+    await waitFor(() => expect(signal?.aborted).toBe(true))
+    await screen.findByText(ROW.uri, { selector: 'span' })
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/access/overview'))).toBe(true))
+  })
+
   it('starts with the complete request stream and opens citable raw context', async () => {
     mockApi()
     renderWithProviders(<AccessLogs slug="case-1" gotoView={vi.fn()} />)

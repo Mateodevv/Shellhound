@@ -42,6 +42,7 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   }
   return await res.json() as T
   } catch (error) {
+    if (init?.signal?.aborted) throw error
     const url = new URL(path, location.origin)
     reportClientError(url.pathname.endsWith('/file') ? 'file-content-open' : 'api-request',
       error, url.searchParams.get('path') ?? url.pathname)
@@ -49,8 +50,8 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   }
 }
 
-export const post = <T = unknown>(path: string, body?: unknown) =>
-  api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+export const post = <T = unknown>(path: string, body?: unknown, init?: Pick<RequestInit, 'signal'>) =>
+  api<T>(path, { ...init, method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
 
 export const patch = <T = unknown>(path: string, body: unknown) =>
   api<T>(path, { method: 'PATCH', body: JSON.stringify(body) })

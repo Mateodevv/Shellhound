@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { api, reportClientError } from './api'
+import { api, post, reportClientError } from './api'
 
 it('records a failed file request with its server correlation ID and preserves the error', async () => {
   const fetcher = vi.spyOn(globalThis, 'fetch')
@@ -23,4 +23,13 @@ it('does not recursively report failed logging or duplicate the same exception',
   reportClientError('browser-exception', error)
   await Promise.resolve()
   expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+it('passes cancellation to fetch without recording an expected abort as an error', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('Aborted', 'AbortError'))
+  await expect(post('/api/cases/synthetic/access/search', {}, { signal: controller.signal })).rejects.toThrow('Aborted')
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher.mock.calls[0][1]?.signal).toBe(controller.signal)
 })

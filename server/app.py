@@ -19,13 +19,14 @@ import io
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import uuid
 import zipfile
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager, closing, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,6 +68,32 @@ from server.engines import (cmsinventory, detect, errorlog, logindex,
                             webrootdiff, webshell)
 from server.events import hub
 from server.jobs import CaseBusy, manager
+
+
+async def _access_query(request, query, *args, **kwargs):
+    """A superseded browser search must stop its SQLite worker too."""
+    cancelled = threading.Event()
+
+    async def watch_disconnect():
+        while not cancelled.is_set():
+            if await request.is_disconnected():
+                cancelled.set()
+                return
+            await asyncio.sleep(0.1)
+
+    watcher = asyncio.create_task(watch_disconnect())
+    try:
+        return await asyncio.to_thread(query, *args, cancelled=cancelled.is_set, **kwargs)
+    except sqlite3.OperationalError:
+        if cancelled.is_set():
+            raise HTTPException(499, "Access-log query cancelled") from None
+        raise
+    finally:
+        cancelled.set()
+        watcher.cancel()
+        with suppress(asyncio.CancelledError):
+            await watcher
+
 
 def _overlay_cms_version(row, scope, key, overrides):
     """Keep the measured value alongside the analyst's durable correction."""
@@ -4382,30 +4409,30 @@ def create_app(config: Config) -> FastAPI:
         return data
 
     @app.post("/api/cases/{slug}/access/search", dependencies=[auth])
-    def access_search(slug: str, body: AccessQueryBody):
+    async def access_search(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
         filters = access_filters(body, keep_page=True)
         try:
-            return logindex.access_search(
+            return await _access_query(request, logindex.access_search,
                 case_dir, filters, limit=max(25, min(body.limit, 500)))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.post("/api/cases/{slug}/access/overview", dependencies=[auth])
-    def access_overview(slug: str, body: AccessQueryBody):
+    async def access_overview(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
-        return logindex.access_overview(case_dir, access_filters(body))
+        return await _access_query(request, logindex.access_overview, case_dir, access_filters(body))
 
     @app.post("/api/cases/{slug}/access/patterns", dependencies=[auth])
-    def access_patterns(slug: str, body: AccessQueryBody):
+    async def access_patterns(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
-        return logindex.access_patterns(case_dir, access_filters(body))
+        return await _access_query(request, logindex.access_patterns, case_dir, access_filters(body))
 
     @app.post("/api/cases/{slug}/access/segments", dependencies=[auth])
-    def access_segments(slug: str, body: AccessQueryBody):
+    async def access_segments(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
         try:
-            return logindex.access_segments(case_dir, access_filters(body))
+            return await _access_query(request, logindex.access_segments, case_dir, access_filters(body))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
