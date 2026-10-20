@@ -439,6 +439,7 @@ export interface YaraRuleFile {
 /** Operator configuration. The real API keys never reach the browser --
  *  `hint` is the last four characters, enough to tell two keys apart. */
 export interface SettingsInfo {
+  indirect_php: boolean
   services: Record<string, {
     configured: boolean
     hint: string

@@ -609,6 +609,13 @@ retries unfinished parts. [Setup and behavior](opencti.md).
 
 ## Configuration
 
+**Settings → Detection → Extended indirect PHP detection** enables additional
+static checks for request copies, obfuscated callable names and decoded
+variables passed to executable calls. It is off by default and saved for the
+whole workspace. Scans may take longer; run a full analysis after switching
+the mode. Existing findings and review decisions remain stored, while a new
+full analysis can retire findings it no longer reproduces.
+
 | Option | Meaning |
 |---|---|
 | `--workspace PATH` | Where cases are kept, default `~/ShellhoundCases` |

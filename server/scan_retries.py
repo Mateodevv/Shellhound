@@ -32,6 +32,8 @@ def scanner_signature(kind, workspace):
         digest.update(source.read_bytes())
     if kind == "webshell":
         digest.update(json.dumps(sorted(ruleswitch.disabled_ids(workspace))).encode())
+        digest.update(json.dumps(settings.load(workspace)["indirect_php"]).encode())
+        digest.update((Path(__file__).parent / "engines" / "php_indirect.py").read_bytes())
         # The shipped content rules are compiled from this local asset.
         digest.update((Path(__file__).parent / "bundled_rules.py").read_bytes())
         for rule in sorted((Path(__file__).parent / "rules_bundled").rglob("*.yar*")):

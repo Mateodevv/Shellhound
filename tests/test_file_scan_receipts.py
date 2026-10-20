@@ -136,7 +136,7 @@ class FileScanReceiptTests(unittest.TestCase):
     def test_mutation_during_matching_never_records_a_success(self):
         path = self.fixture.roots[0] / 'ordinary.php'
         path.write_text('Initial harmless marker\n', encoding='utf-8')
-        def changed(_raw, _kind):
+        def changed(_raw, _kind, *, indirect_php=False):
             path.write_text('New harmless marker\n', encoding='utf-8')
             return []
         with patch.object(webshell, '_yara_findings', side_effect=changed):
@@ -150,7 +150,7 @@ class FileScanReceiptTests(unittest.TestCase):
         path.write_text('Harmless cancellation marker\n', encoding='utf-8')
         ctx = SimpleNamespace(stopped=False, progress=lambda *args: None)
         ctx.cancelled = lambda: ctx.stopped
-        def stopped(_raw, _kind):
+        def stopped(_raw, _kind, *, indirect_php=False):
             ctx.stopped = True
             return []
         with patch.object(webshell, '_yara_findings', side_effect=stopped):

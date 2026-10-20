@@ -4,6 +4,10 @@
 // state what the rule itself establishes. "Is a backdoor" would be wrong;
 // "can execute commands if it is reachable" is the finding.
 export const en: Record<string, string> = {
+  'settings.detection': 'Detection',
+  'settings.detectionHint': 'Workspace-wide options for subsequent analyses.',
+  'settings.indirectPhp': 'Extended indirect PHP detection',
+  'settings.indirectPhpHint': 'Off by default. Follows local request copies, obfuscated function names and decoded values into executable calls. Static evidence only; scanning may take longer. Run a full analysis after changing this option. Review decisions remain stored; findings not reproduced by the next full analysis are retired.',
   'sourceTime.auto': 'Automatic / recorded time zone',
   'sourceTime.local': 'This computer: {zone}',
   'sourceTime.choose': 'Choose time zone…',
@@ -1332,6 +1336,12 @@ export const en: Record<string, string> = {
   'rule.evalOnInput.why': 'This lets the caller run arbitrary code — the core of almost every webshell.',
   'rule.variableFunction.what': 'Which function gets called is decided by a parameter from the request.',
   'rule.variableFunction.why': 'An obfuscated form of "run what I send you". Legitimate code practically never does this.',
+  'rule.indirectInput.what': 'A request parameter passes through a local variable into an executable call, or determines which function is called.',
+  'rule.indirectInput.why': 'The source and call are linked within one straight-line block. Review the original lines and intended access controls; this is static evidence, not proof that the call ran.',
+  'rule.obfuscatedCall.what': 'A known executable function name is reconstructed from bounded literals, escapes or simple decoding, then called.',
+  'rule.obfuscatedCall.why': 'The unusual name and the actual invocation occur together. Ordinary callback names and unused encoded strings do not satisfy this rule.',
+  'rule.decodedExecution.what': 'A local variable receives decoded content and is then passed to eval or assert.',
+  'rule.decodedExecution.why': 'Review why the application loads code this way. The detector never executes the content; assert behavior also depends on the target PHP version.',
   'rule.commandExec.what': 'A system command is assembled from values in the request.',
   'rule.commandExec.why': 'Allows commands on the server. If the file was reachable, this is access to the system.',
   'rule.fileDropper.what': 'The file writes incoming data to disk.',

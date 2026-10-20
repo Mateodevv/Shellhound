@@ -6,6 +6,17 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Added — bounded indirect PHP detection
+
+- Opt in through Settings → Detection → Extended indirect PHP detection.
+  Disabled by default; applies workspace-wide on subsequent analyses. Run
+  full analysis after switching modes; existing review decisions remain stored.
+- Correlate local request copies with executable calls, statically resolve
+  obfuscated executable function names, and detect decoded variables passed
+  to eval/assert. Findings retain original call, request and decoder lines.
+- Limit literal folding and block-local analysis; discard unknown expressions
+  and scope changes. Evidence is never executed or reparsed as decoded PHP.
+
 ### Fixed — CMS detection context
 
 - Avoid treating internal underscore variables and comment examples as request

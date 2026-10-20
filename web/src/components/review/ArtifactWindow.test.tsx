@@ -562,7 +562,7 @@ describe('what the window states about the artifact', () => {
         },
       },
     })
-    const settings: SettingsInfo = { services: {}, enrichment_ack: false, path: '' }
+    const settings: SettingsInfo = { services: {}, enrichment_ack: false, indirect_php: false, path: '' }
     vi.mocked(api).mockImplementation(async (path: string) =>
       (path === '/api/settings' ? settings : artifactContext) as never)
 
@@ -632,6 +632,7 @@ describe('what the window states about the artifact', () => {
       file: { exists: true, size: 42, sha256: 'a'.repeat(64) },
     })
     const settings: SettingsInfo = {
+      indirect_php: false,
       enrichment_ack: true, path: '',
       services: {
         virustotal: { configured: true, hint: '', sends: 'SHA-256', url: '' },
