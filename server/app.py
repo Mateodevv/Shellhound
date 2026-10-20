@@ -619,6 +619,13 @@ def create_app(config: Config) -> FastAPI:
     class AckBody(BaseModel):
         accepted: bool
 
+    class DetectionBody(BaseModel):
+        indirect_php: bool = Field(strict=True)
+
+    @app.post("/api/settings/detection", dependencies=[auth])
+    def settings_detection(body: DetectionBody):
+        return settingslib.set_indirect_php(config.workspace, body.indirect_php)
+
     @app.post("/api/settings/enrichment-ack", dependencies=[auth])
     def settings_ack(body: AckBody):
         """The analyst has read what a lookup sends out. Until this is set,

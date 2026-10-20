@@ -110,6 +110,8 @@ def _tokens(raw):
             continue
         if text == b'?>':
             active = False
+            # PHP's closing tag also terminates the preceding statement.
+            yield Token(b';', match.start(), match.end())
             yield Token(b';boundary', match.start(), match.end())
         elif text.startswith(b'<<<'):
             label = next(value for value in match.groups() if value is not None)

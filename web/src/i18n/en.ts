@@ -4,6 +4,10 @@
 // state what the rule itself establishes. "Is a backdoor" would be wrong;
 // "can execute commands if it is reachable" is the finding.
 export const en: Record<string, string> = {
+  'settings.detection': 'Detection',
+  'settings.detectionHint': 'Workspace-wide options for subsequent analyses.',
+  'settings.indirectPhp': 'Extended indirect PHP detection',
+  'settings.indirectPhpHint': 'Off by default. Follows local request copies, obfuscated function names and decoded values into executable calls. Static evidence only; scanning may take longer. Run a full analysis after changing this option. Review decisions remain stored; findings not reproduced by the next full analysis are retired.',
   'sourceTime.auto': 'Automatic / recorded time zone',
   'sourceTime.local': 'This computer: {zone}',
   'sourceTime.choose': 'Choose time zone…',

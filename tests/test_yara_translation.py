@@ -35,6 +35,11 @@ RULES_DIR = Path(__file__).resolve().parent.parent / "server" / "rules_bundled"
 
 # --- frozen: what these rules matched before the translation ---------------
 REFERENCE = {
+    # Contextual rules have no legacy regex; their behaviour is covered in
+    # test_php_indirect while this catalogue checks IDs and severities.
+    "webshell.indirect_input": None,
+    "webshell.obfuscated_call": None,
+    "webshell.decoded_execution": None,
     "webshell.eval_input": re.compile(
         r"(?i)\b(eval|assert)\s*\(\s*(base64_decode|gzinflate|gzuncompress|str_rot13|strrev|\$_(POST|GET|REQUEST|COOKIE))"),
     "webshell.var_func": re.compile(

@@ -45,6 +45,7 @@ _DEFAULTS = {
     # true, no request leaves the machine -- the same gate as the GeoIP
     # download, and for the same reason.
     "enrichment_ack": False,
+    "indirect_php": False,
     # YARA rule FILES switched off for this workspace, by file name. Stored
     # here rather than as a marker inside the rule, because the rule file is
     # the analyst's own text and may have come from a vendor feed: switching
@@ -65,7 +66,7 @@ def load(workspace) -> dict:
     """The settings, with defaults filled in. A broken file never raises --
     it must not be the reason the interface stops opening."""
     out = {"keys": dict(_DEFAULTS["keys"]),
-           "enrichment_ack": _DEFAULTS["enrichment_ack"],
+           "enrichment_ack": _DEFAULTS["enrichment_ack"], "indirect_php": False,
            "yara_disabled": [], "rules_disabled": [], "opencti": dict(_CTI_DEFAULTS)}
     try:
         raw = json.loads(path(workspace).read_text(encoding="utf-8"))
@@ -86,6 +87,7 @@ def load(workspace) -> dict:
             if isinstance(value, str):
                 out["keys"][name] = value.strip()
     out["enrichment_ack"] = raw.get("enrichment_ack") is True
+    out["indirect_php"] = raw.get("indirect_php") is True
     for key in ("yara_disabled", "rules_disabled"):
         raw_list = raw.get(key)
         if isinstance(raw_list, list):
@@ -122,7 +124,16 @@ def public(workspace) -> dict:
     return {"services": {name: {**info, "configured": bool(data["keys"][name]),
             "hint": "…" + data["keys"][name][-4:] if len(data["keys"][name]) > 4 else "…" if data["keys"][name] else ""}
             for name, info in SERVICES.items()}, "enrichment_ack": data["enrichment_ack"],
-            "opencti": opencti_public(workspace), "path": str(path(workspace))}
+            "opencti": opencti_public(workspace), "indirect_php": data["indirect_php"],
+            "path": str(path(workspace))}
+
+
+def set_indirect_php(workspace, enabled) -> dict:
+    with _LOCK:
+        data = load(workspace)
+        data["indirect_php"] = enabled is True
+        save(workspace, data)
+    return public(workspace)
 
 
 def yara_disabled(workspace) -> set:

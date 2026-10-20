@@ -4,6 +4,7 @@ import { api, post } from '../../api'
 import { renderWithProviders } from '../../test/setup'
 import { Start } from '../../views/Start'
 import { THEME_KEY } from '../../theme'
+import { WorkspaceSettingsDialog } from './WorkspaceSettingsDialog'
 
 vi.mock('../../api', async original => ({ ...(await original<typeof import('../../api')>()), api: vi.fn(), post: vi.fn() }))
 beforeEach(() => {
@@ -46,4 +47,41 @@ it('opens the existing GeoIP download flow only after an explicit click', async 
   fireEvent.click(screen.getByRole('button', { name: 'Fetch now' }))
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/geo/download', {}))
   await waitFor(() => expect(screen.queryByText('GeoIP database is missing')).not.toBeInTheDocument())
+})
+
+it('persists the opt-in PHP detection mode and restores it when settings reopen', async () => {
+  let enabled = false
+  vi.mocked(api).mockImplementation(async path => {
+    if (path === '/api/settings') return { services: {}, indirect_php: enabled, enrichment_ack: false, path: '' }
+    throw new Error(`Unexpected API: ${path}`)
+  })
+  vi.mocked(post).mockImplementation(async (_path, body) => {
+    enabled = (body as { indirect_php: boolean }).indirect_php
+    return { services: {}, indirect_php: enabled, enrichment_ack: false, path: '' }
+  })
+  const view = renderWithProviders(<WorkspaceSettingsDialog onClose={() => {}} initialTab="detection" />)
+  const toggle = await screen.findByRole('checkbox', { name: 'Extended indirect PHP detection' })
+  await waitFor(() => expect(toggle).toBeEnabled())
+  expect(toggle).not.toBeChecked()
+  fireEvent.click(toggle)
+  await waitFor(() => expect(toggle).toBeChecked())
+  expect(post).toHaveBeenCalledWith('/api/settings/detection', { indirect_php: true })
+  view.unmount()
+  renderWithProviders(<WorkspaceSettingsDialog onClose={() => {}} initialTab="detection" />)
+  await waitFor(() => expect(screen.getByRole('checkbox')).toBeChecked())
+  await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled())
+  fireEvent.click(screen.getByRole('checkbox'))
+  await waitFor(() => expect(screen.getByRole('checkbox')).not.toBeChecked())
+  expect(post).toHaveBeenCalledWith('/api/settings/detection', { indirect_php: false })
+})
+
+it('shows detection save errors without changing the saved mode', async () => {
+  vi.mocked(api).mockResolvedValue({ services: {}, indirect_php: false })
+  vi.mocked(post).mockRejectedValue(new Error('Synthetic save failure'))
+  renderWithProviders(<WorkspaceSettingsDialog onClose={() => {}} initialTab="detection" />)
+  const toggle = screen.getByRole('checkbox', { name: 'Extended indirect PHP detection' })
+  await waitFor(() => expect(toggle).toBeEnabled())
+  fireEvent.click(toggle)
+  expect(await screen.findByText('Synthetic save failure')).toBeVisible()
+  expect(toggle).not.toBeChecked()
 })

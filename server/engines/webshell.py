@@ -30,7 +30,7 @@ from bisect import bisect_right
 
 import yara
 
-from server import bundled_rules, db, ruleswitch, file_scan_receipts
+from server import bundled_rules, db, ruleswitch, file_scan_receipts, settings
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from server.paths import display_path, io_path
@@ -254,7 +254,7 @@ def _line_snippet(raw, begin, limit=160):
     return prefix[:last_nonspace]
 
 
-def _yara_findings(raw, kind):
+def _yara_findings(raw, kind, *, indirect_php=False):
     """Run the bundled rules of one kind over a file's bytes.
 
     Yields (rule_id, severity, name, line, evidence) -- the same shape the
@@ -268,7 +268,7 @@ def _yara_findings(raw, kind):
     if not matches:
         return
     indirect = {}
-    if kind == "content" and any(match.meta.get("id") in php_indirect.RULE_IDS for match in matches):
+    if indirect_php and kind == "content" and any(match.meta.get("id") in php_indirect.RULE_IDS for match in matches):
         for evidence in php_indirect.analyse(raw):
             indirect[(evidence.rule_id, evidence.offset)] = evidence
     locations = _match_locations(raw, matches)
@@ -327,7 +327,7 @@ def _yara_findings(raw, kind):
     yield from out
 
 
-def scan_file(file_path, root=None, *, max_bytes=None, cancelled=None):
+def scan_file(file_path, root=None, *, max_bytes=None, cancelled=None, indirect_php=False):
     """Scan one file. Returns (findings, skip_reason, inert) where findings is
     [(rule_id, severity, rule, line, evidence)].
 
@@ -420,7 +420,7 @@ def scan_file(file_path, root=None, *, max_bytes=None, cancelled=None):
         findings.extend(_yara_findings(raw, "htaccess"))
         return result()
 
-    findings.extend(_yara_findings(raw, "content"))
+    findings.extend(_yara_findings(raw, "content", indirect_php=indirect_php))
 
     if in_upload_dir(site_path) and not CMS_GUARD_RE.search(raw[:GUARD_SNIFF_BYTES]):
         if EXEC_SURFACE_RE.search(raw):
@@ -436,12 +436,14 @@ def scan_file(file_path, root=None, *, max_bytes=None, cancelled=None):
     return result()
 
 
-def _parallel_scans(files, limits, progress):
+def _parallel_scans(files, limits, progress, indirect_php=False):
     """Bound read-ahead; only the caller writes findings, in discovery order."""
     def inspect(entry):
         path, root = entry
         limit = limits.get(canonical_file(path)) if limits else None
         options = {'cancelled': progress.cancelled}
+        if indirect_php:
+            options['indirect_php'] = True
         if limit is not None:
             options['max_bytes'] = limit
         return scan_file(path, root, **options)
@@ -476,6 +478,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
     # Read ONCE. The answer cannot change mid-run, and a settings read per
     # line of every file in a webroot is a different kind of tool.
     off = ruleswitch.disabled_ids(workspace) if workspace else set()
+    indirect_php = settings.load(workspace)["indirect_php"] if workspace else False
     # Each file remembers WHICH TARGET it came out of: the location rules
     # need the path below that root, not the one on this machine.
     progress = ScanProgress(ctx)
@@ -512,7 +515,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True,
         for path in hashes:
             hashes_by_path.setdefault(canonical_file(path), []).append(path)
         flagged = set()
-        scans = _parallel_scans(files, limits, progress)
+        scans = _parallel_scans(files, limits, progress, indirect_php)
         for i, ((file_path, root), future) in enumerate(scans):
             if progress.cancelled():
                 break
