@@ -392,6 +392,7 @@ GET_ROUTES = {
     "/api/cases/{slug}/database": "",
     "/api/cases/{slug}/database/row": "finding_id={row_finding}&dump_id={row_dump}",
     "/api/cases/{slug}/database/table-row": None,  # specific table ordinal
+    "/api/cases/{slug}/database/field": None,  # version-bound field page
     "/api/cases/{slug}/database/sql-preview": None,  # registered SQL source
     "/api/cases/{slug}/database/accounts.csv": "",
     "/": None,
@@ -473,8 +474,8 @@ class EndpointSurfaceTests(unittest.TestCase):
                          ("sql_dump", str(path), db.now()))
             dump_id = conn.execute("INSERT INTO db_dumps (path) VALUES (?)",
                                    (str(path),)).lastrowid
-            conn.execute("INSERT INTO db_tables (dump_id,name,rows) VALUES (?,?,?)",
-                         (dump_id, "preview_items", 2))
+            table_id = conn.execute("INSERT INTO db_tables (dump_id,name,rows) VALUES (?,?,?)",
+                                    (dump_id, "preview_items", 2)).lastrowid
             fingerprint = db.upsert_finding(
                 conn, "sqldb", 1, "Harmless row observation", "table", "preview_items",
                 line=2, evidence="Recorded excerpt")
@@ -487,14 +488,27 @@ class EndpointSurfaceTests(unittest.TestCase):
         base = f"/api/cases/{slug}/database/row"
         status, response = get_json(f"{base}?finding_id={finding_id}&dump_id={dump_id}")
         self.assertEqual(200, status, response)
+        self.assertRegex(response["record_version"], r"^[0-9a-f]{64}$")
         self.assertEqual({
             "table": "preview_items", "row": 2, "dump_id": dump_id,
+            "table_id": table_id, "total_rows": 2, "record_version": response["record_version"],
+            "finding_match": {"state": "rule_unavailable", "matches": [], "sources": []},
             "dump_path": str(path), "truncated": False,
             "columns": [
-                {"name": "label", "value": "selected row", "truncated": False},
-                {"name": "id", "value": "2", "truncated": False},
+                {"index": 0, "name": "label", "value": "selected row", "truncated": False},
+                {"index": 1, "name": "id", "value": "2", "truncated": False},
             ],
         }, response)
+        field_url = (f"/api/cases/{slug}/database/field?table_id={table_id}&row=2&column_index=0"
+                     f"&record_version={response['record_version']}&finding_id={finding_id}")
+        status, page = get_json(field_url)
+        self.assertEqual(200, status, page)
+        self.assertEqual((page["value"], page["offset"], page["next_offset"], page["total_characters"]),
+                         ("selected row", 0, None, 12))
+        status, _ = get_json(field_url + "&offset=-1")
+        self.assertEqual(400, status)
+        status, _ = get_json(field_url.replace(response["record_version"], "stale"))
+        self.assertEqual(409, status)
         for query in (f"finding_id={finding_id}", f"dump_id={dump_id}",
                       f"finding_id=invalid&dump_id={dump_id}",
                       f"finding_id={finding_id}&dump_id=invalid"):

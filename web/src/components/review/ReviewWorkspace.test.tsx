@@ -66,9 +66,9 @@ it('requires source choice for table records and moves between real row ordinals
   expect(api).not.toHaveBeenCalled()
   await userEvent.selectOptions(screen.getByRole('combobox'), '2')
   expect(await screen.findByText('safe marker')).toBeVisible()
-  expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=2')
+  expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=2&expected_dump_path=%2Fb.sql&expected_table=items&finding_id=1')
   await userEvent.click(screen.getByRole('button',{name:'Next row'}))
-  await waitFor(() => expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=3'))
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=3&expected_dump_path=%2Fb.sql&expected_table=items'))
 })
 it('previews compatible connectors and runs only explicitly selected enrichment', async () => {
   vi.mocked(api).mockImplementation(async url => (url==='/api/opencti/settings' ? { configured:true } : url.endsWith('/iocs') ? [{id:7,type:'ip',value:'192.0.2.1',tags:[]}] : { lookups:[],jobs:[],enrichments:[] }) as never)

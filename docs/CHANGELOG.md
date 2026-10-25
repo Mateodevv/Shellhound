@@ -6,6 +6,15 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — database evidence review
+
+- Show recorded or current matches before record details, including detections
+  beyond the ordinary preview limit; expand long fields with bounded paging.
+- Link database intelligence to its exact source row and reveal the selected
+  export. Reject stale source links and field pages after evidence changes.
+- Retain structured match locations on successful scans, preserve analyst
+  decisions, and deduplicate source labels across repeated SQL analyses.
+
 ### Added — bounded indirect PHP detection
 
 - Opt in through Settings → Detection → Extended indirect PHP detection.

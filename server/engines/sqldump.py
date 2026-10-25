@@ -8,6 +8,9 @@ Database view shows (accounts, tables, findings) lands in case.db.
 """
 import os
 import re
+import hashlib
+import json
+import lzma
 from collections import namedtuple
 
 from server import cmsintelligence, db, ruleswitch
@@ -681,6 +684,53 @@ def _excerpt(text, start, end, radius=70, max_len=200):
     return out[:max_len]
 
 
+def row_digest(names, values):
+    names = [names[i] if i < len(names) else f"col{i + 1}"
+             for i in range(len(values))]
+    encoded = json.dumps([names, values], ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_insert_values(values):
+    """Reject incomplete INSERTs before committing a new source snapshot."""
+    depth = 0
+    in_string = escape = False
+    for char in values:
+        if escape:
+            escape = False
+        elif in_string:
+            if char == "\\":
+                escape = True
+            elif char == "'":
+                in_string = False
+        elif char == "'":
+            in_string = True
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                break
+        elif char == ";":
+            break
+    if in_string or escape or depth:
+        raise ValueError("The requested table contains an incomplete or malformed INSERT. "
+                         "Check that the original database export is complete.")
+
+
+def evaluate_row(values, rules=None):
+    """Keep the scanner's first matching rule per column, including its span."""
+    for index, value in enumerate(values):
+        if not isinstance(value, str) or len(value) < 4:
+            continue
+        for rid, severity, rule, regex in RULES if rules is None else rules:
+            hit = regex.search(value)
+            if hit:
+                yield index, rid, severity, rule, hit.start(), hit.end()
+                break
+
+
 # --- the engine -------------------------------------------------------------
 
 _Account = namedtuple(
@@ -697,15 +747,24 @@ def _with_source(conn, rule, table, row_no, evidence, dump_name):
     the second dump silently overwrote the first one's evidence and the case
     reported one compromised host where there were two.
     """
-    tag = f"dump: {dump_name}"
     fp = db.fingerprint("sqldb", rule, table, row_no)
     row = db.one(conn, "SELECT evidence FROM findings WHERE fingerprint = ?",
                  (fp,))
-    seen = [part for part in str(row["evidence"] if row else "").split(" · ")
-            if part.startswith("dump: ")]
-    if tag not in seen:
-        seen.append(tag)
-    return (evidence + " · " + ", ".join(seen))[:400]
+    paths = conn.execute("SELECT DISTINCT dump_path FROM sql_finding_observations "
+                         "WHERE finding_fingerprint=? ORDER BY dump_path", (fp,))
+    counts = {}
+    for item in paths:
+        name = os.path.basename(item[0])
+        counts[name] = counts.get(name, 0) + 1
+    seen = [f"dump: {name}" + (f" ({count} sources)" if count > 1 else "")
+            for name, count in counts.items()]
+    # Old prose can identify a label, never reconstruct a source path.
+    if not seen:
+        for part in str(row["evidence"] if row else "").split(" · "):
+            if part.startswith("dump: "):
+                seen.extend(tag.strip() for tag in re.split(r",\s*(?=dump: )", part))
+        seen.append(f"dump: {dump_name}")
+    return (evidence + " · " + ", ".join(dict.fromkeys(seen)))[:400]
 
 
 def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
@@ -744,7 +803,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
                 size = 0
             try:
                 result = _scan_dump(path, size, total_size, done, ctx)
-            except (OSError, EOFError, MemoryError) as e:
+            except (OSError, EOFError, MemoryError, UnicodeError, lzma.LZMAError, ValueError) as e:
                 record_skip(ctx, abs_path, f"read/parse error: {e}")
                 conn.execute(
                     "INSERT INTO skipped (source, path, reason) VALUES (?,?,?)",
@@ -753,8 +812,19 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
                 done += size
                 continue
             done += size
+            if not result["complete"] or (ctx is not None and ctx.cancelled()):
+                cancelled = True
+                break
 
             import json as _json
+            conn.execute("DELETE FROM sql_finding_observations WHERE dump_path=?", (abs_path,))
+            conn.executemany(
+                "INSERT INTO sql_finding_observations "
+                "(finding_fingerprint,dump_path,column_index,match_start,match_end,row_sha256) "
+                "VALUES (?,?,?,?,?,?)",
+                ((fp, abs_path, column, start, end, digest)
+                 for fp, column, start, end, digest, rid in result["observations"]
+                 if rid not in off))
             cms_label = ", ".join(sorted(result["cms"])) or ""
             # THE OLD ROWS BELONG TO THE OLD ID. Deleting the children by the
             # id the INSERT has just handed out misses them entirely -- it
@@ -824,7 +894,7 @@ def scan(case_dir, targets, ctx=None, workspace=None, authoritative=True):
         conn.commit()
         # Only a run that read every dump may retire what it did not
         # reproduce; a cancelled one has no opinion about the rest.
-        if authoritative and not cancelled:
+        if authoritative and not cancelled and not stats["skipped"]:
             db.complete_run(conn, "sqldump", run)
     finally:
         conn.close()
@@ -842,6 +912,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
     row_offsets = {}
     inv = {}
     findings = []
+    observations = []
+    complete = True
     intelligence = cmsintelligence.Collector()
     statements = 0
     name = os.path.basename(path)
@@ -856,6 +928,7 @@ def _scan_dump(path, size, total_size, done_before, ctx):
             read_bytes += len(stmt)
             if ctx is not None and statements % 200 == 0:
                 if ctx.cancelled():
+                    complete = False
                     break
                 frac = (done_before + min(size, read_bytes)) / total_size
                 ctx.progress(0.02 + frac * 0.93,
@@ -881,7 +954,11 @@ def _scan_dump(path, size, total_size, done_before, ctx):
             if m is None:
                 continue
             table = m.group("table")
-            rows = split_rows(stmt[m.end():])
+            values_text = stmt[m.end():]
+            validate_insert_values(values_text)
+            rows = split_rows(values_text)
+            if not rows:
+                raise ValueError("The database export contains an unreadable INSERT.")
             entry = inv.setdefault(table, _blank_table())
             entry["rows"] += len(rows)
             entry["bytes"] += len(stmt)
@@ -900,16 +977,16 @@ def _scan_dump(path, size, total_size, done_before, ctx):
             suf = _suffix(table)
             intelligence.collect(table, entry["columns"], rows, row_offset=base)
             for ridx, row in enumerate(rows):
-                for col in row:
-                    if not isinstance(col, str) or len(col) < 4:
-                        continue
-                    for rid, sev, rule, rx in RULES:
-                        hit = rx.search(col)
-                        if hit:
-                            findings.append((rid, sev, rule, table,
-                                             base + ridx + 1,
-                                             _excerpt(col, *hit.span())))
-                            break        # one finding per column is enough
+                row_names = insert_columns(m) or entry["columns"]
+                digest = None
+                for column, rid, sev, rule, start, end in evaluate_row(row):
+                    row_no = base + ridx + 1
+                    findings.append((rid, sev, rule, table, row_no,
+                                     _excerpt(row[column], start, end)))
+                    if digest is None:
+                        digest = row_digest(row_names, row)
+                    observations.append((db.fingerprint("sqldb", rule, table, row_no),
+                                         column, start, end, digest, rid))
             if _is_user_table(table, entry["columns"]):
                 user_tables.append((table, rows, list(entry["columns"])))
             elif suf == "usermeta":
@@ -958,7 +1035,8 @@ def _scan_dump(path, size, total_size, done_before, ctx):
                                      blocked, signals.get("sessions", 0)))
 
     return {"meta": meta, "tables": inv, "statements": statements,
-            "findings": findings, "accounts": accounts, "cms": cms,
+            "findings": findings, "observations": observations, "complete": complete,
+            "accounts": accounts, "cms": cms,
             "intelligence": intelligence.finish(cms),
             "kind": classify_dump(path, meta, placeholder_seen, data_rows)}
 

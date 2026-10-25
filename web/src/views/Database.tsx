@@ -11,7 +11,7 @@ import clsx from 'clsx'
 import { useT } from '../i18n'
 import {
   api, downloadUrl, post, type CaseDetail, type DatabaseIntelligence,
-  type DbAccount, type DbDump, type DbIntelligenceItem,
+  type DbAccount, type DbDump, type DbIntelligenceItem, type DbTable, type DatabaseRowSource,
 } from '../api'
 import { formatCount, type EvidenceRoot } from '../format'
 import {
@@ -23,6 +23,7 @@ import { TriageFollowUp } from '../components/review/triage'
 import { useTriage } from '../components/review/useTriage'
 import { TraceWindow } from '../components/logview/TraceWindow'
 import { FileViewer } from '../components/review/FileViewer'
+import { DatabaseRowWindow } from '../components/review/DatabaseRowWindow'
 import type { ViewId } from '../App'
 
 type Lens = 'accounts' | 'extensions' | 'content'
@@ -32,6 +33,7 @@ interface DatabaseData {
   schema_files: DbDump[]
   accounts: DbAccount[]
   intelligence: DatabaseIntelligence
+  tables: DbTable[]
 }
 
 export function DatabaseView({ slug, gotoView }: { slug: string; gotoView: (v: ViewId) => void }) {
@@ -41,6 +43,7 @@ export function DatabaseView({ slug, gotoView }: { slug: string; gotoView: (v: V
   const [selected, setSelected] = useState<ArtifactStub | null>(null)
   const [viewing, setViewing] = useState<{ path: string; line: number | null } | null>(null)
   const [traceIps, setTraceIps] = useState<string[] | null>(null)
+  const [record, setRecord] = useState<{ source: DatabaseRowSource; table: string; row: number } | null>(null)
   const triage = useTriage(slug)
   const { data } = useQuery({
     queryKey: ['database', slug],
@@ -65,6 +68,17 @@ export function DatabaseView({ slug, gotoView }: { slug: string; gotoView: (v: V
   const openArtifact = (stub: ArtifactStub) => {
     triage.clearCollected()
     setSelected(stub)
+  }
+  const sourceFor = (item: DbIntelligenceItem): DatabaseRowSource | null => {
+    const dump = data?.dumps.find(entry => entry.id === item.dump_id)
+    const tables = (data?.tables ?? []).filter(entry => entry.dump_id === item.dump_id && entry.name === item.source_table)
+    const table = tables.length === 1 ? tables[0] : null
+    return dump && table && item.source_row > 0 && item.source_row <= table.rows
+      ? { dump_id: dump.id, dump_path: dump.path, table_id: table.id, rows: table.rows } : null
+  }
+  const renderSource = (item: DbIntelligenceItem) => {
+    const source = sourceFor(item)
+    return <Source item={item} onInspect={source ? () => setRecord({ source, table: item.source_table, row: item.source_row }) : undefined} />
   }
 
   if (data && !data.dumps.length) {
@@ -107,8 +121,11 @@ export function DatabaseView({ slug, gotoView }: { slug: string; gotoView: (v: V
     {lens === 'accounts' && data && intel && <AccessLens slug={slug} accounts={data.accounts}
       access={intel.access} flagAccount={(id) => flagAccount.mutate(id)} flagging={flagAccount.isPending} />}
     {lens === 'extensions' && intel && <ExtensionLens rows={intel.extensions}
-      onOpenArtifact={openArtifact} onOpenInventory={() => gotoView('cms')} />}
-    {lens === 'content' && intel && <ContentLens rows={intel.content} />}
+      onOpenArtifact={openArtifact} onOpenInventory={() => gotoView('cms')} renderSource={renderSource} />}
+    {lens === 'content' && intel && <ContentLens rows={intel.content} renderSource={renderSource} />}
+
+    {record && <DatabaseRowWindow key={`${slug}:${record.source.dump_path}:${record.table}:${record.row}`} slug={slug}
+      tableName={record.table} initialRow={record.row} sources={[record.source]} onClose={() => setRecord(null)} />}
 
     <ArtifactWindow slug={slug} artifact={selected} roots={roots} collected={triage.collected}
       onView={(path, line) => setViewing({ path, line })} onTrace={(ips) => setTraceIps(ips)}
@@ -142,13 +159,17 @@ function SignalTags({ signals }: { signals: string[] }) {
   </Tag>)}</>
 }
 
-function Source({ item }: { item: DbIntelligenceItem }) {
+function Source({ item, onInspect }: { item: DbIntelligenceItem; onInspect?: () => void }) {
   const tr = useT()
   if (!item.source_table) return <span className="text-[11px] text-[var(--muted)]">{tr('database.filesystem')}</span>
-  return <Tooltip hint={item.dump_name || undefined}><span
+  const reference = <span
     className="mono max-w-52 truncate text-[10.5px] text-[var(--muted)]">
     {item.source_table}{item.source_row ? ` · #${item.source_row}` : ''}
-  </span></Tooltip>
+  </span>
+  return <Tooltip title={onInspect ? tr('database.row.inspectSource') : undefined} hint={item.dump_name || undefined}>
+    {onInspect ? <button type="button" onClick={onInspect} aria-label={`${tr('database.row.inspectSource')}: ${item.source_table} #${item.source_row}`}
+      className="ui-press inline-flex max-w-52 rounded text-left underline decoration-[var(--accent)]/50 underline-offset-4 hover:text-[var(--accent-text)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">{reference}</button> : reference}
+  </Tooltip>
 }
 
 function AccessLens({ slug, accounts, access, flagAccount, flagging }: {
@@ -244,8 +265,9 @@ function AccessLens({ slug, accounts, access, flagAccount, flagging }: {
     </Section>
 }
 
-function ExtensionLens({ rows, onOpenArtifact, onOpenInventory }: {
+function ExtensionLens({ rows, onOpenArtifact, onOpenInventory, renderSource }: {
   rows: DbIntelligenceItem[]; onOpenArtifact: (artifact: ArtifactStub) => void; onOpenInventory: () => void
+  renderSource: (item: DbIntelligenceItem) => ReactNode
 }) {
   const tr = useT()
   const [cms, setCms] = useState('all')
@@ -282,7 +304,7 @@ function ExtensionLens({ rows, onOpenArtifact, onOpenInventory }: {
           {row.filesystem?.findings.map((finding) => <button key={finding.artifact} onClick={() => onOpenArtifact({
             artifact: finding.artifact, artifact_kind: 'file', worst: finding.worst, triage: finding.triage, triage_note: '',
           })}><Tag tone="danger">{finding.findings} Finding{finding.findings === 1 ? '' : 's'}</Tag></button>)}</div></td>
-        <td className="px-3 py-2"><Source item={row} /></td>
+        <td className="px-3 py-2">{renderSource(row)}</td>
       </tr>)}</tbody>
     </table>{!visible.length && <EmptyRow text={tr('database.noExtensionMatch')} />}</Card>
   </Section>
@@ -296,7 +318,7 @@ function State({ value, alwaysOn }: { value?: boolean | null; alwaysOn?: boolean
   return <Tag>{tr('database.state.unknown')}</Tag>
 }
 
-function ContentLens({ rows }: { rows: DbIntelligenceItem[] }) {
+function ContentLens({ rows, renderSource }: { rows: DbIntelligenceItem[]; renderSource: (item: DbIntelligenceItem) => ReactNode }) {
   const tr = useT()
   const [signalsOnly, setSignalsOnly] = useState(false)
   const [search, setSearch] = useState('')
@@ -313,14 +335,17 @@ function ContentLens({ rows }: { rows: DbIntelligenceItem[] }) {
       const id = `${row.dump_id}:${row.key}:${index}`
       const expanded = open === id
       return <div key={id} className={clsx('border-b border-[var(--line-soft)] last:border-0', row.review && 'bg-[rgba(208,59,59,0.035)]')}>
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-[var(--panel-2)]">
         <button onClick={() => setOpen(expanded ? null : id)}
-          className="grid w-full cursor-pointer gap-2 px-4 py-3 text-left hover:bg-[var(--panel-2)] lg:grid-cols-[20px_minmax(220px,1.4fr)_minmax(160px,1fr)_minmax(240px,1.4fr)_auto] lg:items-center">
+          className="grid min-w-0 flex-1 cursor-pointer gap-2 text-left lg:grid-cols-[20px_minmax(160px,1.4fr)_minmax(130px,1fr)_minmax(160px,1.4fr)] lg:items-center">
           {expanded ? <ChevronDown size={14} className="text-[var(--muted)]" /> : <ChevronRight size={14} className="text-[var(--muted)]" />}
           <div><div className="font-medium">{row.title || row.key}</div><div className="text-[11px] text-[var(--muted)]">{row.cms} · {row.type} · ID {row.key.split(':').pop()}</div></div>
           <div className="text-[11.5px] text-[var(--muted)]">{row.modified || row.created || '—'}{row.path && <div className="mono truncate" title={row.path}>{row.path}</div>}</div>
           <div><div className="flex flex-wrap gap-1"><SignalTags signals={row.signals} /></div>{!!row.domains?.length && <div className="mt-1 flex flex-wrap gap-1">
-            {row.domains.map((domain) => <Tag key={domain}>{domain}</Tag>)}</div>}</div><Source item={row} />
+            {row.domains.map((domain) => <Tag key={domain}>{domain}</Tag>)}</div>}</div>
         </button>
+        {renderSource(row)}
+        </div>
         {expanded && <div className="border-t border-[var(--line-soft)] bg-[var(--code-bg)] px-4 py-3">
           {row.content ? <pre className="mono max-h-[520px] overflow-auto whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-[#e6edf3]">{row.content}</pre>
             : <p className="text-[12px] text-[var(--muted)]">{tr('database.post.noContent')}</p>}

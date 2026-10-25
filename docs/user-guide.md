@@ -541,6 +541,30 @@ are recognised, and their accounts read generically.
 
 ![CMS inventory](../assets/docs/cms-inventory.png)
 
+### Database investigation
+
+Open a database finding to see its matching field and highlighted text first.
+Choose a field when several support the finding, and open **Record details** for
+the rest of the row. **Expand field** starts near the match and provides page
+controls for the complete value; **Copy visible text** copies only the displayed
+page or excerpt. SQL and HTML remain text throughout inspection.
+
+New analyses retain the source and original match location. Older findings locate
+the saved pattern in the selected row when opened, labelled **Current match**;
+this does not rerun case analysis or change findings or decisions. Changed rows,
+missing patterns and unavailable sources keep their saved excerpt available
+without a guessed highlight.
+
+When a table occurs in several exports, choose the export explicitly. **Show in
+file manager** reveals that selection. Under Database, clickable source references
+on content and extension observations open the exact export/table/row and return
+to the same list when closed. References without an exact row remain plain text.
+
+Row previews retain their read, parse and time limits. A stale source link or a
+changed record between field pages requires reopening the current source. Case
+schema upgrades preserve existing findings and decisions; new match metadata is
+included in case archives.
+
 ### Further views
 
 | View | Contents |
