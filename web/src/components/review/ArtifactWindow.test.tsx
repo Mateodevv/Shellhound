@@ -147,6 +147,29 @@ describe('case review progress', () => {
 })
 
 describe('artifact context and classification', () => {
+  it('keeps an explicitly chosen export when switching findings and reveals that export', async () => {
+    const findings = [1, 2].map(id => ({ id, fingerprint: `row-${id}`, source: 'sqldb', rule_id: `fixture.row${id}`,
+      rule: `Database marker ${id}`, severity: 1, artifact: 'items', artifact_kind: 'table', line: id,
+      evidence: `Harmless row ${id}`, triage: 'new', triage_note: '', created: '', last_seen: '', retired: 0 }) as Finding)
+    const ctx = context({ artifact: 'items', kind: 'table', file: undefined, findings,
+      table_sources: [{ dump_id: 1, dump_path: '/first/export.sql', table_id: 10, rows: 3 },
+        { dump_id: 2, dump_path: '/selected/export.sql', table_id: 20, rows: 3 }] })
+    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: false }
+      : url.includes('/database/table-row') ? { table: 'items', row: Number(new URL(url, 'http://localhost').searchParams.get('row')),
+          columns: [{ name: 'text', value: 'Harmless current row', truncated: false }], truncated: false } : ctx)
+    vi.mocked(post).mockResolvedValue({ ok: true })
+    renderWithProviders(<ArtifactWindow slug="case" artifact={stub({ artifact: 'items', artifact_kind: 'table' })} roots={[]}
+      collected={[]} onClose={vi.fn()} onSave={vi.fn()} onView={vi.fn()} onTrace={vi.fn()} />)
+    const selector = await screen.findByRole('combobox', { name: 'Database export' })
+    await userEvent.selectOptions(selector, '2')
+    await screen.findByText('Harmless current row')
+    await userEvent.click(screen.getByRole('button', { name: /Database marker 2/ }))
+    expect(screen.getByRole('combobox', { name: 'Database export' })).toHaveValue('2')
+    await waitFor(() => expect(vi.mocked(api).mock.calls.some(([url]) => url.includes('table_id=20&row=2'))).toBe(true))
+    await userEvent.click(screen.getByRole('button', { name: 'Show in file manager' }))
+    expect(post).toHaveBeenCalledWith('/api/cases/case/reveal-file', { path: '/selected/export.sql' })
+  })
+
   it.each(['file', 'table'] as const)('marks linked IPs already in this case IOC box and clears the cue after removal for %s', async kind => {
     const ip = { ip: '192.0.2.1', why: 'Synthetic relation', hits: 3, ok_hits: 1, in_box: false }
     const ctx = context({ kind, related_ips: [ip] })

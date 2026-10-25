@@ -1564,15 +1564,45 @@ export interface DatabaseRowSource {
   table_id?: number
   rows?: number
   col_list?: string
+  columns?: number
   bytes?: number
   cms?: string
 }
 
-export interface DatabaseRow extends DatabaseRowSource {
+export interface DatabaseRow extends Omit<DatabaseRowSource, 'columns'> {
   table: string
   row: number
-  columns: { name: string; value: string | null; truncated: boolean }[]
+  columns: { index?: number; name: string; value: string | null; truncated: boolean }[]
   truncated: boolean
+  record_version?: string
+  finding_match?: {
+    state: 'recorded' | 'current' | 'changed' | 'not_found' | 'rule_unavailable' | 'not_observed'
+    matches: DatabaseFieldMatch[]
+    sources?: { dump_path: string; dump_id: number | null; table_id: number | null }[]
+  }
+}
+
+export interface DatabaseFieldMatch {
+  column_index: number
+  column_name: string
+  start: number
+  end: number
+  before: string
+  text: string
+  after: string
+}
+
+export interface DatabaseFieldPage extends DatabaseRowSource {
+  table: string
+  row: number
+  column_index: number
+  column_name: string
+  value: string | null
+  offset: number
+  next_offset: number | null
+  total_characters: number
+  record_version: string
+  highlight?: { before: string; text: string; after: string }
 }
 
 export interface ArtifactContext {

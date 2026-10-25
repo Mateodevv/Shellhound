@@ -2738,33 +2738,65 @@ def create_app(config: Config) -> FastAPI:
         finally:
             conn.close()
 
-    @app.get("/api/cases/{slug}/database/row", dependencies=[auth])
-    def database_row(slug: str, finding_id: int, dump_id: int,
-                     lang: str = lang_dep):
-        from server.evidence_rows import read_database_row, RowReadError
-
+    def _database_record(slug, table_id, row, finding_id, dump_id, lang,
+                         expected_dump_path=None, expected_table=None):
+        from server.evidence_rows import (read_database_record, database_record_preview,
+                                          record_version, finding_match, RowReadError)
+        from server.engines.fsutil import canonical_file
         case_dir = case_dir_or_404(slug)
         conn = db.connect(case_dir)
         try:
-            finding = db.one(conn, "SELECT * FROM findings WHERE id = ?", (finding_id,))
-            if not finding:
-                raise HTTPException(404, "The finding is no longer available in this case.")
-            if (finding["artifact_kind"] != "table" or finding["source"] != "sqldb"
-                    or not finding["line"] or finding["line"] < 1):
-                raise HTTPException(400, "This finding does not reference a database row.")
-            source = db.one(conn,
-                "SELECT d.path FROM db_dumps d JOIN db_tables t ON t.dump_id = d.id "
-                "WHERE d.id = ? AND t.name = ?", (dump_id, finding["artifact"]))
-            if not source:
-                raise HTTPException(404, "This export does not contain the table in this case.")
+            finding = None
+            if finding_id is not None:
+                finding = db.one(conn, "SELECT * FROM findings WHERE id=?", (finding_id,))
+                if not finding:
+                    raise HTTPException(404, "The finding is no longer available in this case.")
+                if (finding["artifact_kind"] != "table" or finding["source"] != "sqldb"
+                        or not isinstance(finding["line"], int) or finding["line"] < 1):
+                    raise HTTPException(400, "This finding does not reference a database row.")
+            if table_id is None:
+                table = db.one(conn,
+                    "SELECT t.*,d.path AS dump_path FROM db_tables t "
+                    "JOIN db_dumps d ON d.id=t.dump_id WHERE d.id=? AND t.name=?",
+                    (dump_id, finding["artifact"]))
+                row = finding["line"]
+            else:
+                table = db.one(conn,
+                    "SELECT t.*,d.path AS dump_path FROM db_tables t "
+                    "JOIN db_dumps d ON d.id=t.dump_id WHERE t.id=?", (table_id,))
+            if not table:
+                raise HTTPException(404, "The table export is not available in this case.")
+            try:
+                source_changed = (expected_dump_path is not None and
+                                  canonical_file(expected_dump_path) != canonical_file(table["dump_path"]))
+            except (OSError, ValueError):
+                raise HTTPException(400, "The expected export path is invalid.")
+            if source_changed or (expected_table is not None and expected_table != table["name"]):
+                raise HTTPException(409, "This table export changed. Reopen it from the database inventory.")
+            if not isinstance(row, int) or isinstance(row, bool) or not 1 <= row <= table["rows"]:
+                raise HTTPException(400, "The row is outside this table export.")
+            if finding and (finding["artifact"] != table["name"] or finding["line"] != row):
+                raise HTTPException(400, "This finding does not reference the selected table row.")
+            target = _within_evidence(case_dir, table["dump_path"], lang)
+            try:
+                names, values = read_database_record(target, table["name"], row)
+            except RowReadError as error:
+                raise HTTPException(400, str(error)) from error
+            result = dict(database_record_preview(table["name"], row, names, values),
+                          table_id=table["id"], dump_id=table["dump_id"],
+                          dump_path=table["dump_path"], total_rows=table["rows"],
+                          record_version=record_version(table["dump_path"], table["id"],
+                                                        table["name"], row, names, values))
+            if finding:
+                result["finding_match"] = finding_match(conn, finding, table["dump_path"], names, values)
+            return result, names, values
         finally:
             conn.close()
-        target = _within_evidence(case_dir, source["path"], lang)
-        try:
-            result = read_database_row(target, finding["artifact"], finding["line"])
-        except RowReadError as error:
-            raise HTTPException(400, str(error)) from error
-        return dict(result, dump_id=dump_id, dump_path=source["path"])
+
+    @app.get("/api/cases/{slug}/database/row", dependencies=[auth])
+    def database_row(slug: str, finding_id: int, dump_id: int,
+                     lang: str = lang_dep, expected_dump_path: str | None = None):
+        return _database_record(slug, None, None, finding_id, dump_id, lang, expected_dump_path)[0]
 
     @app.get("/api/cases/{slug}/artifact/finding-requests", dependencies=[auth])
     def artifact_finding_requests(slug: str, finding_id: int, offset: int = 0, limit: int = 50):
@@ -2798,23 +2830,27 @@ def create_app(config: Config) -> FastAPI:
         return successful_accesses(case_dir, ip, offset, limit)
 
     @app.get("/api/cases/{slug}/database/table-row", dependencies=[auth])
-    def review_table_row(slug: str, table_id: int, row: int = 1, lang: str = lang_dep):
-        from server.evidence_rows import read_database_row, RowReadError
-        case_dir = case_dir_or_404(slug)
-        conn = db.connect(case_dir)
+    def review_table_row(slug: str, table_id: int, row: int = 1, lang: str = lang_dep,
+                         finding_id: int | None = None, expected_dump_path: str | None = None,
+                         expected_table: str | None = None):
+        return _database_record(slug, table_id, row, finding_id, None, lang,
+                                expected_dump_path, expected_table)[0]
+
+    @app.get("/api/cases/{slug}/database/field", dependencies=[auth])
+    def review_database_field(slug: str, table_id: int, row: int, column_index: int,
+                              record_version: str, offset: int = 0,
+                              finding_id: int | None = None, lang: str = lang_dep):
+        from server.evidence_rows import field_page, RowReadError
+        record, names, values = _database_record(slug, table_id, row, finding_id, None, lang)
+        if record_version != record["record_version"]:
+            raise HTTPException(409, "This database row changed. Reopen the record before reading more fields.")
         try:
-            table = db.one(conn, "SELECT t.*,d.path AS dump_path FROM db_tables t JOIN db_dumps d ON d.id=t.dump_id WHERE t.id=?", (table_id,))
-            if not table:
-                raise HTTPException(404, "The table is not available in this case.")
-            if row < 1 or row > table["rows"]:
-                raise HTTPException(400, "The row is outside this table export.")
-        finally:
-            conn.close()
-        target = _within_evidence(case_dir, table["dump_path"], lang)
-        try:
-            return dict(read_database_row(target, table["name"], row), dump_id=table["dump_id"], dump_path=table["dump_path"], total_rows=table["rows"])
+            page = field_page(names, values, column_index, offset,
+                              record.get("finding_match", {}).get("matches"))
         except RowReadError as error:
             raise HTTPException(400, str(error)) from error
+        return dict(page, **{key: record[key] for key in
+                    ("table_id", "dump_id", "dump_path", "table", "row", "record_version")})
 
     @app.get("/api/cases/{slug}/database/sql-preview", dependencies=[auth])
     def review_sql_preview(slug: str, path: str, line: int | None = None, expanded: bool = False, lang: str = lang_dep):

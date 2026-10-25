@@ -48,3 +48,5 @@
 - **Codi reminder:** a database finding's `line` is a table row ordinal, not an
   SQL source line. Use the case-scoped row reader and let analysts choose among
   exports with the same table; never treat the table name as a filesystem path.
+  Table IDs can be reused after analysis: verify the expected source/table on
+  row links and the record version when paging a field.
