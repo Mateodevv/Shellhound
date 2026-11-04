@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { api, type DatabaseRow, type DatabaseRowSource, type Finding } from '../../api'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { api, post, type DatabaseRow, type DatabaseRowSource, type Finding } from '../../api'
 import { useT } from '../../i18n'
-import { Button, CopyButton, Modal, Tag } from '../ui/ui'
-import { ChevronLeft, ChevronRight, Expand, FileCode2 } from 'lucide-react'
+import { Button, CopyButton, Tag } from '../ui/ui'
+import { ChevronLeft, ChevronRight, Expand, FileCode2, FolderOpen } from 'lucide-react'
 import { IocTypeBadge } from '../iocs/IocTypeBadge'
+import { DatabaseField, MatchText } from './DatabaseField'
 import { absoluteTime, formatCount, formatBytes, formatLogTime } from '../../format'
 
 export function SuccessfulAccesses({ slug, ip, onView }: { slug: string; ip: string; onView: (path: string, line: number | null) => void }) {
@@ -34,36 +35,77 @@ export function SuccessfulAccesses({ slug, ip, onView }: { slug: string; ip: str
   </section>
 }
 
-export function TableRecord({ slug, sources, finding, tableName }: { slug: string; sources: DatabaseRowSource[]; finding?: Finding | null; tableName: string }) {
-  const tr = useT()
-  const [sourceId, setSourceId] = useState<number | null>(sources.length === 1 ? sources[0].dump_id : null)
-  const [row, setRow] = useState(finding?.line || 1)
-  const [expanded, setExpanded] = useState(false)
+type TableRecordProps = {
+  slug: string; sources: DatabaseRowSource[]; finding?: Finding | null; tableName: string
+  sourceId?: number | null; onSourceChange?: (id: number | null) => void; initialRow?: number
+}
+
+export function TableRecord(props: TableRecordProps) {
+  return <TableRecordSource key={`${props.slug}:${props.tableName}`} {...props} />
+}
+
+function TableRecordSource({ slug, sources, finding, tableName, sourceId: controlledSource, onSourceChange, initialRow }: TableRecordProps) {
+  const [sourcePath, setSourcePath] = useState<string | null | undefined>(sources.length ? sources.length === 1 ? sources[0].dump_path : null : undefined)
+  if (sourcePath === undefined && sources.length) setSourcePath(sources.length === 1 ? sources[0].dump_path : null)
+  const sourceId = controlledSource === undefined ? sources.find(item => item.dump_path === sourcePath)?.dump_id ?? null : controlledSource
   const source = sources.find(item => item.dump_id === sourceId)
-  const { data, error, isPending } = useQuery({ queryKey: ['review-table-row', slug, sourceId, source?.table_id, finding?.id, row],
+  return <TableRecordBody key={`${slug}:${tableName}:${sourceId}:${source?.dump_path}:${finding?.id}:${initialRow}`} slug={slug} sources={sources} finding={finding} tableName={tableName} source={source} initialRow={initialRow}
+    onSourceChange={id => { setSourcePath(sources.find(item => item.dump_id === id)?.dump_path ?? null); onSourceChange?.(id) }} />
+}
+
+function TableRecordBody({ slug, sources, source, finding, tableName, onSourceChange, initialRow }: {
+  slug: string; sources: DatabaseRowSource[]; source?: DatabaseRowSource; finding?: Finding | null; tableName: string
+  onSourceChange: (id: number | null) => void; initialRow?: number
+}) {
+  const tr = useT()
+  const reveal = useMutation({ mutationFn: (path: string) => post(`/api/cases/${slug}/reveal-file`, { path }) })
+  const [row, setRow] = useState(initialRow ?? finding?.line ?? 1)
+  const [matchIndex, setMatchIndex] = useState(0)
+  const [expandedColumn, setExpandedColumn] = useState<number | null>(null)
+  const rowFinding = finding?.line === row ? finding : undefined
+  const { data, error, isPending } = useQuery({ queryKey: ['review-table-row', slug, source?.dump_id, source?.table_id, source?.dump_path, tableName, finding?.id, row],
     queryFn: () => api<DatabaseRow>(source?.table_id != null
-      ? `/api/cases/${slug}/database/table-row?table_id=${source.table_id}&row=${row}`
-      : `/api/cases/${slug}/database/row?finding_id=${finding!.id}&dump_id=${sourceId}`),
-    enabled: sourceId != null && (source?.rows !== 0) && (!!source?.table_id || !!finding) })
-  const columns = <div className="overflow-x-auto rounded-lg border border-[var(--line)]"><table className="w-full table-fixed text-left text-[12px]"><thead className="bg-[var(--panel-2)]"><tr><th className="w-1/4 px-3 py-2">{tr('review.field')}</th><th className="px-3 py-2">{tr('review.value')}</th></tr></thead><tbody>{data?.columns.map((column, index) => {
-    // Highlight only a field containing the recorded evidence excerpt.
-    const excerpt = finding?.evidence?.split(' · dump:')[0].replace(/^…|…$/g, '').replace(/\s+/g, ' ').trim() || ''
-    const hit = finding?.retired !== 1 && finding?.line === row && excerpt.length >= 4 && column.value?.replace(/\s+/g, ' ').includes(excerpt)
-    return <tr key={index} className={`border-t border-[var(--line)] align-top ${hit ? 'bg-[var(--danger-soft)]' : ''}`}><th className="mono break-all px-3 py-3 font-medium">{column.name}</th><td className="px-3 py-3"><div className="flex items-start gap-2"><pre className="mono min-w-0 flex-1 whitespace-pre-wrap break-all">{column.value === null ? 'NULL' : column.value}</pre>{column.value != null && <CopyButton value={column.value} label={tr('review.copyValue')} />}</div>{column.truncated && <p className="text-[var(--warn)]">{tr('database.row.valueTruncated')}</p>}</td></tr>
-  })}</tbody></table></div>
+      ? `/api/cases/${slug}/database/table-row?table_id=${source.table_id}&row=${row}&expected_dump_path=${encodeURIComponent(source.dump_path)}&expected_table=${encodeURIComponent(tableName)}${rowFinding ? `&finding_id=${rowFinding.id}` : ''}`
+      : `/api/cases/${slug}/database/row?finding_id=${finding!.id}&dump_id=${source?.dump_id}&expected_dump_path=${encodeURIComponent(source!.dump_path)}`),
+    enabled: !!source && source.rows !== 0 && (source.table_id != null || !!finding) })
+  const matches = data?.finding_match?.matches ?? []
+  const match = matches[matchIndex] ?? matches[0]
+  const details = data?.columns.filter((column, index) => !matches.some(hit => hit.column_index === (column.index ?? index))) ?? []
+  const canExpand = data?.table_id != null && !!data.record_version
+  function navigate(next: number) { setRow(next); setMatchIndex(0); setExpandedColumn(null) }
   return <section className="flex min-h-0 flex-1 flex-col gap-3 text-[12px]">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{tr('review.record')} · {tableName} · {tr('database.row.label')} {row}</h3><div className="flex gap-2">
-      <Button variant="special" disabled={!data} onClick={() => setExpanded(true)}><Expand size={13} />{tr('review.expandRecord')}</Button>
-      <Button aria-label={tr('review.previousRow')} disabled={!source?.table_id || row <= 1} onClick={() => setRow(row - 1)}><ChevronLeft size={14} /></Button><Button aria-label={tr('review.nextRow')} disabled={!source?.table_id || row >= (source.rows ?? row)} onClick={() => setRow(row + 1)}><ChevronRight size={14} /></Button>
+      <Button aria-label={tr('review.previousRow')} disabled={source?.table_id == null || row <= 1} onClick={() => navigate(row - 1)}><ChevronLeft size={14} /></Button><Button aria-label={tr('review.nextRow')} disabled={source?.table_id == null || row >= (source.rows ?? row)} onClick={() => navigate(row + 1)}><ChevronRight size={14} /></Button>
     </div></div>
-    <label className="flex flex-col gap-1 text-[var(--muted)]">{tr('database.row.source')}<select aria-label={tr('database.row.source')} value={sourceId ?? ''} onChange={event => { setSourceId(Number(event.target.value) || null); setRow(finding?.line || 1) }} className="min-w-0 rounded border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[var(--fg)]"><option value="" disabled>{tr('database.row.choose')}</option>{sources.map(item => <option key={item.dump_id} value={item.dump_id}>{item.dump_path}</option>)}</select></label>
-    {sources.length > 1 && <p className="text-[var(--muted)]">{tr('database.row.multiple')}</p>}
-    {!sources.length && <p role="status">{tr('database.row.noSource')}</p>}
-    {source?.rows === 0 ? <p role="status">{tr('review.emptyTable')}</p> : sourceId != null && isPending && <p role="status">{tr('common.loading')}</p>}
-    {error && <p role="alert" className="text-[var(--danger-text)]">{error.message}</p>}
-    <div data-artifact-scroll="primary" tabIndex={0} className="min-h-0 flex-1 overflow-auto">{data && <>{data.truncated && <p className="text-[var(--warn)]">{tr('database.row.truncated')}</p>}{columns}</>}</div>
-    <p className="text-[11px] text-[var(--muted)]">{tr('database.row.explain')}</p>
-    {expanded && <Modal open layer={2} contained onClose={() => setExpanded(false)} title={`${tableName} · ${tr('database.row.label')} ${row}`}>{columns}</Modal>}
+    <div data-artifact-scroll="primary" tabIndex={0} className="min-h-0 flex-1 space-y-3 overflow-auto">
+      {data?.finding_match && <p role="status" className="text-[var(--muted)]" title={['recorded', 'current'].includes(data.finding_match.state) ? tr(`database.row.match.${data.finding_match.state}Hint`) : undefined}>{tr(`database.row.match.${data.finding_match.state}`)}</p>}
+      {match && <div className="space-y-2 rounded-lg border border-[var(--line)] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {matches.length > 1 ? <select aria-label={tr('database.row.matchingField')} className="max-w-full rounded border border-[var(--line)] bg-[var(--panel-2)] p-1" value={matchIndex} onChange={event => { setMatchIndex(Number(event.target.value)); setExpandedColumn(null) }}>{matches.map((item, index) => <option key={index} value={index}>{item.column_name}</option>)}</select> : <h4 className="mono break-all font-semibold">{match.column_name}</h4>}
+          <div className="flex gap-2"><CopyButton value={match.before + match.text + match.after} label={tr('database.row.copyVisible')} /><Button disabled={!canExpand} onClick={() => setExpandedColumn(match.column_index)}><Expand size={13} />{tr('database.row.expandField')}</Button></div>
+        </div>
+        <pre className="mono whitespace-pre-wrap break-all"><MatchText match={match} finding={rowFinding} /></pre>
+      </div>}
+      {rowFinding?.evidence && data?.finding_match && !matches.length && <div className="rounded-lg border border-[var(--line)] p-3"><h4 className="mb-2 font-semibold">{tr('database.row.recordedExcerpt')}</h4><pre className="mono whitespace-pre-wrap break-all">{rowFinding.evidence}</pre></div>}
+      {sources.length > 0 && <div className="flex min-w-0 flex-wrap items-end gap-2"><label className="flex min-w-0 flex-1 flex-col gap-1 text-[var(--muted)]">{tr('database.row.source')}<select aria-label={tr('database.row.source')} title={source?.dump_path} value={source?.dump_id ?? ''} onChange={event => onSourceChange(Number(event.target.value) || null)} className="min-w-0 rounded border border-[var(--line)] bg-[var(--panel-2)] p-2 text-[var(--fg)]"><option value="" disabled>{tr('database.row.choose')}</option>{sources.map(item => <option key={item.dump_id} value={item.dump_id}>{item.dump_path}</option>)}</select></label>
+        <Button disabled={!source || reveal.isPending} onClick={() => source && reveal.mutate(source.dump_path)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button></div>}
+      {reveal.error && <p role="alert" className="text-[var(--danger-text)]">{reveal.error.message}</p>}
+      {!sources.length && <p role="status">{tr('database.row.noSource')}</p>}
+      {source?.rows === 0 ? <p role="status">{tr('review.emptyTable')}</p> : source && isPending && <p role="status">{tr('common.loading')}</p>}
+      {error && <p role="alert" className="text-[var(--danger-text)]">{error.message}</p>}
+      {data && <details open={!rowFinding || !matches.length} className="rounded-lg border border-[var(--line)]"><summary className="cursor-pointer bg-[var(--panel-2)] px-3 py-2 font-semibold">{tr('database.row.details')}</summary>
+        {data.truncated && <p role="status" className="p-3 text-[var(--warn)]">{tr('database.row.truncated')}</p>}
+        <dl>{details.map((column) => {
+          const index = column.index ?? data.columns.indexOf(column)
+          return <div key={index} className="border-t border-[var(--line)] p-3"><dt className="mono mb-2 break-all font-medium">{column.name}</dt><dd>
+            <div className="mb-2 flex gap-2">{column.value != null && <CopyButton value={column.value} label={column.truncated ? tr('database.row.copyVisible') : tr('review.copyValue')} />}<Button disabled={!canExpand} onClick={() => setExpandedColumn(index)}><Expand size={13} />{tr('database.row.expandField')}</Button></div>
+            <pre className="mono whitespace-pre-wrap break-all">{column.value ?? 'NULL'}</pre>{column.truncated && <span className="text-[var(--warn)]">{tr('database.row.valueTruncated')}</span>}
+          </dd></div>
+        })}</dl>
+      </details>}
+      {data && !canExpand && data.columns.some(column => column.truncated) && <p role="status">{tr('database.row.unavailableField')}</p>}
+    </div>
+    {data && expandedColumn != null && <DatabaseField key={`${row}:${expandedColumn}:${data.record_version}`} slug={slug} record={data} columnIndex={expandedColumn} match={matches.find(item => item.column_index === expandedColumn)} finding={rowFinding} onClose={() => setExpandedColumn(null)} />}
   </section>
 }
 

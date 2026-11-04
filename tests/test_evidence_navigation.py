@@ -109,7 +109,7 @@ class EvidenceNavigationTests(unittest.TestCase):
                         encoding="utf-8")
         response = self.row(self.slug, finding_id, dump_id, "en")
         self.assertEqual(response["columns"],
-                         [{"name": "label", "value": "current contents", "truncated": False}])
+                         [{"index": 0, "name": "label", "value": "current contents", "truncated": False}])
         self.assertEqual(self.finding_snapshot(finding_id), snapshot)
 
     def test_invalid_ids_table_source_kinds_and_row_references_are_rejected(self):

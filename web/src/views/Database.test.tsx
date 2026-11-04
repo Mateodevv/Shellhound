@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api'
 import { renderWithProviders } from '../test/setup'
@@ -60,6 +60,40 @@ beforeEach(() => {
 })
 
 describe('Database CMS intelligence workspace', () => {
+  it('opens the exact source record and returns to the expanded content in the same lens', async () => {
+    const data = { ...DATA, dumps: [...DATA.dumps, { ...DATA.dumps[0], id: 2, path: 'D:/other-export/cms.sql' }],
+      tables: [{ id: 10, dump_id: 1, name: 'wp_posts', rows: 4 }, { id: 20, dump_id: 2, name: 'wp_posts', rows: 4 }],
+      intelligence: { ...DATA.intelligence, content: [{ ...DATA.intelligence.content[0], dump_id: 2, content: 'Harmless published text' }] } }
+    vi.mocked(api).mockImplementation(async path => path === '/api/cases/test/database' ? data : path === '/api/cases/test' ? { evidence_items: [] }
+      : { table_id: 20, dump_id: 2, dump_path: 'D:/other-export/cms.sql', table: 'wp_posts', row: 1, truncated: false,
+          columns: [{ index: 0, name: 'body', value: 'Selected source record', truncated: false }] })
+    renderWithProviders(<DatabaseView slug="test" gotoView={() => {}} />)
+    await screen.findByText('synthetic-admin')
+    fireEvent.click(screen.getByRole('tab', { name: /Posts & articles/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic post/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect source row: wp_posts #1' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText('Selected source record')).toBeVisible()
+    const request = vi.mocked(api).mock.calls.find(([url]) => url.includes('/database/table-row'))![0]
+    const query = new URL(request, 'http://localhost').searchParams
+    expect(query.get('table_id')).toBe('20')
+    expect(query.get('row')).toBe('1')
+    expect(query.get('expected_dump_path')).toBe('D:/other-export/cms.sql')
+    expect(query.get('expected_table')).toBe('wp_posts')
+    fireEvent.click(within(dialog).getByRole('button', { name: /Close/ }))
+    expect(screen.getByRole('tab', { name: /Posts & articles/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Harmless published text')).toBeVisible()
+  })
+
+  it('does not guess a source when a table is missing or the source row is unknown', async () => {
+    renderWithProviders(<DatabaseView slug="test" gotoView={() => {}} />)
+    await screen.findByText('synthetic-admin')
+    fireEvent.click(screen.getByRole('tab', { name: /Extensions/ }))
+    expect(screen.queryByRole('button', { name: /Inspect source row/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Posts & articles/ }))
+    expect(screen.queryByRole('button', { name: /Inspect source row/ })).not.toBeInTheDocument()
+  })
+
   it('opens on accounts and shows database-derived permissions', async () => {
     renderWithProviders(<DatabaseView slug="test" gotoView={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Accounts and permissions' })).toBeInTheDocument()

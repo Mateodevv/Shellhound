@@ -297,6 +297,15 @@ CREATE TABLE IF NOT EXISTS db_tables (
     bytes INTEGER NOT NULL DEFAULT 0,
     col_list TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS sql_finding_observations (
+    finding_fingerprint TEXT NOT NULL,
+    dump_path TEXT NOT NULL,
+    column_index INTEGER NOT NULL,
+    match_start INTEGER NOT NULL,
+    match_end INTEGER NOT NULL,
+    row_sha256 TEXT NOT NULL,
+    PRIMARY KEY (finding_fingerprint, dump_path, column_index)
+);
 CREATE TABLE IF NOT EXISTS db_accounts (
     id INTEGER PRIMARY KEY,
     dump_id INTEGER NOT NULL,
@@ -545,7 +554,8 @@ _ADDED_COLUMNS = {
 # 15: IOC-box objects default to malicious; manual assessments remain unchanged.
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
 # 23: index file scan receipts for artifact-scoped review and backup history.
-CASE_SCHEMA_VERSION = 23
+# 24: SQL findings retain source/column identity and decoded-row match spans.
+CASE_SCHEMA_VERSION = 24
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -564,6 +574,7 @@ _CURRENT_SCHEMA_TABLES = {
     "ioc_files", "ioc_observations", "ioc_assessments", "ioc_file_members",
     "ioc_relationship_evidence", "ioc_relationship_events",
     "file_scan_results", "file_completion", "skip_reviews",
+    "sql_finding_observations",
 }
 
 

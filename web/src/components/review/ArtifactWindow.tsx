@@ -238,6 +238,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const [leftWidth, setLeftWidth] = useState(28)
   const splitRef = useRef<HTMLDivElement>(null)
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
+  const [selectedExportPath, setSelectedExportPath] = useState<string | null>(null)
   const conf = useOpenCtiSettings(!!artifact)
   const direct = useDirectSettings(!!artifact)
   const geo = useGeo(artifact?.artifact_kind === 'client' ? artifact.artifact : null)
@@ -301,6 +302,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     setSelectedFinding(null)
     setClassifications(['webshell'])
     setSelectedTable(null)
+    setSelectedExportPath(null)
   }, [artifactKey, artifact?.artifact_kind])
   useEffect(() => {
     if (!artifactKey || contextFor.current === artifactKey) return
@@ -317,6 +319,11 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const canEnrich = kind === 'client' && (conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'ip')))
   const tab = evidenceTab === 'enrichment' && !canEnrich ? (kind === 'client' ? 'trace' : 'findings') : evidenceTab
   const activeFinding = selectedFinding ?? ctx?.findings.find(item => item.retired !== 1) ?? ctx?.findings[0]
+  const tableSources = ctx?.table_sources ?? []
+  const tableSource = selectedExportPath == null
+    ? (tableSources.length === 1 ? tableSources[0] : undefined)
+    : tableSources.find(source => source.dump_path === selectedExportPath)
+  const tableFacts = tableSource ?? (tableSources.length <= 1 ? ctx?.table : undefined)
   const boxUrl = new URL(location.href)
   boxUrl.searchParams.set('case', slug); boxUrl.searchParams.set('view', 'iocbox')
   if (ctx?.ioc_ids?.[0]) boxUrl.searchParams.set('ioc', String(ctx.ioc_ids[0])); else boxUrl.searchParams.delete('ioc')
@@ -435,9 +442,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       {kind === 'client' ? <><IpFlag ip={artifact.artifact} /><span>{geo?.name || artifact.artifact}</span></> : <span className="mono min-w-0 flex-1 break-all" title={artifact.artifact}>{displayedIdentity}</span>}
       <CopyButton value={kind === 'log_observation' ? displayedIdentity : artifact.artifact} label={tr(kind === 'log_observation' ? 'logEvidence.copyReference' : 'copy.path')} className="shrink-0" />
     </div>
-    {kind !== 'log_observation' && <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
+    {kind !== 'log_observation' && kind !== 'table' && <div className="mt-2 flex flex-wrap gap-2 [&>div>div]:left-0 [&>div>div]:right-auto">
       {kind === 'client' ? <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
-        : <><Button variant="ghost" disabled={reveal.isPending || (kind === 'table' && (ctx?.table_sources?.length ?? 0) !== 1) || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(kind === 'table' ? ctx!.table_sources![0].dump_path : artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
+        : <><Button variant="ghost" disabled={reveal.isPending || (kind === 'file' && !fileAvailable)} onClick={() => reveal.mutate(artifact.artifact)}><FolderOpen size={13} />{tr('artifact.showInFileManager')}</Button>
         <GroupedActions label={tr('review.open')} icon={<ExternalLink size={13} />}>
           <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
         </GroupedActions></>}
@@ -499,15 +506,15 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
 
       </div>
     )}
-    {ctx?.table && (ctx.table_sources?.length ?? 0) <= 1 && (
+    {tableFacts && (
       <div className="flex flex-col">
-        <MetaCell label={tr('artifact.rowsInDump')}>{formatCount(ctx.table.rows)}</MetaCell>
-        <MetaCell label={tr('artifact.columns')}>{ctx.table.columns}</MetaCell>
-        <MetaCell label={tr('artifact.dumpBytes')}>{formatBytes(ctx.table.bytes)}</MetaCell>
-        <MetaCell label="CMS">{ctx.table.cms || '—'}</MetaCell>
-        {ctx.table.col_list && <div className="col-span-2">
+        {tableFacts.rows != null && <MetaCell label={tr('artifact.rowsInDump')}>{formatCount(tableFacts.rows)}</MetaCell>}
+        {tableFacts.columns != null && <MetaCell label={tr('artifact.columns')}>{tableFacts.columns}</MetaCell>}
+        {tableFacts.bytes != null && <MetaCell label={tr('artifact.dumpBytes')}>{formatBytes(tableFacts.bytes)}</MetaCell>}
+        {tableFacts.cms && <MetaCell label="CMS">{tableFacts.cms}</MetaCell>}
+        {tableFacts.col_list && <div className="col-span-2">
           <MetaCell label={tr('artifact.columnsInDump')}>
-            <span className="mono break-all text-[11px]">{ctx.table.col_list}</span>
+            <span className="mono break-all text-[11px]">{tableFacts.col_list}</span>
           </MetaCell>
         </div>}
       </div>
@@ -599,7 +606,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               : <ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} />}
           </div>
         ) : logReview ? <LogFindingReview key={artifactKey} slug={slug} events={ctx?.log_observations ?? []} configured={conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'file'))} onFile={onView} /> : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
-          <aside data-artifact-scroll tabIndex={0} className="min-w-0 space-y-4 p-3 lg:overflow-y-auto">
+          <aside data-artifact-scroll tabIndex={0} className={clsx('min-w-0 space-y-4 p-3 lg:overflow-y-auto', kind === 'table' && 'hidden lg:block')}>
             {identity}{kind === 'file' ? fileFacts : nonFileContext}
             {kind === 'dump' && !!ctx?.tables?.length && <Block title={tr('review.tables')}><div className="space-y-1">{ctx.tables.map(table => <button key={table.id} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-[var(--panel-2)]" onClick={() => { setSelectedTable(table.id); setEvidenceTab('tables') }}><Database size={13} /><span className="mono min-w-0 flex-1 truncate">{table.name}</span><ChevronRight size={13} /></button>)}</div></Block>}
           </aside>
@@ -631,7 +638,9 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               {tab === 'trace' && <TraceWindow key={artifactKey} slug={slug} ips={[artifact.artifact]} embedded marks={marks} onClose={() => setEvidenceTab('trace')} />}
               {tab === 'agents' && <div className="overflow-x-auto rounded-lg border border-[var(--line)]"><table className="w-full text-left text-[12px]"><thead className="bg-[var(--panel-2)]"><tr><th className="p-2">{tr('review.agents')}</th><th className="p-2">{tr('table.requests')}</th></tr></thead><tbody>{actor?.top_agents?.map((entry, index) => <tr key={index} className="border-t border-[var(--line)]"><td className="mono break-all p-2">{entry.agent || tr('artifact.emptyAgent')}</td><td className="p-2">{formatCount(entry.n)}</td></tr>)}</tbody></table>{!actor?.top_agents?.length && <p className="p-3 text-[12px] text-[var(--muted)]">{tr('review.noAgents')}</p>}<p className="p-2 text-[11px] text-[var(--muted)]">{tr('review.agentLimit')}</p></div>}
               {tab === 'enrichment' && <ArtifactEnrichment key={JSON.stringify([artifactKey, ctx?.ioc_ids])} slug={slug} ids={ctx?.ioc_ids ?? []} />}
-              {kind === 'table' && tab === 'findings' && <TableRecord key={`${artifactKey}:${activeFinding?.id}`} slug={slug} sources={ctx?.table_sources ?? []} finding={activeFinding} tableName={artifact.artifact} />}
+              {kind === 'table' && tab === 'findings' && <TableRecord key={`record:${artifactKey}`} slug={slug} sources={tableSources} finding={activeFinding} tableName={artifact.artifact}
+                sourceId={tableSource?.dump_id ?? null} onSourceChange={id => setSelectedExportPath(tableSources.find(source => source.dump_id === id)?.dump_path ?? null)} />}
+              {kind === 'table' && <details className="rounded-lg border border-[var(--line)] lg:hidden"><summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold">{tr('review.context.table')}</summary><div className="space-y-3 p-3">{identity}{nonFileContext}</div></details>}
               {kind === 'dump' && tab === 'findings' && <><ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} onExpand={ctx?.dump ? () => setExpanded(true) : undefined} />{sqlQuery.error && <p role="alert">{sqlQuery.error.message}</p>}</>}
               {kind === 'dump' && tab === 'tables' && <>
                 <label className="flex flex-col gap-1 text-[12px]">{tr('review.tables')}<select aria-label={tr('review.tables')} className="rounded border border-[var(--line)] bg-[var(--panel-2)] p-2" value={selectedTable ?? ''} onChange={event => setSelectedTable(Number(event.target.value) || null)}><option value="">{tr('review.chooseTable')}</option>{ctx?.tables?.map(table => <option key={table.id} value={table.id}>{table.name} · {table.rows} {tr('review.rows')}</option>)}</select></label>

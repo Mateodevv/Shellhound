@@ -26,7 +26,7 @@ it('requires an explicit export choice and renders database values as inert text
   await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'Database export' }), '7')
   expect(await screen.findByText('<b>Harmless marker</b>')).toBeVisible()
   expect(screen.getByText('NULL')).toBeVisible()
-  expect(api).toHaveBeenCalledWith('/api/cases/case/database/row?finding_id=12&dump_id=7')
+  expect(api).toHaveBeenCalledWith('/api/cases/case/database/row?finding_id=12&dump_id=7&expected_dump_path=%2Fexport%20two%2Fdata.sql')
   expect(document.querySelector('dd b')).toBeNull()
 })
 
@@ -34,7 +34,7 @@ it('opens the only available export and explains read failures', async () => {
   vi.mocked(api).mockRejectedValue(new Error('The evidence file is unavailable.'))
   renderWithProviders(<DatabaseRowWindow slug="case" finding={finding} sources={[sources[0]]} onClose={() => {}} />)
   expect(await screen.findByRole('alert')).toHaveTextContent('The evidence file is unavailable.')
-  expect(api).toHaveBeenCalledWith('/api/cases/case/database/row?finding_id=12&dump_id=4')
+  expect(api).toHaveBeenCalledWith('/api/cases/case/database/row?finding_id=12&dump_id=4&expected_dump_path=%2Fexport%20one%2Fdata.sql')
 })
 
 it('explains missing indexed exports without making a file request', () => {
