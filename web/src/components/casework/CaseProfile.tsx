@@ -27,10 +27,11 @@ function CaseProfileDialog({ slug, onClose }: { slug: string; onClose: () => voi
   const query = useQuery({ queryKey: ['case', slug], queryFn: () => api<CaseInfo>(`/api/cases/${slug}`) })
   return <Modal open onClose={onClose} title={tr('cti.profile')}>
     <CtiError error={query.error} />
-    {query.data ? <CaseProfileForm slug={slug} info={query.data} onClose={onClose} /> : !query.error && <p>{tr('common.loading')}</p>}
+    {query.isError && <Button onClick={() => void query.refetch()}>{tr('evidence.skips.retry')}</Button>}
+    {query.data ? <CaseProfileForm slug={slug} info={query.data} onClose={onClose} unavailable={query.isError || query.isFetching} /> : !query.error && <p>{tr('common.loading')}</p>}
   </Modal>
 }
-export function CaseProfileForm({ slug, info, onClose }: { slug: string; info: CaseInfo; onClose: () => void }) {
+export function CaseProfileForm({ slug, info, onClose, unavailable = false }: { slug: string; info: CaseInfo; onClose: () => void; unavailable?: boolean }) {
   const tr = useT()
   const qc = useQueryClient()
   const [name, setName] = useState(info.name)
@@ -47,15 +48,15 @@ export function CaseProfileForm({ slug, info, onClose }: { slug: string; info: C
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
     onClose()
   } })
-  return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!invalidDates && name.trim() && !save.isPending) save.mutate() }}>
+  return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!unavailable && !invalidDates && name.trim() && !save.isPending) save.mutate() }}>
     <p className="text-[12px] text-[var(--muted)]">{tr('profileChanges.localSave')}</p>
-    <fieldset disabled={save.isPending} className="flex flex-col gap-4">
+    <fieldset disabled={save.isPending || unavailable} className="flex flex-col gap-4">
     <CtiField label={tr('wizard.name')}><input aria-label={tr('wizard.name')} required value={name} onChange={e => setName(e.target.value)} className={ctiInput} /><span>{tr('profileChanges.localName')}</span></CtiField>
     <CtiField label={tr('cti.caseId')}><input aria-label={tr('cti.caseId')} value={reference} readOnly={info.reference_locked} onChange={(e) => setReference(e.target.value)} className={ctiInput} /><span>{tr(info.reference_locked ? 'profileChanges.referenceLocked' : 'cti.caseIdHint')}</span></CtiField>
     <CaseProfileFields profile={profile} onChange={setProfile} />
     </fieldset>
     <CtiError error={invalidDates ? tr('cti.dateError') : save.error} />
-    <div className="flex justify-end gap-2"><Button type="button" disabled={save.isPending} onClick={onClose}>{tr('common.cancel')}</Button><Button type="submit" variant="primary" disabled={save.isPending || invalidDates || !name.trim()}>{tr('common.save')}</Button></div>
+    <div className="flex justify-end gap-2"><Button type="button" disabled={save.isPending} onClick={onClose}>{tr('common.cancel')}</Button><Button type="submit" variant="primary" disabled={unavailable || save.isPending || invalidDates || !name.trim()}>{tr('common.save')}</Button></div>
   </form>
 }
 

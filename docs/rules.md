@@ -705,6 +705,12 @@ honest form of removal. The case records what was searched for in it,
 **including without success**: "we checked for this, there was nothing" is
 written down nowhere else, because findings only record finds.
 
+If the saved library is unreadable or invalid, Pattern Hunt blocks library
+changes and offers retry instead of replacing it with an empty library. Repair
+or restore the original workspace file before editing again. Keep a stopped-app
+copy of the whole workspace for backup; a case archive does not include the
+workspace-wide pattern library or settings.
+
 ### Scanner tool User-Agent — INFO
 
 **Trigger:** the User-Agent names a known tool: sqlmap, nikto, nmap, masscan,

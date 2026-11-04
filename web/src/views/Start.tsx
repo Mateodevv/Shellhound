@@ -23,7 +23,7 @@ interface State { workspace: string; cases: CaseInfo[] }
 export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
   const tr = useT()
   const qc = useQueryClient()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ['state'],
     queryFn: () => api<State>('/api/state'),
   })
@@ -122,27 +122,29 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
           >
             <div className="flex w-full items-center gap-3">
               <button className="flex min-w-0 flex-1 cursor-pointer flex-col items-start gap-3 rounded-md text-left sm:flex-row sm:items-center sm:justify-between"
-                onClick={() => onOpen(c.slug)}>
+                disabled={c.metadata_available === false} onClick={() => onOpen(c.slug)}>
                 <div className="min-w-0">
-                  <div className="break-words font-semibold">{c.name}</div>
-                  <div className="mt-0.5 text-xs text-[var(--muted)]">
+                  <div className="break-words font-semibold">{c.name || c.slug}</div>
+                  {c.metadata_available === false && <div role="alert" className="text-xs text-[var(--danger-text)]">{c.metadata_error || tr('start.metadataUnavailable')}</div>}
+                  {c.metadata_available !== false && <div className="mt-0.5 text-xs text-[var(--muted)]">
                     {c.reference && <span className="mr-3">{c.reference}</span>}
                     {tr('start.created')} {c.created?.slice(0, 10)}
-                  </div>
+                  </div>}
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)] tabular sm:grid sm:grid-cols-3 sm:text-right">
+                {c.metadata_available !== false && <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)] tabular sm:grid sm:grid-cols-3 sm:text-right">
                   <span>{tr('start.artifacts', { n: c.artifacts ?? 0 })}</span>
                   <span className="text-[var(--danger-text)]">{tr('start.confirmed', { n: c.confirmed ?? 0 })}</span>
                   <span>{c.iocs ?? 0} IOCs</span>
-                </div>
+                </div>}
               </button>
               <div className="flex shrink-0 items-center gap-1">
+                {c.metadata_available === false && <Button onClick={() => void refetch()}>{tr('common.retry')}</Button>}
                 {/* The default exit: everything into a zip in the archive
                     below, restorable from right there. */}
                 <Tooltip hint={tr('start.archive.hint')}>
                   <Button variant="ghost" title={tr('start.archive')}
                     className="transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                    disabled={busy === c.slug}
+                    disabled={busy === c.slug || c.metadata_available === false}
                     onClick={() => setConfirmation({ kind: 'archive', item: c })}>
                     {busy === c.slug && archiveCase.isPending
                       ? <span className="text-[11px]">{tr('start.archiving')}</span>
@@ -153,7 +155,7 @@ export function Start({ onOpen }: { onOpen: (slug: string) => void }) {
                   <Button variant="ghost"
                     title={tr('common.remove')}
                     className="transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                    disabled={busy === c.slug}
+                    disabled={busy === c.slug || c.metadata_available === false}
                     onClick={() => setConfirmation({ kind: 'delete', item: c })}>
                     <Trash2 size={14} />
                   </Button>

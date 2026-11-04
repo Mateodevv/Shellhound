@@ -127,6 +127,63 @@ class LogEvidenceTests(unittest.TestCase):
         Path(source["path"]).write_text("Changed observation\n", encoding="utf-8")
         self.assertEqual(logs.warning_counts(self.case), (1, 0))
 
+    def test_bulk_warning_review_is_atomic_and_preserves_decisions_on_retry(self):
+        for number in range(101):
+            (self.sources / f"note-{number}.txt").write_text("ordinary text\n", encoding="utf-8")
+        (self.sources / "binary.bin").write_bytes(b"binary\0data")
+        logs.build(self.case)
+        sources = logs.source_status(self.case)
+        selections = [{"source_id": s["id"], "warning_key": s["warning_key"]} for s in sources]
+        self.assertEqual(len(selections), 102)
+        self.assertEqual(sum(s["warning_group"] == "unsupported" for s in sources), 1)
+        with patch.object(parsers, "records", side_effect=AssertionError("review parsed records")), \
+             patch.object(parsers, "text_lines", side_effect=AssertionError("review parsed text")), \
+             patch.object(logs, "inventory", wraps=logs.inventory) as inventory:
+            self.assertEqual(logs.review_warnings(self.case, "accept", selections)["updated"], 102)
+            self.assertEqual(inventory.call_count, 1)
+        self.assertEqual(logs.warning_counts(self.case), (0, 102))
+        logs.build(self.case)
+        self.assertEqual(logs.warning_counts(self.case), (0, 102))
+        Path(sources[0]["path"]).write_text("changed text\n", encoding="utf-8")
+        with self.assertRaises(logs.LogEvidenceError):
+            logs.review_warnings(self.case, "reopen", selections)
+        self.assertEqual(logs.warning_counts(self.case), (1, 101))
+        remaining = selections[1:]
+        self.assertEqual(logs.review_warnings(self.case, "reopen", remaining)["updated"], 101)
+        self.assertEqual(logs.warning_counts(self.case), (102, 0))
+
+    def test_job_warning_snapshot_tracks_current_and_legacy_source_review(self):
+        from server.jobs import manager
+        from server import analysis, scan_retries
+        (self.sources / "notes.txt").write_text("ordinary text\n", encoding="utf-8")
+        job_id = manager.submit(self.case, "log_events", lambda ctx: logs.build(self.case, ctx))
+        self.assertEqual(manager.wait_for(self.case, [job_id], timeout=20), [])
+        conn = db.connect(self.case)
+        try:
+            details = scan_retries.skipped_details(conn, job_id, self.root)
+            item = details["items"][0]
+            self.assertTrue(item["acceptable"])
+            self.assertFalse(item["retryable"])
+            logs.review_warnings(self.case, "accept", [{"source_id": item["source_id"], "warning_key": item["warning_key"]}])
+            self.assertEqual(scan_retries.skipped_details(conn, job_id, self.root)["accepted"], 1)
+            Path(item["path"]).write_text("changed text\n", encoding="utf-8")
+            with patch.object(parsers, "text_lines", side_effect=AssertionError("details parsed source")):
+                self.assertEqual(scan_retries.skipped_details(conn, job_id, self.root)["items"][0]["status"], "historical")
+            row = db.one(conn, "SELECT * FROM jobs WHERE id=?", (job_id,))
+            described = analysis.describe_job(conn, row, logs.source_status(self.case, detect=False))
+            self.assertEqual(described["current_warning_count"], 0)
+            self.assertEqual(described["current_accepted_count"], 0)
+            self.assertEqual(described["warning_count"], 1)
+            self.assertEqual(described["analysis_status"], "complete_with_warnings")
+            conn.execute("UPDATE jobs SET scan_context='{}' WHERE id=?", (job_id,))
+            conn.commit()
+            legacy = scan_retries.skipped_details(conn, job_id, self.root)["items"][0]
+            self.assertTrue(legacy["current_source_warning"])
+            self.assertTrue(legacy["acceptable"])
+            self.assertNotEqual(item["warning_key"], legacy["warning_key"])
+        finally:
+            conn.close()
+
     def test_mapping_respects_existing_decision_and_earliest_upload(self):
         webroot = self.root / "webroot"
         webroot.mkdir()

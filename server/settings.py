@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 import threading
 import uuid
 from urllib.parse import urlsplit
@@ -62,18 +63,43 @@ def path(workspace) -> Path:
     return Path(workspace) / SETTINGS_FILE
 
 
-def load(workspace) -> dict:
-    """The settings, with defaults filled in. A broken file never raises --
-    it must not be the reason the interface stops opening."""
+class SettingsError(RuntimeError):
+    """A safe settings error that contains no file content or credentials."""
+
+
+def load(workspace, *, for_write=False) -> dict:
+    """Fill defaults for readers; never replace unreadable settings on a write."""
     out = {"keys": dict(_DEFAULTS["keys"]),
            "enrichment_ack": _DEFAULTS["enrichment_ack"], "indirect_php": False,
            "yara_disabled": [], "rules_disabled": [], "opencti": dict(_CTI_DEFAULTS)}
     try:
         raw = json.loads(path(workspace).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return out
+    except OSError:
+        if for_write:
+            raise SettingsError("Saved settings could not be read. Check access to settings.json and retry.") from None
+        return out
+    except ValueError:
+        if for_write:
+            raise SettingsError("Saved settings.json is invalid. Restore a valid copy before saving changes.") from None
         return out
     if not isinstance(raw, dict):
+        if for_write:
+            raise SettingsError("Saved settings.json is invalid. Restore a valid copy before saving changes.")
         return out
+    if for_write:
+        for container, fields in (("keys", SERVICES), ("opencti", ("url", "token", "ingester_id"))):
+            if container in raw and (not isinstance(raw[container], dict) or any(
+                    field in raw[container] and not isinstance(raw[container][field], str)
+                    for field in fields)):
+                raise SettingsError("Saved settings.json is invalid. Restore a valid copy before saving changes.")
+        # Keep fields written by other versions when changing an unrelated setting.
+        out = {**raw, **out}
+        out["keys"].update(raw.get("keys", {}))
+        out["opencti"].update({key: value for key, value in raw.get("opencti", {}).items()
+                               if key not in _CTI_DEFAULTS})
+        out["opencti"]["external_file_uploads"] = False
     cti = raw.get("opencti")
     if isinstance(cti, dict):
         for key in ("url", "token", "ingester_id"):
@@ -96,21 +122,31 @@ def load(workspace) -> dict:
 
 
 def save(workspace, data) -> dict:
-    """Write settings, owner-readable where the platform allows it."""
+    """Replace settings only after a complete, private temporary file is flushed."""
     target = path(workspace)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".tmp")
-    # Beside it first, then replace: a crash mid-write must not leave the
-    # workspace with half a settings file.
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                   encoding="utf-8")
-    tmp.replace(target)
+    tmp = None
     try:
-        os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
-        # Windows and exotic file systems: best effort, and the docstring
-        # says so rather than the code pretending it worked.
-        pass
+        payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                         prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+            tmp = Path(stream.name)
+            try:
+                os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass  # Windows permissions are best effort, as for the settings file.
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.replace(target)
+    except (OSError, TypeError, ValueError):
+        raise SettingsError("Settings could not be saved. Existing settings have not been changed.") from None
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     return data
 
 
@@ -120,17 +156,17 @@ def public(workspace) -> dict:
     A KEY NEVER LEAVES THIS FUNCTION IN FULL. The last four characters tell
     the analyst which key is configured; they cannot be used to sign a
     request. `configured` is what the UI actually switches on."""
-    data = load(workspace)
+    data = load(workspace, for_write=True)
     return {"services": {name: {**info, "configured": bool(data["keys"][name]),
             "hint": "…" + data["keys"][name][-4:] if len(data["keys"][name]) > 4 else "…" if data["keys"][name] else ""}
             for name, info in SERVICES.items()}, "enrichment_ack": data["enrichment_ack"],
-            "opencti": opencti_public(workspace), "indirect_php": data["indirect_php"],
+            "opencti": _public_opencti(data["opencti"]), "indirect_php": data["indirect_php"],
             "path": str(path(workspace))}
 
 
 def set_indirect_php(workspace, enabled) -> dict:
     with _LOCK:
-        data = load(workspace)
+        data = load(workspace, for_write=True)
         data["indirect_php"] = enabled is True
         save(workspace, data)
     return public(workspace)
@@ -143,7 +179,7 @@ def yara_disabled(workspace) -> set:
 
 def set_yara_disabled(workspace, names) -> list:
     with _LOCK:
-        data = load(workspace)
+        data = load(workspace, for_write=True)
         data["yara_disabled"] = sorted({str(n) for n in names if str(n).strip()})
         save(workspace, data)
         return data["yara_disabled"]
@@ -160,7 +196,7 @@ def set_key(workspace, service, key) -> dict:
     from server import diagnostics
     diagnostics.protect_secret(key)
     with _LOCK:
-        data = load(workspace)
+        data = load(workspace, for_write=True)
         data["keys"][service] = key
         save(workspace, data)
     return public(workspace)
@@ -168,16 +204,19 @@ def set_key(workspace, service, key) -> dict:
 
 def set_ack(workspace, accepted) -> dict:
     with _LOCK:
-        data = load(workspace)
+        data = load(workspace, for_write=True)
         data["enrichment_ack"] = bool(accepted)
         save(workspace, data)
     return public(workspace)
 
 
 def for_service(workspace, service) -> str:
-    if service not in SERVICES or opencti_public(workspace)["configured"]:
+    if service not in SERVICES:
         return ""
-    key = load(workspace)["keys"][service]
+    data = load(workspace, for_write=True)
+    if _public_opencti(data["opencti"])["configured"]:
+        return ""
+    key = data["keys"][service]
     from server import diagnostics
     diagnostics.protect_secret(key)
     return key
@@ -189,9 +228,13 @@ def opencti_config(workspace) -> dict:
 
 
 def opencti_public(workspace) -> dict:
-    data = opencti_config(workspace)
-    token = data.pop("token")
-    return {**data, "configured": bool(token and data["url"] and data["ingester_id"]),
+    return _public_opencti(opencti_config(workspace))
+
+
+def _public_opencti(data) -> dict:
+    token = data["token"]
+    visible = {key: data[key] for key in _CTI_DEFAULTS if key != "token"}
+    return {**visible, "configured": bool(token and data["url"] and data["ingester_id"]),
             "token_hint": "…" + token[-4:] if len(token) >= 4 else ("…" if token else "")}
 
 
@@ -201,7 +244,7 @@ def set_opencti(workspace, changes) -> dict:
     if unknown:
         raise ValueError("Unsupported OpenCTI setting")
     with _LOCK:
-        data = load(workspace)
+        data = load(workspace, for_write=True)
         current = data["opencti"]
         for key in ("url", "token", "ingester_id"):
             if key in changes and not isinstance(changes[key], str):

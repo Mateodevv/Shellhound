@@ -153,7 +153,7 @@ def validate_settings(options):
     return result
 
 
-def inventory(case_dir, *, persist=False, ctx=None):
+def inventory(case_dir, *, persist=False, ctx=None, detect=True):
     conn = db.connect(case_dir)
     try:
         evidence = db.rows(conn, "SELECT * FROM evidence WHERE kind IN ('logs','access_logs') ORDER BY id")
@@ -162,7 +162,7 @@ def inventory(case_dir, *, persist=False, ctx=None):
         for path, identity in files([e["path"] for e in evidence], ctx):
             old = known.get(identity)
             options = json.loads(old["settings"]) if old else {}
-            detected = _detect(path)
+            detected = _detect(path) if detect else {"format": old["format"] if old else "text", "error": ""}
             fmt = options.get("format", "auto")
             fmt = detected["format"] if fmt == "auto" else fmt
             item = {**(old or {}), "id": old["id"] if old else _hash(identity)[:24],
@@ -208,7 +208,7 @@ def configure(case_dir, source_id, options, source=None):
         conn.close()
 
 
-def access_targets(case_dir):
+def access_targets(case_dir, *, detect=True):
     """Keep legacy registrations byte-for-byte compatible until explicitly migrated."""
     conn = db.connect(case_dir)
     try:
@@ -218,7 +218,7 @@ def access_targets(case_dir):
         conn.close()
     if not has_new:
         return legacy
-    return [s["path"] for s in inventory(case_dir) if s["format"] == "access"]
+    return [s["path"] for s in inventory(case_dir, detect=detect) if s["format"] == "access"]
 
 
 def _open_index(case_dir, write=False):
@@ -406,7 +406,7 @@ def build(case_dir, ctx=None, source_ids=None):
                 conn.rollback()
                 warning = str(exc) if isinstance(exc, (LogEvidenceError, parsers.LogReadError)) else "Unable to read or index this source. Check access and file integrity, then retry."
                 state = "cancelled" if ctx and ctx.cancelled() else "failed"
-                conn.execute("UPDATE log_sources SET state=?,warning=?,accepted_fingerprint='' WHERE id=?", (state, warning, sid))
+                conn.execute("UPDATE log_sources SET state=?,warning=? WHERE id=?", (state, warning, sid))
                 conn.commit()
                 stats["failed_sources"] += 1
                 if ctx and ctx.cancelled():
@@ -415,6 +415,13 @@ def build(case_dir, ctx=None, source_ids=None):
                 stats["log_warnings"] += 1
                 if ctx:
                     ctx.detailed_skip(source["path"], warning, "log_source", source["path"])
+                    snapshot = {**source, "warning": warning, "current_marker": marker(source["path"])}
+                    try:
+                        snapshot["warning_fingerprint"] = fingerprint(source["path"], options)
+                    except OSError:
+                        snapshot["warning_fingerprint"] = "unreadable"
+                    ctx.log_warning_snapshots[str(len(ctx.skipped_files) - 1)] = {
+                        "source_id": sid, "warning_key": _warning_key(snapshot)}
         # A completed migration replaces the old case-wide error engine.
         # A failed or scoped pass cannot retire support from another source.
         if source_ids is None and not stats["failed_sources"] and not (ctx and ctx.cancelled()) and db.one(
@@ -429,14 +436,14 @@ def build(case_dir, ctx=None, source_ids=None):
     return stats
 
 
-def source_status(case_dir):
-    sources = inventory(case_dir)
+def source_status(case_dir, *, detect=True):
+    sources = inventory(case_dir, detect=detect)
     http_status = {}
     http_indexing = False
     if any(s["format"] == "access" for s in sources):
         from server.engines import logindex
         from server.jobs import manager
-        http_status = logindex.status(case_dir, access_targets(case_dir))
+        http_status = logindex.status(case_dir, access_targets(case_dir, detect=detect))
         conn = db.connect(case_dir)
         try:
             jobs = db.rows(conn, "SELECT id FROM jobs WHERE kind='index_logs' AND state IN ('queued','running')")
@@ -473,7 +480,10 @@ def source_status(case_dir):
                 s["warning_fingerprint"] = fingerprint(s["path"], s["settings"])
             except OSError:
                 s["warning_fingerprint"] = "unreadable"
-        s["accepted"] = bool(s["warning"] and s["accepted_fingerprint"] == _warning_key(s))
+        s["warning_key"] = _warning_key(s) if s["warning"] else ""
+        s["warning_group"] = ("unsupported" if "Binary content" in s["warning"] else
+                              "processing_error" if s["state"] in ("failed", "cancelled") else "manual_review") if s["warning"] else ""
+        s["accepted"] = bool(s["warning"] and s["accepted_fingerprint"] == s["warning_key"])
     return sources
 
 
@@ -481,27 +491,56 @@ def _warning_key(source):
     return _hash(source["id"] + source["current_marker"] + source.get("warning_fingerprint", "") + json.dumps(source["settings"], sort_keys=True) + source["warning"])
 
 
-def accept_warning(case_dir, sid):
-    source = next((s for s in source_status(case_dir) if s["id"] == sid), None)
-    if not source or not source["warning"]:
-        raise LogEvidenceError("No current warning for this source")
+def validate_warning_selection(case_dir, selections):
+    sources = {s["id"]: s for s in source_status(case_dir, detect=False)}
+    if len({s["source_id"] for s in selections}) != len(selections) or any(
+            not sources.get(s["source_id"]) or not sources[s["source_id"]]["warning"] or
+            sources[s["source_id"]]["warning_key"] != s["warning_key"] for s in selections):
+        raise LogEvidenceError("A selected warning changed or is no longer available. Refresh the list.")
+
+
+def review_warnings(case_dir, decision, selections):
+    if decision not in ("accept", "reopen") or not selections:
+        raise ValueError("Choose a review decision and at least one warning")
+    sources = {s["id"]: s for s in source_status(case_dir, detect=False)}
+    seen = set()
+    selected = []
+    for selection in selections:
+        sid, key = selection["source_id"], selection["warning_key"]
+        source = sources.get(sid)
+        if (sid in seen or not source or source["format"] == "access" or not source["warning"]
+                or source["warning_key"] != key or source["accepted"] != (decision == "reopen")):
+            raise LogEvidenceError("A selected warning changed or is no longer available. Refresh the list.")
+        seen.add(sid)
+        selected.append(source)
     conn = db.connect(case_dir)
     try:
-        conn.execute("UPDATE log_sources SET accepted_fingerprint=? WHERE id=?", (_warning_key(source), sid))
-        conn.execute("INSERT INTO meta(key,value) VALUES (?,?)", ("log_warning_review:" + sid + ":" + uuid.uuid4().hex,
-            json.dumps({"source_id": sid, "warning": source["warning"], "fingerprint": _warning_key(source), "accepted_at": db.now()})))
-        skipped = db.one(conn, "SELECT s.job_id,s.ordinal FROM job_skips s JOIN jobs j ON j.id=s.job_id "
-                              "WHERE j.kind='log_events' AND s.path=? ORDER BY s.job_id DESC LIMIT 1", (source["path"],))
-        if skipped:
-            conn.execute("INSERT INTO skip_reviews(job_id,ordinal,accepted_at) VALUES (?,?,?)",
-                         (skipped["job_id"], skipped["ordinal"], db.now()))
+        for source in selected:
+            sid = source["id"]
+            conn.execute("UPDATE log_sources SET accepted_fingerprint=? WHERE id=?",
+                         (source["warning_key"] if decision == "accept" else "", sid))
+            conn.execute("INSERT INTO meta(key,value) VALUES (?,?)", ("log_warning_review:" + sid + ":" + uuid.uuid4().hex,
+                json.dumps({"source_id": sid, "warning": source["warning"], "fingerprint": source["warning_key"],
+                            "decision": decision, "reviewed_at": db.now()})))
+        from server.analysis import refresh_receipts
+        refresh_receipts(conn)
         conn.commit()
     finally:
         conn.close()
+    return {"updated": len(selected)}
+
+
+def accept_warning(case_dir, sid):
+    source = next((s for s in source_status(case_dir, detect=False) if s["id"] == sid and s["warning"]), None)
+    if not source:
+        raise LogEvidenceError("No current warning for this source")
+    if source["accepted"]:
+        return {"updated": 0}
+    return review_warnings(case_dir, "accept", [{"source_id": sid, "warning_key": source["warning_key"]}])
 
 
 def warning_counts(case_dir):
-    rows = [s for s in source_status(case_dir) if s["warning"] and s["format"] != "access"]
+    rows = [s for s in source_status(case_dir, detect=False) if s["warning"] and s["format"] != "access"]
     return sum(not s["accepted"] for s in rows), sum(s["accepted"] for s in rows)
 
 
@@ -517,6 +556,7 @@ def reconcile_receipts(conn):
     known = {s["identity"]: s for s in db.rows(conn, "SELECT * FROM log_sources")}
     job = db.one(conn, "SELECT * FROM jobs WHERE kind='log_events' ORDER BY id DESC LIMIT 1")
     http_fresh = None
+    warning_cache = {}
     for item in evidence:
         stats = json.loads(item["stats"] or "{}")
         attempt = stats.get("last_attempt", {})
@@ -530,7 +570,20 @@ def reconcile_receipts(conn):
         state = "complete" if ready and job and job["state"] == "done" else "partial"
         if job and job["state"] in ("queued", "running", "cancelled", "failed"):
             state = "running" if job["state"] == "queued" else job["state"]
-        warnings = sum(bool(s and s["warning"]) for s in others)
+        def unresolved(source):
+            if not source or not source["warning"]:
+                return False
+            if source["id"] not in warning_cache:
+                options = json.loads(source["settings"])
+                try:
+                    warning_fp = fingerprint(source["path"], options)
+                except OSError:
+                    warning_fp = "unreadable"
+                snapshot = {**source, "settings": options, "current_marker": marker(source["path"]),
+                            "warning_fingerprint": warning_fp}
+                warning_cache[source["id"]] = source["accepted_fingerprint"] != _warning_key(snapshot)
+            return warning_cache[source["id"]]
+        warnings = sum(unresolved(s) for s in others)
         if state == "complete" and warnings:
             state = "complete_with_warnings"
         engines["log_events"] = {"state": state, "stats": {"log_warnings": warnings,
@@ -542,7 +595,7 @@ def reconcile_receipts(conn):
             if http_fresh is None:
                 from server.engines import logindex
                 case_dir = Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
-                http_fresh = bool(logindex.status(case_dir, access_targets(case_dir)).get("fresh"))
+                http_fresh = bool(logindex.status(case_dir, access_targets(case_dir, detect=False)).get("fresh"))
             if not http_fresh:
                 engines["index_logs"] = {**engines["index_logs"], "state": "partial"}
         states = {outcome["state"] for outcome in engines.values()}
