@@ -93,6 +93,13 @@ class ReviewWorkspaceTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code,404)
 
     def test_file_enrichment_uses_current_digest_and_never_changed_snapshot(self):
+        from server import backups
+        conn = db.connect(self.case)
+        try:
+            backups.index_content(conn)
+            conn.commit()
+        finally:
+            conn.close()
         test_artifact_preview.ArtifactPreviewTests.decide(self,['webshell'])
         endpoint=self.endpoints['/api/cases/{slug}/artifact']
         initial=endpoint(self.case.name,str(self.file),'en')

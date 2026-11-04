@@ -29,7 +29,7 @@ The lifecycle assertions cover:
 - Local operation without any OpenCTI client construction.
 - Saved decisions across a fresh application instance; interrupted jobs are
   marked failed and analysis can run again without losing review history.
-- Enrichment results, tags and score; an accepted transfer interrupted during
+- Reviewed profile and allowed IOC transfer; an accepted import interrupted during
   status polling resumes without another push. The external OpenCTI adapter
   is simulated, but its local jobs, receipts and mappings are real.
 - Every SQLite table before and after archive/restore, including evidence,
@@ -52,7 +52,7 @@ it is never presented as a valid closed case.
 
 Broader related regressions:
 
-    python -m unittest tests.test_case_profile tests.test_opencti_api tests.test_opencti_service tests.test_opencti_graph tests.test_opencti_sample_context tests.test_jobs tests.test_startup tests.test_scan_retry_api tests.test_incremental_analysis tests.test_evidence_files tests.test_evidence_rows tests.test_diagnostics tests.test_hunt_batches tests.test_review_progress tests.test_regressions
+    python -m unittest tests.test_case_profile tests.test_opencti_api tests.test_opencti_service tests.test_opencti_graph tests.test_jobs tests.test_startup tests.test_scan_retry_api tests.test_incremental_analysis tests.test_evidence_files tests.test_evidence_rows tests.test_diagnostics tests.test_hunt_batches tests.test_review_progress tests.test_regressions
 
 From `web/`, exercise the visible wizard and review interactions:
 
@@ -60,9 +60,9 @@ From `web/`, exercise the visible wizard and review interactions:
     npm run build
 
 These checks do not prove behavior against a particular live OpenCTI version,
-a physical power loss, or every CMS detection rule. Use the opt-in
-`tools.opencti_smoke` command described in `docs/opencti.md` for the remote
-boundary. Do not infer remote acceptance from a successful HTTP submission:
+a physical power loss, or every CMS detection rule. The `tools.opencti_smoke`
+command described in `docs/opencti.md` is offline only. Do not infer remote
+acceptance from a successful HTTP submission:
 the saved receipt must reach complete with visible objects.
 
 ## Dashboard evidence timeline

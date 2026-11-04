@@ -1,4 +1,4 @@
-"""Explicit, report-only reputation lookups when OpenCTI is not configured."""
+"""Explicit, report-only reputation lookups independent of OpenCTI export."""
 import base64
 import ipaddress
 import json
@@ -149,8 +149,6 @@ def _abuse(value, key):
 
 
 def lookup(workspace, case_dir, service, value, refresh=False, *, kind=''):
-    if settings.opencti_public(workspace)['configured']:
-        raise EnrichError('OpenCTI is configured. Use OpenCTI enrichment.', 409)
     if service not in settings.SERVICES:
         raise EnrichError('Unknown enrichment provider')
     value, kind = _identity(value, kind)

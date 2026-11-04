@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler
 
-from server.casework import profile as case_profile, report as case_report, incident_summary
+from server.casework import report as case_report, incident_summary
 from server import correlation, coverage, db, diagnostics
 from server.integrations import geoip
 from server import huntrules, hunt_batches
@@ -682,23 +682,10 @@ def create_app(config: Config) -> FastAPI:
             diagnostics.exception(config.workspace, "opencti", exc, operation=operation)
             raise HTTPException(502, opencti_service._error(exc)) from None
 
-    @app.get("/api/organizations", dependencies=[auth])
-    def organizations_list():
-        return case_profile.list_organizations(config.workspace)
-
-    @app.get("/api/profile/geography", dependencies=[auth])
-    def profile_geography():
-        from server.casework.profile_options import geography
-        return geography()
-
-    @app.get("/api/opencti/sectors", dependencies=[auth])
+    @app.get("/api/profile/sectors", dependencies=[auth])
     def profile_sectors():
-        from server.casework.profile_options import sectors
-        return _cti_call(sectors, config.workspace)
-
-    @app.post("/api/organizations", dependencies=[auth])
-    def organization_create():
-        return _cti_call(case_profile.create_organization, config.workspace)
+        from server.casework.profile_options import SECTORS
+        return {"sectors": SECTORS}
 
     @app.get("/api/opencti/settings", dependencies=[auth])
     def opencti_settings():
@@ -708,7 +695,7 @@ def create_app(config: Config) -> FastAPI:
         url: str | None = None
         token: str | None = None
         ingester_id: str | None = None
-        sample_uploads: bool | None = None
+        model_config = {"extra": "forbid"}
 
     @app.patch("/api/opencti/settings", dependencies=[auth])
     def opencti_settings_update(body: OpenCTISettings):
@@ -723,31 +710,9 @@ def create_app(config: Config) -> FastAPI:
     def opencti_state(slug: str):
         return _cti_call(opencti_service.state, config.workspace, case_dir_or_404(slug))
 
-    @app.get("/api/cases/{slug}/opencti/profile-changes", dependencies=[auth])
-    def opencti_profile_changes(slug: str):
-        return _cti_call(opencti_service.profile_changes, config.workspace, case_dir_or_404(slug))
-
-    @app.post("/api/cases/{slug}/opencti/activity/clear", dependencies=[auth])
-    def opencti_clear_activity(slug: str):
-        return _cti_call(opencti_service.clear_activity, case_dir_or_404(slug))
-
-    class OpenCTISelection(BaseModel):
+    class OpenCTIPreview(BaseModel):
+        model_config = {"extra": "forbid"}
         ioc_ids: list[int] | None = None
-
-    @app.post("/api/cases/{slug}/opencti/lookup", dependencies=[auth])
-    def opencti_lookup(slug: str, body: OpenCTISelection):
-        return _cti_call(opencti_service.lookup, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids)
-
-    class OpenCTIPreview(OpenCTISelection):
-        exclude_relationship_ids: list[int] = Field(default_factory=list)
-        indicator_ids: list[int] = Field(default_factory=list)
-        sample_ids: list[str] = Field(default_factory=list)
-        include_notes: bool = False
-        include_evidence: bool = False
-        exclude_note_ioc_ids: list[int] = Field(default_factory=list)
-        exclude_evidence_ioc_ids: list[int] = Field(default_factory=list)
-        exclude_profile_fields: list[str] = Field(default_factory=list)
 
     @app.post("/api/cases/{slug}/opencti/preview", dependencies=[auth])
     def opencti_preview(slug: str, body: OpenCTIPreview):
@@ -769,25 +734,6 @@ def create_app(config: Config) -> FastAPI:
     def opencti_retry(slug: str, body: OpenCTIRetry):
         return _cti_call(opencti_service.retry, config.workspace,
                          case_dir_or_404(slug), body.export_id)
-
-    @app.post("/api/cases/{slug}/opencti/enrichment/preview", dependencies=[auth])
-    def opencti_enrichment_preview(slug: str, body: OpenCTISelection):
-        return _cti_call(opencti_service.enrichment_preview, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids)
-
-    class OpenCTIEnrich(OpenCTISelection):
-        connector_ids: list[str] = Field(default_factory=list)
-        create_missing: bool = False
-
-    @app.post("/api/cases/{slug}/opencti/enrichment/status", dependencies=[auth])
-    def opencti_enrichment_status(slug: str):
-        return _cti_call(opencti_service.refresh_enrichment, config.workspace,
-                         case_dir_or_404(slug))
-
-    @app.post("/api/cases/{slug}/opencti/enrich", dependencies=[auth])
-    def opencti_enrich(slug: str, body: OpenCTIEnrich):
-        return _cti_call(opencti_service.enrich, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids, body.connector_ids, body.create_missing)
 
     @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
     def log_coverage(slug: str, lang: str = lang_dep, tz: str = tz_dep):

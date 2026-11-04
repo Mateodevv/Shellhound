@@ -1,281 +1,73 @@
-# OpenCTI integration
+# OpenCTI transfer
 
-Shellhound keeps evidence, investigation and triage local. OpenCTI stores shared
-intelligence and runs external enrichment connectors. Local GeoIP remains local.
+OpenCTI integration transfers the manually saved case profile and selected
+IPs, CVEs and file hashes. There is no OpenCTI lookup, score display, label import,
+connector enrichment, Indicator creation or original-file upload.
 
-## Structured IOC objects
+## Configure
 
-The IOC box uses a paginated object list beside a persistent detail pane. Type tabs,
-positive filters and search cover the whole case. Files are searchable by name and
-hash. Overview, Evidence, Relationships and OpenCTI separate the investigation
-steps; tooltips explain individual fields. Object links retain a back history and
-filters. Opening a row is separate from checkbox selection, which starts empty.
-Select page or Select all filtered explicitly to prepare a batch action. The action
-count includes file hash entries. New arrivals never join an existing selection.
-Opening details never starts enrichment or transfer. On narrow screens, Back
-restores the object list. Activity contains transfer receipts and full/filtered
-downloads; POST /api/cases/{slug}/iocs/export accepts ids and format for downloads.
+In Settings, save an HTTPS OpenCTI URL, a dedicated integration token and the
+TAXII push ingester ID. Tokens remain in workspace settings and never enter case
+archives or API responses. Changing the URL clears the previous token. TLS
+verification and redirect refusal remain enabled.
 
-Files have a content identity, coherent hashes and multiple recorded locations.
-The file browser and confirmed findings collect these automatically. Existing hash
-entries remain available inside the file card. Different content at the same path
-is a different file; a matching filename is never sufficient to combine hashes.
-Missing originals do not erase recorded file metadata. Samples still require an
-explicit selection and a fresh matching hash before upload.
-For migrated records, **Verify available file metadata** reads only registered
-local evidence and adds secondary hashes/size when SHA-256 still matches. Changed
-or missing locations are reported; verification does not upload content.
+Use **Test saved connection** explicitly to check the saved configuration and
+TAXII write access. Active internal enrichment connectors must be manual: transfer
+refuses configurations that could automatically start external enrichment.
 
-Path context distinguishes HTTP paths, investigated system paths and local evidence
-paths. Local paths never appear in OpenCTI transfers. Account context identifies the
-system in which a username is meaningful; unscoped usernames stay local and appear with an export warning.
-The context itself is not sent as an account identifier: a stable scoped digest is
-used to prevent merging unrelated accounts.
+## Fill the case profile
 
-Each object starts **malicious**, following the IOC-box default policy. Analysts can
-change the assessment with a reason and retained history. Migration applies this
-default to old unassessed objects without assessment history; manual assessments
-remain intact. Indicator suggestions from assessments require an explicit manual
-malicious assessment. This is independent of
-finding triage, file classification and remote intelligence. Indicator selection
-remains a separate export decision.
+Enter the organization name, summary, country codes, region, city and incident
+dates manually. Countries use two-letter codes such as DE and AT. Organization
+names are no longer generated or suggested from a registry.
 
-Relationships carry direction, automatic/manual provenance and supporting evidence.
-Use **Add evidence-backed relationship** to attach a specific log/finding reference,
-optionally an observation and a time range. A CVE can be added to the box by its
-identifier. Request-path context, observed use, execution, exploitation attempts
-and confirmed exploitation remain distinct assertions. An HTTP 2xx response alone
-establishes neither execution nor exploitation. The adapter preserves unsupported
-relationship semantics in a case-owned `related-to` with a short generated
-description. Analyst notes and supporting evidence excerpts are not exported.
+Main sectors come from a fixed local catalogue: Public administration, Healthcare,
+Financial services, Energy, Water and wastewater, Technology, Telecommunications,
+Transport and logistics, Manufacturing, Retail, Food and agriculture, Education
+and research, Media and culture, Professional services, Construction and real
+estate, Hospitality and tourism, Non-profit organisations, and Other.
 
-Pattern Hunt tests (individual and batch) automatically add every matched IP and
-link it to valid CVE identifiers explicitly entered in the pattern's CVE field.
-This includes clients beyond the displayed result limit and the current draft's
-CVE metadata. Each link retains the test, rule/index fingerprints, request count,
-time range and an example log reference. A match creates CVE context, not a verdict
-or proof of exploitation. Patterns without CVEs or without hits add no such links.
-Retesting preserves explicit relationship withdrawals. Transfer remains a separate
-reviewed action; tests never contact OpenCTI or enrichment services.
+Enter any subsectors manually and associate each with a selected main sector.
+Software and CVE context can be edited manually in the case profile. CVE context
+retains the analyst's assessment; it does not attribute exploitation to every IP.
+TLP:AMBER+STRICT remains the default marking.
 
-Withdrawal requires a reason and is visible in history. A repeated automatic
-collection does not silently undo a withdrawn relationship. The next reviewed
-transfer withdraws earlier owned statements while preserving shared objects and
-other sources' assertions. Assessment reasons and relationship evidence remain local.
+Saving a profile is local and never starts a transfer. Existing profile values,
+including older sector names, remain readable and are preserved on partial edits.
 
-Schema 15 preserves existing IOC IDs, source UIDs, notes and export receipts.
-Explicit historical SHA-256 provenance creates file records without inventing
-size, secondary hashes or a classification. Unknown legacy contexts and equivalent
-legacy values are retained with review warnings. Migration never initiates export.
-Historical file-location and request-context relationships require matching source
-artifacts. Ambiguous content versions retain their path context without an inferred
-IP-to-file assertion. Later migrations preserve verified metadata and withdrawals.
+## Review and transfer
 
-Local detail/decision APIs: `GET /api/cases/{slug}/iocs/{id}/detail`,
-`POST /api/cases/{slug}/iocs/{id}/assessments`,
-`POST /api/cases/{slug}/ioc-relationships`, and
-`POST /api/cases/{slug}/ioc-relationships/{id}/withdraw`.
-IOC creation/update also accepts `context` and `path_context`; listing adds file
-metadata, membership, summary and assessment. Invalid relationships return 400,
-missing endpoints 404, and conflicting identity corrections 409.
+1. Choose **Transfer to OpenCTI** from the IOC box, an object, or the case close flow.
+2. Review the saved profile and the selected IPs, CVEs and hashes. Unsupported IOC
+   types cannot be selected through the API either. IP tags become object labels.
+3. Confirm the reviewed preview. A profile can also be transferred without IOCs.
+4. Check the transfer receipt. Queue acceptance is distinct from verified import.
+   Retry incomplete work from the receipt instead of starting duplicate imports.
 
-## Configure the connection
+Hash-only File objects contain supported hashes, not filenames or source bytes.
+Paths, domains, URLs, emails, usernames, evidence excerpts, notes and file samples
+are never exported as IOCs. The profile can contain manually entered organization,
+sector, location, software and CVE context. Local paths and credentials are redacted
+from transferred text. An IOC's case association does not assert maliciousness.
 
-1. Open **Settings → OpenCTI**. Enter the final HTTPS URL, an existing dedicated
-   integration token and the TAXII push ingester UUID. Personal passwords do not
-   belong in these settings. Reuse the existing Shellhound ingester.
-2. In the OpenCTI deployment, set internal enrichment connectors to manual
-   (`CONNECTOR_AUTO=false` where supported by that connector). Keep external
-   feed import schedules enabled. Recreate/restart only the affected connector
-   services using the deployment's normal workflow, then confirm their OpenCTI
-   overview shows a manual trigger. The connection test lists active automatic
-   enrichments; transfers remain blocked until these are changed.
-3. The integration account needs read access to visible knowledge, TAXII push
-   permission, **Access connectors** (`MODULES`) to inspect connector metadata,
-   **Ask for knowledge enrichment** (`KNOWLEDGE_KNENRICHMENT`), and (only when enabled) artifact
-   upload permission. Grant access to the selected TLP marking as well. A token
-   with narrower visibility can legitimately return no visible result.
-4. Use **Test connection**. This reads capabilities and connector metadata; it
-   neither sends evidence nor triggers enrichment.
+The server binds a preview to the case contents and destination. Changed data,
+credentials or mappings require a new preview. Existing shared objects are reused
+without overwriting another author's fields or markings. Completion requires
+consistent TAXII status and visible imported objects. Reviewed IP tags are added
+and verified even on reused IPs; existing remote tags are retained. The integration
+account needs permission to create labels and attach them to these IPs. Receipts survive failures,
+and completed batches are not resubmitted during retry.
 
-If the test reports that connection and TAXII write access succeeded but
-connector metadata was denied, the token is valid. Check **Access connectors**
-in the integration user's assigned role under **Settings → Security → Roles**.
-Until the connector configuration can be inspected, transfer remains blocked;
-the connector check must not be skipped.
+Older receipts for removed functionality remain local history and cannot be
+replayed. Create a fresh preview under the reduced transfer model. No existing
+remote OpenCTI data is deleted by this change.
 
-The token lives in workspace `settings.json`, outside case archives. Responses
-and previews never return it. Changing the URL clears the old token. TLS remains
-verified and redirect responses are refused. Existing direct-provider keys are
-ignored and removed on the next settings write.
+Direct VirusTotal and AbuseIPDB report lookups remain separate, explicit actions
+and work independently of the OpenCTI export connection.
 
-## Prepare a case
+## Offline checks
 
-Set a unique **Case ID**, for example `SYN-2026-001`. Empty IDs are allowed for local
-work, but cannot be exported. The first queued transfer locks the ID to prevent
-later updates becoming a different OpenCTI incident. Active and archived IDs
-are reserved in the workspace.
-
-Enter the affected organization name. Shellhound stores the chosen name and its
-UUID in the local organization registry and uses that name for the organization
-object transferred to OpenCTI. Select an existing organization to reuse its
-identity across cases. The name is not automatically anonymized: if the real
-organization name should not be shared, enter a pseudonym yourself and review
-the case profile before transfer. Previously generated pseudonyms remain
-unchanged unless you explicitly choose a different organization name.
-
-Optional profile fields include summary, sectors, ISO alpha-2 country codes,
-incident dates, software versions and vulnerabilities. Vulnerabilities carry
-`confirmed` or `suspected` exploitation status. CVEs are represented as
-Vulnerability objects; non-CVE observations remain explicit context. The default
-marking is **TLP:AMBER+STRICT**. This expresses intended sharing restrictions; it
-does not replace OpenCTI's access controls.
-
-## Use the IOC box
-
-- **Check in OpenCTI** searches existing observable values. Contextual path,
-  user and other entries remain visible but are not sent to external reputation
-  providers. Results retain sources, dates, reports and relationships. No visible
-  match means unknown to the integration account, not benign.
-- **Transfer to OpenCTI** opens a preview of the complete selected graph,
-  including collapsed rows. Review individual IOCs, relations, notes, evidence,
-  profile fields and suggested Indicators. Indicators require explicit selection;
-  extracted domains and HTTP requests do not become malware or C2 assertions.
-- **Enrich via OpenCTI** shows matching active connectors. Unknown values require
-  explicit permission to create marked observables before the selected connector
-  runs. Requests never change Shellhound's triage state.
-
-Every new transfer creates or updates an **Incident Response case**
-(`x-opencti-case-incident`) containing the **Incident**, the affected organization,
-sectors/subsectors, locations, software, CVEs and selected investigation results.
-The Case represents the investigation; the Incident represents the security event.
-No Report is generated by default. The OpenCTI workflow remains under OpenCTI's
-control; archiving the local case does not silently close its remote counterpart.
-Source UUIDs survive edits. File hashes
-come from one verified snapshot; ambiguous evidence roots or changed file
-versions are visible problems instead of guessed associations.
-
-Each exported observable has a neutral description with the case ID and a pointer
-to the investigation. STIX Notes and evidence excerpts are never exported,
-including automatic IOC context, analyst notes and withdrawal summary Notes.
-Legacy inclusion flags are ignored. File/hash entries resolving to the same
-content share a File object. Entries without a standalone STIX representation
-remain local with an export warning. Descriptions use one managed
-section per case; repeat exports replace that section while preserving other
-authors and other cases. A shared observable with a different marking requires
-review before adding case context to its description. Description failures are
-recorded as partial transfers and can be resumed without repeating imports or
-sample uploads. Previously uploaded, hash-matched samples also receive context.
-
-Every observable is directly associated with the Incident. An IP requesting a
-path remains local when the path has no standalone STIX object. It is not projected onto
-the File, Malware or Artifact collected later. A separate, evidence-backed use
-or execution relationship can express stronger knowledge.
-A direct IP-to-CVE link requires a confirmed, active IP-scoped finding naming
-that CVE; a CVE in the case profile alone is connected through the Incident.
-
-File classifications (Webshell, Dropper, SEO-Spam and others) remain labels and
-case context. A Malware entity additionally requires confirmed, verified content
-and a selected Indicator or an evidence-backed use/execution relationship.
-Webshell Indicators are preselected in the wizard and can be unchecked. Merely
-having a classification tag never creates a Malware entity. Matching File/hash
-entries reuse the same Malware entity. Generic malware remains an unknown type
-without family attribution. Confirming ordinary or YARA findings exports the
-File and its case context without inferring a malware classification. Changing or withdrawing an
-explicit classification replaces or retracts the previous owned assertion.
-
-An HTTP acceptance is not a successful import. Receipts preserve TAXII work IDs,
-batch progress and per-sample upload results. **Resume** checks pending work and
-continues unfinished steps. Changes to the case, file identity, destination or
-reviewed content require a new preview. Deleting local rows does not delete
-shared OpenCTI objects. A later preview identifies withdrawn owned assertions;
-reactivated assertions receive a new generation when STIX revocation is terminal.
-
-Saved transfers from model versions before 3 require a fresh preview and cannot
-be resumed. New exports use the Case container. Existing remote Notes and their
-relationships are neither re-exported nor deleted. Old Reports remain history.
-
-## Original samples and privacy
-
-Samples are off by default. Enable optional uploads in Settings, then select each
-original in the preview. The upload limit is 25 MiB per file. The worker verifies
-the exact selected bytes and SHA-256, uploads an Artifact through GraphQL, and
-links it to the File (`obs_content` and `related-to`) and Case container. Only
-confirmed Malware and the Incident are inherited
-by the Artifact; path requests, IP addresses and CVEs are not copied. An upload failure does not erase a completed
-metadata transfer. Archive extraction and script execution are not performed by
-Shellhound.
-
-Shellhound refuses manual enrichment of Artifacts and files with attached
-content. This prevents forwarding original content when a connector's remote
-upload settings cannot be verified. For metadata-only hash enrichment, use an
-observable without an attached sample. Keep connector-side file forwarding
-disabled as part of deployment configuration.
-
-Preview domains, email addresses, paths, notes and evidence carefully. Random
-pseudonyms do not anonymize this content. Local workstation paths and obvious
-credentials are excluded/redacted, but free text can still disclose investigation
-context. Nothing is sent merely by opening an IOC or reading cached results.
-
-## Local acceptance
-
-Run the OpenCTI client, graph, service, profile and HTTP tests plus the frontend
-suite. Use an isolated synthetic case and a configured OpenCTI integration
-account for deployment acceptance. Verify repeat exports, revoked/re-confirmed
-assertions, partial retries, manually requested enrichment, markings and sample
-links. Do not use real evidence for initial integration tests.
-
-The acceptance helper creates a separate fixture with ten object types, seven
-relationships and inert sample bytes. It reads the saved integration settings;
-tokens are never command-line arguments. From the repository's Python environment:
-
-```text
-python -m tools.opencti_smoke --offline
-python -m tools.opencti_smoke --workspace <configured-workspace>
-python -m tools.opencti_smoke --workspace <configured-workspace> --transfer
-```
-
-The first command stays offline; the second only tests the connection and reads
-existing knowledge. `--transfer` explicitly imports the synthetic case. Add
-`--sample` to explicitly include the inert sample when sample uploads are enabled.
-Fixtures, previews and proof files remain under `.shellhound/opencti-smoke`.
-Pending work can be continued with `--resume <fixture-directory> --transfer`.
-The helper does not request external enrichment or remove remote objects.
-
-Relevant upstream references:
-
-- [OpenCTI API](https://docs.opencti.io/latest/reference/api/)
-- [TAXII push](https://docs.opencti.io/latest/usage/import/taxii-push/)
-- [Enrichment](https://docs.opencti.io/latest/usage/enrichment/)
-- [FIRST TLP](https://www.first.org/tlp/)
-
-The dashboard and Pattern Hunt use the current main workflow, including saved
-pattern checks. Explicit CVE metadata still links every matching IP during a
-query preview or saved check, including results beyond the UI page limit.
-CVE collection validates the same log index generation as the saved check.
-IOC evidence links open the exact historical query without replacing an editor
-draft. The integration schema also retains main's scan retries and skip reviews.
-
-## Editing a case profile after export
-
-Use **Case profile** on the dashboard or in the first Transfer & Close step.
-The local display name, incident summary, organization, sectors/subsectors,
-location, dates, marking, software and vulnerability context remain editable.
-The Case ID becomes read-only after the first export, preserving its identity.
-Saving is local and does not contact OpenCTI. A form opened before a newer
-profile save is rejected with HTTP 409 and retains its draft in the browser.
-
-The final transfer review shows **Case profile changes**, with old and current
-values for changed fields. The baseline is the last completed transfer to the
-same destination, not a failed/partial attempt or a transfer to another server.
-Token rotation does not discard that baseline. Reordering a selection alone is
-not a change. Profile changes are local receipt comparisons, not a live diff
-against edits made directly in OpenCTI; shared objects continue to follow the
-existing reuse rules.
-
-Receipts created before profile snapshots existed explicitly show that no
-comparison is available. The next completed transfer establishes a baseline;
-old exports are not silently assigned today's profile. Snapshots travel with
-the case archive. Excluded context is identified as excluded, not as a command
-to erase previously shared information. The local display name is not part of
-the export comparison because OpenCTI names the case with its Case ID.
+Run `python -m tools.opencti_smoke --offline` for an isolated, harmless export fixture.
+The check never contacts OpenCTI or uploads data. Focused regression tests are
+`tests.test_opencti_graph`, `tests.test_opencti_service`, `tests.test_opencti_client`,
+`tests.test_opencti_api`, `tests.test_case_profile`, and `tests.test_profile_options`.

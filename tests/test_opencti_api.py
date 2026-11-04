@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
@@ -11,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from server import db, workspace
+from server import backups, db, workspace
 from server.app import create_app
 from server.config import Config
 from tests.test_http import _LiveServer
@@ -107,11 +108,16 @@ class OpenCTIHTTPTests(unittest.TestCase):
             archive.assert_called_once()
             cancel.assert_not_called()
 
-    def test_clear_activity_requires_authentication_and_valid_case(self):
-        path = f'/api/cases/{self.slug}/opencti/activity/clear'
-        self.assertEqual(401, self.request('POST', path, {}, token='bad')[0])
-        self.assertEqual(404, self.request('POST', '/api/cases/missing/opencti/activity/clear', {})[0])
-        self.assertEqual((200, {'cleared': 0}), self.request('POST', path, {}))
+    def test_removed_features_and_retired_export_options_are_unavailable(self):
+        prefix = f"/api/cases/{self.slug}/opencti"
+        for suffix in ('lookup', 'enrich', 'enrichment/preview', 'enrichment/status', 'activity/clear'):
+            self.assertEqual(404, self.request('POST', prefix + '/' + suffix, {})[0])
+        self.assertEqual(404, self.request('GET', prefix + '/profile-changes')[0])
+        for route in ('/api/organizations', '/api/opencti/sectors', '/api/profile/geography'):
+            self.assertEqual(404, self.request('GET', route)[0])
+        self.assertEqual(422, self.request('POST', prefix + '/preview', {'sample_ids': []})[0])
+        self.assertEqual(422, self.request('PATCH', '/api/opencti/settings', {'sample_uploads': True})[0])
+
 
     def test_edit_ioc_is_atomic_validated_and_records_assessment_and_value_history(self):
         base = f'/api/cases/{self.slug}/iocs'
@@ -242,7 +248,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
 
     def test_offline_reads_auth_and_unconfigured_providers(self):
         with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("network")):
-            for path in ["/api/opencti/settings", "/api/organizations", f"/api/cases/{self.slug}/opencti"]:
+            for path in ["/api/opencti/settings", "/api/profile/sectors", f"/api/cases/{self.slug}/opencti"]:
                 self.assertEqual(401, self.request("GET", path, token="bad")[0])
                 self.assertEqual(200, self.request("GET", path)[0])
             self.assertEqual(200, self.request("POST", "/api/settings/key",
@@ -266,39 +272,33 @@ class OpenCTIHTTPTests(unittest.TestCase):
             self.assertEqual(200, self.request("POST", path, body)[0]); self.assertEqual(1, remote.call_count)
             from server import settings
             settings.set_opencti(self.root, {"url":"https://cti.example","token":"test-token","ingester_id":"dba5717c-b7d1-474f-8aad-bf9c2d61312c"})
-            self.assertEqual(409, self.request("POST", path, {**body,"refresh":True})[0]); self.assertEqual(1, remote.call_count)
+            self.assertEqual(200, self.request("POST", path, {**body,"refresh":True})[0]); self.assertEqual(2, remote.call_count)
 
-    def test_profile_choices_are_authenticated_and_read_only(self):
-        for route in ("/api/profile/geography", "/api/opencti/sectors"):
-            self.assertEqual(401, self.request("GET", route, token="bad")[0])
-        code, geo = self.request("GET", "/api/profile/geography")
+    def test_profile_sector_catalogue_is_authenticated_local_and_read_only(self):
+        self.assertEqual(401, self.request('GET', '/api/profile/sectors', token='bad')[0])
+        with patch('server.integrations.opencti.service.OpenCTIClient', side_effect=AssertionError('Unexpected network')):
+            code, result = self.request('GET', '/api/profile/sectors')
         self.assertEqual(200, code)
-        self.assertEqual(["DE", "AT"], [item["code"] for item in geo["countries"][:2]])
-        self.assertEqual(16, len(geo["states"]["DE"]))
-        with patch("server.casework.profile_options.sectors", return_value={"sectors": [], "stale": False}) as read:
-            self.assertEqual(200, self.request("GET", "/api/opencti/sectors")[0])
-            read.assert_called_once()
+        self.assertIn('Healthcare', result['sectors'])
+        self.assertIn('Technology', result['sectors'])
 
-    def test_case_profile_and_preview_are_reviewable_without_token(self):
-        code, organization = self.request("POST", "/api/organizations", {})
-        self.assertEqual(200, code)
-        code, case = self.request("PATCH", f"/api/cases/{self.slug}", {"profile": {
-            "organization_id": organization["id"], "summary": "Synthetic test only",
-            "vulnerabilities": [{"name": "CVE-2026-1234", "status": "suspected"}]}})
+
+    def test_manual_profile_and_preview_are_reviewable_without_opencti_credentials(self):
+        code, case = self.request('PATCH', f'/api/cases/{self.slug}', {'profile': {
+            'organization_name': 'Manually entered organisation', 'summary': 'Synthetic test only',
+            'vulnerabilities': [{'name': 'CVE-2026-1234', 'status': 'suspected'}]}})
         self.assertEqual(200, code, case)
-        self.assertEqual(organization["name"], case["profile"]["pseudonym"])
-        code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {})
+        self.assertEqual('Manually entered organisation', case['profile']['organization_name'])
+        code, preview = self.request('POST', f'/api/cases/{self.slug}/opencti/preview', {})
         self.assertEqual(200, code, preview)
-        self.assertTrue(preview["preview_id"])
-        self.assertIn("incident", {o["type"] for o in preview["objects"]})
-        self.assertIn("x-opencti-case-incident", {o["type"] for o in preview["objects"]})
-        self.assertEqual(400, self.request("POST", f"/api/cases/{self.slug}/opencti/export",
-                                         {"preview_id": preview["preview_id"]})[0])
+        self.assertTrue(preview['preview_id'])
+        self.assertIn('x-opencti-case-incident', {obj['type'] for obj in preview['objects']})
+        self.assertEqual(400, self.request('POST', f'/api/cases/{self.slug}/opencti/export', {'preview_id': preview['preview_id']})[0])
+
 
     def test_wizard_creates_complete_profile_before_any_transfer(self):
-        _, organization = self.request("POST", "/api/organizations", {})
         profile = {
-            "organization_id": organization["id"], "pseudonym": organization["name"],
+            "organization_name": "Manual organisation",
             "summary": "Synthetic incident for wizard acceptance",
             "sectors": ["Technology", "Manufacturing"], "countries": ["de", "AT"],
             "first_seen": "2026-09-01", "last_seen": "2026-09-08",
@@ -314,7 +314,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
             })
             self.assertEqual(200, status, created)
             _, saved = self.request("GET", f"/api/cases/{created['slug']}")
-        expected = {**profile, "countries": ["DE", "AT"], "organization_name": "", "subsectors": [], "state": "", "city": ""}
+        expected = {**profile, "countries": ["DE", "AT"], "organization_name": "Manual organisation", "organization_id": saved["profile"]["organization_id"], "pseudonym": "Manual organisation", "subsectors": [], "state": "", "city": ""}
         self.assertEqual(expected, saved["profile"])
         self.assertEqual("PIM-WIZARD-1", saved["reference"])
         _, state = self.request("GET", f"/api/cases/{created['slug']}/opencti")
@@ -371,6 +371,9 @@ class OpenCTIHTTPTests(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        with closing(db.connect(self.case)) as prepared:
+            backups.index_content(prepared)
+            prepared.commit()
         return sample
 
     def test_file_hashes_survive_windows_path_and_handle_ctime_difference(self):
@@ -405,13 +408,9 @@ class OpenCTIHTTPTests(unittest.TestCase):
                 self.assertEqual(200, code, preview)
                 self.assertEqual([], preview["errors"])
                 self.assertFalse(any(o["type"] == "malware" for o in preview["objects"]))
-                selected = next(i["id"] for i in preview["iocs"] if i["type"] == "file" and i["indicator_supported"])
-                code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {"indicator_ids": [selected]})
-                self.assertEqual(200, code, preview)
-                malware = [o for o in preview["objects"] if o["type"] == "malware"]
-                self.assertEqual(1, len(malware), malware)
-                self.assertEqual([malware_type], malware[0]["malware_types"])
-                self.assertFalse(malware[0]["is_family"])
+                labels = {label for obj in preview['objects'] if obj['type'] == 'file' for label in obj.get('labels', [])}
+                self.assertIn('Webshell' if classification == 'webshell' else 'Malware', labels)
+                self.assertFalse(any(obj['type'] in ('malware', 'indicator', 'artifact') for obj in preview['objects']))
         conn = db.connect(self.case)
         try:
             event = db.one(conn, "SELECT note FROM triage_events ORDER BY id DESC LIMIT 1")
@@ -439,6 +438,12 @@ class OpenCTIHTTPTests(unittest.TestCase):
             conn.close()
         sample.write_bytes(b"Different inert bytes at the same relative path.\n")
         new_hash = hashlib.sha256(sample.read_bytes()).hexdigest()
+        with closing(db.connect(self.case)) as prepared:
+            prepared.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('webshell_hashes',?)",
+                             (json.dumps({str(sample): new_hash}),))
+            prepared.commit()
+            backups.index_content(prepared)
+            prepared.commit()
         code, result = self.request("POST", route, {"path": str(sample), "state": "confirmed",
             "classification": "malware", "note": "Reviewed the changed synthetic bytes."})
         self.assertEqual(200, code, result)
@@ -453,14 +458,9 @@ class OpenCTIHTTPTests(unittest.TestCase):
             conn.close()
         code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {})
         self.assertEqual(200, code, preview)
-        selected = next(i["id"] for i in preview["iocs"] if i["value"] == new_hash and i["indicator_supported"])
-        code, preview = self.request("POST", f"/api/cases/{self.slug}/opencti/preview", {"indicator_ids": [selected]})
-        self.assertEqual(200, code, preview)
-        malware = [o for o in preview["objects"] if o["type"] == "malware"]
-        self.assertEqual(1, len(malware), malware)
-        referenced_file = next(o for o in preview["objects"] if o["id"] == malware[0]["sample_refs"][0])
-        self.assertEqual(new_hash, referenced_file["hashes"]["SHA-256"])
-
+        files = [obj for obj in preview['objects'] if obj['type'] == 'file']
+        self.assertTrue(any(obj['hashes'].get('SHA-256') == new_hash for obj in files))
+        self.assertFalse(any(obj['type'] in ('malware', 'indicator', 'artifact') for obj in preview['objects']))
 
     def test_profile_edit_rejects_stale_revision_without_overwriting_newer_data(self):
         route = f"/api/cases/{self.slug}"
@@ -477,8 +477,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual("Updated name", saved["name"])
         with patch("server.integrations.opencti.service.OpenCTIClient", side_effect=AssertionError("Unexpected network")):
             code, changes = self.request("GET", route + "/opencti/profile-changes")
-        self.assertEqual(200, code, changes)
-        self.assertEqual("first_export", changes["status"])
+        self.assertEqual(404, code, changes)
 
 if __name__ == "__main__":
     unittest.main()

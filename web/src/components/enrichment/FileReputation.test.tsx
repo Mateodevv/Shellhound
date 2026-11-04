@@ -100,12 +100,11 @@ it('isolates late lookup responses and saved reports when switching files or cas
   expect(post).toHaveBeenCalledTimes(1)
 })
 
-it('keeps OpenCTI routing and cached reports without offering a direct lookup', async () => {
+it('keeps explicit hash lookups and cached reports independent of OpenCTI export settings', async () => {
   configured = true
   entries = [report({ known: true, score: 7, of: 72 })]
   renderWithProviders(panel())
-  expect(await screen.findByRole('link', { name: 'Open IOC Box' })).toHaveAttribute('href', '/?case=demo&view=iocbox')
-  expect(screen.queryByRole('button', { name: /VirusTotal/ })).not.toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Refresh VirusTotal' })).toBeEnabled()
   expect(screen.getByText('7 / 72')).toBeVisible()
   expect(post).not.toHaveBeenCalled()
 })

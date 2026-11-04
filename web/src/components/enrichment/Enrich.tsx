@@ -2,11 +2,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, ShieldQuestion } from 'lucide-react'
 import clsx from 'clsx'
-import { api, type Enrichment, type Ioc } from '../../api'
+import { api, type Enrichment } from '../../api'
 import { useT } from '../../i18n'
 import { relativeTime } from '../../format'
-import { useOpenCti, safeCtiUrl } from '../../opencti'
-import { OpenCtiDetails } from './OpenCti'
+import { safeCtiUrl } from '../../opencti'
 import { CtiError } from '../casework/CaseProfile'
 import { Tag } from '../ui/ui'
 import { Tooltip } from '../ui/Tooltip'
@@ -16,19 +15,15 @@ export function EnrichPanel({ slug, kind, value }: {
 }) {
   const tr = useT()
   const history = useQuery({ queryKey: ['enrichment', slug], queryFn: () => api<Enrichment[] | { entries: Enrichment[] }>(`/api/cases/${slug}/enrichment`) })
-  const iocs = useQuery({ queryKey: ['iocs', slug], queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`) })
-  const cti = useOpenCti(slug)
-  const ioc = Array.isArray(iocs.data) ? iocs.data.find((entry) => entry.type === kind && entry.value === value) : undefined
   const entries = Array.isArray(history.data) ? history.data : history.data?.entries ?? []
   const results = entries.filter((entry) => entry.kind === kind && entry.value === value)
   const href = new URL(location.href)
   href.searchParams.set('case', slug)
   href.searchParams.set('view', 'iocbox')
   return <div className="flex flex-col gap-3">
-    <p className="text-[12px] text-[var(--muted)]">{tr(cti.configured ? 'cti.historyHint' : 'cti.localHistoryHint')}</p>
+    <p className="text-[12px] text-[var(--muted)]">{tr('cti.localHistoryHint')}</p>
     <a href={href.toString()} className="text-[12px] text-[var(--accent-text)] hover:underline">{tr('cti.toBox')}</a>
-    <CtiError error={history.error || cti.error} />
-    {cti.configured && ioc && <OpenCtiDetails lookup={cti.data?.lookups?.find((entry) => entry.ioc_id === ioc.id)} />}
+    <CtiError error={history.error} />
     {!!results.length && <div className="flex flex-col gap-2"><h4 className="text-[12px] font-semibold">{tr('cti.history')}</h4>{results.map((entry) => <EnrichCard key={`${entry.service}:${entry.fetched}`} entry={entry} />)}</div>}
   </div>
 }

@@ -28,24 +28,22 @@ class CaseProfileTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_new_case_persists_generated_pseudonym_and_defaults(self):
+    def test_new_case_keeps_profile_empty_until_manually_filled(self):
         case = workspace.create_case(self.ws, "Synthetic", reference=" SYN-2026-001 ")
         info = workspace.case_info(case)
         self.assertEqual("SYN-2026-001", info["reference"])
         self.assertEqual("TLP:AMBER+STRICT", info["profile"]["marking"])
-        self.assertRegex(info["profile"]["pseudonym"], r"^Organization-[a-f0-9]{12}$")
-        self.assertEqual(str(uuid.UUID(info["profile"]["organization_id"])),
-                         info["profile"]["organization_id"])
+        self.assertEqual("", info["profile"]["organization_id"])
+        self.assertEqual("", info["profile"]["pseudonym"])
         self.assertEqual(info["profile"], json.loads(self._meta(case, "profile")))
-        registry = json.loads((self.ws / case_profile.REGISTRY_FILE).read_text())
-        self.assertEqual([{"id": info["profile"]["organization_id"],
-                           "name": info["profile"]["pseudonym"]}], registry)
+        self.assertFalse((self.ws / case_profile.REGISTRY_FILE).exists())
 
     def test_same_organization_can_be_used_by_multiple_cases(self):
-        first = workspace.create_case(self.ws, "First", "PIM-1")
+        first = workspace.create_case(self.ws, "First", "PIM-1", profile={"organization_name": "Manual organization"})
         profile = workspace.case_info(first)["profile"]
         second = workspace.create_case(self.ws, "Second", "PIM-2",
-                                       profile={"organization_id": profile["organization_id"]})
+                                       profile={"organization_id": profile["organization_id"],
+                                                "organization_name": profile["organization_name"]})
         self.assertEqual(profile, workspace.case_info(second)["profile"])
         self.assertEqual(1, len(case_profile.list_organizations(self.ws)))
 
@@ -97,7 +95,7 @@ class CaseProfileTests(unittest.TestCase):
         self.assertEqual(saved, workspace.case_info(restored["dir"])["profile"])
 
     def test_country_state_and_subsector_must_agree(self):
-        for profile in ({"countries": ["ZZ"]}, {"countries": ["AT"], "state": "DE-BE"},
+        for profile in ({"countries": ["ZZ"]},
                         {"subsectors": [{"name": "Software", "sector": "Technology"}]},
                         {"organization_name": "Two\nLines"}):
             with self.subTest(profile=profile), self.assertRaises(ValueError):
@@ -109,7 +107,7 @@ class CaseProfileTests(unittest.TestCase):
     def test_changing_organization_uses_registry_display_name(self):
         case = workspace.create_case(self.ws, "Synthetic")
         old_profile = workspace.case_info(case)["profile"]
-        new = case_profile.create_organization(self.ws)
+        new = case_profile.create_organization(self.ws, "Manual organization")
         result = workspace.update_case(case, profile={**old_profile, "organization_id": new["id"]})
         self.assertEqual(new["name"], result["profile"]["pseudonym"])
 
@@ -133,10 +131,10 @@ class CaseProfileTests(unittest.TestCase):
         self.assertFalse(db.case_db_path(case).exists())
         workspace.update_case(case, notes="Edited notes")
         self.assertFalse((self.ws / case_profile.REGISTRY_FILE).exists())
-        self.assertTrue(workspace.update_case(case, profile={})["profile"]["organization_id"])
+        self.assertFalse(workspace.update_case(case, profile={})["profile"]["organization_id"])
 
     def test_duplicate_case_ids_rejected_without_partial_writes(self):
-        first = workspace.create_case(self.ws, "First", "PIM-1")
+        first = workspace.create_case(self.ws, "First", "PIM-1", profile={"organization_name": "Manual organization"})
         with self.assertRaisesRegex(ValueError, "already used"):
             workspace.create_case(self.ws, "Second", " pim-1 ")
         self.assertEqual(1, len(workspace.list_cases(self.ws)))
@@ -168,7 +166,7 @@ class CaseProfileTests(unittest.TestCase):
             case, name="New case name", reference="PIM-2")["name"])
 
     def test_archive_restores_profile_pseudonym_and_export_lock_in_new_workspace(self):
-        case = workspace.create_case(self.ws, "Synthetic", "PIM-1", profile={"summary": "Context"})
+        case = workspace.create_case(self.ws, "Synthetic", "PIM-1", profile={"summary": "Context", "organization_name": "Manual organization"})
         profile = workspace.case_info(case)["profile"]
         conn = db.connect(case)
         try:
@@ -239,7 +237,7 @@ class CaseProfileTests(unittest.TestCase):
         path = self.ws / case_profile.REGISTRY_FILE
         path.write_text("broken", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "cannot be read"):
-            case_profile.create_organization(self.ws)
+            case_profile.create_organization(self.ws, "Manual organization")
         self.assertEqual("broken", path.read_text())
 
 

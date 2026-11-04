@@ -14,7 +14,7 @@ owner alone where the platform supports it, and that is the honest extent of
 it -- said plainly here rather than implied by an encrypted-looking blob.
 
 The server adapter receives credentials through `opencti_config()`. Public
-settings expose only the token's last four characters. Direct provider keys are kept server-side and used only without configured OpenCTI.
+settings expose only the token's last four characters. Direct provider keys remain server-side and serve explicit reputation lookups.
 """
 from __future__ import annotations
 
@@ -28,10 +28,9 @@ from pathlib import Path
 
 SETTINGS_FILE = "settings.json"
 _LOCK = threading.RLock()
-_CTI_DEFAULTS = {"url": "", "token": "", "ingester_id": "", "timeout": 30,
-                 "sample_uploads": False, "external_file_uploads": False}
+_CTI_DEFAULTS = {"url": "", "token": "", "ingester_id": "", "timeout": 30}
 
-# Direct reputation providers, used only when OpenCTI is not configured.
+# Direct reputation providers, independent of the OpenCTI export connection.
 SERVICES = {
     "virustotal": {"sends": "hash, ip, domain, url", "url": "https://www.virustotal.com"},
     "abuseipdb": {"sends": "ip", "url": "https://www.abuseipdb.com"},
@@ -79,7 +78,6 @@ def load(workspace) -> dict:
         for key in ("url", "token", "ingester_id"):
             if isinstance(cti.get(key), str):
                 out["opencti"][key] = cti[key].strip()
-        out["opencti"]["sample_uploads"] = cti.get("sample_uploads") is True
     keys = raw.get("keys", {})
     if isinstance(keys, dict):
         for name in SERVICES:
@@ -175,7 +173,7 @@ def set_ack(workspace, accepted) -> dict:
 
 
 def for_service(workspace, service) -> str:
-    if service not in SERVICES or opencti_public(workspace)["configured"]:
+    if service not in SERVICES:
         return ""
     key = load(workspace)["keys"][service]
     from server import diagnostics
@@ -197,7 +195,7 @@ def opencti_public(workspace) -> dict:
 
 def set_opencti(workspace, changes) -> dict:
     """Keep credentials out of URLs and bind a token to its explicit host."""
-    unknown = set(changes) - {"url", "token", "ingester_id", "sample_uploads"}
+    unknown = set(changes) - {"url", "token", "ingester_id"}
     if unknown:
         raise ValueError("Unsupported OpenCTI setting")
     with _LOCK:
@@ -234,10 +232,5 @@ def set_opencti(workspace, changes) -> dict:
             if len(token) > 4096 or any(not 33 <= ord(c) <= 126 for c in token):
                 raise ValueError("Invalid integration token")
             current["token"] = token
-        if "sample_uploads" in changes:
-            if not isinstance(changes["sample_uploads"], bool):
-                raise ValueError("Sample uploads must be enabled explicitly")
-            current["sample_uploads"] = changes["sample_uploads"]
-        current["external_file_uploads"] = False
         save(workspace, data)
     return opencti_public(workspace)
