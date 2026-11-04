@@ -6,21 +6,23 @@ import { Button, Modal } from '../ui/ui'
 
 const field = 'mt-1 w-full rounded-md border border-[var(--line)] bg-[var(--panel-2)] px-3 py-2 font-normal'
 
-export function IocEditDialog({ slug, object, assessments = [], edits = [], onClose, onSaved }: { slug: string; object: Ioc; assessments?: { id: number; state: string; reason: string; created: string }[]; edits?: { previous_value: string; value: string; reason: string; created: string }[]; onClose: () => void; onSaved?: (content: TriageResult['content_assessment']) => void }) {
+export function IocEditDialog({ slug, object: currentObject, assessments = [], edits = [], onClose, onSaved }: { slug: string; object: Ioc; assessments?: { id: number; state: string; reason: string; created: string }[]; edits?: { previous_value: string; value: string; reason: string; created: string }[]; onClose: () => void; onSaved?: (content: TriageResult['content_assessment']) => void }) {
   const tr = useT()
   const qc = useQueryClient()
+  const [object] = useState(() => ({ ...currentObject, tags: [...currentObject.tags], file_ids: currentObject.file_ids && [...currentObject.file_ids] }))
   const [value, setValue] = useState(object.value)
   const [note, setNote] = useState(object.note)
+  const [type, setType] = useState(object.type)
   const [assessment, setAssessment] = useState(object.assessment || 'malicious')
   const [tags, setTags] = useState(object.tags.join(', '))
   const [reason, setReason] = useState('')
   const locked = object.type === 'file' || (object.type === 'hash' && !!object.file_ids?.length)
-  const changed = value !== object.value || note !== object.note || assessment !== (object.assessment || 'malicious') || tags !== object.tags.join(', ')
-  const needsReason = value.trim() !== object.value || assessment !== (object.assessment || 'malicious')
+  const changed = value !== object.value || type !== object.type || note !== object.note || assessment !== (object.assessment || 'malicious') || tags !== object.tags.join(', ')
+  const needsReason = value.trim() !== object.value || type !== object.type || assessment !== (object.assessment || 'malicious')
   const save = useMutation({ mutationFn: () => {
     const nextTags = tags === object.tags.join(', ') ? object.tags : [...new Set(tags.split(',').map(tag => tag.trim()).filter(Boolean))]
     return post<{ content_assessment?: TriageResult['content_assessment'] }>(`/api/cases/${slug}/iocs/${object.id}/edit`, {
-      value, note, assessment, expected_value: object.value, expected_note: object.note,
+      value, note, type, expected_type: object.type, assessment, expected_value: object.value, expected_note: object.note,
       expected_assessment: object.assessment || 'malicious', reason,
       add_tags: nextTags.filter(tag => !object.tags.includes(tag)),
       remove_tags: object.tags.filter(tag => !nextTags.includes(tag)),
@@ -36,6 +38,9 @@ export function IocEditDialog({ slug, object, assessments = [], edits = [], onCl
     <form className="space-y-4 text-[13px]" onSubmit={event => { event.preventDefault(); save.mutate() }}>
       <label className="block font-semibold">{tr('iocEdit.value')}<input className={field} value={value} readOnly={locked} required maxLength={8192} onChange={event => setValue(event.target.value)} /></label>
       {locked && <p className="text-[var(--muted)]">{tr('iocEdit.contentIdentity')}</p>}
+      <label className="block font-semibold">{tr('iocEdit.type')}<select className={field} value={type} disabled={locked} onChange={event => setType(event.target.value)}>
+        {(object.type === 'file' ? ['file'] : ['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other', 'vulnerability', 'software']).map(kind => <option key={kind} value={kind}>{tr(kind === 'file' ? 'iocBadge.file' : kind === 'vulnerability' ? 'iocBadge.cve' : `iocType.${kind}`)}</option>)}
+      </select></label>
       <label className="block font-semibold">{tr('iocEdit.assessment')}<select className={field} value={assessment} onChange={event => setAssessment(event.target.value as NonNullable<Ioc['assessment']>)}>
         {['unassessed', 'suspicious', 'malicious', 'benign'].map(state => <option key={state} value={state}>{state}</option>)}
       </select></label>

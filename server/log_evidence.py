@@ -431,10 +431,18 @@ def build(case_dir, ctx=None, source_ids=None):
 
 def source_status(case_dir):
     sources = inventory(case_dir)
-    http_fresh = None
+    http_status = {}
+    http_indexing = False
     if any(s["format"] == "access" for s in sources):
         from server.engines import logindex
-        http_fresh = bool(logindex.status(case_dir, access_targets(case_dir)).get("fresh"))
+        from server.jobs import manager
+        http_status = logindex.status(case_dir, access_targets(case_dir))
+        conn = db.connect(case_dir)
+        try:
+            jobs = db.rows(conn, "SELECT id FROM jobs WHERE kind='index_logs' AND state IN ('queued','running')")
+            http_indexing = any(manager.progress_snapshot(case_dir, job["id"]) for job in jobs)
+        finally:
+            conn.close()
     index = _open_index(case_dir)
     try:
         generations = dict(index.execute("SELECT source_id,fingerprint FROM generations")) if index else {}
@@ -445,10 +453,12 @@ def source_status(case_dir):
         if s["format"] != "access":
             s["fresh"] = s["fresh"] and generations.get(s["id"]) == s["fingerprint"]
         else:
-            s["fresh"] = bool(http_fresh)
-            s["state"] = "ready" if http_fresh else "new"
-            s["warning"] = ""
-        if s["state"] == "indexing":
+            s["fresh"] = bool(http_status.get("fresh")) and not http_indexing
+            s["state"] = ("indexing" if http_indexing else "ready" if s["fresh"]
+                          else "failed" if http_status.get("partial") else "new")
+            s["warning"] = (http_status.get("reason", "")
+                            if http_status.get("exists") and not s["fresh"] and not http_indexing else "")
+        if s["state"] == "indexing" and s["format"] != "access":
             from server.jobs import manager
             conn = db.connect(case_dir)
             try:

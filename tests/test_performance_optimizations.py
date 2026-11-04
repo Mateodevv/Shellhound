@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import threading
 import time
 import unittest
@@ -44,6 +45,27 @@ class PerformanceOptimizationTests(unittest.TestCase):
         self.assertEqual(first['summary'], second['summary'])
         self.assertFalse({r['request_id'] for r in first['rows']} & {r['request_id'] for r in second['rows']})
         self.assertEqual(0, logindex.access_search(self.case, {'search': 'nonexistent synthetic term'})['total'])
+
+    def test_mixed_filters_share_exact_summary_in_either_query_order(self):
+        filters = {'search': 'Synthetic', 'status': '2xx', 'method': 'GET'}
+        with logindex._ACCESS_CACHE_LOCK:
+            logindex._ACCESS_CACHE.clear()
+        overview = logindex.access_overview(self.case, filters)
+        search = logindex.access_search(self.case, filters)
+        self.assertEqual(overview['total'], search['total'])
+        self.assertEqual([x['count'] for x in overview['facets']['status']],
+                         [search['summary'][key] for key in ('ok', 'redirects', 'client_errors', 'server_errors')])
+        with logindex._ACCESS_CACHE_LOCK:
+            logindex._ACCESS_CACHE.clear()
+        fresh_search = logindex.access_search(self.case, filters)
+        fresh_overview = logindex.access_overview(self.case, filters)
+        self.assertEqual(search, fresh_search)
+        self.assertEqual(overview, fresh_overview)
+
+    def test_cancelled_query_interrupts_sqlite(self):
+        with self.assertRaises(sqlite3.OperationalError):
+            logindex.access_overview(self.case, {'search': 'Synthetic'}, cancelled=lambda: True)
+        self.assertEqual(100, logindex.access_search(self.case)['total'])
 
     def test_overview_preserves_equal_count_facet_membership(self):
         result = logindex.access_overview(self.case)

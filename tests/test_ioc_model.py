@@ -43,6 +43,8 @@ class StructuredIocTests(unittest.TestCase):
                         assessment=row['assessment'], expected_assessment=row['assessment'], reason='Correction')
             with self.assertRaisesRegex(ValueError, 'bound to their content'):
                 model.edit_object(self.conn, ioc_id, **body)
+            with self.assertRaisesRegex(ValueError, 'bound to their content'):
+                model.edit_object(self.conn, ioc_id, **{**body, 'value': row['value'], 'type': 'other', 'expected_type': row['type']})
             model.edit_object(self.conn, ioc_id, **{**body, 'value': row['value'], 'note': 'Reviewed content'})
             current = db.one(self.conn, 'SELECT * FROM iocs WHERE id=?', (ioc_id,))
             self.assertEqual(row['value'], current['value'])

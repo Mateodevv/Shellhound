@@ -6,6 +6,16 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Changed — log index and manual IOCs
+
+- Show reliable partial log-index status and allow a one-time explicit rebuild
+  of derived indexes created with schema 12 (current schema 13).
+- Add **Rebuild log index** to the Logs action menu; it queues log analysis only.
+- Suggest manual IOC types, require a choice for ambiguous domain/path values,
+  and save type edits atomically. Duplicate additions keep the draft and do not
+  overwrite the existing note.
+- Cancel superseded log queries and reduce repeated aggregate work.
+
 ### Changed — database evidence review
 
 - Show recorded or current matches before record details, including detections

@@ -113,6 +113,52 @@ def classify(value):
     return "other"
 
 
+def suggestion(value):
+    v = str(value).strip()
+    ambiguous = classify(v) == "path" and bool(_DOMAIN_RE.fullmatch(v) and _FILENAME_RE.fullmatch(v))
+    return {"type": classify(v), "ambiguous": ambiguous}
+
+
+def validate_manual(value, kind):
+    from urllib.parse import urlsplit
+    v = value.strip()
+    if not v or any(ord(c) < 32 or ord(c) == 127 for c in v):
+        raise ValueError("Enter a non-empty, single-line IOC value.")
+    if kind not in IOC_TYPES or kind == "file":
+        raise ValueError("Invalid manual IOC type.")
+    if kind == "ip":
+        try:
+            return str(ipaddress.ip_address(v))
+        except ValueError:
+            raise ValueError("Enter a valid IP address.") from None
+    if kind == "hash":
+        if not _HASH_RE.fullmatch(v):
+            raise ValueError("Enter an MD5, SHA-1 or SHA-256 hash.")
+        return v.lower()
+    if kind == "vulnerability":
+        if not re.fullmatch(r"CVE-\d{4}-\d{4,}", v, re.I):
+            raise ValueError("Enter a valid CVE identifier.")
+        return v.upper()
+    if kind == "domain":
+        try:
+            v = v.rstrip('.').encode('idna').decode('ascii').lower()
+        except UnicodeError:
+            raise ValueError("Enter a valid domain name.") from None
+        if len(v) > 253 or not _DOMAIN_RE.fullmatch(v):
+            raise ValueError("Enter a valid domain name.")
+    if kind == "email" and not _EMAIL_RE.fullmatch(v):
+        raise ValueError("Enter a valid email address.")
+    if kind == "url":
+        try:
+            url = urlsplit(v)
+            if url.scheme.lower() not in ("http", "https") or not url.hostname or url.username or url.password or any(c.isspace() for c in v):
+                raise ValueError
+            _ = url.port
+        except ValueError:
+            raise ValueError("Enter an HTTP or HTTPS URL without credentials.") from None
+    return v
+
+
 # --- exports ----------------------------------------------------------------
 
 def actor_tags(actor, brute_threshold):

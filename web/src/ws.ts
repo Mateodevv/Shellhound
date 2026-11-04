@@ -12,7 +12,7 @@ type Event = JobEvent | InvalidateEvent
 const SCOPE_KEYS: Record<string, string[]> = {
   'opencti-lookup': ['iocs', 'opencti', 'jobs'],
   first_sign: ['first-sign', 'dashboard', 'chain'],
-  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request'],
+  index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request', 'access-search', 'access-overview', 'access-patterns', 'access-segments', 'access-request', 'access-clips'],
   hunt: ['dashboard', 'hunt-batches', 'hunt-batch', 'hunt-tests', 'jobs'],
   webshell: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],
   yara: ['dashboard', 'findings', 'jobs', 'case', 'job-skips'],

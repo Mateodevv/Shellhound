@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -17,6 +18,68 @@ from tests.test_http import _LiveServer
 
 
 class OpenCTIHTTPTests(unittest.TestCase):
+    def test_duplicate_check_serializes_concurrent_creates(self):
+        base = f'/api/cases/{self.slug}/iocs'
+        def create(note):
+            return self.request('POST', base, {'value': 'race.test', 'type': 'domain', 'note': note, 'reject_duplicate': True})
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(create, ('one', 'two')))
+        self.assertEqual([200, 200], [status for status, _ in results])
+        self.assertEqual([False, True], sorted(result['ok'] for _, result in results))
+        rows = self.request('GET', base)[1]
+        self.assertEqual(1, len(rows))
+        self.assertIn(rows[0]['note'], ('one', 'two'))
+
+    def test_manual_ioc_suggestions_duplicates_and_atomic_type_edit(self):
+        base = f'/api/cases/{self.slug}/iocs'
+        suggest = '/api/iocs/suggest'
+        self.assertEqual({'type': 'path', 'ambiguous': True}, self.request('POST', suggest, {'value': 'example.test'})[1])
+        self.assertEqual({'type': 'ip', 'ambiguous': False}, self.request('POST', suggest, {'value': '192.0.2.1'})[1])
+        self.assertEqual(400, self.request('POST', base, {'value': 'z' * 64, 'type': 'hash'})[0])
+        first = self.request('POST', base, {'value': 'Example.test', 'type': 'domain', 'note': 'original'})[1]['id']
+        result = self.request('POST', base, {'value': 'example.test', 'type': 'domain', 'note': 'draft', 'reject_duplicate': True})[1]
+        self.assertEqual({'ok': False, 'existing_id': first, 'type': 'domain'}, result)
+        self.assertEqual('original', self.request('GET', f'{base}/{first}/detail')[1]['object']['note'])
+        path = self.request('POST', base, {'value': 'Example.test', 'type': 'path'})[1]['id']
+        edit = {'value': 'Example.test', 'note': 'draft', 'type': 'domain', 'expected_type': 'path',
+                'expected_value': 'Example.test', 'expected_note': '', 'assessment': 'malicious',
+                'expected_assessment': 'malicious', 'reason': 'Correction'}
+        self.assertEqual(400, self.request('POST', f'{base}/{path}/edit', edit)[0])
+        self.assertEqual('', self.request('GET', f'{base}/{path}/detail')[1]['object']['note'])
+        edit['value'] = 'another.test'
+        self.assertEqual(200, self.request('POST', f'{base}/{path}/edit', edit)[0])
+        self.assertEqual(400, self.request('POST', f'{base}/{path}/edit', edit)[0])
+        obj = self.request('GET', f'{base}/{path}/detail')[1]['object']
+        self.assertEqual(('domain', 'another.test', 'draft'), (obj['type'], obj['value'], obj['note']))
+
+    def test_retype_preserves_links_and_invalidates_lookup(self):
+        base = f'/api/cases/{self.slug}/iocs'
+        path = self.request('POST', base, {'value': 'example.test', 'type': 'path'})[1]['id']
+        ip = self.request('POST', base, {'value': '192.0.2.9', 'type': 'ip'})[1]['id']
+        conn = db.connect(self.case)
+        try:
+            db.link_iocs(conn, ip, path, 'requested')
+            conn.execute("INSERT INTO opencti_lookups VALUES(?,?,?,?,?)", (path, 'old', db.now(), '{}', 'local'))
+            conn.commit()
+        finally:
+            conn.close()
+        edit = {'value': 'example.test', 'note': '', 'type': 'domain', 'expected_type': 'path',
+                'expected_value': 'example.test', 'expected_note': '', 'assessment': 'malicious',
+                'expected_assessment': 'malicious', 'reason': 'Correction'}
+        self.assertEqual(400, self.request('POST', f'{base}/{path}/edit', edit)[0])
+        conn = db.connect(self.case)
+        try:
+            conn.execute('UPDATE ioc_links SET active=0')
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(200, self.request('POST', f'{base}/{path}/edit', edit)[0])
+        conn = db.connect(self.case)
+        try:
+            self.assertIsNone(db.one(conn, 'SELECT * FROM opencti_lookups WHERE ioc_id=?', (path,)))
+        finally:
+            conn.close()
+
     def test_wizard_archive_refuses_active_work_without_cancelling_it(self):
         conn = db.connect(self.case)
         try:

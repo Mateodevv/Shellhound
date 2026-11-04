@@ -484,50 +484,38 @@ def supported_links(conn, links):
     return out
 
 
-def edit_object(conn, ioc_id, *, value, note, expected_value, expected_note, assessment, expected_assessment, reason="", add_tags=(), remove_tags=()):
+def edit_object(conn, ioc_id, *, value, note, expected_value, expected_note, assessment, expected_assessment, reason="", add_tags=(), remove_tags=(), type=None, expected_type=None):
     from server import db
-    from urllib.parse import urlsplit
+    from server.ioc.formats import validate_manual
     row = db.one(conn, "SELECT * FROM iocs WHERE id=?", (ioc_id,))
     if not row:
         raise LookupError("IOC does not exist.")
-    if row["value"] != expected_value or row["note"] != expected_note or row["assessment"] != expected_assessment:
+    if row["value"] != expected_value or row["note"] != expected_note or row["assessment"] != expected_assessment or (expected_type is not None and row["type"] != expected_type):
         raise ValueError("This IOC changed. Reopen the editor to load its current values.")
     value = value.strip()
     if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("Enter a non-empty, single-line IOC value.")
-    changed = value != row["value"]
+    kind = type if type is not None else row["type"]
+    if type is not None and expected_type is None:
+        raise ValueError("Expected type is required when changing type.")
+    changed = value != row["value"] or kind != row["type"]
     if changed:
-        kind = row["type"]
-        if kind == "file" or (kind == "hash" and conn.execute("SELECT 1 FROM ioc_file_members WHERE ioc_id=?", (ioc_id,)).fetchone()):
+        if kind == "file" or row["type"] == "file" or (row["type"] == "hash" and conn.execute("SELECT 1 FROM ioc_file_members WHERE ioc_id=?", (ioc_id,)).fetchone()):
             raise ValueError("Verified file identities are bound to their content. Edit the note or tags instead.")
         if not reason.strip():
             raise ValueError("Explain the correction to this IOC value.")
-        if kind == "ip":
-            value = str(ipaddress.ip_address(value))
-        elif kind == "vulnerability":
-            if not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
-                raise ValueError("Enter a valid CVE identifier.")
-            value = value.upper()
-        elif kind == "hash":
-            if not re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{40}|[a-fA-F0-9]{64}", value):
-                raise ValueError("Enter an MD5, SHA-1 or SHA-256 hash.")
-            value = value.lower()
-        elif kind == "domain":
-            value = value.rstrip('.').encode('idna').decode('ascii').lower()
-            if len(value) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in value.split('.')):
-                raise ValueError("Enter a valid domain name.")
-        elif kind == "email" and not re.fullmatch(r"[^@\s]+@[^@\s]+", value):
-            raise ValueError("Enter a valid email address.")
-        elif kind == "url":
-            url = urlsplit(value)
-            if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
-                raise ValueError("Enter an HTTP or HTTPS URL without credentials.")
+        value = validate_manual(value, kind)
+        if kind != row["type"]:
+            for link in db.ioc_links(conn):
+                allowed = RELATIONS.get(link["kind"])
+                if allowed and (link["src_id"] == ioc_id and kind not in allowed[0] or link["dst_id"] == ioc_id and kind not in allowed[1]):
+                    raise ValueError("Withdraw incompatible relationships before changing this object's type.")
         key = identity(value, kind, row["context"], row["path_context"])
         if conn.execute("SELECT 1 FROM iocs WHERE identity_key=? AND id!=?", (key, ioc_id)).fetchone():
             raise ValueError("This IOC already exists. Existing objects were retained.")
-        event = {"previous_value": row["value"], "value": value, "reason": reason.strip(), "created": now()}
+        event = {"previous_value": row["value"], "value": value, "previous_type": row["type"], "type": kind, "reason": reason.strip(), "created": now()}
         conn.execute("INSERT INTO meta(key,value) VALUES(?,?)", (f"ioc-edit:{ioc_id}:{uuid.uuid4()}", json.dumps(event)))
-        conn.execute("UPDATE iocs SET value=?,identity_key=? WHERE id=?", (value, key, ioc_id))
+        conn.execute("UPDATE iocs SET value=?,type=?,identity_key=? WHERE id=?", (value, kind, key, ioc_id))
         conn.execute("DELETE FROM opencti_lookups WHERE ioc_id=?", (ioc_id,))
     conn.execute("UPDATE iocs SET note=? WHERE id=?", (note, ioc_id))
     if assessment not in ASSESSMENTS:

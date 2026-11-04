@@ -42,6 +42,10 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
   const [deleteSelection, setDeleteSelection] = useState<Ioc[] | null>(null)
   const [value, setValue] = useState('')
   const [note, setNote] = useState('')
+  const [manualType, setManualType] = useState('')
+  const [duplicate, setDuplicate] = useState<number | null>(null)
+  const suggestion = useQuery({ queryKey: ['ioc-suggestion', value], queryFn: () => post<{ type: string; ambiguous: boolean }>('/api/iocs/suggest', { value }), enabled: addOpen && !!value.trim() && value.length <= 8192 })
+  const visibleType = manualType || suggestion.data?.type || ''
   const update = (patch: Partial<Session>) => setState(s => ({ ...s, ...patch }))
   const filter = (patch: Partial<Session>) => update({ ...patch, page: 1, scroll: 0 })
   useEffect(() => { sessionStorage.setItem(`ioc-workspace:${slug}`, JSON.stringify(state)) }, [slug, state])
@@ -82,8 +86,9 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
     }
   }
   const add = useMutation({
-    mutationFn: () => post<{ id: number }>(`/api/cases/${slug}/iocs`, { value, note }), onSuccess: result => {
-      setAddOpen(false); setValue(''); setNote(''); qc.invalidateQueries({ queryKey: ['iocs'] }); open(result.id)
+    mutationFn: () => post<{ ok: boolean; id?: number; existing_id?: number }>(`/api/cases/${slug}/iocs`, { value, note, type: visibleType, reject_duplicate: true }), onSuccess: result => {
+      if (!result.ok) { setDuplicate(result.existing_id ?? null); return }
+      setAddOpen(false); setValue(''); setNote(''); setManualType(''); setDuplicate(null); qc.invalidateQueries({ queryKey: ['iocs'] }); if (result.id != null) open(result.id)
     }
   })
   const download = useMutation({ mutationFn: ({ ids, format }: { ids: number[]; format: string }) => downloadSelection(`/api/cases/${slug}/iocs/export`, ids, format, `iocs_${slug}.${format === 'csv' ? 'csv' : 'json'}`) })
@@ -331,7 +336,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
 
     <Modal
       open={addOpen}
-      onClose={() => { if ((!value && !note) || window.confirm('Discard this new IOC?')) setAddOpen(false) }}
+      onClose={() => { if (!add.isPending && ((!value && !note) || window.confirm('Discard this new IOC?'))) setAddOpen(false) }}
       title="Add IOC">
       <form className="space-y-4" onSubmit={e => { e.preventDefault(); add.mutate() }}>
         <label className="block text-[13px]">
@@ -339,17 +344,28 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           <input
             className={`${field} mt-1 w-full`}
             required
+            disabled={add.isPending}
             value={value}
-            onChange={e => setValue(e.target.value)}
+            maxLength={8192}
+            onChange={e => { setValue(e.target.value); setDuplicate(null) }}
             placeholder="IP, domain, URL, hash, path or CVE…" />
         </label>
+        <label className="block text-[13px]">{tr('iocEdit.type')}
+          <select className={`${field} mt-1 w-full`} disabled={add.isPending} value={manualType} onChange={e => { setManualType(e.target.value); setDuplicate(null) }}>
+            <option value="">{tr(suggestion.data?.ambiguous ? 'iocEdit.chooseType' : 'iocEdit.auto')}{!suggestion.data?.ambiguous && visibleType && ` (${tr(visibleType === 'vulnerability' ? 'iocBadge.cve' : `iocType.${visibleType}`)})`}</option>
+            {['ip', 'hash', 'url', 'domain', 'email', 'path', 'user', 'other', 'vulnerability', 'software'].map(type => <option key={type} value={type}>{tr(type === 'vulnerability' ? 'iocBadge.cve' : `iocType.${type}`)}</option>)}
+          </select>
+        </label>
+        {!manualType && suggestion.data?.ambiguous && <p role="alert">{tr('iocEdit.ambiguous')}</p>}
+        {suggestion.error && <p role="alert">{suggestion.error.message}</p>}
         <label className="block text-[13px]">
           {tr('iocWorkspace.note')}
-          <textarea className={`${field} mt-1 w-full`} value={note} onChange={e => setNote(e.target.value)} />
+          <textarea className={`${field} mt-1 w-full`} maxLength={10000} disabled={add.isPending} value={note} onChange={e => setNote(e.target.value)} />
         </label>
         <p className="text-[12px] text-[var(--muted)]">{tr('iocWorkspace.initial_assessment_malicious')}</p>
         {add.error && <p role="alert">{add.error.message}</p>}
-        <Button disabled={!value.trim() || add.isPending}>{tr('iocWorkspace.add_ioc')}</Button>
+        {duplicate != null && <p role="alert">{tr('iocEdit.duplicate')} <Button type="button" onClick={() => { if (state.active === duplicate || open(duplicate)) setAddOpen(false) }}>{tr('iocEdit.openExisting')}</Button></p>}
+        <Button disabled={!value.trim() || !visibleType || suggestion.isFetching || (!manualType && !!suggestion.data?.ambiguous) || add.isPending}>{tr('iocWorkspace.add_ioc')}</Button>
       </form>
     </Modal>
 
