@@ -58,6 +58,34 @@ class BackupTests(unittest.TestCase):
         changes = backups.compare(self.conn, self.site, 'changes')
         self.assertEqual({r['path'] for r in changes['rows']}, {'changed.txt', 'new.txt'})
 
+    def test_grouping_resolves_manifest_paths_only_for_unmatched_findings(self):
+        self.populate()
+        for root in self.roots:
+            self.finding(root / 'same.txt')
+        self.prepare()
+        paths = [str(root / 'same.txt') for root in self.roots]
+        with patch.object(backups, 'canonical_file', side_effect=AssertionError('Exact manifest paths need no filesystem resolution')):
+            members = backups.grouping(self.conn)
+        self.assertEqual(len({members[path]['key'] for path in paths}), 1)
+
+        original = paths[0]
+        aliases = [str(self.roots[0] / '..' / 'site' / 'same.txt')]
+        if os.name == 'nt':
+            aliases.append(original.upper())
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                self.conn.execute('UPDATE findings SET artifact=? WHERE artifact=?', (alias, original))
+                members = backups.grouping(self.conn)
+                self.assertEqual(members[alias], members[original])
+                self.conn.execute('UPDATE findings SET artifact=? WHERE artifact=?', (original, alias))
+
+        unrelated = self.root / 'unrelated.txt'
+        unrelated.write_text('Harmless file outside the backups\n', encoding='utf-8')
+        self.finding(unrelated)
+        self.assertNotIn(str(unrelated), backups.grouping(self.conn))
+        self.conn.execute('DELETE FROM backup_snapshots')
+        self.assertEqual(backups.grouping(self.conn), {})
+
     def test_identical_hash_assessment_reaches_other_paths_but_preserves_conflicts(self):
         self.populate()
         other = self.roots[1] / 'renamed.txt'
