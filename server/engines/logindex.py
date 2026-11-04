@@ -41,8 +41,9 @@ from pathlib import Path
 from server import db, huntrules, ruleswitch
 from server.engines import accesslog
 from server.i18n import t
+from server.paths import io_path
 from server.engines.fsutil import (get_files_recursive, is_compressed, record_skip,
-                                   is_scannable_text, open_text_auto)
+                                   open_text_auto)
 
 # 3: days.ok (requests answered with 2xx per day) for the timeline curves.
 # 5: actors.admin_ok -- 2xx responses from the admin backend, which is
@@ -57,7 +58,7 @@ from server.engines.fsutil import (get_files_recursive, is_compressed, record_sk
 #     changes on every rebuild and cannot be cited in an investigation.
 # 12: optional virtual host from Apache vhost_combined or IIS cs-host. Empty
 #     means the source did not record it; it is never inferred.
-SCHEMA_VERSION = "12"
+SCHEMA_VERSION = "13"
 _BATCH = 20000
 
 # --- detection patterns (evaluated once per distinct string) ----------------
@@ -346,6 +347,13 @@ class _Actor:
             entry[1] = size
 
 
+def _is_log_text(file_path):
+    if is_compressed(file_path):
+        return True
+    with open(io_path(file_path), "rb") as stream:
+        return b"\x00" not in stream.read(8192)
+
+
 def build(case_dir, targets, ctx=None, workspace=None):
     """Parse every access-log file under `targets` into <case>/logindex.db.
 
@@ -354,12 +362,26 @@ def build(case_dir, targets, ctx=None, workspace=None):
     sneaks in.
     """
     log_db = db.log_db_path(case_dir)
-    if log_db.exists():
-        log_db.unlink()
     stats = {"files": 0, "lines": 0, "unparsed": 0, "undated": 0,
              "partial": False,
              "skipped": 0,
              "clients": 0, "alerts": 0, "bytes": 0}
+    # Windows keeps the old SQLite file locked until cancelled readers close.
+    deadline = time.monotonic() + 5
+    while log_db.exists():
+        if ctx is not None and ctx.cancelled():
+            stats["partial"] = True
+            return stats
+        try:
+            log_db.unlink()
+            break
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise PermissionError("The log index is in use. Close other log views or exports "
+                                      "and check case-folder permissions, then retry.") from None
+            if ctx is not None:
+                ctx.progress(0, "Waiting for current log queries to finish")
+            time.sleep(0.05)
 
     files = []
     for target in targets:
@@ -442,6 +464,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
         # span and the coverage windows were then all computed from a
         # fraction of the evidence, with nothing on screen saying so.
         cancelled = False
+        incomplete = False
         for file_path, file_size in sized:
             if ctx is not None and ctx.cancelled():
                 cancelled = True
@@ -452,12 +475,20 @@ def build(case_dir, targets, ctx=None, workspace=None):
                 file_mtime = int(os.stat(file_path).st_mtime)
             except OSError:
                 file_mtime = 0
-            if not is_scannable_text(file_path):
-                record_skip(ctx, abs_path, "binary/unreadable file")
+            try:
+                text_source = _is_log_text(file_path)
+            except OSError:
+                text_source = False
+                incomplete = True
+                skip_reason = "read error"
+            else:
+                skip_reason = "binary/unreadable file"
+            if not text_source:
+                record_skip(ctx, abs_path, skip_reason)
                 conn.execute(
                     "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
                     " VALUES (?,?,?,?)",
-                    (abs_path, file_size, file_mtime, "binary/unreadable file"))
+                    (abs_path, file_size, file_mtime, skip_reason))
                 stats["skipped"] += 1
                 done_size += file_size
                 continue
@@ -493,6 +524,9 @@ def build(case_dir, targets, ctx=None, workspace=None):
             try:
                 with open_text_auto(file_path) as fh:
                     for line_no, line in enumerate(fh, start=1):
+                        if line_no % 1000 == 0 and ctx is not None and ctx.cancelled():
+                            cancelled = True
+                            break
                         data = parser.parse(line)
                         if data is None:
                             if line.strip() and not accesslog.is_metadata_line(line):
@@ -640,19 +674,18 @@ def build(case_dir, targets, ctx=None, workspace=None):
                             batch.clear()
                             if ctx is not None:
                                 if ctx.cancelled():
+                                    cancelled = True
                                     break
                                 frac = (done_size + min(file_size, chars * file_size // denom)) / max(1, total_size)
                                 ctx.progress(0.02 + frac * 0.82,
                                              f"{name}: {stats['lines'] + file_lines:,} lines indexed")
-            except (OSError, EOFError) as e:
-                record_skip(ctx, abs_path, f"read error: {e}")
+            except (OSError, EOFError):
+                incomplete = True
+                record_skip(ctx, abs_path, "read error")
                 conn.execute(
-                    "INSERT OR IGNORE INTO sources (path, size, mtime, skipped_reason)"
-                    " VALUES (?,?,?,?)",
-                    (abs_path, file_size, file_mtime, f"read error: {e}"))
+                    "UPDATE sources SET skipped_reason = ? WHERE id = ?",
+                    ("read error", src_id))
                 stats["skipped"] += 1
-                done_size += file_size
-                continue
 
             conn.execute(
                 "UPDATE sources SET lines = ?, unparsed = ? WHERE id = ?",
@@ -663,7 +696,13 @@ def build(case_dir, targets, ctx=None, workspace=None):
             stats["undated"] += file_undated
             stats["bytes"] += file_size
             done_size += file_size
+            if ctx is not None and ctx.cancelled():
+                cancelled = True
+            if cancelled:
+                break
 
+        if ctx is not None and ctx.cancelled():
+            cancelled = True
         if batch:
             conn.executemany(
                 "INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
@@ -818,7 +857,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             "VALUES (?,?,?,?,?)", alert_rows)
         stats["alerts"] = len(alert_rows)
         stats["clients"] = len(actors)
-        stats["partial"] = cancelled
+        stats["partial"] = cancelled or incomplete
 
         if ctx is not None:
             ctx.progress(0.92, "Building indexes…")
@@ -838,7 +877,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
             ("clients", str(stats["clients"])),
             ("unparsed", str(stats["unparsed"])),
             ("undated", str(stats["undated"])),
-            ("partial", "1" if cancelled else ""),
+            ("partial", "1" if stats["partial"] else ""),
             # Which UTC offsets appear in these logs. Usually one, but a
             # server that ran through a DST change writes two -- an Austrian
             # log crosses +0100/+0200 twice a year -- and several servers in
@@ -853,7 +892,7 @@ def build(case_dir, targets, ctx=None, workspace=None):
         conn.close()
 
     # --- alert findings into the case DB (one truth, two views) -----------
-    _write_alert_findings(case_dir, workspace, completed=not cancelled)
+    _write_alert_findings(case_dir, workspace, completed=not stats["partial"])
     try:
         stats["index_size"] = log_db.stat().st_size
     except OSError:
@@ -1035,7 +1074,7 @@ def status(case_dir, targets=None, lang="en"):
     """Whether the index exists and can be trusted for these targets."""
     out = {"exists": False, "fresh": False, "reason": t(lang, "index.none"),
            "lines": 0, "clients": 0, "unparsed": 0, "undated": 0,
-           "size": 0}
+           "size": 0, "partial": False, "generation": ""}
     conn = _open_ro(case_dir)
     if conn is None:
         return out
@@ -1043,11 +1082,16 @@ def status(case_dir, targets=None, lang="en"):
         out["exists"] = True
         out["size"] = db.log_db_path(case_dir).stat().st_size
         meta = dict(conn.execute("SELECT key, value FROM meta"))
+        out["generation"] = meta.get("generation", "")
         if meta.get("schema") != SCHEMA_VERSION:
             out["reason"] = t(lang, "index.oldVersion")
             return out
-        for k in ("lines", "clients", "unparsed"):
+        for k in ("lines", "clients", "unparsed", "undated"):
             out[k] = int(meta.get(k, 0) or 0)
+        out["partial"] = meta.get("partial") == "1"
+        if out["partial"]:
+            out["reason"] = t(lang, "index.partial")
+            return out
         # EVERY source, skipped ones included. The fingerprint on the other
         # side of this comparison is built from the files on disk, and a file
         # the engine deliberately skipped -- an error log lying in the
@@ -1935,7 +1979,7 @@ def _public_access_rows(conn, rows):
     return out
 
 
-def access_search(case_dir, filters=None, limit=200):
+def access_search(case_dir, filters=None, limit=200, cancelled=None):
     """Search the complete access-log index with cursor pagination."""
     filters = dict(filters or {})
     conn = _open_ro(case_dir)
@@ -1945,8 +1989,11 @@ def access_search(case_dir, filters=None, limit=200):
                             "server_errors": 0, "first_epoch": None,
                             "last_epoch": None}}
     try:
+        if cancelled:
+            conn.set_progress_handler(cancelled, 1000)
         conn.execute("BEGIN")
-        _prepare_access_conn(conn)
+        if filters.get("signals_only"):
+            _prepare_access_conn(conn)
         key = _access_cache_key(case_dir, conn, filters, 'summary')
         summary_row = _access_cached(key)
         base_clause, base_params = _access_clause(filters, cursor=False)
@@ -1996,7 +2043,7 @@ def _nice_bucket(span, wanted=72):
     return 90 * 86400
 
 
-def access_overview(case_dir, filters=None):
+def access_overview(case_dir, filters=None, cancelled=None):
     """Histogram and exact full-scope facets for the current search."""
     filters = dict(filters or {})
     conn = _open_ro(case_dir)
@@ -2004,6 +2051,8 @@ def access_overview(case_dir, filters=None):
         return {"total": 0, "timeline": [], "bucket_seconds": 0,
                 "facets": {}}
     try:
+        if cancelled:
+            conn.set_progress_handler(cancelled, 1000)
         conn.execute("BEGIN")
         cache_key = _access_cache_key(case_dir, conn, filters, 'overview')
         cached = _access_cached(cache_key)
@@ -2012,12 +2061,20 @@ def access_overview(case_dir, filters=None):
         _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         base_joins = _access_joins_for(filters)
-        span = conn.execute(
-            f"SELECT count(*), "
-            f"min(CASE WHEN r.epoch > 0 THEN r.epoch END), "
-            f"max(CASE WHEN r.epoch > 0 THEN r.epoch END) "
-            f"FROM requests r {base_joins} WHERE {clause}", params).fetchone()
-        total, first, last = span if span else (0, None, None)
+        summary_key = _access_cache_key(case_dir, conn, filters, 'summary')
+        summary = _access_cached(summary_key)
+        if summary is None:
+            summary = dict(conn.execute(
+                f"""SELECT count(*) AS total,
+                    min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
+                    max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch,
+                    sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END) AS ok,
+                    sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END) AS redirects,
+                    sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END) AS client_errors,
+                    sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END) AS server_errors
+                    FROM requests r {base_joins} WHERE {clause}""", params).fetchone())
+            _cache_access(summary_key, summary)
+        total, first, last = summary['total'], summary['first_epoch'], summary['last_epoch']
         width = _nice_bucket((last or 0) - (first or 0)) if first and last else 0
         timeline = []
         if width:
@@ -2065,16 +2122,10 @@ def access_overview(case_dir, filters=None):
         for item in sources:
             item["label"] = os.path.basename(item.pop("path", "") or "")
 
-        status_row = conn.execute(
-            f"""SELECT
-                sum(CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 ELSE 0 END),
-                sum(CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 ELSE 0 END),
-                sum(CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 ELSE 0 END),
-                sum(CASE WHEN r.status >= 500 THEN 1 ELSE 0 END)
-                FROM requests r {base_joins} WHERE {clause}""", params).fetchone()
         statuses = [
-            {"value": name, "count": int((status_row[index] if status_row else 0) or 0)}
-            for index, name in enumerate(("2xx", "3xx", "4xx", "5xx"))
+            {"value": name, "count": int(summary[key] or 0)}
+            for name, key in zip(("2xx", "3xx", "4xx", "5xx"),
+                                 ("ok", "redirects", "client_errors", "server_errors"))
         ]
         result = {"total": int(total or 0), "timeline": timeline,
                 "bucket_seconds": width,
@@ -2117,18 +2168,21 @@ def _uri_pattern(uri):
     return patterned or "/"
 
 
-def access_patterns(case_dir, filters=None, limit=80):
+def access_patterns(case_dir, filters=None, limit=80, cancelled=None):
     """Group exact URIs into readable shapes, then measure those shapes."""
     filters = dict(filters or {})
     conn = _open_ro(case_dir)
     if conn is None:
         return {"patterns": [], "sampled_uris": 0, "truncated": False}
     try:
-        _prepare_access_conn(conn)
+        if cancelled:
+            conn.set_progress_handler(cancelled, 1000)
+        if filters.get("signals_only"):
+            _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         candidates = conn.execute(
             f"""SELECT r.uri AS uri_id, u.text AS uri, count(*) AS requests
-                FROM requests r {_ACCESS_JOINS} WHERE {clause}
+                FROM requests r {_access_joins_for(filters, ('ip', 'uri'))} WHERE {clause}
                 GROUP BY r.uri ORDER BY requests DESC LIMIT 10001""", params).fetchall()
         truncated = len(candidates) > 10000
         candidates = candidates[:10000]
@@ -2150,7 +2204,7 @@ def access_patterns(case_dir, filters=None, limit=80):
                        sum(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END) AS errors,
                        min(CASE WHEN r.epoch > 0 THEN r.epoch END) AS first_epoch,
                        max(CASE WHEN r.epoch > 0 THEN r.epoch END) AS last_epoch
-                FROM requests r {_ACCESS_JOINS}
+                FROM requests r {_access_joins_for(filters, ('ip',))}
                 JOIN access_pattern_map pm ON pm.uri_id = r.uri
                 WHERE {clause} GROUP BY pm.pattern
                 ORDER BY requests DESC LIMIT ?""", params + [max(1, min(limit, 200))]).fetchall()
@@ -2169,7 +2223,7 @@ def access_patterns(case_dir, filters=None, limit=80):
         conn.close()
 
 
-def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
+def access_segments(case_dir, filters=None, gap_seconds=900, limit=100, cancelled=None):
     """Measured activity windows for a deliberately small client scope.
 
     They are called segments, never sessions: an access log has no authority
@@ -2184,6 +2238,8 @@ def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
     if conn is None:
         return {"segments": [], "requires_client": False, "truncated": False}
     try:
+        if cancelled:
+            conn.set_progress_handler(cancelled, 1000)
         _prepare_access_conn(conn)
         clause, params = _access_clause(filters, cursor=False)
         raw = conn.execute(
@@ -2209,6 +2265,8 @@ def access_segments(case_dir, filters=None, gap_seconds=900, limit=100):
             segments.append(segment)
 
         for row in rows:
+            if cancelled and cancelled():
+                raise InterruptedError('access query cancelled')
             epoch = int(row.get("epoch") or 0)
             starts_new = (current is None or current["client"] != row["client"]
                           or not epoch or not current["last_epoch"]

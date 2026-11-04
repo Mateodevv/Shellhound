@@ -1031,7 +1031,18 @@ def create_app(config: Config) -> FastAPI:
         except CaseBusy as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    def _analyze(slug: str, body: AnalyzeBody | None = None):
+    @app.post("/api/cases/{slug}/access/reindex", dependencies=[auth])
+    def reindex_access(slug: str):
+        case_dir = case_dir_or_404(slug)
+        try:
+            with manager.case_operation(case_dir):
+                if not log_evidence.access_targets(case_dir):
+                    raise HTTPException(400, "No access logs are registered in this case.")
+                return _analyze(slug, logs_only=True)
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def _analyze(slug: str, body: AnalyzeBody | None = None, *, logs_only=False):
         """Run every registered source, or only newly registered evidence.
 
         An omitted body intentionally retains the original full-run API.
@@ -1040,7 +1051,9 @@ def create_app(config: Config) -> FastAPI:
         newly registered log source rebuilds that index from every log root.
         """
         case_dir = case_dir_or_404(slug)
-        by_kind = _evidence_by_kind(case_dir)
+        registered = _evidence_by_kind(case_dir)
+        by_kind = {kind: rows for kind, rows in registered.items()
+                   if not logs_only or kind in ("access_logs", "logs")}
         mode = body.mode if body is not None else "all"
         if mode not in ("new", "all"):
             raise HTTPException(400, "analysis mode must be 'new' or 'all'")
@@ -1108,7 +1121,7 @@ def create_app(config: Config) -> FastAPI:
             # File correlations need a webroot. Their absence is a coverage
             # limit, not a prerequisite for analyzing an access-log-only case.
             error_kinds = ()
-            if by_kind.get("webroot") and chosen.get("access_logs"):
+            if registered.get("webroot") and chosen.get("access_logs"):
                 error_kinds = ("access_logs", "webroot") if chosen.get("webroot") else ("access_logs",)
             if not by_kind.get("logs"):
                 tasks.append(("errorlog", run_errors, error_kinds))
@@ -4417,31 +4430,61 @@ def create_app(config: Config) -> FastAPI:
             data.pop("limit", None)
         return data
 
+    def require_access_ready(case_dir):
+        with closing(db.connect(case_dir)) as conn:
+            running = db.rows(conn, "SELECT id FROM jobs WHERE kind='index_logs' AND state IN ('queued','running')")
+        if any(manager.progress_snapshot(case_dir, job["id"]) for job in running):
+            raise HTTPException(409, "The log index is rebuilding. Wait for it to finish.")
+        state = logindex.status(case_dir, log_evidence.access_targets(case_dir))
+        if not state["fresh"]:
+            raise HTTPException(409, state["reason"])
+
+    async def run_access_query(request, fn, case_dir, filters, **kwargs):
+        require_access_ready(case_dir)
+        cancelled = threading.Event()
+        task = asyncio.create_task(asyncio.to_thread(
+            fn, case_dir, filters, cancelled=cancelled.is_set, **kwargs))
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=0.1)
+                if not task.done() and await request.is_disconnected():
+                    cancelled.set()
+                    try:
+                        await task
+                    except Exception:
+                        pass
+                    return Response(status_code=499)
+            return await task
+        finally:
+            if not task.done():
+                cancelled.set()
+                task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+
     @app.post("/api/cases/{slug}/access/search", dependencies=[auth])
-    def access_search(slug: str, body: AccessQueryBody):
+    async def access_search(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
         filters = access_filters(body, keep_page=True)
         try:
-            return logindex.access_search(
+            return await run_access_query(request, logindex.access_search,
                 case_dir, filters, limit=max(25, min(body.limit, 500)))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
     @app.post("/api/cases/{slug}/access/overview", dependencies=[auth])
-    def access_overview(slug: str, body: AccessQueryBody):
+    async def access_overview(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
-        return logindex.access_overview(case_dir, access_filters(body))
+        return await run_access_query(request, logindex.access_overview, case_dir, access_filters(body))
 
     @app.post("/api/cases/{slug}/access/patterns", dependencies=[auth])
-    def access_patterns(slug: str, body: AccessQueryBody):
+    async def access_patterns(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
-        return logindex.access_patterns(case_dir, access_filters(body))
+        return await run_access_query(request, logindex.access_patterns, case_dir, access_filters(body))
 
     @app.post("/api/cases/{slug}/access/segments", dependencies=[auth])
-    def access_segments(slug: str, body: AccessQueryBody):
+    async def access_segments(slug: str, body: AccessQueryBody, request: Request):
         case_dir = case_dir_or_404(slug)
         try:
-            return logindex.access_segments(case_dir, access_filters(body))
+            return await run_access_query(request, logindex.access_segments, case_dir, access_filters(body))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -4449,6 +4492,7 @@ def create_app(config: Config) -> FastAPI:
     def access_request(slug: str, request_id: int, before: int = 12,
                        after: int = 12, index_fingerprint: str = ""):
         case_dir = case_dir_or_404(slug)
+        require_access_ready(case_dir)
         if index_fingerprint:
             require_current_hunt_index(case_dir, index_fingerprint)
         try:
@@ -4474,6 +4518,7 @@ def create_app(config: Config) -> FastAPI:
     def access_export(slug: str, filters: str = "{}"):
         """The visible access-log scope as a citable ZIP exhibit."""
         case_dir = case_dir_or_404(slug)
+        require_access_ready(case_dir)
         active = parsed_access_export_filters(filters)
         result = logindex.access_search(case_dir, active, limit=200000)
         buf = io.StringIO()
@@ -4804,6 +4849,16 @@ def create_app(config: Config) -> FastAPI:
         note: str = ""
         context: str = ""
         path_context: str = "unknown"
+        reject_duplicate: bool = False
+
+    class IocSuggestion(BaseModel):
+        value: str
+
+    @app.post("/api/iocs/suggest", dependencies=[auth])
+    def suggest_ioc(body: IocSuggestion):
+        if len(body.value) > 8192:
+            raise HTTPException(400, "IOC value is too long.")
+        return ioclib.suggestion(body.value)
 
     @app.post("/api/cases/{slug}/iocs", dependencies=[auth])
     def add_ioc(slug: str, body: NewIoc):
@@ -4814,9 +4869,16 @@ def create_app(config: Config) -> FastAPI:
         ioc_type = body.type if body.type in ioclib.IOC_TYPES else ioclib.classify(value)
         if ioc_type == "file":
             raise HTTPException(400, "Collect a file through the file browser, or add a standalone hash.")
+        if len(value) > 8192 or len(body.note) > 10000 or len(body.context) > 8192:
+            raise HTTPException(400, "IOC input is too long.")
         if body.path_context not in ioc_model.PATH_CONTEXTS:
             raise HTTPException(400, "Invalid path context.")
-        if ioc_type == "vulnerability" and not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
+        if body.type in ioclib.IOC_TYPES or body.reject_duplicate:
+            try:
+                value = ioclib.validate_manual(value, ioc_type)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+        elif ioc_type == "vulnerability" and not re.fullmatch(r"CVE-\d{4}-\d{4,}", value, re.I):
             raise HTTPException(400, "A vulnerability value must be a CVE identifier.")
         # Hex has no case. The collectors write hexdigest() and are already
         # lower-case; only the analyst pastes `4323…C`, and without this the
@@ -4827,6 +4889,12 @@ def create_app(config: Config) -> FastAPI:
             value = value.lower()
         conn = db.connect(case_dir)
         try:
+            if body.reject_duplicate:
+                conn.execute("BEGIN IMMEDIATE")
+                key = ioc_model.identity(value, ioc_type, body.context, body.path_context)
+                existing = db.one(conn, "SELECT id FROM iocs WHERE identity_key=?", (key,))
+                if existing:
+                    return {"ok": False, "existing_id": existing["id"], "type": ioc_type}
             ioc_id = db.add_ioc(conn, value, ioc_type, [ioclib.TAG_ANALYST],
                        note=body.note, origin="added by the analyst", context=body.context,
                        path_context=body.path_context)
@@ -4854,6 +4922,13 @@ def create_app(config: Config) -> FastAPI:
                 raise HTTPException(400, "A vulnerability value must be a CVE identifier.")
             if target_type == "file" and current["type"] != "file" or current["type"] == "file" and target_type != "file":
                 raise HTTPException(400, "File content identities cannot be retyped.")
+            if body.type is not None and body.type != current["type"]:
+                if current["type"] == "hash" and conn.execute("SELECT 1 FROM ioc_file_members WHERE ioc_id=?", (ioc_id,)).fetchone():
+                    raise HTTPException(400, "Verified file identities are bound to their content.")
+                try:
+                    ioclib.validate_manual(current["value"], body.type)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from None
             if body.path_context is not None and body.path_context not in ioc_model.PATH_CONTEXTS:
                 raise HTTPException(400, "Invalid path context.")
             if body.type is not None and body.type != current["type"]:
@@ -4875,6 +4950,8 @@ def create_app(config: Config) -> FastAPI:
                     raise HTTPException(400, f"type must be one of {ioclib.IOC_TYPES}")
                 conn.execute("UPDATE iocs SET type = ? WHERE id = ?",
                              (body.type, ioc_id))
+                if body.type != current["type"]:
+                    conn.execute("DELETE FROM opencti_lookups WHERE ioc_id=?", (ioc_id,))
             if body.note is not None:
                 conn.execute("UPDATE iocs SET note = ? WHERE id = ?",
                              (body.note, ioc_id))

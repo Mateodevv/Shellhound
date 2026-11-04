@@ -103,6 +103,7 @@ const CASE = {
 function mockApi() {
   vi.mocked(api).mockImplementation(async (path) => {
     if (path.endsWith('/case-1')) return CASE
+    if (path.endsWith('/jobs')) return []
     if (path.endsWith('/access/saved')) return []
     if (path.endsWith('/access/clips')) return []
     if (path.endsWith('/access/request/7')) return CONTEXT
@@ -121,6 +122,19 @@ function mockApi() {
 }
 
 describe('access-log investigation workspace', () => {
+  it('loads tab-specific queries only when selected and passes cancellation signals', async () => {
+    mockApi()
+    renderWithProviders(<AccessLogs slug="case-1" gotoView={vi.fn()} />)
+    await screen.findByText(ROW.uri, { selector: 'span' })
+    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/access/patterns'))).toBe(false)
+    expect(vi.mocked(post).mock.calls.some(([path]) => path.endsWith('/access/segments'))).toBe(false)
+    const search = vi.mocked(post).mock.calls.find(([path]) => path.endsWith('/access/search'))
+    expect(search?.[2]).toBeInstanceOf(AbortSignal)
+    fireEvent.click(screen.getByRole('button', { name: 'Patterns' }))
+    await waitFor(() => expect(vi.mocked(post).mock.calls.some(([path, , signal]) =>
+      path.endsWith('/access/patterns') && signal instanceof AbortSignal)).toBe(true))
+  })
+
   it('starts with the complete request stream and opens citable raw context', async () => {
     mockApi()
     renderWithProviders(<AccessLogs slug="case-1" gotoView={vi.fn()} />)

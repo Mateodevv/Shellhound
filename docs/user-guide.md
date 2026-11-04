@@ -577,6 +577,16 @@ included in case archives.
 
 ![Access Log Explorer](../assets/docs/access-logs.png)
 
+On the Logs page, open **Access → Actions → Rebuild log index** to queue log
+analysis when the index is missing or stale. The action rebuilds the log index
+only; it does not run webroot or database scans. Older derived indexes (schema
+12) require this one-time rebuild for the current schema (13). Partial index
+status is shown so incomplete results are not mistaken for a complete search.
+
+When adding an IOC manually, Shellhound suggests a type. Choose one explicitly
+when a value could be either a domain or a path. Type edits save atomically.
+If an IOC already exists, the draft stays open and the existing note is kept.
+
 **Report & close** edits the case summary, checks evidence, running/failed
 analyses and open triage, and previews a selectable-section report before the
 case is archived. The self-contained HTML contains no evidence-root paths or

@@ -1821,6 +1821,33 @@ class ActorWorkspaceEndpointTests(unittest.TestCase):
 
 
 class AccessLogExplorerEndpointTests(unittest.TestCase):
+    def test_disconnected_query_signals_worker_to_stop(self):
+        from unittest.mock import patch
+        from server.engines import logindex
+        started, stopped = threading.Event(), threading.Event()
+
+        def slow_query(case_dir, filters, cancelled=None):
+            started.set()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if cancelled():
+                    stopped.set()
+                    raise InterruptedError('cancelled')
+                time.sleep(.01)
+            return {}
+
+        with patch.object(logindex, 'access_overview', side_effect=slow_query):
+            client = socket.create_connection(('127.0.0.1', SERVER.port))
+            try:
+                body = b'{}'
+                client.sendall((f'POST /api/cases/{CASE}/access/overview HTTP/1.1\r\n'
+                    f'Host: 127.0.0.1\r\nX-Token: {TOKEN}\r\n'
+                    f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n').encode() + body)
+                self.assertTrue(started.wait(2))
+            finally:
+                client.close()
+            self.assertTrue(stopped.wait(2))
+
     def search(self, slug=None, **overrides):
         slug = slug or CASE
         query = {"limit": 25, **overrides}

@@ -18,6 +18,25 @@ beforeEach(() => {
 })
 const show = () => renderWithProviders(<IocBox slug="qa" gotoView={() => {}} />)
 describe('IOC investigation workspace', () => {
+  it('requires a choice for ambiguous input and retains a duplicate draft', async () => {
+    rows = [object(1, { type: 'domain', value: 'example.test' })]
+    vi.mocked(post).mockImplementation(async url => url === '/api/iocs/suggest' ? { type: 'path', ambiguous: true } : { ok: false, existing_id: 1 })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add IOC' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Value'), { target: { value: 'example.test' } })
+    fireEvent.change(within(dialog).getByLabelText('Note'), { target: { value: 'draft note' } })
+    expect(await within(dialog).findByText('Choose Domain or Path for this value.')).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: 'Add IOC' })).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'domain' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add IOC' }))
+    expect(await within(dialog).findByText(/This IOC already exists/)).toBeVisible()
+    expect(within(dialog).getByLabelText('Note')).toHaveValue('draft note')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open existing IOC' }))
+    expect(await screen.findByText('Object detail 1')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Add IOC' }))
+    expect(within(screen.getByRole('dialog')).getByLabelText('Note')).toHaveValue('draft note')
+  })
   it('deletes the explicit selection across filters and clears the active deleted object', async () => {
     rows = [object(1), object(2), object(3)]
     vi.mocked(post).mockImplementation(async (_url, body) => {

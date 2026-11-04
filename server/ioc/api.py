@@ -43,6 +43,8 @@ class EditObjectBody(BaseModel):
     expected_note: str
     assessment: str
     expected_assessment: str
+    type: str | None = None
+    expected_type: str | None = None
     reason: str = Field(default="", max_length=2000)
     add_tags: list[str] = Field(default_factory=list, max_length=100)
     remove_tags: list[str] = Field(default_factory=list, max_length=100)

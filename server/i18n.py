@@ -76,6 +76,7 @@ CATALOGUE: dict[str, str] = {
     "index.none": "no index built",
     "index.stale": "evidence has changed ({added} file(s) new/modified, {gone} removed) — rebuild the index",
     "index.oldVersion": "index comes from an older version",
+    "index.partial": "index build was incomplete — rebuild the index",
     "err.jobsRunning": "Jobs are still running that could not be stopped in time. Please wait a moment and close the case again.",
     "err.fileNotFound": "file not found",
     "err.fileAccessDenied": "access to this evidence file was denied; check permissions and security software",

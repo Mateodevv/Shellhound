@@ -6,6 +6,7 @@
 // operation remains a structured server query; no SQL or query-language text
 // from the browser is ever executed.
 import './accessLogs.css'
+import { RebuildLogIndex } from '../components/logview/RebuildLogIndex'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -118,6 +119,18 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
   })
   const indexReady = caseInfo?.log_index?.fresh === true
+  const generation = useRef('')
+  useEffect(() => {
+    const next = caseInfo?.log_index?.generation
+    if (!next) return
+    if (generation.current && generation.current !== next) {
+      setSelectedRequest(null)
+      setTraceRow(null)
+      setCursor('')
+      setCursorHistory([])
+    }
+    generation.current = next
+  }, [caseInfo?.log_index?.generation])
   useEffect(() => {
     const node = workspaceRef.current
     if (!node || typeof ResizeObserver === 'undefined') return
@@ -143,26 +156,26 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
 
   const searchQuery = useQuery({
     queryKey: ['access-search', slug, query, cursor],
-    queryFn: () => post<AccessSearchResponse>(
-      `/api/cases/${slug}/access/search`, queryBody(query, cursor)),
+    queryFn: ({ signal }) => post<AccessSearchResponse>(
+      `/api/cases/${slug}/access/search`, queryBody(query, cursor), signal),
     enabled: indexReady,
   })
   const overviewQuery = useQuery({
     queryKey: ['access-overview', slug, query],
-    queryFn: () => post<AccessOverview>(
-      `/api/cases/${slug}/access/overview`, queryBody(query)),
+    queryFn: ({ signal }) => post<AccessOverview>(
+      `/api/cases/${slug}/access/overview`, queryBody(query), signal),
     enabled: indexReady,
   })
   const patternsQuery = useQuery({
     queryKey: ['access-patterns', slug, query],
-    queryFn: () => post<AccessPatternsResponse>(
-      `/api/cases/${slug}/access/patterns`, queryBody(query)),
+    queryFn: ({ signal }) => post<AccessPatternsResponse>(
+      `/api/cases/${slug}/access/patterns`, queryBody(query), signal),
     enabled: indexReady && tab === 'patterns',
   })
   const segmentsQuery = useQuery({
     queryKey: ['access-segments', slug, query],
-    queryFn: () => post<AccessSegmentsResponse>(
-      `/api/cases/${slug}/access/segments`, queryBody(query)),
+    queryFn: ({ signal }) => post<AccessSegmentsResponse>(
+      `/api/cases/${slug}/access/segments`, queryBody(query), signal),
     enabled: indexReady && tab === 'segments',
   })
   const contextQuery = useQuery({
@@ -254,7 +267,10 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
 
   if (caseInfo && !caseInfo.log_index.fresh) {
     return <EmptyState icon={<Search size={36} />} title={tr('logs.index.title')}
-      sub={caseInfo.log_index.reason || tr('logs.index.sub')} />
+      sub={caseInfo.log_index.reason || tr('logs.index.sub')}
+      action={caseInfo.has_access_logs
+        ? <RebuildLogIndex slug={slug} onStarted={() => { setSelectedRequest(null); setTraceRow(null); setCursor(''); setCursorHistory([]) }} />
+        : <Button onClick={() => gotoView('evidence')}>{tr('logEvidence.add')}</Button>} />
   }
 
   return <div className="access-workspace flex min-h-0 flex-1 flex-col gap-3">
@@ -269,6 +285,7 @@ export function AccessLogs({ slug, gotoView }: { slug: string; gotoView: Navigat
           <div className="absolute right-0 top-full z-20 mt-1 flex min-w-56 flex-col gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-2 shadow-xl" onClick={event => { const details = event.currentTarget.parentElement as HTMLDetailsElement; details.open = false }}>
             <Button variant="ghost" onClick={() => setSaveOpen(true)}><Save size={14} />{tr('logs.save')}</Button>
             <Button variant="ghost" onClick={() => setSavedOpen(true)}><Bookmark size={14} />{tr('logs.saved')}</Button>
+            <RebuildLogIndex slug={slug} onStarted={() => { setSelectedRequest(null); setTraceRow(null); setCursor(''); setCursorHistory([]) }} />
             <a href={downloadUrl(`/api/cases/${slug}/access/export?filters=${exportFilters}`)} className="inline-flex items-center gap-2 rounded px-3 py-2 text-[13px]"><Download size={14} />{tr('logs.export')}</a>
           </div>
         </details>

@@ -4,6 +4,7 @@ import { api, post, del, type Ioc } from '../../api'
 import { renderWithProviders } from '../../test/setup'
 import { IocField } from './IocField'
 import { IocDetails } from './IocDetails'
+import { IocEditDialog } from './IocEditDialog'
 import { iocOrigins } from './iocPresentation'
 
 vi.mock('../../api', async orig => ({ ...(await orig<typeof import('../../api')>()), api: vi.fn(), post: vi.fn(), del: vi.fn(), patch: vi.fn() }))
@@ -26,6 +27,26 @@ beforeEach(() => {
 const show = () => renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[ip, cve]} onClose={() => {}} />)
 
 describe('Structured IOC details', () => {
+  it('keeps its original edit baseline when the object refreshes and retains a conflicted draft', async () => {
+    const initial = { ...ip, type: 'path', value: 'example.test', note: 'original', tags: ['old'] }
+    const onClose = vi.fn()
+    vi.mocked(post).mockRejectedValueOnce(new Error('This IOC changed. Reopen the editor to load its current values.'))
+    const { rerender } = renderWithProviders(<IocEditDialog slug="synthetic" object={initial} onClose={onClose} />)
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'domain' } })
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'draft' } })
+    fireEvent.change(screen.getByLabelText(/Tags/), { target: { value: 'new' } })
+    fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Correction' } })
+    rerender(<IocEditDialog slug="synthetic" object={{ ...initial, type: 'other', value: 'updated', note: 'changed', assessment: 'benign', tags: ['remote'] }} onClose={onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/iocs/1/edit', expect.objectContaining({
+      expected_type: 'path', expected_value: 'example.test', expected_note: 'original', expected_assessment: 'unassessed',
+      type: 'domain', note: 'draft', add_tags: ['new'], remove_tags: ['old'],
+    })))
+    expect(await screen.findByRole('alert')).toHaveTextContent('This IOC changed')
+    expect(screen.getByLabelText('Note')).toHaveValue('draft')
+    expect(screen.getByLabelText('Type')).toHaveValue('domain')
+    expect(onClose).not.toHaveBeenCalled()
+  })
   it('shows copy reuse and incomplete-index feedback after an explicit hash assessment', async () => {
     const hash = { ...ip, type: 'hash', value: 'a'.repeat(64) }
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: hash } : { configured: false, lookups: [] })
