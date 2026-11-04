@@ -11,7 +11,7 @@ import { IocDetails } from '../components/iocs/IocDetails'
 import { IpFlag } from '../components/ui/IpFlag'
 import { IocAssessmentBadge } from '../components/iocs/IocAssessmentBadge'
 import { IocTypeBadge } from '../components/iocs/IocTypeBadge'
-import { ctiLabel, iocName } from '../components/iocs/iocPresentation'
+import { iocName } from '../components/iocs/iocPresentation'
 import { useOpenCti } from '../opencti'
 
 import { iocGroups as groups } from '../components/iocs/iocGroups'
@@ -93,7 +93,6 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
   })
   const download = useMutation({ mutationFn: ({ ids, format }: { ids: number[]; format: string }) => downloadSelection(`/api/cases/${slug}/iocs/export`, ids, format, `iocs_${slug}.${format === 'csv' ? 'csv' : 'json'}`) })
   const byId = useMemo(() => new Map(iocs.map(i => [i.id, i])), [iocs])
-  const lookups = useMemo(() => new Map(cti.data?.lookups?.map(i => [i.ioc_id, i]) ?? []), [cti.data])
   const sync = useMemo(() => new Map(cti.data?.sync?.map(i => [i.ioc_id, i.status]) ?? []), [cti.data])
   const roots = useMemo(() => iocs.filter(i => i.type !== 'hash' || !i.file_ids?.some(id => byId.has(id))), [iocs, byId])
   const members = (id: number) => [id, ...iocs.filter(i => i.type === 'hash' && i.file_ids?.includes(id)).map(i => i.id)]
@@ -102,10 +101,10 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
     const term = state.search.trim().toLowerCase()
     return roots.filter(i => (!types.length || types.includes(i.type)) && (!state.type || i.type === state.type)
       && (!state.assessment || i.assessment === state.assessment) && (!state.origin || i.tags.includes(state.origin))
-      && (!cti.configured || !state.status || (state.status.startsWith('sync:') ? sync.get(i.id) === state.status.slice(5) : state.status === 'unchecked' ? !lookups.has(i.id) : state.status === 'stale' ? lookups.get(i.id)?.stale : lookups.get(i.id)?.status === state.status))
+      && (!cti.configured || !state.status || !state.status.startsWith('sync:') || sync.get(i.id) === state.status.slice(5))
       && (!term || [i.value, i.note, i.origin, i.summary, ...(i.file?.names ?? []), ...Object.values(i.file?.hashes ?? {})].some(v => v?.toLowerCase().includes(term))))
       .sort((a, b) => (state.sort === 'name' ? iocName(a).localeCompare(iocName(b)) : state.sort === 'assessment' ? (a.assessment || '').localeCompare(b.assessment || '') : state.sort === 'observed' ? (b.last_seen || '').localeCompare(a.last_seen || '') : b.added.localeCompare(a.added)) || b.id - a.id)
-  }, [roots, state, sync, lookups, cti.configured])
+  }, [roots, state, sync, cti.configured])
   const pages = Math.max(1, Math.ceil(filtered.length / state.size)), page = Math.min(state.page, pages)
   const visible = filtered.slice((page - 1) * state.size, page * state.size)
   useEffect(() => { if (listRef.current && !isPending) listRef.current.scrollTop = state.scroll }, [state.scroll, isPending, state.page])
@@ -134,15 +133,10 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
         <p className="text-[12px] text-[var(--muted)]">{tr('iocWorkspace.objects_evidence_and_relationships')}</p>
       </div>
       <OpenCtiToolbar
-        mode="inline"
         actionScope="case"
-        grouped
         slug={slug}
         iocs={iocs}
-        selectedIds={[]}
-        onSelectAll={() => {}}
-        onClear={() => {}}
-        onSettings={() => navigate('settings')} />
+        selectedIds={[]} />
       <Button onClick={() => setActivity(true)}>
         <Activity size={14} />
         {tr('iocWorkspace.activity')}
@@ -172,13 +166,9 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
         <Button variant="danger" onClick={() => setDeleteSelection([...selected])}><Trash2 size={14} />{tr('iocDelete.selected')}</Button>
       </div>
       <OpenCtiToolbar
-        mode="actions"
         slug={slug}
         iocs={iocs}
-        selectedIds={selectedIds}
-        onSelectAll={() => select(filtered)}
-        onClear={() => setSelection(new Set())}
-        onSettings={() => navigate('settings')} />
+        selectedIds={selectedIds} />
     </div>}
 
     {error && <p role="alert" className="text-[var(--danger-text)]">{error.message}</p>}
@@ -214,7 +204,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           {filters && <div className="grid grid-cols-2 gap-2">
             {filterSelect('Assessment filter', 'assessment', ['malicious', 'suspicious', 'benign', 'unassessed'].map(s => [s, s]))}
             {filterSelect('Origin / tag filter', 'origin', [...new Set(iocs.flatMap(i => i.tags))].sort().map(s => [s, s]))}
-            {cti.configured && filterSelect('OpenCTI filter', 'status', [['known', 'Known'], ['own', 'Own exports only'], ['unknown', 'No visible match'], ['unchecked', 'Not checked'], ['stale', 'Outdated'], ['error', 'Check failed'], ['sync:new', 'New for transfer'], ['sync:changed', 'Changed'], ['sync:error', 'Transfer error'], ['sync:exported', 'Transferred']])}
+            {cti.configured && filterSelect('OpenCTI filter', 'status', [['sync:new', 'New for transfer'], ['sync:changed', 'Changed'], ['sync:error', 'Transfer error'], ['sync:exported', 'Transferred']])}
             {filterSelect('Object type filter', 'type', [...new Set(roots.map(i => i.type))].sort().map(s => [s, s]))}
             <Button onClick={() => filter({ assessment: '', origin: '', status: '', type: '' })}>{tr('iocWorkspace.reset_filters')}</Button>
           </div>}
@@ -262,7 +252,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
                   <span className="mt-0.5 flex items-center gap-1 text-[11px] text-[var(--muted)]">
                     <IocAssessmentBadge assessment={ioc.assessment || 'malicious'} />
                     {ioc.assessment_manual && ' ✎'}
-                    {cti.configured && (sync.get(ioc.id) === 'error' ? 'Transfer error' : sync.get(ioc.id) !== 'changed' && ctiLabel(lookups.get(ioc.id)))}
+                    {cti.configured && (sync.get(ioc.id) === 'error' ? 'Transfer error' : sync.get(ioc.id) === 'exported' ? 'Transferred' : 'Not transferred')}
                   </span>
                 </span>
               </button>
@@ -375,10 +365,7 @@ export function IocBox({ slug, gotoView }: { slug: string; gotoView: Navigate })
           mode="activity"
           slug={slug}
           iocs={iocs}
-          selectedIds={[]}
-          onSelectAll={() => { }}
-          onClear={() => { }}
-          onSettings={() => navigate('settings')} />
+          selectedIds={[]} />
         <section className="space-y-2 border-t border-[var(--line)] pt-3" aria-label={tr('ctiActivity.downloads')}>
           <h3 className="text-[13px] font-semibold">{tr('ctiActivity.downloads')}</h3>
           {[{ id: 'filtered', n: filtered.length }, { id: 'all', n: iocs.length }].map(scope => <div key={scope.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--line)] px-3 py-2">

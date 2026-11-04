@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { post } from '../../api'
 import { useDirectSettings, providerTypes } from '../../directEnrichment'
-import { useOpenCtiSettings } from '../../opencti'
 import { useT } from '../../i18n'
 import { Button, Section, Tag } from '../ui/ui'
 import { CtiError } from '../casework/CaseProfile'
@@ -12,9 +11,7 @@ import { InfoDot } from '../ui/Tooltip'
 export function DirectEnrichmentSettings() {
   const tr = useT()
   const settings = useDirectSettings()
-  const cti = useOpenCtiSettings()
   return <Section title={tr('direct.settings')} sub={tr('direct.settingsHint')}>
-    {cti.data?.configured && <p role="status" className="mb-3 text-[12px] text-[var(--muted)]">{tr('direct.openctiActive')}</p>}
     <CtiError error={settings.error} />
     <div className="space-y-3">{Object.keys(providerTypes).map(service => <ProviderKey key={service} service={service} configured={settings.data?.services?.[service]?.configured ?? false} hint={settings.data?.services?.[service]?.hint ?? ''} />)}</div>
   </Section>

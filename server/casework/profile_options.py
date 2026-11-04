@@ -1,16 +1,16 @@
-"""Local geographic choices and read-only OpenCTI sector taxonomy."""
-import hashlib
+"""Local profile validation data and the fixed main-sector catalogue."""
 import json
-import threading
-import time
 from functools import lru_cache
 from pathlib import Path
 
-from server import settings
-from server.integrations.opencti.client import OpenCTIClient, OpenCTIError
-
-_CACHE = {}
-_LOCK = threading.Lock()
+SECTORS = (
+    'Public administration', 'Healthcare', 'Financial services', 'Energy',
+    'Water and wastewater', 'Technology', 'Telecommunications',
+    'Transport and logistics', 'Manufacturing', 'Retail', 'Food and agriculture',
+    'Education and research', 'Media and culture', 'Professional services',
+    'Construction and real estate', 'Hospitality and tourism',
+    'Non-profit organisations', 'Other',
+)
 
 
 @lru_cache(maxsize=1)
@@ -26,22 +26,3 @@ def geography():
     for entries in states.values():
         entries.sort(key=lambda item: item['name'])
     return {'countries': countries, 'states': states}
-
-
-def sectors(workspace):
-    config = settings.opencti_config(workspace)
-    if not config.get('url') or not config.get('token'):
-        return {'sectors': [], 'stale': False}
-    key = hashlib.sha256(json.dumps([config.get('url'), config.get('token')]).encode()).hexdigest()
-    with _LOCK:
-        cached = _CACHE.get(key)
-        if cached and time.monotonic() - cached[0] < 900:
-            return {'sectors': cached[1], 'stale': False}
-        try:
-            entries = OpenCTIClient(config).sectors()
-        except OpenCTIError:
-            if cached:
-                return {'sectors': cached[1], 'stale': True}
-            raise
-        _CACHE[key] = (time.monotonic(), entries)
-        return {'sectors': entries, 'stale': False}

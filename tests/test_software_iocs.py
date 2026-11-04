@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from server import db, workspace
 from server.app import create_app
 from server.config import Config
-from server.ioc import model
 from server.ioc.software import collect, sync_inventory
 from server.integrations.opencti.graph import build_preview
 
@@ -51,14 +50,15 @@ class SoftwareIocTests(unittest.TestCase):
         self.assertEqual('unassessed', row['assessment'])
         self.assertEqual(1, self.conn.execute('SELECT count(*) FROM ioc_observations').fetchone()[0])
 
-    def test_software_export_obeys_ioc_selection_without_indicator(self):
+    def test_detected_software_is_local_and_only_manual_profile_software_is_exported(self):
         identifier = collect(self.conn, 'Joomla', '5.2')
         self.conn.commit()
-        full = build_preview(self.case, {'ioc_ids':[identifier]})
-        obj = next(o for o in full['objects'] if o['type']=='software')
-        self.assertEqual(('Joomla','5.2'), (obj['name'],obj['version']))
-        self.assertFalse(full['iocs'][0]['indicator_supported'])
-        self.assertFalse(any(o['type']=='software' for o in build_preview(self.case, {'ioc_ids':[]})['objects']))
+        with self.assertRaises(ValueError):
+            build_preview(self.case, {'ioc_ids': [identifier]})
+        self.assertFalse(any(o['type'] == 'software' for o in build_preview(self.case)['objects']))
+        workspace.update_case(self.case, profile={'software': [{'name': 'Manually chosen CMS', 'version': '1'}]})
+        exported = [o for o in build_preview(self.case, {'ioc_ids': []})['objects'] if o['type'] == 'software']
+        self.assertEqual([('Manually chosen CMS', '1')], [(o['name'], o['version']) for o in exported])
 
     def test_legacy_profile_migrates_once_and_preserves_context(self):
         profile = {'software':[{'name':'Legacy CMS','version':'2'}], 'vulnerabilities':[{'name':'CVE-2025-12345','status':'suspected','description':'Review required'}]}

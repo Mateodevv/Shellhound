@@ -2,7 +2,7 @@ import { useState, type ReactNode, type Dispatch, type SetStateAction } from 're
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { SlidersHorizontal } from 'lucide-react'
 import { api, patch, type CaseInfo } from '../../api'
-import { newCaseProfile, useOpenCtiSettings, type CaseProfile, type CaseProfileChanges } from '../../opencti'
+import { newCaseProfile, type CaseProfile } from '../../opencti'
 import { AffectedOrganizationFields } from './AffectedOrganizationFields'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
@@ -18,9 +18,7 @@ export function CtiError({ error }: { error: unknown }) {
 export function CaseProfileButton({ slug }: { slug: string }) {
   const tr = useT()
   const [open, setOpen] = useState(false)
-  const settings = useOpenCtiSettings()
-  const changes = useQuery({ queryKey: ['opencti', slug, 'profile-changes'], queryFn: () => api<CaseProfileChanges>(`/api/cases/${slug}/opencti/profile-changes`), enabled: settings.data?.configured === true })
-  return <div className="flex flex-wrap items-center gap-2"><Button onClick={() => setOpen(true)}><SlidersHorizontal size={14} />{tr('cti.profile')}</Button>{changes.data?.status === 'changed' && <span className="text-[11px] text-[var(--muted)]">{tr('profileChanges.pending', { n: changes.data.entries.length })}</span>}{open && <CaseProfileDialog slug={slug} onClose={() => setOpen(false)} />}</div>
+  return <div className="flex flex-wrap items-center gap-2"><Button onClick={() => setOpen(true)}><SlidersHorizontal size={14} />{tr('cti.profile')}</Button>{open && <CaseProfileDialog slug={slug} onClose={() => setOpen(false)} />}</div>
 }
 function CaseProfileDialog({ slug, onClose }: { slug: string; onClose: () => void }) {
   const tr = useT()
@@ -78,5 +76,26 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
       {['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'].map((marking) => <option key={marking}>{marking}</option>)}
     </select><span>{tr('cti.markingHint')}</span></CtiField>
     </div></div>
+    {section === 'all' && <>
+      <fieldset className="space-y-3 rounded-lg border border-[var(--line)] p-3">
+        <legend>{tr('cti.profileSoftware')}</legend>
+        {profile.software.map((item, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <CtiField label={tr('cti.softwareName')}><input required className={ctiInput} value={item.name} onChange={event => change('software', profile.software.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} /></CtiField>
+          <CtiField label={tr('cti.softwareVersion')}><input className={ctiInput} value={item.version} onChange={event => change('software', profile.software.map((entry, i) => i === index ? { ...entry, version: event.target.value } : entry))} /></CtiField>
+          <Button type="button" onClick={() => change('software', profile.software.filter((_, i) => i !== index))}>{tr('common.remove')}</Button>
+        </div>)}
+        <Button type="button" onClick={() => change('software', [...profile.software, { name: '', version: '' }])}>{tr('cti.addSoftware')}</Button>
+      </fieldset>
+      <fieldset className="space-y-3 rounded-lg border border-[var(--line)] p-3">
+        <legend>{tr('cti.profileCves')}</legend>
+        {profile.vulnerabilities.map((item, index) => <div key={index} className="space-y-2 border-b border-[var(--line)] pb-3">
+          <CtiField label={tr('cti.vulnerabilityName')}><input required className={ctiInput} value={item.name} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} /></CtiField>
+          <CtiField label={tr('cti.status')}><select className={ctiInput} value={item.status} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, status: event.target.value as 'confirmed' | 'suspected' } : entry))}><option value="suspected">{tr('cti.suspected')}</option><option value="confirmed">{tr('cti.confirmed')}</option></select></CtiField>
+          <CtiField label={tr('cti.description')}><textarea className={ctiInput} value={item.description} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, description: event.target.value } : entry))} /></CtiField>
+          <Button type="button" onClick={() => change('vulnerabilities', profile.vulnerabilities.filter((_, i) => i !== index))}>{tr('common.remove')}</Button>
+        </div>)}
+        <Button type="button" onClick={() => change('vulnerabilities', [...profile.vulnerabilities, { name: '', status: 'suspected', description: '' }])}>{tr('cti.addVulnerability')}</Button>
+      </fieldset>
+    </>}
   </>
 }

@@ -11,7 +11,7 @@ server/
   casework/                   Case profiles, options, changes and reports
   ioc/                        IoC API, model, tags and export formats
   integrations/
-    opencti/                  Client, graph, transfer service and samples
+    opencti/                  Client, restricted export graph and transfer receipts
     enrich.py, geoip.py        Direct enrichment and local GeoIP lookup
   engines/                    Evidence parsing and detection
   data/, rules_bundled/       Bundled geography data and detection rules
@@ -44,7 +44,7 @@ assets/                       Reviewed documentation assets
 |---|---|
 | Case creation or profile changes | `server/casework/`, `web/src/components/casework/` |
 | IoC values, tags or relationships | `server/ioc/`, `web/src/components/iocs/`, `web/src/views/IocBox.tsx` |
-| OpenCTI lookup, transfer or enrichment | `server/integrations/opencti/`, `web/src/components/enrichment/` |
+| OpenCTI profile and IOC transfer | `server/integrations/opencti/`, `web/src/components/enrichment/` |
 | Direct enrichment or GeoIP | `server/integrations/`, `web/src/components/settings/` |
 | Artifact review and file contents | `web/src/components/review/`, `server/app.py`, `server/engines/` |
 | Log evidence and traces | `server/engines/`, `web/src/components/logview/`, `web/src/views/` |

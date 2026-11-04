@@ -23,31 +23,28 @@ The five promises:
   5. A SWITCHED-OFF RULE HIDES, IT DOES NOT DELETE. A switch is not a
      retraction.
 
-Nothing here reaches the network: OpenCTI lookups use a mocked server adapter
-while exercising the real local lookup job and persisted result handling.
+Nothing here reaches the network: direct provider reports use a mocked transport
+while exercising real local validation and persisted result handling.
 """
 import io
 import json
-import re
 import tempfile
 import unittest
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from server import db, i18n
-from server.integrations.opencti import service as opencti_service
+from server.integrations import enrich
 from server import rules as rulelib, ruleswitch, settings
 from server.app import create_app
 from server.artifacts import counts as artifact_counts
 from server.chain import EVENT_CAP, case_chain
 from server.config import Config
 from server.engines import logindex, sqldump, webshell
-from server.integrations.opencti.client import OpenCTIClient
 from tests.fixtures_hostile import ATTACKER, HostileEvidence, hostile_shapes
 
 
@@ -331,8 +328,8 @@ def stored_rows(case_dir):
             volatile = _VOLATILE | ({"at"} if table == "triage_events" else set())
             keep = [c for c in columns if c not in volatile]
             out[table] = sorted(
-                tuple((c, row[c]) for c in keep)
-                for row in conn.execute(f"SELECT * FROM {table}").fetchall())
+                (tuple((c, row[c]) for c in keep)
+                 for row in conn.execute(f"SELECT * FROM {table}").fetchall()), key=repr)
         return out
     finally:
         conn.close()
@@ -568,14 +565,14 @@ class ChronologyAccountsForEverythingTests(unittest.TestCase):
 class ForeignVerdictsMoveNothingTests(unittest.TestCase):
     """PROMISE 4: a reputation score never changes a severity.
 
-    OpenCTI's result is an opinion, not a
+    A reputation provider's result is an opinion, not a
     measurement, and a file is not a webshell because VirusTotal says so, nor
     clean because VirusTotal is silent. The severity of a finding is this
     toolkit's own statement about evidence it read, and a third party must
     not be able to raise or lower it from outside.
 
-    No lookup here reaches the network -- the OpenCTI adapter is mocked,
-    while the real lookup job runs and stores results. Verdicts are extreme because a
+    No lookup here reaches the network -- provider HTTP is mocked,
+    while real lookup validation and result persistence run. Verdicts are extreme because a
     middling score would not move anything even in code that let it.
     """
 
@@ -583,22 +580,7 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
         self.evidence = HostileEvidence(two_dumps=True).build().analyse()
         self.addCleanup(self.evidence.cleanup)
         self.workspace = self.evidence.root
-        settings.set_opencti(self.workspace, {
-            "url": "https://cti.example.test", "token": "synthetic-integration-token",
-            "ingester_id": "11111111-1111-4111-8111-111111111111"})
-        self.client = Mock(spec=OpenCTIClient)
-        client_patch = patch.object(opencti_service, "OpenCTIClient", return_value=self.client)
-        client_patch.start()
-        self.addCleanup(client_patch.stop)
-        jobs_patch = patch.object(opencti_service.manager, "submit", side_effect=self._submit)
-        jobs_patch.start()
-        self.addCleanup(jobs_patch.stop)
-
-    def _submit(self, case_dir, kind, run, **kwargs):
-        self.assertEqual(self.evidence.case_dir, case_dir)
-        self.assertEqual("opencti-lookup", kind)
-        self.job_result = run(SimpleNamespace(cancelled=lambda: False, progress=lambda *_: None))
-        return 1
+        settings.set_key(self.workspace, 'virustotal', 'synthetic-provider-key')
 
     def _findings(self):
         conn = db.connect(self.evidence.case_dir)
@@ -632,31 +614,12 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
 
     def _lookup_both(self, verdict):
         digest, ip = self._indicators()
-        conn = db.connect(self.evidence.case_dir)
-        try:
-            ids = [db.add_ioc(conn, digest, "hash", ["confirmed"]),
-                   db.add_ioc(conn, ip, "ip", ["confirmed"])]
-            conn.commit()
-        finally:
-            conn.close()
-        def answer(kind, value):
-            if not verdict.get("known"):
-                return []
-            return [{"id": "remote-" + kind,
-                     "entity_type": "StixFile" if kind == "hash" else "IPv4-Addr",
-                     "observable_value": value, "score": verdict.get("score"),
-                     "description": verdict.get("label", "External assessment"),
-                     "createdBy": {"name": "External intelligence provider"},
-                     "reports": [{"id": "report-" + kind, "name": "External report"}],
-                     "report_count": verdict.get("reports", 0),
-                     "relationships": [], "externalReferences": []}]
-        self.client.lookup.side_effect = answer
-        opencti_service.lookup(self.workspace, self.evidence.case_dir, ids)
-        self.assertEqual({"checked": 2, "errors": 0}, self.job_result)
-        self.assertEqual({("hash", digest), ("ip", ip)},
-                         {call.args for call in self.client.lookup.call_args_list})
-        self.client.enrich.assert_not_called()
-        self.client.upload_sample.assert_not_called()
+        response = None if not verdict.get('known') else {'data': {'attributes': {
+            'last_analysis_stats': {'malicious': verdict.get('score', 0), 'undetected': 0}}}}
+        with patch.object(enrich, '_get', return_value=response) as remote:
+            for value, kind in ((digest, 'hash'), (ip, 'ip')):
+                enrich.lookup(self.workspace, self.evidence.case_dir, 'virustotal', value, kind=kind)
+        self.assertEqual(2, remote.call_count)
 
     def test_a_damning_verdict_raises_no_severity(self):
         before, counts = self._findings(), self._counts()
@@ -681,25 +644,18 @@ class ForeignVerdictsMoveNothingTests(unittest.TestCase):
                          "the artifact counts moved after a lookup")
 
     def test_the_verdict_is_stored_where_it_belongs(self):
-        """The counter-assertion: the two tests above would also pass if the
-        lookup had silently done nothing at all. It has to land in
-        the OpenCTI lookup cache and nowhere else."""
-        self._lookup_both({"known": True, "score": 70, "of": 70})
+        self._lookup_both({'known': True, 'score': 70, 'of': 70})
         conn = db.connect(self.evidence.case_dir)
         try:
-            stored = db.rows(conn, "SELECT i.type, i.value, l.payload FROM opencti_lookups l "
-                                  "JOIN iocs i ON i.id=l.ioc_id")
-            legacy_count = conn.execute("SELECT count(*) FROM enrichment").fetchone()[0]
+            stored = db.rows(conn, 'SELECT kind,value,payload FROM enrichment')
+            self.assertEqual(0, conn.execute('SELECT count(*) FROM opencti_lookups').fetchone()[0])
         finally:
             conn.close()
-        self.assertEqual({"hash", "ip"}, {r["type"] for r in stored},
-                         "the injected verdicts were never stored")
-        self.assertEqual(0, legacy_count)
+        self.assertEqual({'hash', 'ip'}, {row['kind'] for row in stored})
         for row in stored:
-            payload = json.loads(row["payload"])
-            self.assertEqual("known", payload["status"])
-            self.assertEqual(70, payload["entities"][0]["score"])
-            self.assertEqual(row["value"], payload["entities"][0]["observable_value"])
+            payload = json.loads(row['payload'])
+            self.assertTrue(payload['known'])
+            self.assertEqual(70, payload['score'])
 
     def test_the_chronology_reports_the_same_severities_afterwards(self):
         """Severity travels: the chain hangs it on every event, and that is

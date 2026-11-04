@@ -5,17 +5,16 @@ import { useT } from '../../i18n'
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, post, type Ioc, type CrossCaseIocMatch } from '../../api'
-import { safeCtiUrl, useOpenCti } from '../../opencti'
-import { OpenCtiToolbar, OpenCtiScore, OpenCtiDetails, GroupedActions } from '../enrichment/OpenCti'
+import { OpenCtiToolbar, GroupedActions } from '../enrichment/OpenCti'
 import { Button, Modal, CopyButton, Tabs } from '../ui/ui'
 import { TraceWindow } from '../logview/TraceWindow'
 import { FileContentPane } from '../review/FileViewer'
-import { ArrowLeft, ArrowRight, ExternalLink, FileCode2, Search, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, ArrowRight, FileCode2, Search, Trash2, Pencil, SlidersHorizontal } from 'lucide-react'
 import { IocDeleteDialog } from './IocDeleteDialog'
 import { IocEditDialog } from './IocEditDialog'
 import { useTriage } from '../review/useTriage'
 import { TriageFollowUp } from '../review/triage'
-import { InfoDot, Tooltip } from '../ui/Tooltip'
+import { InfoDot } from '../ui/Tooltip'
 import { descriptions, iocName, iocOrigins, observationTime } from './iocPresentation'
 import { IocField } from './IocField'
 import { IpFlag } from '../ui/IpFlag'
@@ -64,14 +63,11 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     queryKey: ['iocs', slug, 'detail', id],
     queryFn: () => api<Detail>(`/api/cases/${slug}/iocs/${id}/detail`)
   })
-  const cti = useOpenCti(slug)
   const direct = useDirectSettings()
   const [localTab, setLocalTab] = useState('Overview')
   const requestedTab = controlledTab || localTab
-  const canDirect = !cti.configured && !!data?.object && directSupported(direct.data, data.object.type)
-  const canEnrich = canDirect || (cti.configured && !!data?.object && (
-    ['ip', 'domain', 'url', 'email', 'hash', 'file', 'vulnerability'].includes(data.object.type)
-    || (data.object.type === 'user' && !!data.object.context)))
+  const canDirect = !!data?.object && directSupported(direct.data, data.object.type)
+  const canEnrich = canDirect
   const canContent = ['file', 'path'].includes(data?.object.type ?? '')
   const canTrace = data?.object.type === 'ip'
   const canCve = data?.object.type === 'vulnerability'
@@ -107,13 +103,6 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
   const indexedLast = object?.type === 'ip' ? current?.last_seen : undefined
   const links = data?.relationships.filter(r => r.active) ?? []
   const targetOf = (r: Relationship) => r.src === id ? r.dst : r.src
-  const lookup = cti.data?.lookups?.find(entry => entry.ioc_id === id)
-  // Lookup writes import provider labels transactionally; refresh the shared
-  // local object when that snapshot changes, including during enrichment polling.
-  useEffect(() => {
-    if (lookup?.checked_at) void qc.invalidateQueries({ queryKey: ['iocs', slug] })
-  }, [lookup?.checked_at, qc, slug])
-  const ctiLinks = (lookup?.entities ?? []).filter(entity => safeCtiUrl(entity.url))
   const relationshipTable = (relations: Relationship[]) => <div className="overflow-x-auto rounded-lg border border-[var(--line)]">
     <table className="ioc-relationships w-full text-left text-[12px]">
       <thead><tr>{['relationship', 'type', 'object'].map(key => <th key={key} scope="col">{tr(`iocTable.${key}`)}</th>)}</tr></thead>
@@ -139,17 +128,13 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
           {object.type === 'ip' && <IpFlag ip={object.value} />}
           <h2 className="min-w-0 break-all text-xl font-semibold">{iocName(object)}</h2>
           <CopyButton value={object.value} label="Copy object value" />
-          {ctiLinks.map(entity => <Tooltip key={entity.id} body={tr('cti.openObject', { name: entity.name || object.value })}>
-            <a href={safeCtiUrl(entity.url)} target="_blank" rel="noopener noreferrer" aria-label={ctiLinks.length === 1 ? tr('cti.open') : tr('cti.openObject', { name: entity.name || entity.id })} className="ui-press inline-flex shrink-0 items-center rounded p-1.5 text-[var(--accent-text)] hover:bg-[var(--panel-2)]"><ExternalLink size={16} /></a>
-          </Tooltip>)}
+
         </div>
         <div className="mt-1 flex items-center gap-2 text-[12px]">
           <IocAssessmentBadge assessment={object.assessment} />
         </div>
       </div>
       <OpenCtiToolbar
-        mode="inline"
-        grouped
         trailingAction={<GroupedActions label={tr('iocEdit.actions')} icon={<SlidersHorizontal size={14} />}>
           <Button type="button" variant="ghost" onClick={() => setEditOpen(true)}><Pencil size={14} />{tr('iocEdit.title')}</Button>
           <Button type="button" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 size={14} />{tr('iocDelete.single')}</Button>
@@ -161,10 +146,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         </>}
         slug={slug}
         iocs={iocs}
-        selectedIds={[id, ...iocs.filter(i => i.file_ids?.includes(id)).map(i => i.id)]}
-        onSelectAll={() => { }}
-        onClear={() => { }}
-        onSettings={() => gotoView?.('settings')} />
+        selectedIds={[id, ...iocs.filter(i => i.file_ids?.includes(id)).map(i => i.id)]} />
     </header>}
 
     {object && editOpen && <IocEditDialog slug={slug} object={object} assessments={data?.assessments} edits={data?.edits} onClose={() => setEditOpen(false)} onSaved={content => {
@@ -201,8 +183,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         <IocField name="Origin">
           <div className="space-y-1 break-words">{iocOrigins(object, observed, data?.findings ?? []).map(origin => <p key={origin}>{origin}</p>)}</div>
         </IocField>
-        {cti.configured && <OpenCtiScore lookup={cti.data?.lookups?.find(entry => entry.ioc_id === id)} loading={cti.isPending} error={Boolean(cti.error)} />}
-        <IocField name={tr('iocTags.title')} help={tr(cti.configured ? 'iocTags.help' : 'iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
+        <IocField name={tr('iocTags.title')} help={tr('iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
       </div>
       {object.file && <div className="space-y-2">
             <Button disabled={verifyFile.isPending} onClick={() => verifyFile.mutate()}>{tr('iocWorkspace.verify_available_file_metadata')}</Button>
@@ -234,22 +215,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
     </>}
 
     {object && tab === 'Enrichment' && canDirect && <DirectEnrichment key={id} slug={slug} ids={[id]} />}
-    {object && tab === 'Enrichment' && cti.configured && <section aria-label={tr('iocWorkspace.tab.Enrichment')} className="space-y-3">
-      <h3 className="ioc-section-title">{tr('cti.enrichmentResults')}</h3>
-      {cti.isPending && <p>{tr('common.loading')}</p>}
-      {cti.error && <p role="alert" className="text-[var(--danger-text)]">{String(cti.error instanceof Error ? cti.error.message : cti.error)}</p>}
-      {!!cti.data?.enrichments?.some(entry => entry.ioc_id === id) && <div className="space-y-2">
-        {cti.data.enrichments.filter(entry => entry.ioc_id === id).map(entry => <div key={entry.id} className="flex flex-wrap items-center gap-2 rounded border border-[var(--line)] p-3 text-[12px]">
-          <strong>{entry.connector_name || tr('cti.connectorJob', { id: entry.connector_id.slice(0, 8) })}</strong>
-          <span>{entry.state}</span><span className="text-[var(--muted)]">{entry.updated}</span>
-          {entry.error && <span className="text-[var(--danger-text)]">{entry.error}</span>}
-        </div>)}
-      </div>}
-      {!cti.isPending && !lookup?.entities?.length && <p className="text-[var(--muted)]">{tr('cti.enrichmentEmpty')}</p>}
-      <OpenCtiDetails lookup={lookup} object={object} slug={slug} loading={cti.isPending} error={Boolean(cti.error)} />
-    </section>}
-
-    {object && tab === 'CVE details' && <IocVulnerability key={`${slug}:${id}:${object.value}`} slug={slug} id={id} value={object.value} descriptions={(lookup?.entities ?? []).map(entity => entity.description || '').filter(Boolean)} />}
+    {object && tab === 'CVE details' && <IocVulnerability key={`${slug}:${id}:${object.value}`} slug={slug} id={id} value={object.value} />}
     {object && tab === 'Content' && <section aria-label={tr('iocWorkspace.tab.Content')} className="space-y-3">
       {!fileLocations.length && <p className="text-[var(--muted)]">{tr('iocAction.noContent')}</p>}
       {fileLocations.length > 1 && <div className="space-y-2">

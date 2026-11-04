@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { api, post, type CaseInfo } from '../../api'
-import type { Geography } from './AffectedOrganizationFields'
+import { post, type CaseInfo } from '../../api'
 import { useOpenCtiSettings, newCaseProfile } from '../../opencti'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
@@ -22,14 +21,13 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
   const [name, setName] = useState('')
   const [reference, setReference] = useState('')
   const [profile, setProfile] = useState(newCaseProfile)
-  const steps = configured ? ['case', 'affected', 'review'] : ['case', 'review']
+  const steps = ['case', 'affected', 'review']
   const current = steps[step]
   const invalidCountries = profile.countries.some(value => !/^[A-Za-z]{2}$/.test(value))
   const invalidDates = !!profile.first_seen && !!profile.last_seen && profile.first_seen > profile.last_seen
   const caseValid = Boolean(name.trim() && (!configured || (reference.trim() && profile.summary.trim())))
-  const affectedValid = Boolean((profile.organization_name?.trim() || (profile.organization_id && profile.pseudonym)) && profile.sectors.length && profile.countries.length && !invalidCountries && !invalidDates)
-  const geography = useQuery({ queryKey: ['profile-geography'], queryFn: () => api<Geography>('/api/profile/geography'), enabled: configured, staleTime: Infinity })
-  const valid = caseValid && (!configured || affectedValid)
+  const affectedValid = Boolean((!configured || ((profile.organization_name?.trim() || (profile.organization_id && profile.pseudonym)) && profile.sectors.length && profile.countries.length)) && !invalidCountries && !invalidDates && (profile.subsectors ?? []).every(item => item.name.trim() && profile.sectors.includes(item.sector)))
+  const valid = caseValid && affectedValid
   const stepValid = current === 'case' ? caseValid : current === 'affected' ? affectedValid : valid
   const save = useMutation({
     mutationFn: () => post<CaseInfo>('/api/cases', { name: name.trim(), reference: reference.trim(), profile }),
@@ -59,7 +57,7 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
             <CtiField label={`${tr('cti.caseId')}${configured ? ' *' : ''}`}><input required={configured} maxLength={200} className={ctiInput} value={reference} onChange={e => setReference(e.target.value)} /></CtiField>
             <CtiField label={`${tr('cti.summary')}${configured ? ' *' : ''}`}><textarea required={configured} maxLength={10000} rows={4} className={ctiInput} value={profile.summary} onChange={e => setProfile({ ...profile, summary: e.target.value })} /></CtiField>
           </>}
-          {configured && <CaseProfileFields profile={profile} onChange={setProfile} section={current === 'affected' ? current : 'hidden'} requiredContext />}
+          <CaseProfileFields profile={profile} onChange={setProfile} section={current === 'affected' ? current : 'hidden'} requiredContext={configured} />
           {current === 'affected' && <CtiError error={invalidCountries ? tr('wizard.countriesError') : invalidDates ? tr('cti.dateError') : null} />}
           {current === 'review' && <>
             <dl className="grid gap-5 sm:grid-cols-2">
@@ -68,8 +66,8 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
               {configured && <>
                 {summaryItem(tr('cti.organizationName'), profile.organization_name || profile.pseudonym)}{summaryItem(tr('cti.marking'), profile.marking)}
                 {summaryItem(tr('cti.sectors'), profile.sectors.join(', '))}{summaryItem(tr('cti.subsectors'), (profile.subsectors ?? []).map(item => item.name).join(', '))}
-                {summaryItem(tr('cti.country'), profile.countries.map(code => geography.data?.countries.find(item => item.code === code)?.name || code).join(', '))}
-                {summaryItem(tr('cti.state'), geography.data?.states[profile.countries[0]]?.find(item => item.code === profile.state)?.name || profile.state || '')}
+                {summaryItem(tr('cti.country'), profile.countries.join(', '))}
+                {summaryItem(tr('cti.state'), profile.state || '')}
                 {summaryItem(tr('cti.city'), profile.city || '')}
                 {summaryItem(tr('cti.firstSeen'), profile.first_seen)}{summaryItem(tr('cti.lastSeen'), profile.last_seen)}
               </>}

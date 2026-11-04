@@ -596,50 +596,23 @@ it never searches raw findings or evidence.
 
 ### OpenCTI integration
 
-Configure an HTTPS OpenCTI URL, a dedicated integration token and the existing
-TAXII push ingester ID in *Settings*. Then use the IOC box's three separate
-actions: **Check in OpenCTI**, **Transfer to OpenCTI**, and **Enrich via OpenCTI**.
-Opening a case only reads the local cache. Checking searches existing knowledge;
-it never starts an external enrichment connector or changes local triage.
+Configure an HTTPS URL, dedicated integration token and TAXII push ingester ID
+in Settings. OpenCTI is used only for explicit transfer of the saved case profile
+and selected IPs with tags, CVEs and hashes. Review the preview before confirming.
+The case may be transferred without IOCs. Failed or pending imports retain a
+receipt and can be resumed without resubmitting completed work.
 
-Transfers require a unique case ID and a reviewed preview. The chosen organization
-name (or an existing pseudonym), incident profile, Incident and Report retain
-the case context. The case wizard loads sectors and their subsectors from OpenCTI.
-Missing sectors and subsectors can be added to the case, with a parent sector
-for each subsector. They are created in OpenCTI on transfer; matching existing
-entries are reused.
-Country and state choices are available offline, with Germany and Austria first;
-the city is entered as free text. These locations and sectors are linked to the
-affected organization on export. All IOC rows are considered, including collapsed children.
-Notes, evidence, profile details, optional Indicators and original samples are
-reviewed separately. Local workstation paths are removed. Samples are disabled
-by default and must also be selected individually in the preview.
+Fill the case profile manually. Main sectors use a fixed local catalogue;
+subsectors, organization, country codes, region, city and incident details are
+entered manually. Saving never sends data. OpenCTI lookup, score display,
+connector enrichment, Indicators and original-file uploads are removed.
+Paths, domains, URLs, emails, usernames, local notes and evidence excerpts are
+excluded from IOC transfer. Existing local profiles and historical receipts remain
+readable; old transfer models require a fresh preview.
 
-Set internal enrichment connectors to **manual** before transferring data;
-automatic feed imports can keep running. Shellhound blocks transfer when an
-active enrichment connector still runs automatically. Metadata-only observables
-can be enriched explicitly; attached file contents are never forwarded by a
-Shellhound enrichment request. Historical VirusTotal/AbuseIPDB results remain
-readable. When OpenCTI is not configured, a locally configured VirusTotal or
-AbuseIPDB key enables explicit direct lookups instead.
-
-During file review, **Ask VirusTotal** sits beneath SHA-256; files no longer
-need a separate Enrichment tab or prior IOC collection. A click sends only the
-displayed hash to retrieve an existing report, never file contents or a new scan.
-Press **V** in the file review window to ask or refresh VirusTotal. The shortcut
-respects the button's availability and does not run while typing or holding a key.
-Saved reports show their retrieval date and provider link. Zero malicious
-verdicts are green, positive counts red, and unknown reports or unavailable
-counts neutral. Green does not establish that the file is safe, and no result
-changes the analyst decision. **Refresh VirusTotal** explicitly requests a new
-report; failed refreshes retain the dated saved result. If OpenCTI is configured,
-the file context links to its existing IOC Box workflow instead of contacting
-VirusTotal directly. IP review keeps its existing enrichment tools.
-
-Results distinguish visible knowledge, own exports, no visible match, stale
-cache and errors. No visible match does not mean benign. Import receipts track
-pending, failed and completed batches; **Resume** checks existing work and
-retries unfinished parts. [Setup and behavior](opencti.md).
+See [OpenCTI transfer](opencti.md) for configuration, supported data and retry rules.
+Direct VirusTotal and AbuseIPDB report lookups remain separate explicit actions;
+they do not upload original files or initiate new scans.
 
 ## Configuration
 
@@ -700,13 +673,10 @@ During analysis, outbound network access is explicit:
 | Request | Transmitted value |
 |---|---|
 | GeoIP database download | — |
-| OpenCTI lookup | selected observable values |
-| OpenCTI transfer | the reviewed case graph and individually selected samples |
-| OpenCTI enrichment | explicitly selected observable and connector IDs; creation of unknown observables requires consent |
+| OpenCTI transfer | the manually saved profile and reviewed IPs with tags, CVEs and hashes |
 
 TLP:AMBER+STRICT is the default intended sharing boundary, not an access-control
-mechanism. Review domains, email addresses and free text as well as the case
-profile. Pseudonyms alone do not anonymize evidence.
+mechanism. Review the manually entered case profile and selected IOC labels before transfer.
 
 Separately, first setup and changed dependency manifests can download Python
 and npm packages from the configured package registries. Choosing Update

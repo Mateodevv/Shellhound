@@ -1,6 +1,5 @@
 """A complete API workflow with real jobs/storage and a simulated OpenCTI boundary."""
 import hashlib
-import json
 import threading
 import tempfile
 import unittest
@@ -9,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
 from server import db, diagnostics
-from server.integrations.opencti import graph as opencti_graph, service as opencti_service
+from server.integrations.opencti import graph as opencti_graph
 from server import patterns, workspace
 from server.app import create_app
 from server.config import Config
@@ -27,11 +26,11 @@ class CaseWorkflowTests(unittest.TestCase):
         self.fixture = create(self.root)
         self.config = Config(workspace=self.fixture["workspace"], token="workflow-test")
         self.remote_config = {"url": "https://cti.example.test", "token": "synthetic-token",
-                              "ingester_id": "qa", "sample_uploads": False, "timeout": 2}
+                              "ingester_id": "qa", "timeout": 2}
         self.remote = MagicMock(spec=OpenCTIClient)
         self.remote.find_existing_shared.return_value = None
         self.remote.connectors.return_value = []
-        self.remote.lookup.return_value = []
+        self.remote.resolve_many.side_effect = lambda ids: {identifier: self.remote.resolve(identifier) for identifier in ids}
         self.remote.push.return_value = {"id": "qa-taxii-work"}
         self.remote.taxii_status.return_value = {"status": "complete", "failure_count": 0, "pending_count": 0}
         self.remote.resolve.side_effect = lambda identifier: {"id": "remote-" + identifier, "standard_id": identifier}
@@ -159,24 +158,14 @@ class CaseWorkflowTests(unittest.TestCase):
         self.assertEqual("QA-WORKFLOW", self.get(self.route)["reference"])
         preview = opencti_graph.build_preview(self.case)
         self.assertEqual([], preview["errors"])
-        self.assertTrue(any(r["kind"] == "cve-context" for r in preview["relationships"]))
+        self.assertTrue(any(o["type"] == "vulnerability" for o in preview["objects"]))
         self.roundtrip()
         self.client_factory.assert_not_called()
 
-    def test_enrichment_transfer_resume_and_restore_preserve_remote_identities(self):
+    def test_profile_ioc_transfer_resume_and_restore_preserve_remote_identities(self):
         self.analyze_and_review()
-        self.remote.connectors.return_value = [{"id": "qa-enrich", "name": "Synthetic provider", "active": True,
-            "auto": False, "connector_type": "INTERNAL_ENRICHMENT", "scope": ["IPv4-Addr"]}]
-        self.remote.lookup.side_effect = lambda kind, value: [{"id": "qa-ip", "entity_type": "IPv4-Addr",
-            "observable_value": IP, "labels": [{"value": "Provider QA"}], "score": 58}] if kind == "ip" else []
-        self.remote.enrich.return_value = {"id": "qa-enrichment-work"}
-        self.remote.work.return_value = {"status": "complete", "errors": []}
-        enriched = self.post(self.route + "/opencti/enrich", {"ioc_ids": [self.ip_id], "connector_ids": ["qa-enrich"]})
-        self.wait(enriched["job_id"])
-        state = self.get(self.route + "/opencti")
-        self.assertEqual("complete", state["enrichments"][0]["state"])
-        self.assertEqual(58, next(r for r in state["lookups"] if r["ioc_id"] == self.ip_id)["entities"][0]["score"])
-        self.assertIn("Provider QA", next(r for r in self.get(self.route + "/iocs") if r["id"] == self.ip_id)["tags"])
+        for retired in ('lookup', 'enrich', 'enrichment/preview'):
+            self.assertEqual(404, self.client.post(self.route + '/opencti/' + retired, json={}).status_code)
         self.remote.taxii_status.side_effect = OpenCTIError("Synthetic connection interruption")
         preview = self.post(self.route + "/opencti/preview", {})
         self.assertEqual([], preview["errors"])
@@ -192,10 +181,8 @@ class CaseWorkflowTests(unittest.TestCase):
         self.wait(retried["job_id"])
         self.assertEqual(1, self.remote.push.call_count, "An accepted batch must be checked, not resubmitted")
         self.assertEqual("complete", self.get(self.route + "/opencti")["exports"][0]["state"])
-        self.remote.upload_sample.assert_not_called()
         self.roundtrip()
         self.assertEqual("complete", self.get(self.route + "/opencti")["exports"][0]["state"])
-        self.assertEqual(1, self.remote.enrich.call_count)
 
     def test_interrupted_job_is_recovered_without_changing_decisions(self):
         self.analyze_and_review()
