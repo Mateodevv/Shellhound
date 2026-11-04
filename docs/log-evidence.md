@@ -108,6 +108,18 @@ for the case. Acceptance removes the active coverage warning and retains an
 audit record. A changed source or warning requires a fresh review. Accepting a
 limitation does not claim that unparsed content was automatically checked.
 
+The analysis window separates **Manual review** (searchable text),
+**Unsupported files** (such as binary databases), and **Processing errors**.
+Select individual sources or all sources in the current group across pages,
+then accept the selected warnings. Use **Accepted** to inspect or reopen them.
+Source-level review uses the same decisions under Log sources. A stale selection
+is rejected so a changed warning cannot be accepted accidentally.
+
+Folder discovery includes generated reports and databases; it does not silently
+exclude `.goaccess` or infer a format from names such as `error.log` or `ftp.log`.
+Review unsupported files as a group. Correct a source's format when appropriate,
+then retry that source. The 128 KiB record and decompression limits remain in force.
+
 Overlapping registrations share one canonical file identity. Selected evidence
 has stable record references and saved excerpts; repeated application and
 reanalysis preserve analyst decisions. Case archives include source settings,

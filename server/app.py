@@ -34,7 +34,8 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictBool, StrictInt
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 
 from server.casework import profile as case_profile, report as case_report, incident_summary
 from server import correlation, coverage, db, diagnostics
@@ -176,6 +177,29 @@ def create_app(config: Config) -> FastAPI:
     async def unhandled_exception(request: Request, exc: Exception):
         return Response(status_code=500, content=json.dumps({"detail": "Shellhound could not complete this request. Details were recorded in the local log file.", "request_id": request.scope.get("diagnostic_id")}),
                         media_type="application/json", headers={"x-request-id": request.scope.get("diagnostic_id", "")})
+
+    @app.exception_handler(settingslib.SettingsError)
+    async def settings_unavailable(request: Request, exc: settingslib.SettingsError):
+        diagnostics.record(config.workspace, "warning", "settings", str(exc),
+                           request_id=request.scope.get("diagnostic_id"))
+        return Response(status_code=503, content=json.dumps({"detail": str(exc)}),
+                        media_type="application/json")
+
+    @app.exception_handler(patternlib.PatternStorageError)
+    @app.exception_handler(workspace.CaseMetadataError)
+    async def saved_data_unavailable(request: Request, exc: RuntimeError):
+        diagnostics.record(config.workspace, "warning", "storage", str(exc),
+                           request_id=request.scope.get("diagnostic_id"))
+        return Response(status_code=503, content=json.dumps({"detail": str(exc)}),
+                        media_type="application/json")
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError):
+        if getattr(request.scope.get("route"), "path", request.url.path) in ("/api/settings/key", "/api/opencti/settings"):
+            # Validation errors can otherwise echo the submitted secret or body.
+            return Response(status_code=422, media_type="application/json",
+                            content=json.dumps({"detail": "Invalid settings request. Supply the required fields using the expected types."}))
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(StarletteHTTPException)
     async def handled_http_exception(request: Request, exc: StarletteHTTPException):
@@ -606,8 +630,7 @@ def create_app(config: Config) -> FastAPI:
 
     class KeyBody(BaseModel):
         service: str
-        key: str = ""          # empty clears it: that is how a service is
-                               # switched off, not a separate verb
+        key: str               # Only an explicitly supplied empty value clears it.
 
     @app.post("/api/settings/key", dependencies=[auth])
     def settings_key(body: KeyBody):
@@ -675,6 +698,8 @@ def create_app(config: Config) -> FastAPI:
             result = fn(*args, **kwargs)
             diagnostics.record(config.workspace, "info", "opencti", "Operation completed", operation=operation)
             return result
+        except (settingslib.SettingsError, patternlib.PatternStorageError, workspace.CaseMetadataError):
+            raise
         except ValueError as exc:
             diagnostics.record(config.workspace, "warning", "opencti", str(exc), operation=getattr(fn, "__name__", "operation"))
             raise HTTPException(400, str(exc)) from None
@@ -1274,6 +1299,7 @@ def create_app(config: Config) -> FastAPI:
     def jobs_list(slug: str):
         case_dir = case_dir_or_404(slug)
         manager.recover_interrupted(case_dir)
+        log_sources = log_evidence.source_status(case_dir, detect=False)
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn,
@@ -1282,8 +1308,8 @@ def create_app(config: Config) -> FastAPI:
                            "COALESCE(json_extract(scan_context, '$.mode'), '') != 'retry' AND "
                            "run_id IN (SELECT json_extract(stats, '$.last_attempt.run_id') FROM evidence)) "
                            "ORDER BY id DESC")
-            return [{**describe_job(conn, r), **manager.progress_snapshot(case_dir, r["id"])}
-                    if r["state"] in ("running", "queued") else describe_job(conn, r)
+            return [{**describe_job(conn, r, log_sources), **manager.progress_snapshot(case_dir, r["id"])}
+                    if r["state"] in ("running", "queued") else describe_job(conn, r, log_sources)
                     for r in rows]
         finally:
             conn.close()
@@ -1365,6 +1391,7 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/api/cases/{slug}/dashboard", dependencies=[auth])
     def dashboard(slug: str, lang: str = lang_dep, tz: str = tz_dep):
         case_dir = case_dir_or_404(slug)
+        log_sources = log_evidence.source_status(case_dir, detect=False)
         conn = db.connect(case_dir)
         try:
             review_summary = incident_summary.review_summary(conn, ruleswitch.disabled_ids(config.workspace))
@@ -1423,7 +1450,7 @@ def create_app(config: Config) -> FastAPI:
                     GROUP BY kind
                 )
             """)
-            latest_engines = [describe_job(conn, j) for j in latest_engines]
+            latest_engines = [describe_job(conn, j, log_sources) for j in latest_engines]
             supported_evidence = [e for e in evidence
                                   if e["kind"] in ("webroot", "access_logs", "logs", "sql_dump")]
             present = {e["kind"] for e in supported_evidence}
@@ -1492,8 +1519,9 @@ def create_app(config: Config) -> FastAPI:
             (event for event in events if event["kind"] == "alarm"), None))
         observe("last", events[-1] if events else None)
         observations.sort(key=lambda event: event["at"])
-        additional_sources = [s for s in log_evidence.source_status(case_dir) if s["format"] != "access"]
-        log_warnings, log_accepted = log_evidence.warning_counts(case_dir)
+        additional_sources = [s for s in log_sources if s["format"] != "access"]
+        log_warnings = sum(bool(s["warning"]) and not s["accepted"] for s in additional_sources)
+        log_accepted = sum(bool(s["warning"]) and s["accepted"] for s in additional_sources)
         analysis_warnings += log_warnings
         analysis_accepted += log_accepted
         if "logs" in present:

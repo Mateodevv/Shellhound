@@ -70,10 +70,10 @@ def current_skip_entries(conn, job, entries):
     return [entry for entry in entries if path_within_any(entry["path"], roots)]
 
 
-def describe_job(conn, row):
+def describe_job(conn, row, log_sources=None):
     job = decode_job(row)
     stats = job["stats"]
-    skips = db.rows(conn, "SELECT ordinal, category, path FROM job_skips WHERE job_id = ?",
+    skips = db.rows(conn, "SELECT ordinal, category, path, reason FROM job_skips WHERE job_id = ?",
                     (job["id"],))
     # Old completed file jobs recorded individual skips before categories
     # existed. The count and broken-rule/partial checks must all agree.
@@ -110,6 +110,26 @@ def describe_job(conn, row):
         outcomes.get(entry["ordinal"], {}).get("status") == "accepted" for entry in current)
     if not job["warning_count"]:
         job["current_warning_count"] = 0
+    if job["kind"] == "log_events" and log_sources is not None:
+        sources = {source["id"]: source for source in log_sources}
+        snapshots = job["scan_context"].get("log_warnings", {})
+        current = [sources.get(snapshot.get("source_id")) for snapshot in snapshots.values()
+                   if sources.get(snapshot.get("source_id")) and
+                   sources[snapshot["source_id"]].get("warning_key") == snapshot.get("warning_key") and
+                   sources[snapshot["source_id"]].get("warning")]
+        if not snapshots:
+            from server.engines.fsutil import canonical_file
+            by_path = {canonical_file(source["path"]): source for source in log_sources if source["warning"]}
+            current = [by_path[canonical_file(skip["path"])] for skip in skips
+                       if canonical_file(skip["path"]) in by_path and
+                       by_path[canonical_file(skip["path"])]["warning"] == skip["reason"]]
+        job["current_warning_count"] = sum(not source["accepted"] for source in current)
+        job["current_accepted_count"] = sum(source["accepted"] for source in current)
+        job["warning_count"] = max(0, int(stats.get("log_warnings") or 0) - job["current_accepted_count"])
+        job["accepted_count"] = job["current_accepted_count"]
+        job["warnings_current"] = bool(current)
+        if job["state"] == "done" and stats_status(stats, job["kind"]) == "complete_with_warnings":
+            job["analysis_status"] = "complete_with_warnings" if job["warning_count"] else "complete"
     return job
 
 

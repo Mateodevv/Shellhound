@@ -60,3 +60,15 @@ it('retains the editor revision across refetches and keeps a failed draft', asyn
   expect(screen.getByLabelText('Incident summary')).toHaveValue('Unsaved correction')
   expect(onClose).not.toHaveBeenCalled()
 })
+
+it('disables saving an unavailable profile without discarding the draft', () => {
+  const info = { slug: 'qa', name: 'Case', reference: '', profile_revision: 'one', profile: newCaseProfile() } as CaseInfo
+  const view = renderWithProviders(<CaseProfileForm slug="qa" info={info} onClose={() => {}} />)
+  fireEvent.change(screen.getByLabelText('Incident summary'), { target: { value: 'Draft text' } })
+  view.rerender(<CaseProfileForm slug="qa" info={info} unavailable onClose={() => {}} />)
+  expect(screen.getByLabelText('Incident summary')).toHaveValue('Draft text')
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  view.rerender(<CaseProfileForm slug="qa" info={info} onClose={() => {}} />)
+  expect(screen.getByLabelText('Incident summary')).toHaveValue('Draft text')
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+})

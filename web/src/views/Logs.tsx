@@ -32,15 +32,15 @@ export function Logs({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         onClick={() => gotoView('logs', { section: value })}>{tr(`logEvidence.family.${value}`)}
         {!!sourceQuery.data?.sources.filter(s => s.family === value).length && <span className="ml-2 text-xs opacity-70">{sourceQuery.data.sources.filter(s => s.family === value).length}</span>}</button>)}
     </div>
-    {family === 'access' ? <AccessLogs slug={slug} gotoView={gotoView} /> : <EventBrowser key={`${slug}:${family}`} slug={slug} family={family} gotoView={gotoView} initialEvent={url.searchParams.get('event') || ''} />}
+    {family === 'access' ? <AccessLogs slug={slug} gotoView={gotoView} /> : <EventBrowser key={`${slug}:${family}`} slug={slug} family={family} gotoView={gotoView} initialEvent={url.searchParams.get('event') || ''} initialSource={url.searchParams.get('source') || ''} />}
   </div>
 }
 
-function EventBrowser({ slug, family, gotoView, initialEvent }: { slug: string; family: string; gotoView: Navigate; initialEvent: string }) {
+function EventBrowser({ slug, family, gotoView, initialEvent, initialSource }: { slug: string; family: string; gotoView: Navigate; initialEvent: string; initialSource: string }) {
   const tr = useT()
   const qc = useQueryClient()
   const sources = useLogSources(slug)
-  const [filters, setFilters] = useState<Record<string, string>>({})
+  const [filters, setFilters] = useState<Record<string, string>>(initialSource ? { source_id: initialSource } : {} as Record<string, string>)
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)

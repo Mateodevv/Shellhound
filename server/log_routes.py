@@ -24,8 +24,17 @@ def install(app, auth, case_dir_or_404, manager):
         server_root: str = ""
         webroot: str = ""
 
+    class WarningSelection(BaseModel):
+        source_id: str
+        warning_key: str = Field(min_length=64, max_length=64)
+
     class AnalyzeBody(BaseModel):
         source_ids: list[str] | None = None
+        warning_selections: list[WarningSelection] | None = None
+
+    class WarningReview(BaseModel):
+        decision: str
+        selections: list[WarningSelection] = Field(min_length=1, max_length=10000)
 
     class RegisterBody(BaseModel):
         path: str
@@ -66,7 +75,7 @@ def install(app, auth, case_dir_or_404, manager):
     @app.get("/api/cases/{slug}/log-sources", dependencies=[auth])
     def sources(slug: str):
         try:
-            return {"sources": log_evidence.source_status(case_dir_or_404(slug)),
+            return {"sources": log_evidence.source_status(case_dir_or_404(slug), detect=False),
                     "formats": log_evidence.parsers.FORMATS}
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
@@ -112,9 +121,23 @@ def install(app, auth, case_dir_or_404, manager):
                 raise log_evidence.LogEvidenceError("Choose currently registered sources")
             if body.source_ids and any(s["format"] == "access" and s["id"] in body.source_ids for s in current):
                 raise log_evidence.LogEvidenceError("Access logs share the HTTP index. Use Run analysis in Evidence to rebuild it")
-            return {"job": manager.submit(case, "log_events", lambda ctx: log_evidence.build(case, ctx, body.source_ids),
+            selections = [s.model_dump() for s in body.warning_selections] if body.warning_selections else None
+            if selections and (not body.source_ids or set(body.source_ids) != {s["source_id"] for s in selections}):
+                raise log_evidence.LogEvidenceError("The selected warnings changed. Refresh the list")
+            def run(ctx):
+                if selections:
+                    log_evidence.validate_warning_selection(case, selections)
+                return log_evidence.build(case, ctx, body.source_ids)
+            if selections:
+                log_evidence.validate_warning_selection(case, selections)
+            return {"job": manager.submit(case, "log_events", run,
                                           scan_context={"mode": "log_retry"})}
         return change(slug, submit)
+
+    @app.post("/api/cases/{slug}/log-sources/review-warnings", dependencies=[auth])
+    def review_warnings(slug: str, body: WarningReview):
+        return change(slug, lambda case: log_evidence.review_warnings(
+            case, body.decision, [s.model_dump() for s in body.selections]))
 
     @app.post("/api/cases/{slug}/log-sources/{source_id}/accept-warning", dependencies=[auth])
     def accept(slug: str, source_id: str):

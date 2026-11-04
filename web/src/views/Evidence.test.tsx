@@ -276,3 +276,19 @@ describe('incomplete evidence analysis', () => {
     expect(await screen.findByText('Partially analyzed')).toBeInTheDocument()
   })
 })
+
+it.each([false, true])('labels log warnings accurately in a %s mixed run', async mixed => {
+  vi.mocked(api).mockImplementation(async path => {
+    if (path.endsWith('/log-sources')) return { sources: [], formats: {} }
+    if (path.endsWith('/jobs')) return [
+      { id: 1, run_id: 'log-run', kind: 'log_events', state: 'done', progress: 1, created: '2026-09-02', stats: { files: 1, log_warnings: 2 }, analysis_status: 'complete_with_warnings', current_warning_count: 2, warnings_current: true },
+      ...(mixed ? [{ id: 2, run_id: 'log-run', kind: 'webshell', state: 'done', progress: 1, created: '2026-09-02', stats: { file_skips: 1 }, analysis_status: 'complete_with_warnings', current_warning_count: 1, warning_count: 1, warnings_current: true }] : []),
+    ]
+    return { ...CASE, evidence_items: [{ id: 1, kind: 'logs', path: 'C:/Synthetic/logs', exists: true, scanned_at: '2026-09-02', stats: { last_attempt: { status: 'complete_with_warnings', warnings: 2 } } }] }
+  })
+  renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+  expect(await screen.findByText(mixed ? 'Warnings to review' : 'Log warnings to review')).toBeVisible()
+  expect(screen.getByText(/#1 · 2 warning\(s\)/)).toBeVisible()
+  expect(screen.getAllByText(`Processing finished · ${mixed ? 3 : 2} warning(s)`).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/2 file\(s\) skipped/)).not.toBeInTheDocument()
+})

@@ -26,6 +26,18 @@ Redirects are rejected to prevent forwarding keys. Authentication and rate-limit
 errors are shown without provider response bodies or credentials. Successful and
 failed requests are recorded in the local diagnostic log with a hashed target value.
 
+## Troubleshooting saved keys
+
+Keys belong to the workspace in `settings.json`, which is outside the checkout.
+Updating Shellhound alone should not delete them. Password fields are intentionally
+blank when displayed; a stored-key hint means a key is configured.
+
+If settings cannot be read, saving other settings is blocked and the page offers
+**Retry**. Check that you opened the correct workspace, then check file permissions
+or restore a valid local copy of `settings.json`. It contains secrets, so do not
+paste or share it. A key already overwritten cannot be recovered by this fix; once
+the file is valid again, enter the key in the UI.
+
 API references: [VirusTotal file reports](https://docs.virustotal.com/reference/file-info),
 [IP reports](https://docs.virustotal.com/reference/ip-info),
 [domain reports](https://docs.virustotal.com/reference/domain-info),

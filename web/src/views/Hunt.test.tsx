@@ -73,6 +73,35 @@ beforeEach(() => {
 })
 
 describe('Pattern Hunt investigation workflow', () => {
+  it('blocks a cached library after a failed refresh and retains the editor draft', async () => {
+    saveSession('case-1', { ...DEFAULT_SESSION, draft: emptyDraft({ name: 'Cached draft', rule: RULE, dsl: PATTERN.dsl }) })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=editor')
+    const view = renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled())
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(path => path === '/api/patterns' ? Promise.reject(new Error('Refresh failed')) : original(path))
+    await act(async () => { await view.qc.refetchQueries({ queryKey: ['patterns'] }) })
+    expect(await screen.findByText('Refresh failed')).toBeVisible()
+    expect(screen.getByDisplayValue('Cached draft')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save pattern' })).toBeDisabled()
+    vi.mocked(api).mockImplementation(original)
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled())
+    expect(screen.getByDisplayValue('Cached draft')).toBeEnabled()
+  })
+
+  it('keeps a draft and blocks saving when the pattern library cannot be read', async () => {
+    saveSession('case-1', { ...DEFAULT_SESSION, draft: emptyDraft({ name: 'Unsaved draft', rule: RULE, dsl: PATTERN.dsl }) })
+    history.replaceState(null, '', '/?case=case-1&view=hunt&section=editor')
+    const original = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation((path) => path === '/api/patterns' ? Promise.reject(new Error('Library unavailable')) : original(path))
+    renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
+    expect(await screen.findByText('Library unavailable')).toBeVisible()
+    expect(screen.getByDisplayValue('Unsaved draft')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save pattern' })).toBeDisabled()
+    expect(screen.queryByText('No saved patterns match this view.')).not.toBeInTheDocument()
+  })
+
   it('shows a flat sortable IP table and loads detail groups only on request', async () => {
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
     await screen.findByRole('button', { name: `Details for ${CLUSTER.client}` })
@@ -394,7 +423,8 @@ describe('Pattern Hunt investigation workflow', () => {
     vi.mocked(post).mockImplementation((path, body) =>
       path === '/api/patterns' || path === '/api/patterns/sample/clone' ? response : originalPost(path, body))
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: source === 'new' ? 'Save pattern' : 'Save as workspace pattern' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: source === 'new' ? 'Save pattern' : 'Save as workspace pattern' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: source === 'new' ? 'Save pattern' : 'Save as workspace pattern' }))
     if (source === 'bundled') {
       fireEvent.click(screen.getByRole('button', { name: 'Save own variant' }))
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -402,6 +432,7 @@ describe('Pattern Hunt investigation workflow', () => {
     fireEvent.change(screen.getByDisplayValue('Submitted pattern'), { target: { value: 'Newer investigator edits' } })
     await act(async () => { finish(source === 'new' ? { entry: saved } : saved); await response })
     expect(await screen.findByDisplayValue('Newer investigator edits')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
     await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/patterns/created-pattern',
       expect.objectContaining({ expected_version: 1, name: 'Newer investigator edits' })))
@@ -416,13 +447,15 @@ describe('Pattern Hunt investigation workflow', () => {
     const originalPost = vi.mocked(post).getMockImplementation()!
     vi.mocked(post).mockImplementation((path, body) => path === '/api/patterns' ? response : originalPost(path, body))
     renderWithProviders(<Hunt slug="case-1" gotoView={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Save pattern' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
     fireEvent.click(screen.getByRole('button', { name: 'Back to Pattern Hunt' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Add a pattern' }))
     fireEvent.click(screen.getByRole('button', { name: 'Discard draft and continue' }))
     fireEvent.change(await screen.findByRole('textbox', { name: 'Name' }), { target: { value: 'Separate draft' } })
     await act(async () => { finish({ entry: { ...PATTERN, id: 'created-pattern', name: 'First draft' } }); await response })
     expect(await screen.findByDisplayValue('Separate draft')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save pattern' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Save pattern' }))
     await waitFor(() => expect(vi.mocked(post).mock.calls.filter(([path]) => path === '/api/patterns')).toHaveLength(2))
     expect(patch).not.toHaveBeenCalled()
