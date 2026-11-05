@@ -684,8 +684,8 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/profile/sectors", dependencies=[auth])
     def profile_sectors():
-        from server.casework.profile_options import SECTORS
-        return {"sectors": SECTORS}
+        from server.casework.profile_options import SECTORS, SUBSECTORS
+        return {"sectors": SECTORS, "subsectors": SUBSECTORS}
 
     @app.get("/api/opencti/settings", dependencies=[auth])
     def opencti_settings():

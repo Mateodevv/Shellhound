@@ -281,6 +281,12 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertIn('Healthcare', result['sectors'])
         self.assertIn('Technology', result['sectors'])
+        self.assertIn('Hospitals', result['subsectors']['Healthcare'])
+        self.assertNotIn('Software', result['subsectors']['Healthcare'])
+        before = self.request('GET', f'/api/cases/{self.slug}')[1]['profile']
+        code, _ = self.request('PATCH', f'/api/cases/{self.slug}', {'profile': {'sectors': ['Healthcare'], 'subsectors': [{'name': 'Software', 'sector': 'Healthcare'}]}})
+        self.assertEqual(400, code)
+        self.assertEqual(before, self.request('GET', f'/api/cases/{self.slug}')[1]['profile'])
 
 
     def test_manual_profile_and_preview_are_reviewable_without_opencti_credentials(self):

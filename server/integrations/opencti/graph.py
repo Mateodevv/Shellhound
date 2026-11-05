@@ -19,6 +19,7 @@ from server.paths import display_path, io_path
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
 OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "file"}
 IOC_TYPES = {"ip", "vulnerability", "hash", "file"}
+MODEL_VERSION = 5
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
@@ -252,19 +253,6 @@ def build_preview(case_dir, options=None):
             identifier = add(sdo('location', [field, country, name.casefold()], name=name,
                                   x_opencti_location_type=kind, **details))
             relation([field, identifier], context_id, identifier, 'located-at')
-    for item in profile.get('software') or []:
-        identifier = add(_sco('software', {'name': clean.text(item['name']), 'version': clean.text(item.get('version', ''))}))
-        relation(['profile-software', identifier], incident_id, identifier)
-    for item in profile.get('vulnerabilities') or []:
-        if re.fullmatch(r'CVE-\d{4}-\d{4,}', item['name'], re.I):
-            name = item['name'].upper()
-            identifier = add(sdo('vulnerability', ['vulnerability', name], name=name,
-                                  description=clean.text(item.get('description', '')),
-                                  external_references=[{'source_name': 'cve', 'external_id': name}]))
-            relation(['profile-cve', name], incident_id, identifier,
-                     description=clean.text(f"Manually recorded CVE ({item.get('status', 'suspected')}); successful exploitation is not implied. " + item.get('description', '')))
-        else:
-            warnings.append('A profile vulnerability without a CVE identifier is omitted from transfer.')
     output = []
     for row in eligible:
         chosen = selected is None or row['id'] in selected
@@ -291,7 +279,8 @@ def build_preview(case_dir, options=None):
             relation(['case-observable', obj['id']], incident_id, obj['id'],
                      description='Recorded in this case; this association does not establish maliciousness.')
         entry = {'id': row['id'], 'source_uid': row.get('source_uid'), 'type': row['type'],
-                 'value': value, 'selected': chosen, 'tags': tags,
+                 'value': (obj.get('value') or obj.get('name') or value.lower()) if obj else value,
+                 'selected': chosen, 'tags': tags,
                  'object_ids': [obj['id']] if obj else [], 'warnings': row_warnings}
         entry['fingerprint'] = _digest(_stable([obj, profile]))
         output.append(entry)
@@ -300,8 +289,24 @@ def build_preview(case_dir, options=None):
                       description=clean.text(profile.get('summary') or ''), object_refs=refs,
                       x_shellhound_case_reference=reference,
                       external_references=[{'source_name': 'Shellhound', 'external_id': reference + ':case'}]))
-    result = {'model_version': 4, 'case_reference': reference, 'incident_id': incident_id,
+    result = {'model_version': MODEL_VERSION, 'case_reference': reference, 'incident_id': incident_id,
               'case_id': case_id, 'objects': list(objects.values()), 'iocs': output,
               'warnings': warnings, 'errors': errors}
     result['fingerprint'] = _digest(_stable(result))
+    result['profile'] = {
+        'organization_name': clean.text(organization) if organization and profile.get('organization_id') else '',
+        'summary': incident['description'],
+        'sectors': [clean.text(value) for value in profile.get('sectors') or []],
+        'subsectors': [{'sector': clean.text(item['sector']), 'name': clean.text(item['name'])}
+                       for item in profile.get('subsectors') or [] if item['sector'] in sectors],
+        'countries': profile.get('countries') or [],
+        'state': clean.text(profile.get('state')), 'city': clean.text(profile.get('city')),
+        'first_seen': incident.get('first_seen', ''), 'last_seen': incident.get('last_seen', ''),
+        'marking': profile.get('marking', 'TLP:AMBER+STRICT'),
+    }
+    result['redacted'] = any(clean.text(value) != value for value in
+                             [organization or '', profile.get('summary') or '',
+                              profile.get('state') or '', profile.get('city') or '',
+                              *(profile.get('sectors') or []),
+                              *(item['name'] for item in profile.get('subsectors') or [])])
     return result

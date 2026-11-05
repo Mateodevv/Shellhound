@@ -27,9 +27,13 @@ Transport and logistics, Manufacturing, Retail, Food and agriculture, Education
 and research, Media and culture, Professional services, Construction and real
 estate, Hospitality and tourism, Non-profit organisations, and Other.
 
-Enter any subsectors manually and associate each with a selected main sector.
-Software and CVE context can be edited manually in the case profile. CVE context
-retains the analyst's assessment; it does not attribute exploitation to every IP.
+Each main sector has a fixed local list of matching subsectors, selected directly
+within its group. New free-text values and cross-sector choices are rejected by
+the server. Existing custom values remain selectable as saved values; they are
+not renamed or deleted when the profile is edited.
+CVEs are managed once, in the IOC Box. The profile editor contains only the case
+context. Previously saved software and CVE profile details remain stored locally,
+including in archives; editing the simplified form does not erase them.
 TLP:AMBER+STRICT remains the default marking.
 
 Saving a profile is local and never starts a transfer. Existing profile values,
@@ -38,16 +42,33 @@ including older sector names, remain readable and are preserved on partial edits
 ## Review and transfer
 
 1. Choose **Transfer to OpenCTI** from the IOC box, an object, or the case close flow.
-2. Review the saved profile and the selected IPs, CVEs and hashes. Unsupported IOC
+2. Review the sanitized profile summary and the selected IPs, CVEs and hashes. Local
+   paths and credentials are shown as redacted values; the saved profile stays unchanged. The
+   close flow opens this same preview directly, without a separate profile step. Unsupported IOC
    types cannot be selected through the API either. IP tags become object labels.
-3. Confirm the reviewed preview. A profile can also be transferred without IOCs.
+3. Check the destination URL, TAXII collection and TLP beside the confirmation,
+   then confirm the reviewed preview. A profile can also be transferred without IOCs.
 4. Check the transfer receipt. Queue acceptance is distinct from verified import.
    Retry incomplete work from the receipt instead of starting duplicate imports.
 
+An unchanged selection matching the latest successful transfer to this destination
+is marked as already transferred and cannot be submitted again. The comparison uses
+exported objects, so local-only notes and token rotation do not create changes.
+Changed profile content, IOC selection, tags or marking can be transferred again.
+An intervening incomplete transfer requires review instead of assuming an older
+successful snapshot still describes the remote case. This is a local receipt check,
+not a live comparison against later changes made directly in OpenCTI.
+
+After verification, the receipt shows the number of distinct IP, CVE and hash
+objects and links to the imported case on its original OpenCTI server. Pending or
+failed work never displays a successful-transfer message or case link.
+
 Hash-only File objects contain supported hashes, not filenames or source bytes.
 Paths, domains, URLs, emails, usernames, evidence excerpts, notes and file samples
-are never exported as IOCs. The profile can contain manually entered organization,
-sector, location, software and CVE context. Local paths and credentials are redacted
+are never exported as IOCs. The profile transfers manually entered organization,
+sector, location, dates, summary and marking. Older software/CVE profile details
+are not exported separately: only CVEs selected from the IOC Box leave the case.
+Local paths and credentials are redacted
 from transferred text. An IOC's case association does not assert maliciousness.
 
 The server binds a preview to the case contents and destination. Changed data,

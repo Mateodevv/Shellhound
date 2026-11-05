@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from server import db
 from server.ioc import model as ioc_model
@@ -66,6 +67,40 @@ def _config(root):
     return config
 
 
+def _counts(payload):
+    types = [obj['type'] for obj in payload.get('objects', [])]
+    return {'ips': types.count('ipv4-addr') + types.count('ipv6-addr'),
+            'cves': types.count('vulnerability'), 'hashes': types.count('file')}
+
+
+def _export_fingerprint(payload):
+    return _digest(graph._stable(sorted(payload.get('objects', []), key=lambda obj: obj['id'])))
+
+
+def _case_url(conn, payload, config):
+    destination = payload.get('mapping_destination')
+    target = payload.get('target')
+    if not target and destination == _mapping_destination(config):
+        target = config
+    if not target or not target.get('url') or not payload.get('case_id'):
+        return None
+    mapped = db.one(conn, 'SELECT remote_id FROM opencti_mappings WHERE source_id=? AND destination=?',
+                    (payload['case_id'], destination))
+    return (target['url'].rstrip('/') + '/dashboard/id/' + quote(mapped['remote_id'], safe='')) if mapped and mapped['remote_id'] else None
+
+
+def _completed_export(conn, payload, config):
+    # Compare the latest completed snapshot: reverting A -> B -> A must remain possible.
+    for receipt in db.rows(conn, "SELECT * FROM opencti_exports ORDER BY rowid DESC"):
+        previous = json.loads(receipt['payload'])
+        if previous.get('mapping_destination') != _mapping_destination(config):
+            continue
+        if receipt['state'] == 'complete' and previous.get('model_version') == graph.MODEL_VERSION and _export_fingerprint(previous) == _export_fingerprint(payload):
+            return {'id': receipt['id'], 'updated': receipt['updated'], 'case_url': _case_url(conn, previous, config)}
+        break
+    return None
+
+
 def _iocs(case_dir, ids=None):
     conn = db.connect(case_dir)
     try:
@@ -113,12 +148,15 @@ def connection_test(root):
 
 def state(root, case_dir):
     """Read transfer receipts locally, without lookups or enrichment."""
-    destination = _mapping_destination(settings.opencti_config(root))
+    config = settings.opencti_config(root)
+    destination = _mapping_destination(config)
     current = {row["id"]: row for row in _iocs(case_dir) if row["type"] in graph.IOC_TYPES}
     revisions = _revisions(case_dir)
     conn = db.connect(case_dir)
     try:
         exports = db.rows(conn, "SELECT * FROM opencti_exports ORDER BY created DESC")
+        for receipt in exports:
+            receipt['case_url'] = _case_url(conn, json.loads(receipt['payload']), config) if receipt['state'] == 'complete' else None
         jobs = db.rows(conn, "SELECT * FROM jobs WHERE kind='opencti-export' ORDER BY id DESC LIMIT 50")
     finally:
         conn.close()
@@ -127,14 +165,15 @@ def state(root, case_dir):
     for receipt in reversed(exports):
         payload = json.loads(receipt["payload"])
         receipts.append({key: receipt[key] for key in ("id", "state", "created", "updated", "error")})
-        receipts[-1]["stats"] = {"objects": len(payload.get("objects", [])), "batches": payload.get("batches", [])}
+        receipts[-1]['case_url'] = receipt['case_url']
+        receipts[-1]["stats"] = {"objects": len(payload.get("objects", [])), "counts": _counts(payload), "batches": payload.get("batches", [])}
         if payload.get("mapping_destination", receipt["destination"]) != destination:
             continue
         for row in payload.get("iocs", []):
             key = row["id"]
             if key not in current or not row.get("selected") or row.get("source_uid") != current[key].get("source_uid"):
                 continue
-            changed = payload.get("revisions", {}).get(str(key)) != revisions.get(str(key))
+            changed = payload.get("model_version") != graph.MODEL_VERSION or payload.get("revisions", {}).get(str(key)) != revisions.get(str(key))
             status = "changed" if changed else "exported" if receipt["state"] == "complete" else "error" if receipt["state"] in ("partial", "failed") else "new"
             sync[key] = {"ioc_id": key, "status": status, "error": receipt["error"]}
     for job in jobs:
@@ -158,12 +197,15 @@ def preview(root, case_dir, options=None):
     result = graph.build_preview(case_dir, options)
     result["graph_fingerprint"] = result["fingerprint"]
     config = settings.opencti_config(root)
+    result['target'] = {key: config.get(key, '') for key in ('url', 'ingester_id')}
+    result['counts'] = _counts(result)
     conn = db.connect(case_dir)
     try:
         previous = db.rows(conn, "SELECT object_json FROM opencti_mappings WHERE destination=?", (_mapping_destination(config),))
         result["mapping_revision"] = _digest(sorted([graph._stable(json.loads(row["object_json"])) for row in previous], key=lambda obj: obj["id"]))
         result["mapping_destination"] = _mapping_destination(config)
         result["preview_id"] = str(uuid.uuid4())
+        result['already_exported'] = _completed_export(conn, result, config)
         stored = {**result, "revisions": _revisions(case_dir)}
         conn.execute("INSERT INTO opencti_previews VALUES (?,?,?,?,?,?)",
                      (result["preview_id"], db.now(), result["graph_fingerprint"], _json(options), _json(stored), _destination(config)))
@@ -287,7 +329,7 @@ def _queue_export(root, case_dir, receipt):
     def run(ctx):
         payload = json.loads(receipt["payload"])
         try:
-            if payload.get("model_version", 0) != 4 or payload.get("samples"):
+            if payload.get("model_version", 0) != graph.MODEL_VERSION or payload.get("samples"):
                 raise ValueError("This saved transfer uses retired OpenCTI features. Create a fresh preview before transferring.")
             client = OpenCTIClient(config)
             if _destination(settings.opencti_config(root)) != receipt["destination"]:
@@ -414,7 +456,7 @@ def transfer(root, case_dir, preview_id):
         options = json.loads(preview_row["options"])
         if payload["errors"]:
             raise ValueError("Resolve the problems shown in the export preview first.")
-        if payload.get("model_version") != 4:
+        if payload.get("model_version") != graph.MODEL_VERSION:
             raise ValueError("Create a fresh export preview before transferring.")
         fresh = graph.build_preview(case_dir, options)
         if fresh["fingerprint"] != preview_row["fingerprint"]:
@@ -429,6 +471,12 @@ def transfer(root, case_dir, preview_id):
             raise ValueError("A previous transfer changed OpenCTI mappings. Review a fresh export preview.")
         if payload.get("revisions") != {str(k): v for k, v in _revisions(case_dir).items()}:
             raise ValueError("Case data changed after preview. Review the updated export first.")
+        conn = db.connect(case_dir)
+        try:
+            if _completed_export(conn, payload, config):
+                raise ValueError('This selection has already been transferred successfully; no export data changed.')
+        finally:
+            conn.close()
         reference = workspace.case_info(case_dir)["reference"]
         payload["options"] = options
         profile = workspace.case_info(case_dir)["profile"]
@@ -463,7 +511,7 @@ def retry(root, case_dir, export_id):
     if receipt["state"] == "complete":
         raise ValueError("This transfer is already complete.")
     payload = json.loads(receipt["payload"])
-    if payload.get("model_version") != 4:
+    if payload.get("model_version") != graph.MODEL_VERSION:
         raise ValueError("Create a fresh preview instead of retrying a legacy transfer.")
     fresh = graph.build_preview(case_dir, payload["options"])
     if fresh["fingerprint"] != payload.get("graph_fingerprint", payload["fingerprint"]):

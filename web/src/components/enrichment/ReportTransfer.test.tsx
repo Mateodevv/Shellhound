@@ -8,13 +8,13 @@ import { ReportTransfer } from './ReportTransfer'
 vi.mock('../../api', async original => ({ ...(await original<typeof import('../../api')>()), api: vi.fn(), post: vi.fn() }))
 const info = { slug: 'qa', name: 'Example case', reference: 'QA-1', profile_revision: 'r1', profile: { ...newCaseProfile(), summary: 'Manual summary', organization_name: 'Manual organisation' } } as CaseInfo
 const rows = [{ id: 1, type: 'ip', value: '198.51.100.4' }, { id: 2, type: 'domain', value: 'example.invalid' }] as Ioc[]
-const preview: OpenCtiPreview = { preview_id: 'reviewed', case_reference: 'QA-1', fingerprint: 'fp', objects: [], iocs: [{ id: 1, type: 'ip', value: rows[0].value, selected: true, object_ids: [], tags: [], warnings: [] }], warnings: [], errors: [] }
+const preview: OpenCtiPreview = { preview_id: 'reviewed', case_reference: 'QA-1', fingerprint: 'fp', profile: { ...newCaseProfile(), ...info.profile }, target: { url: 'https://cti.example.test', ingester_id: 'collection' }, counts: { ips: 1, cves: 0, hashes: 0 }, redacted: false, already_exported: null, objects: [], iocs: [{ id: 1, type: 'ip', value: rows[0].value, selected: true, object_ids: [], tags: [], warnings: [] }], warnings: [], errors: [] }
 let jobRows: Job[] = []
 let configured = true
 let exported = false
 beforeEach(() => {
   vi.clearAllMocks(); jobRows = []; configured = true; exported = false
-  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { configured } : path === '/api/cases/qa' ? info : path.endsWith('/jobs') ? jobRows : path.endsWith('/summary') ? { artifacts: 1, findings: 1, confirmed: 1, iocs: 2, evidence: [] } : path.endsWith('/iocs') ? rows : { jobs: jobRows, exports: exported ? [{ id: 'receipt', state: 'complete', stats: { objects: 2 } }] : [], sync: [] })
+  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { configured } : path === '/api/cases/qa' ? info : path.endsWith('/jobs') ? jobRows : path.endsWith('/summary') ? { artifacts: 1, findings: 1, confirmed: 1, iocs: 2, evidence: [] } : path.endsWith('/iocs') ? rows : { jobs: jobRows, exports: exported ? [{ id: 'receipt', state: 'complete', case_url: 'https://cti.example.test/dashboard/id/case', stats: { objects: 2, counts: { ips: 2, cves: 1, hashes: 1 } } }] : [], sync: [] })
   vi.mocked(post).mockImplementation(async path => {
     if (path.endsWith('/preview')) return preview
     if (path.endsWith('/export')) { exported = true; jobRows = [{ id: 9, kind: 'opencti-export', state: 'done', stats: { export_id: 'receipt' }, run_id: '', progress: 1, message: '', error: '', created: '' }] }
@@ -24,20 +24,22 @@ beforeEach(() => {
 
 it('transfers only allowed IOCs after review and never archives automatically', async () => {
   renderWithProviders(<ReportTransfer slug="qa" caseInfo={info} />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Next' }))
   expect(await screen.findByRole('checkbox', { name: 'Select 198.51.100.4' })).toBeVisible()
   expect(post).toHaveBeenCalledWith('/api/cases/qa/opencti/preview', { ioc_ids: [1] })
+  expect(screen.queryByRole('navigation', { name: 'Transfer and close steps' })).not.toBeInTheDocument()
+  expect(screen.getAllByText('Manual summary')).toHaveLength(1)
   const confirm = screen.getByRole('button', { name: 'Transfer reviewed preview' })
   await waitFor(() => expect(confirm).toBeEnabled())
   fireEvent.click(confirm)
   await screen.findByText('Transfer completed')
+  expect(screen.getByText('2 IPs, 1 CVE, 1 hash successfully transferred')).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Open case in OpenCTI' })).toHaveAttribute('href', 'https://cti.example.test/dashboard/id/case')
   expect(vi.mocked(post).mock.calls.some(([path]) => path.includes('/archive'))).toBe(false)
 })
 
 it('closes locally without OpenCTI calls and rechecks active work before archiving', async () => {
   configured = false
   const { qc } = renderWithProviders(<ReportTransfer slug="qa" caseInfo={info} />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Next' }))
   await screen.findByRole('heading', { name: 'Close case' })
   fireEvent.change(screen.getByRole('textbox', { name: 'Case name to confirm archiving' }), { target: { value: info.name } })
   const archive = screen.getByRole('button', { name: 'Close & archive case' })
@@ -55,4 +57,12 @@ it('resumes an active transfer without starting another one', async () => {
   expect(await screen.findByRole('heading', { name: 'Transferring to OpenCTI' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Continue with incomplete transfer' })).toBeDisabled()
   expect(post).not.toHaveBeenCalled()
+})
+
+it('can skip transfer and still requires the existing archive confirmation', async () => {
+  renderWithProviders(<ReportTransfer slug="qa" caseInfo={info} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Skip transfer' }))
+  expect(await screen.findByRole('button', { name: 'Close & archive case' })).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Case name to confirm archiving' })).toHaveValue('')
+  expect(vi.mocked(post).mock.calls.every(([path]) => path.endsWith('/preview'))).toBe(true)
 })

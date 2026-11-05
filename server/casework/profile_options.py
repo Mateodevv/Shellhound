@@ -1,16 +1,30 @@
-"""Local profile validation data and the fixed main-sector catalogue."""
+"""Local profile validation data and the fixed sector catalogue."""
 import json
 from functools import lru_cache
 from pathlib import Path
 
-SECTORS = (
-    'Public administration', 'Healthcare', 'Financial services', 'Energy',
-    'Water and wastewater', 'Technology', 'Telecommunications',
-    'Transport and logistics', 'Manufacturing', 'Retail', 'Food and agriculture',
-    'Education and research', 'Media and culture', 'Professional services',
-    'Construction and real estate', 'Hospitality and tourism',
-    'Non-profit organisations', 'Other',
-)
+SUBSECTORS = {
+    'Public administration': ('National government', 'Regional government', 'Local government', 'Public agencies'),
+    'Healthcare': ('Hospitals', 'Medical practices', 'Care services', 'Laboratories', 'Pharmacies'),
+    'Financial services': ('Banking', 'Insurance', 'Investment services', 'Payment services'),
+    'Energy': ('Electricity', 'Gas', 'Oil', 'Renewable energy'),
+    'Water and wastewater': ('Drinking water supply', 'Wastewater treatment', 'Water infrastructure'),
+    'Technology': ('Software', 'IT services', 'Cloud and data centres', 'Cybersecurity', 'Hardware'),
+    'Telecommunications': ('Fixed networks', 'Mobile networks', 'Internet service providers', 'Satellite communications'),
+    'Transport and logistics': ('Road transport', 'Rail transport', 'Aviation', 'Shipping', 'Logistics'),
+    'Manufacturing': ('Machinery', 'Automotive', 'Electronics', 'Chemicals', 'Pharmaceutical manufacturing'),
+    'Retail': ('Physical retail', 'Online retail', 'Wholesale'),
+    'Food and agriculture': ('Agriculture', 'Food processing', 'Food distribution', 'Forestry', 'Fisheries'),
+    'Education and research': ('Schools', 'Higher education', 'Research institutes', 'Vocational training'),
+    'Media and culture': ('News media', 'Broadcasting', 'Publishing', 'Cultural institutions'),
+    'Professional services': ('Legal services', 'Accounting and tax', 'Consulting', 'Engineering and architecture'),
+    'Construction and real estate': ('Construction', 'Property management', 'Real estate services', 'Building services'),
+    'Hospitality and tourism': ('Hotels', 'Food services', 'Travel and tourism', 'Event services'),
+    'Non-profit organisations': ('Charities', 'Associations', 'Foundations', 'Religious organisations'),
+    'Other': ('Other services', 'Private individuals', 'Unclassified'),
+}
+SECTORS = tuple(SUBSECTORS)
+
 
 
 @lru_cache(maxsize=1)

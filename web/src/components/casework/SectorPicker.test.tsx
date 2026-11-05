@@ -11,6 +11,8 @@ it('uses fixed main sectors and retains legacy choices without a create action',
     return <><SectorPicker sectors={['Technology', 'Healthcare']} profile={profile} onChange={setProfile} required /><output>{JSON.stringify(profile)}</output></>
   }
   renderWithProviders(<Form />)
+  expect(screen.getByText('Main sectors (1) *').closest('details')).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByText('Main sectors (1) *'))
   expect(screen.getByRole('checkbox', { name: 'Legacy sector' })).toBeChecked()
   fireEvent.click(screen.getByRole('checkbox', { name: 'Technology' }))
   expect(screen.getByRole('checkbox', { name: 'Technology' })).toBeChecked()

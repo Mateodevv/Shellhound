@@ -603,8 +603,11 @@ The case may be transferred without IOCs. Failed or pending imports retain a
 receipt and can be resumed without resubmitting completed work.
 
 Fill the case profile manually. Main sectors use a fixed local catalogue;
-subsectors, organization, country codes, region, city and incident details are
-entered manually. Saving never sends data. OpenCTI lookup, score display,
+subsectors are selected from the matching fixed list for each main sector. Saved
+custom subsectors are preserved. Organization, country codes, region, city and
+incident details are entered manually. CVEs are maintained in the IOC Box. Older software and CVE
+profile fields remain stored and survive edits and archives, but are not exported
+separately. Saving never sends data. OpenCTI lookup, score display,
 connector enrichment, Indicators and original-file uploads are removed.
 Paths, domains, URLs, emails, usernames, local notes and evidence excerpts are
 excluded from IOC transfer. Existing local profiles and historical receipts remain

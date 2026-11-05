@@ -16,7 +16,7 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.case = workspace.create_case(Path(self.temporary.name), 'Local case name', 'EXPORT-1',
             notes='LOCAL-ONLY-NOTE', profile={'organization_name': 'Manual organisation',
             'summary': 'Manually entered summary', 'sectors': ['Healthcare'],
-            'subsectors': [{'name': 'Manual laboratory', 'sector': 'Healthcare'}],
+            'subsectors': [{'name': 'Laboratories', 'sector': 'Healthcare'}],
             'countries': ['DE'], 'state': 'Manual region', 'city': 'Manual city',
             'software': [{'name': 'Manual software', 'version': '1.2'}],
             'vulnerabilities': [{'name': 'CVE-2026-12345', 'status': 'suspected',
@@ -44,13 +44,13 @@ class OpenCTIGraphTests(unittest.TestCase):
         for address in ('198.51.100.4', '2001:db8::4'):
             obj = next(obj for obj in result['objects'] if obj.get('value') == address)
             self.assertEqual(obj['labels'], ['manual-tag'])
-        for name in ('Manual organisation', 'Manual laboratory', 'Manual region',
-                     'Manual software', 'Manual CVE context'):
+        for name in ('Manual organisation', 'Laboratories', 'Manual region',
+                     'Manual city'):
             self.assertIn(name, wire)
-        self.assertTrue(result['warnings'])
+        self.assertFalse(result['warnings'])
+        self.assertNotIn('Manual software', wire)
+        self.assertNotIn('Manual CVE context', wire)
         self.assertNotIn('Legacy non-CVE', wire)
-        self.assertTrue(any(obj['type'] == 'relationship' and 'Manual CVE context' in obj.get('description', '')
-                            for obj in result['objects']))
         self.assertEqual(result['fingerprint'], graph.build_preview(self.case)['fingerprint'])
 
     def test_unsupported_selection_and_retired_options_are_rejected(self):
@@ -62,6 +62,19 @@ class OpenCTIGraphTests(unittest.TestCase):
                 graph.build_preview(self.case, {option: []})
         with self.assertRaises(ValueError):
             graph.build_preview(self.case, {'ioc_ids': [99999]})
+
+    def test_display_profile_matches_sanitized_objects_and_preserves_local_values(self):
+        summary = r'Manual summary C:\Users\Example\private.txt password=synthetic-secret'
+        workspace.update_case(self.case, profile={'summary': summary, 'first_seen': '2026-11-01'})
+        result = graph.build_preview(self.case)
+        incident = next(obj for obj in result['objects'] if obj['type'] == 'incident')
+        self.assertEqual(incident['description'], result['profile']['summary'])
+        self.assertEqual(incident['first_seen'], result['profile']['first_seen'])
+        self.assertEqual('2026-11-01T00:00:00.000Z', result['profile']['first_seen'])
+        self.assertTrue(result['redacted'])
+        self.assertNotIn('synthetic-secret', json.dumps(result))
+        self.assertNotIn('C:\\Users', json.dumps(result))
+        self.assertEqual(summary, workspace.case_info(self.case)['profile']['summary'])
 
     def test_profile_only_transfer_has_no_iocs_and_selection_changes_fingerprint(self):
         profile = graph.build_preview(self.case, {'ioc_ids': []})
@@ -75,8 +88,29 @@ class OpenCTIGraphTests(unittest.TestCase):
         self.conn.commit()
         self.assertTrue(graph.build_preview(self.case)['errors'])
 
+    def test_preview_shows_the_normalized_exported_ioc_values(self):
+        self.conn.execute('UPDATE iocs SET value=? WHERE id=?', ('cve-2026-12345', self.ids['CVE-2026-12345']))
+        self.conn.execute('UPDATE iocs SET value=? WHERE id=?', ('2001:0db8:0:0:0:0:0:4', self.ids['2001:db8::4']))
+        self.conn.execute('UPDATE iocs SET value=? WHERE id=?', ('A' * 64, self.ids['a' * 64]))
+        self.conn.commit()
+        result = graph.build_preview(self.case)
+        self.assertEqual('CVE-2026-12345', next(row['value'] for row in result['iocs'] if row['type'] == 'vulnerability'))
+        self.assertEqual('2001:db8::4', next(row['value'] for row in result['iocs'] if row['id'] == self.ids['2001:db8::4']))
+        self.assertEqual('a' * 64, next(row['value'] for row in result['iocs'] if row['type'] == 'hash'))
+
     def test_manual_region_and_city_do_not_require_an_inferred_country(self):
         workspace.update_case(self.case, profile={'countries': []})
         locations = [obj for obj in graph.build_preview(self.case)['objects'] if obj['type'] == 'location']
         self.assertEqual({'Manual region', 'Manual city'}, {obj['name'] for obj in locations})
         self.assertTrue(all('country' not in obj for obj in locations))
+
+    def test_legacy_profile_details_are_stored_but_only_selected_ioc_cves_are_exported(self):
+        original = workspace.case_info(self.case)['profile']
+        updated = workspace.update_case(self.case, profile={'summary': 'Updated summary'})['profile']
+        self.assertEqual(original['software'], updated['software'])
+        self.assertEqual(original['vulnerabilities'], updated['vulnerabilities'])
+        empty = graph.build_preview(self.case, {'ioc_ids': []})
+        self.assertFalse(any(obj['type'] in ('software', 'vulnerability') for obj in empty['objects']))
+        selected = graph.build_preview(self.case, {'ioc_ids': [self.ids['CVE-2026-12345']]})
+        self.assertEqual(['CVE-2026-12345'], [obj['name'] for obj in selected['objects'] if obj['type'] == 'vulnerability'])
+        self.assertEqual(updated, workspace.case_info(self.case)['profile'])

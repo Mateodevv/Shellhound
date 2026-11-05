@@ -50,7 +50,7 @@ class SoftwareIocTests(unittest.TestCase):
         self.assertEqual('unassessed', row['assessment'])
         self.assertEqual(1, self.conn.execute('SELECT count(*) FROM ioc_observations').fetchone()[0])
 
-    def test_detected_software_is_local_and_only_manual_profile_software_is_exported(self):
+    def test_detected_and_legacy_profile_software_remain_local(self):
         identifier = collect(self.conn, 'Joomla', '5.2')
         self.conn.commit()
         with self.assertRaises(ValueError):
@@ -58,7 +58,8 @@ class SoftwareIocTests(unittest.TestCase):
         self.assertFalse(any(o['type'] == 'software' for o in build_preview(self.case)['objects']))
         workspace.update_case(self.case, profile={'software': [{'name': 'Manually chosen CMS', 'version': '1'}]})
         exported = [o for o in build_preview(self.case, {'ioc_ids': []})['objects'] if o['type'] == 'software']
-        self.assertEqual([('Manually chosen CMS', '1')], [(o['name'], o['version']) for o in exported])
+        self.assertEqual([], exported)
+        self.assertEqual([{'name': 'Manually chosen CMS', 'version': '1'}], workspace.case_info(self.case)['profile']['software'])
 
     def test_legacy_profile_migrates_once_and_preserves_context(self):
         profile = {'software':[{'name':'Legacy CMS','version':'2'}], 'vulnerabilities':[{'name':'CVE-2025-12345','status':'suspected','description':'Review required'}]}

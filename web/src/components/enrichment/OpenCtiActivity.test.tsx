@@ -29,3 +29,13 @@ it('does not offer retry without explicit permission from its parent', async () 
   expect(screen.queryByRole('button', { name: 'Retry incomplete transfer' })).not.toBeInTheDocument()
   expect(post).not.toHaveBeenCalled()
 })
+
+it('shows verified counts and rejects unsafe remote case links', async () => {
+  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { configured: true } : {
+    jobs: [], sync: [], exports: [{ id: 'receipt', state: 'complete', updated: '', case_url: 'javascript:alert(1)', stats: { objects: 12, counts: { ips: 2, cves: 1, hashes: 1 } } }],
+  })
+  renderWithProviders(<OpenCtiActivity slug="qa" allowRetry />)
+  expect(await screen.findByText('2 IPs, 1 CVE, 1 hash successfully transferred')).toBeVisible()
+  expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry incomplete transfer' })).not.toBeInTheDocument()
+})
