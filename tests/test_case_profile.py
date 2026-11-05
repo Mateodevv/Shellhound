@@ -94,6 +94,24 @@ class CaseProfileTests(unittest.TestCase):
         restored = workspace.import_archive(self.root / "restored", archive)
         self.assertEqual(saved, workspace.case_info(restored["dir"])["profile"])
 
+    def test_legacy_custom_subsector_survives_edit_archive_and_restore(self):
+        case = workspace.create_case(self.ws, 'Saved case', profile={'sectors': ['Healthcare']})
+        path = case / workspace.CASE_FILE
+        identity = json.loads(path.read_text(encoding='utf-8'))
+        identity['profile']['subsectors'] = [{'name': 'Saved specialist clinic', 'sector': 'Healthcare'}]
+        path.write_text(json.dumps(identity), encoding='utf-8')
+        conn = db.connect(case)
+        try:
+            conn.execute("UPDATE meta SET value=? WHERE key='profile'", (json.dumps(identity['profile']),))
+            conn.commit()
+        finally:
+            conn.close()
+        saved = workspace.update_case(case, profile={'summary': 'Edited summary'})['profile']
+        archive, _ = workspace.archive_case(self.ws, case)
+        restored = workspace.import_archive(self.root / 'restored', archive)
+        self.assertEqual(saved, workspace.case_info(restored['dir'])['profile'])
+        self.assertEqual(saved['subsectors'], workspace.update_case(restored['dir'], profile={'city': 'Manual city'})['profile']['subsectors'])
+
     def test_country_state_and_subsector_must_agree(self):
         for profile in ({"countries": ["ZZ"]},
                         {"subsectors": [{"name": "Software", "sector": "Technology"}]},

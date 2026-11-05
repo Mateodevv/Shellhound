@@ -82,6 +82,70 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertEqual("complete", self.receipt(result["export_id"])["state"])
         self.assertEqual({"preflight_seconds", "import_verify_seconds"}, set(payload["timings"]))
 
+    def test_target_counts_and_verified_case_link_use_original_destination(self):
+        db.add_ioc(self.conn, 'CVE-2026-12345', 'vulnerability')
+        db.add_ioc(self.conn, 'a' * 64, 'hash')
+        db.add_ioc(self.conn, '2001:db8::4', 'ip')
+        self.conn.commit()
+        self.config['url'] = 'https://cti.example.test/subpath/'
+        self.client.resolve.side_effect = lambda source: {'id': 'remote/case ?id', 'standard_id': source}
+        preview = self.preview()
+        self.assertEqual({'url': self.config['url'], 'ingester_id': 'ingester'}, preview['target'])
+        self.assertNotIn(self.config['token'], json.dumps(preview))
+        self.assertEqual({'ips': 2, 'cves': 1, 'hashes': 1}, preview['counts'])
+        result = service.transfer(self.root, self.case, preview['preview_id'])
+        self.assertIsNone(service.state(self.root, self.case)['exports'][0]['case_url'])
+        self.jobs.run()
+        self.config['url'] = 'https://different.example.test'
+        receipt = service.state(self.root, self.case)['exports'][0]
+        self.assertEqual(result['export_id'], receipt['id'])
+        self.assertEqual(preview['counts'], receipt['stats']['counts'])
+        self.assertEqual('https://cti.example.test/subpath/dashboard/id/remote%2Fcase%20%3Fid', receipt['case_url'])
+
+    def test_completed_identical_export_is_blocked_without_jobs_or_network(self):
+        exported = self.export()
+        self.client.reset_mock()
+        self.conn.execute('UPDATE iocs SET note=? WHERE id=?', ('Only a local note changed', self.ip_id))
+        self.conn.commit()
+        self.config['token'] = 'rotated-token'
+        preview = self.preview()
+        self.assertEqual(exported['export_id'], preview['already_exported']['id'])
+        with self.assertRaisesRegex(ValueError, 'already been transferred'):
+            service.transfer(self.root, self.case, preview['preview_id'])
+        self.assertEqual(1, len(self.jobs.pending))
+        self.assertFalse(self.client.mock_calls)
+
+    def test_changed_selection_tags_profile_marking_and_destination_allow_export(self):
+        self.export()
+        self.assertIsNone(self.preview(ioc_ids=[])['already_exported'])
+        for update in ({'summary': 'Changed summary'}, {'marking': 'TLP:RED'}):
+            with self.subTest(update=update):
+                workspace.update_case(self.case, profile=update)
+                self.assertIsNone(self.preview()['already_exported'])
+                self.export()
+        self.conn.execute('UPDATE iocs SET tags=? WHERE id=?', ('["New tag"]', self.ip_id))
+        self.conn.commit()
+        self.assertIsNone(self.preview()['already_exported'])
+        self.export()
+        for field, value in (('url', 'https://different.example.test'), ('ingester_id', 'different')):
+            old = self.config[field]
+            self.config[field] = value
+            self.assertIsNone(self.preview()['already_exported'])
+            self.config[field] = old
+
+    def test_reverted_snapshot_and_incomplete_import_do_not_match_older_success(self):
+        self.export()
+        workspace.update_case(self.case, profile={'summary': 'B'})
+        self.export()
+        workspace.update_case(self.case, profile={'summary': ''})
+        self.assertIsNone(self.preview()['already_exported'])
+        self.export()
+        workspace.update_case(self.case, profile={'summary': 'Partial update'})
+        self.client.taxii_status.return_value = {'status': 'pending', 'pending_count': 1}
+        self.export()
+        workspace.update_case(self.case, profile={'summary': ''})
+        self.assertIsNone(self.preview()['already_exported'])
+
     def test_reused_ip_tags_are_required_and_retry_does_not_reimport(self):
         self.conn.execute('UPDATE iocs SET tags=? WHERE id=?', (json.dumps(['Reviewed']), self.ip_id))
         self.conn.commit()
@@ -250,7 +314,7 @@ class OpenCTIServiceTests(unittest.TestCase):
 
     def test_legacy_preview_and_receipt_cannot_replay_retired_features(self):
         preview = self.preview()
-        payload = dict(preview, model_version=3)
+        payload = dict(preview, model_version=4)
         self.conn.execute('UPDATE opencti_previews SET payload=? WHERE id=?',
                           (json.dumps(payload), preview['preview_id']))
         self.conn.commit()
@@ -258,7 +322,7 @@ class OpenCTIServiceTests(unittest.TestCase):
             service.transfer(self.root, self.case, preview['preview_id'])
         result = self.export()
         receipt = self.receipt(result['export_id'])
-        receipt['payload']['model_version'] = 3
+        receipt['payload']['model_version'] = 4
         self.conn.execute("UPDATE opencti_exports SET state='failed', payload=? WHERE id=?",
                           (json.dumps(receipt['payload']), result['export_id']))
         self.conn.commit()

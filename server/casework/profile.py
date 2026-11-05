@@ -213,10 +213,14 @@ def normalize(profile, workspace, existing=None):
     if not isinstance(profile, dict) or set(profile) - _FIELDS:
         raise ValueError("Case profile contains unsupported fields")
     result = _validated({**defaults(existing), **profile})
-    from server.casework.profile_options import SECTORS
+    from server.casework.profile_options import SECTORS, SUBSECTORS
     allowed = set(SECTORS) | set(defaults(existing)['sectors'])
     if any(sector not in allowed for sector in result['sectors']):
         raise ValueError('Choose a main sector from the catalogue')
+    previous_subsectors = {(item['sector'], item['name']) for item in defaults(existing)['subsectors']}
+    for item in result['subsectors']:
+        if item['name'] not in SUBSECTORS.get(item['sector'], ()) and (item['sector'], item['name']) not in previous_subsectors:
+            raise ValueError('Choose a subsector from the catalogue for its main sector')
     with _LOCK:
         if result['organization_name']:
             # A different chosen name resolves to its own registry entry, so

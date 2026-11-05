@@ -23,7 +23,7 @@ export function CaseProfileButton({ slug }: { slug: string }) {
 function CaseProfileDialog({ slug, onClose }: { slug: string; onClose: () => void }) {
   const tr = useT()
   const query = useQuery({ queryKey: ['case', slug], queryFn: () => api<CaseInfo>(`/api/cases/${slug}`) })
-  return <Modal open onClose={onClose} title={tr('cti.profile')}>
+  return <Modal open onClose={onClose} title={tr('cti.profile')} maxWidth={900}>
     <CtiError error={query.error} />
     {query.data ? <CaseProfileForm slug={slug} info={query.data} onClose={onClose} /> : !query.error && <p>{tr('common.loading')}</p>}
   </Modal>
@@ -46,19 +46,19 @@ export function CaseProfileForm({ slug, info, onClose }: { slug: string; info: C
     onClose()
   } })
   return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!invalidDates && name.trim() && !save.isPending) save.mutate() }}>
-    <p className="text-[12px] text-[var(--muted)]">{tr('profileChanges.localSave')}</p>
-    <fieldset disabled={save.isPending} className="flex flex-col gap-4">
-    <CtiField label={tr('wizard.name')}><input aria-label={tr('wizard.name')} required value={name} onChange={e => setName(e.target.value)} className={ctiInput} /><span>{tr('profileChanges.localName')}</span></CtiField>
-    <CtiField label={tr('cti.caseId')}><input aria-label={tr('cti.caseId')} value={reference} readOnly={info.reference_locked} onChange={(e) => setReference(e.target.value)} className={ctiInput} /><span>{tr(info.reference_locked ? 'profileChanges.referenceLocked' : 'cti.caseIdHint')}</span></CtiField>
-    <CaseProfileFields profile={profile} onChange={setProfile} />
+    <fieldset disabled={save.isPending} className="grid gap-4 sm:grid-cols-2">
+    <CtiField label={tr('wizard.name')}><input aria-label={tr('wizard.name')} required value={name} onChange={e => setName(e.target.value)} className={ctiInput} /></CtiField>
+    <CtiField label={tr('cti.caseId')}><input aria-label={tr('cti.caseId')} value={reference} readOnly={info.reference_locked} onChange={(e) => setReference(e.target.value)} className={ctiInput} />{info.reference_locked && <span>{tr('profileChanges.referenceLocked')}</span>}</CtiField>
+    <div className="flex flex-col gap-4 sm:col-span-2"><CaseProfileFields profile={profile} onChange={setProfile} /></div>
     </fieldset>
+    {!!(profile.software.length || profile.vulnerabilities.length) && <p className="text-[12px] text-[var(--muted)]">{tr('cti.retainedProfileData')}</p>}
     <CtiError error={invalidDates ? tr('cti.dateError') : save.error} />
     <div className="flex justify-end gap-2"><Button type="button" disabled={save.isPending} onClick={onClose}>{tr('common.cancel')}</Button><Button type="submit" variant="primary" disabled={save.isPending || invalidDates || !name.trim()}>{tr('common.save')}</Button></div>
   </form>
 }
 
 export function CaseProfileFields({ profile, onChange, section = 'all', requiredContext = false }: {
-  profile: CaseProfile; onChange: Dispatch<SetStateAction<CaseProfile>>; section?: 'all' | 'affected' | 'technical' | 'hidden'; requiredContext?: boolean
+  profile: CaseProfile; onChange: Dispatch<SetStateAction<CaseProfile>>; section?: 'all' | 'affected' | 'hidden'; requiredContext?: boolean
 }) {
   const tr = useT()
   const change = <K extends keyof CaseProfile>(key: K, value: CaseProfile[K]) => onChange(previous => ({ ...previous, [key]: value }))
@@ -76,26 +76,6 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
       {['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'].map((marking) => <option key={marking}>{marking}</option>)}
     </select><span>{tr('cti.markingHint')}</span></CtiField>
     </div></div>
-    {section === 'all' && <>
-      <fieldset className="space-y-3 rounded-lg border border-[var(--line)] p-3">
-        <legend>{tr('cti.profileSoftware')}</legend>
-        {profile.software.map((item, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <CtiField label={tr('cti.softwareName')}><input required className={ctiInput} value={item.name} onChange={event => change('software', profile.software.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} /></CtiField>
-          <CtiField label={tr('cti.softwareVersion')}><input className={ctiInput} value={item.version} onChange={event => change('software', profile.software.map((entry, i) => i === index ? { ...entry, version: event.target.value } : entry))} /></CtiField>
-          <Button type="button" onClick={() => change('software', profile.software.filter((_, i) => i !== index))}>{tr('common.remove')}</Button>
-        </div>)}
-        <Button type="button" onClick={() => change('software', [...profile.software, { name: '', version: '' }])}>{tr('cti.addSoftware')}</Button>
-      </fieldset>
-      <fieldset className="space-y-3 rounded-lg border border-[var(--line)] p-3">
-        <legend>{tr('cti.profileCves')}</legend>
-        {profile.vulnerabilities.map((item, index) => <div key={index} className="space-y-2 border-b border-[var(--line)] pb-3">
-          <CtiField label={tr('cti.vulnerabilityName')}><input required className={ctiInput} value={item.name} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry))} /></CtiField>
-          <CtiField label={tr('cti.status')}><select className={ctiInput} value={item.status} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, status: event.target.value as 'confirmed' | 'suspected' } : entry))}><option value="suspected">{tr('cti.suspected')}</option><option value="confirmed">{tr('cti.confirmed')}</option></select></CtiField>
-          <CtiField label={tr('cti.description')}><textarea className={ctiInput} value={item.description} onChange={event => change('vulnerabilities', profile.vulnerabilities.map((entry, i) => i === index ? { ...entry, description: event.target.value } : entry))} /></CtiField>
-          <Button type="button" onClick={() => change('vulnerabilities', profile.vulnerabilities.filter((_, i) => i !== index))}>{tr('common.remove')}</Button>
-        </div>)}
-        <Button type="button" onClick={() => change('vulnerabilities', [...profile.vulnerabilities, { name: '', status: 'suspected', description: '' }])}>{tr('cti.addVulnerability')}</Button>
-      </fieldset>
-    </>}
+
   </>
 }

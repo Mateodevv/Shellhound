@@ -16,13 +16,17 @@ export interface OpenCtiSettings {
   url: string; ingester_id: string; configured: boolean; token_hint: string; timeout: number
 }
 export interface OpenCtiState {
-  exports: { id: string; state: string; created: string; updated: string; error?: string; activity_hidden?: boolean; stats: Record<string, unknown> }[]
+  exports: { id: string; state: string; created: string; updated: string; error?: string; case_url?: string | null; activity_hidden?: boolean; stats: { counts?: OpenCtiCounts } & Record<string, unknown> }[]
   sync: { ioc_id: number; status: 'new' | 'changed' | 'exported' | 'error'; error?: string }[]
   jobs: (Job & { activity_hidden?: boolean })[]
 }
 export interface OpenCtiOptions { ioc_ids: number[] | null }
+export interface OpenCtiCounts { ips: number; cves: number; hashes: number }
 export interface OpenCtiPreview {
   preview_id: string; case_reference: string; fingerprint: string
+  profile: Omit<CaseProfile, 'organization_id' | 'pseudonym' | 'software' | 'vulnerabilities'>
+  target: { url: string; ingester_id: string }; counts: OpenCtiCounts; redacted: boolean
+  already_exported: { id: string; updated: string; case_url?: string | null } | null
   objects: ({ id: string; type: string } & Record<string, unknown>)[]
   iocs: { id: number; value: string; type: string; selected: boolean; tags: string[]; object_ids: string[]; warnings: string[] }[]
   warnings: string[]; errors: string[]
