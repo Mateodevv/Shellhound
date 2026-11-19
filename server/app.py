@@ -2454,31 +2454,10 @@ def create_app(config: Config) -> FastAPI:
                                  context=artifact, path_context="system")
             _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
-            # Decisions reuse the identity analysis prepared; no content reads
-            # or hash calculations belong in this save request.
-            indexed_info = None
-            try:
-                indexed_info = backups.indexed_file(conn, artifact)
-            except backups.BackupError:
-                pass
-            digest = indexed_info['sha256'] if indexed_info else None
-            file_id = None
-            if digest:
-                hash_id = db.add_ioc(conn, digest, "hash",
-                                     [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
-                                     origin=f"sha-256 of {os.path.basename(artifact)}")
-                _track_ioc(conn, hash_id, artifact, "hash")
-                if manual_webshell or manual_malware or explicit_classes is not None:
-                    conn.execute("UPDATE ioc_sources SET active=0 WHERE artifact=? "
-                                 "AND role='hash' AND ioc_id != ?", (artifact, hash_id))
-                # Path and hash describe THE SAME file. Only here is that
-                # still known: afterwards the box holds two rows one cannot
-                # tell it from.
-                db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
-                file_id = ioc_model.collect_file(conn, artifact, digest, hash_id, path_id,
-                                                 file_classification, findings,
-                                                 indexed_info=indexed_info)
-                out.append({"value": digest, "type": "hash"})
+            content = ioc_model.complete_file_iocs(conn, artifact, path_id, findings, prepare=True)
+            file_id = content['file_id'] if content else None
+            if content:
+                out.append({"value": content['digest'], "type": "hash"})
             # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))
             for hit in list(touches)[:25]:

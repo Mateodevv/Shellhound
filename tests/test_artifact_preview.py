@@ -87,6 +87,54 @@ class ArtifactPreviewTests(unittest.TestCase):
         self.assertEqual('new', ctx['triage'])
         self.assertIsNone(ctx['file']['classifications'])
 
+    def test_marking_unindexed_modified_file_collects_content(self):
+        from server.ioc import model
+        endpoint = self.endpoints['/api/cases/{slug}/files/review']
+        body = endpoint.__annotations__['body'](path=str(self.file), state='confirmed', classification='modified-file')
+        endpoint(self.case.name, body, 'en')
+        conn = db.connect(self.case)
+        try:
+            self.assertEqual({'path', 'hash', 'file'}, {r[0] for r in conn.execute('SELECT type FROM iocs')})
+            file = db.one(conn, "SELECT * FROM iocs WHERE type='file'")
+            self.assertEqual(['Modified file'], model.detail(conn, file['id'])['object']['tags'])
+        finally:
+            conn.close()
+
+    def test_analysis_completes_pending_files_without_reconfirming(self):
+        from server import backups
+        from server.ioc import model
+        with patch.object(model, 'complete_file_iocs', return_value=None):
+            self.decide(['modified-file'])
+        conn = db.connect(self.case)
+        try:
+            self.assertEqual(['path'], [r[0] for r in conn.execute('SELECT type FROM iocs')])
+            backups.index_content(conn)
+            self.assertEqual({'path', 'hash', 'file'}, {r[0] for r in conn.execute('SELECT type FROM iocs')})
+            before = conn.execute('SELECT count(*) FROM iocs').fetchone()[0]
+            backups.index_content(conn)
+            self.assertEqual(before, conn.execute('SELECT count(*) FROM iocs').fetchone()[0])
+            file = db.one(conn, "SELECT * FROM iocs WHERE type='file'")
+            self.assertIn('Modified file', model.detail(conn, file['id'])['object']['tags'])
+        finally:
+            conn.close()
+
+    def test_analysis_does_not_collect_withdrawn_or_unavailable_files(self):
+        from server import backups
+        from server.ioc import model
+        with patch.object(model, 'complete_file_iocs', return_value=None):
+            self.decide(['modified-file'])
+        conn = db.connect(self.case)
+        try:
+            conn.execute("UPDATE findings SET triage='dismissed'")
+            backups.index_content(conn)
+            self.assertEqual(['path'], [r[0] for r in conn.execute('SELECT type FROM iocs')])
+            conn.execute("UPDATE findings SET triage='confirmed'")
+            self.file.unlink()
+            backups.index_content(conn)
+            self.assertEqual(['path'], [r[0] for r in conn.execute('SELECT type FROM iocs')])
+        finally:
+            conn.close()
+
     def test_webshell_requesters_get_specific_labels_in_ui_and_exports(self):
         from server.ioc import formats, model
         from server.integrations.opencti import graph

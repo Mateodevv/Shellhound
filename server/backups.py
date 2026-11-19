@@ -339,6 +339,8 @@ def index_content(conn, ctx=None):
         conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', ('content_inventory_sources', source_signature(conn)))
     else:
         conn.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
+    from server.ioc.model import complete_indexed_file_iocs
+    complete_indexed_file_iocs(conn)
     return {'files': len(seen), 'skipped_count': failures, 'incomplete': bool(failures)}
 
 

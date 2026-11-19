@@ -378,6 +378,12 @@ controls so the queue itself remains the starting point.
 Review the indicators collected from confirmed artifacts or added manually,
 then export the required scope.
 
+Confirming a file also collects its verified SHA-256 and File object, including
+the selected classification. A missing content index is prepared for that file
+during confirmation. If content cannot be verified, the path and decision are
+retained; a later content analysis automatically completes missing File objects
+for still-confirmed, active collections. Existing File objects are retained.
+
 When confirming a file classified as a webshell, requesting IPs with a logged
 HTTP 2xx response receive the `accessed-webshell` tag. This describes the
 request and response, not proof of code execution. Older `successful` tags
