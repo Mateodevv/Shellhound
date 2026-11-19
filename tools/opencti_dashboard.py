@@ -34,7 +34,7 @@ def label_value(field, value):
     return PROFILE_LABEL_PREFIX + field + ':' + value.strip().casefold()
 
 
-def label_id(field, value, display=False):
+def label_id(field, value, display=True):
     # OpenCTI Label.generate_id: UUIDv5 of the canonical {"value": ...} JSON.
     canonical = json.dumps({'value': (display_label(field, value) if display else label_value(field, value)).strip().lower()}, ensure_ascii=False,
                            sort_keys=True, separators=(',', ':'))
@@ -131,7 +131,7 @@ def build_dashboard():
         'Fallzahlen belegen weder Schadenwahrscheinlichkeit noch die Wirksamkeit von Präventionsmaßnahmen.'))
     manifest = {'widgets': widgets, 'config': {'startDate': None, 'endDate': None, 'relativeDate': None}}
     return {'openCTI_version': VERSION, 'type': 'dashboard', 'configuration': {
-        'name': 'Shellhound · Fallprofile und Cyber-Schäden · Verteilungen',
+        'name': 'Shellhound · Fallprofile · Kurzlabels',
         'manifest': base64.b64encode(json.dumps(manifest, ensure_ascii=False,
                                               separators=(',', ':')).encode()).decode(),
     }}
@@ -150,8 +150,8 @@ def build_catalogue():
                  'name': 'Shellhound Dashboard · Labelkatalog', 'context': 'unspecified',
                  'description': 'Technischer Katalog für portable Dashboard-Filter. Kein Vorfall, kein Kunde.',
                  'object_refs': [identity_id],
-                 'labels': sorted({CASE_LABEL} | {label for field, values in options().items() for value in values
-                                                  for label in (label_value(field, value), display_label(field, value))})},
+                 'labels': sorted({CASE_LABEL} | {display_label(field, value)
+                                  for field, values in options().items() for value in values})},
             ]}
 
 
@@ -163,7 +163,7 @@ def write_artifacts():
         target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         print(target)
     mapping = ['# Labels manuell zuordnen', '',
-               'Die technischen Labels behalten und die passenden kurzen Labels am selben Case ergänzen.',
+               'Die passenden kurzen Labels am selben Case ergänzen, prüfen und danach die alten technischen Zuordnungen entfernen.',
                'Zusätzlich jedem Shellhound-Case `Webserver Compromise` geben. Das Label allein ist kein technischer Nachweis.',
                'Vor dem Dashboard den aktualisierten Labelkatalog importieren; danach das neue Dashboard importieren.', '',
                '| Vorhandenes technisches Label | Zusätzliches kurzes Label |', '|---|---|']

@@ -37,9 +37,9 @@ class CaseContextTests(unittest.TestCase):
             self.assertIn(note['id'], container['object_refs'])
             self.assertEqual(profile_options.context_labels(CONTEXT), container['labels'])
             self.assertEqual(container['labels'], preview['case_labels'])
-            self.assertIn('shellhound:profile:spread:web_application', container['labels'])
-            self.assertIn('shellhound:profile:hosting_providers:synthetic hosting', container['labels'])
-            self.assertIn('shellhound:profile:initial_cve:cve-2026-12345', container['labels'])
+            self.assertIn('SH Ausbreitung: Webanwendung', container['labels'])
+            self.assertIn('SH Anbieter: synthetic hosting', container['labels'])
+            self.assertIn('SH Initial-CVE: CVE-2026-12345', container['labels'])
             self.assertFalse(any(obj['type'] == 'vulnerability' for obj in preview['objects']))
             self.assertTrue(all(not obj.get('labels') for obj in preview['objects'] if obj['id'] != container['id']))
             self.assertNotIn('LOCAL-ONLY-NOTE', json.dumps(preview))
@@ -84,18 +84,18 @@ class CaseContextTests(unittest.TestCase):
             self.assertEqual(initial['id'], cleared['id'])
             self.assertEqual({'schema': 'shellhound.case-context/v1', **profile_options.context_defaults()}, json.loads(cleared['content']))
             labels = graph.build_preview(case)['case_labels']
-            self.assertEqual(2 * len(profile_options.context_defaults()) + 1, len(labels))
+            self.assertEqual(len(profile_options.context_defaults()) + 1, len(labels))
             self.assertIn('Webserver Compromise', labels)
-            self.assertTrue(all(value.endswith(':unknown') for value in labels if value.startswith(profile_options.PROFILE_LABEL_PREFIX)))
+            self.assertFalse(any(value.startswith(profile_options.PROFILE_LABEL_PREFIX) for value in labels))
             self.assertIn('SH Größe: unbekannt', labels)
 
     def test_case_labels_are_stable_and_keep_fields_and_multiple_providers_separate(self):
         first = profile_options.context_labels({**CONTEXT, 'hosting_providers': ['Hetzner', 'AWS', 'hetzner']})
         second = profile_options.context_labels({**CONTEXT, 'hosting_providers': ['aws', 'Hetzner']})
         self.assertEqual(first, second)
-        self.assertIn('shellhound:profile:data_exfiltration:not_observed', first)
-        self.assertNotIn('shellhound:profile:data_exfiltration:unknown', first)
-        self.assertNotIn('shellhound:profile:hosting_providers:unknown', first)
+        self.assertIn('SH Abfluss: nicht beobachtet', first)
+        self.assertNotIn('SH Abfluss: unbekannt', first)
+        self.assertNotIn('SH Anbieter: unbekannt', first)
 
     def test_validation_rejects_unstructured_or_ambiguous_values(self):
         invalid = [{'employee_count': 42}, {'hosting_model': 'Guessed from IP'}, {'spread': 'web_server'},

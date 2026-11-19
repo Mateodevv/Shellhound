@@ -321,7 +321,8 @@ class OpenCTIHTTPTests(unittest.TestCase):
             catalogue = self.request('GET', '/api/profile/sectors')[1]['context_options']
             self.assertIn('not_observed', catalogue['data_exfiltration'])
             self.assertIn('Hetzner', catalogue['hosting_providers'])
-            self.assertIn('shellhound:profile:employee_count:10-49', preview['case_labels'])
+            self.assertIn('SH Größe: 10–49', preview['case_labels'])
+            self.assertFalse(any(label.startswith('shellhound:profile:') for label in preview['case_labels']))
 
 
     def test_wizard_creates_complete_profile_before_any_transfer(self):

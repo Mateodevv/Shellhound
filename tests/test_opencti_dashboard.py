@@ -4,7 +4,7 @@ import json
 import unittest
 
 from server.casework.profile_options import CONTEXT_OPTIONS, context_labels
-from tools.opencti_dashboard import (OUTPUT, TITLES, VERSION, build_catalogue,
+from tools.opencti_dashboard import (OUTPUT, TITLES, VERSION, display_label, build_catalogue,
                                      build_dashboard, label_id, label_value, options)
 
 
@@ -18,6 +18,7 @@ class OpenCTIDashboardTests(unittest.TestCase):
         for name, expected in [('01-shellhound-label-catalogue.stix.json', build_catalogue()),
                                ('02-shellhound-dashboard-' + VERSION + '.json', self.dashboard)]:
             self.assertEqual(json.loads((OUTPUT / name).read_text(encoding='utf-8')), expected)
+        self.assertNotIn('shellhound:profile:', json.dumps(self.manifest))
         self.assertEqual(self.dashboard['type'], 'dashboard')
         self.assertEqual(self.dashboard['openCTI_version'], '7.261103.0')
 
@@ -26,14 +27,14 @@ class OpenCTIDashboardTests(unittest.TestCase):
         self.assertEqual([o['type'] for o in catalogue['objects']], ['identity', 'grouping'])
         self.assertEqual(catalogue['objects'][1]['object_refs'], [catalogue['objects'][0]['id']])
         labels = set(catalogue['objects'][1]['labels'])
-        self.assertEqual(len(labels), 2 * sum(len(v) for v in options().values()) + 1)
+        self.assertEqual(len(labels), sum(len(v) for v in options().values()) + 1)
         self.assertIn('Webserver Compromise', labels)
         for field, values in options().items():
             for value in values:
                 profile = {field: [value] if field in ('spread', 'hosting_providers') else value}
-                self.assertIn(label_value(field, value), context_labels(profile))
-                self.assertIn(label_value(field, value), labels)
-        self.assertEqual(label_id('data_exfiltration', 'confirmed'),
+                self.assertIn(display_label(field, value), context_labels(profile))
+                self.assertIn(display_label(field, value), labels)
+        self.assertEqual(label_id('data_exfiltration', 'confirmed', display=False),
                          'label--225f97d0-a93c-5966-9168-741165b8cee5')
 
     def test_all_queries_are_scoped_and_all_references_seeded(self):

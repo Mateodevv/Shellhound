@@ -67,41 +67,20 @@ local case or IOC notes. The preview shows the same context before confirmation.
 
 ### Community Edition: filterable case labels
 
-The Incident Response case also receives a label for each profile value, using
-the reserved namespace `shellhound:profile:<field>:<value>`. Scalar fields have
-one label; providers and affected areas have one per value. Missing values use
-an explicit `unknown` label. Values are lowercased, deduplicated and sorted;
-the JSON Note preserves original provider spelling. No organization name,
-summary, local notes or source paths become profile labels. These labels belong
-only to the case, not its shared IPs, hashes, CVEs or organization.
+Cases receive short readable labels in the reserved `SH ` namespace and the
+fixed label `Webserver Compromise`. Examples: `SH Größe: 10–49`,
+`SH Hosting: Cloud`, `SH Abfluss: bestätigt`, `SH Initial-CVE: CVE-2026-12345`.
+Missing values use `unbekannt`. Providers and affected areas allow multiple
+labels. The JSON Note preserves the full original field values.
 
-Examples:
-
-```text
-shellhound:profile:employee_count:10-49
-shellhound:profile:hosting_model:managed_hosting
-shellhound:profile:hosting_providers:hetzner
-shellhound:profile:initial_cve:cve-2026-12345
-shellhound:profile:data_exfiltration:not_observed
-shellhound:profile:spread:web_server
-```
-
-Use **Label** filters on Incident Response cases, including dashboard widgets.
-The initial CVE is included in the context Note and case labels; clearing it
-exports `shellhound:profile:initial_cve:unknown`. It does not automatically
-create a vulnerability IOC or an exploitation relationship. To transfer a
-Vulnerability object, select the corresponding CVE in the IOC Box as usual.
-For example, combine `shellhound:profile:hosting_model:managed_hosting` AND
-`shellhound:profile:data_exfiltration:confirmed` to count these cases. Labels
-are categories, not numeric or date fields for arithmetic or range comparisons.
-
-After TAXII imports the case, explicit GraphQL label updates add missing labels
-and check their visibility before detaching old
-labels in the reserved namespaces (`shellhound:profile:` and `SH `). Labels outside `shellhound:profile:` are
-retained, including other Shellhound labels. Global Label objects are never
-deleted. The final managed label set (including `Webserver Compromise`) must exactly match the reviewed preview
-before a receipt becomes complete. Permission failures or mismatches remain
-incomplete; retry checks labels again without resubmitting completed TAXII batches.
+The compact dashboard uses only these short labels, including its case cohort
+and status filters. Legacy `shellhound:profile:` labels are no longer emitted.
+On transfer, replacement labels are added and verified before stale SH or legacy
+profile associations are detached. Unrelated labels remain unchanged, and global
+Label objects are never deleted. Existing cases need a fresh reviewed transfer
+or manual migration using [the label mapping](opencti-dashboard/LABELS.md).
+The fixed workflow label does not prove technical compromise. Labels belong to
+cases, never their shared organizations, CVEs, IPs or files.
 
 ## Review and transfer
 
@@ -171,8 +150,7 @@ and their reviewed STIX context.
 ## Readable chart labels
 
 Cases additionally receive `Webserver Compromise` and readable labels in the
-reserved `SH ` namespace (for example `SH Größe: 10–49`). Technical profile
-labels remain unchanged. Synchronization verifies both managed namespaces and
+reserved `SH ` namespace (for example `SH Größe: 10–49`). Legacy technical labels are no longer emitted and their case associations are removed after replacement verification. Synchronization verifies both managed namespaces and
 the fixed case label, replacing stale associations while preserving unrelated
 labels. These labels belong only to the Case-Incident, never shared entities.
 The fixed label describes the Shellhound workflow; it does not establish compromise.

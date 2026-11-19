@@ -1,6 +1,6 @@
 # Labels manuell zuordnen
 
-Die technischen Labels behalten und die passenden kurzen Labels am selben Case ergänzen.
+Die passenden kurzen Labels am selben Case ergänzen, prüfen und danach die alten technischen Zuordnungen entfernen.
 Zusätzlich jedem Shellhound-Case `Webserver Compromise` geben. Das Label allein ist kein technischer Nachweis.
 Vor dem Dashboard den aktualisierten Labelkatalog importieren; danach das neue Dashboard importieren.
 

@@ -35,7 +35,7 @@ def main(argv=None):
         assert any(obj.get('labels') == ['manual-tag'] for obj in result['objects'])
         case_object = next(obj for obj in result['objects'] if obj['id'] == result['case_id'])
         assert case_object['labels'] == result['case_labels']
-        assert 'shellhound:profile:hosting_providers:hetzner' in case_object['labels']
+        assert 'SH Anbieter: Hetzner' in case_object['labels']
         print(json.dumps({'offline': True, 'objects': len(result['objects']), 'iocs': len(result['iocs']), 'errors': result['errors']}))
     return 0
 

@@ -94,7 +94,6 @@ def context_labels(context):
         value = context.get(key, default)
         values = value if isinstance(value, list) else [value or 'unknown']
         for item in values or ['unknown']:
-            labels.add(PROFILE_LABEL_PREFIX + key + ':' + item.strip().casefold())
             labels.add(display_label(key, item))
     return sorted(labels)
 

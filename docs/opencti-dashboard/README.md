@@ -15,13 +15,13 @@ keine Enterprise Custom Fields.
    einen Connector für STIX 2.1 JSON verwenden. Der Connector muss laufen und
    dein Konto muss den Import und das Anlegen von Labels erlauben.
 2. In OpenCTI prüfen, ob das Label
-   `shellhound:profile:data_exfiltration:confirmed` vorhanden ist. Der Katalog
+   `SH Abfluss: bestätigt` vorhanden ist. Der Katalog
    legt alle Auswahlwerte an, auch wenn es dazu noch keine Fälle gibt.
 3. **Dashboard importieren:** In der Liste der benutzerdefinierten Dashboards
    **Import dashboard** wählen und
    `02-shellhound-dashboard-7.261103.0.json` hochladen. Diese Datei gehört nicht
    in den STIX-Datenimport. Das Dashboard heißt
-   **Shellhound · Fallprofile und Cyber-Schäden · Verteilungen**.
+   **Shellhound · Fallprofile · Kurzlabels**.
 4. Einen erfolgreich übertragenen Shellhound-Fall in der Fallliste öffnen und
    seine Profil-Labels mit den Kennzahlen vergleichen. Bei leeren Ergebnissen:
    Profiltransfer prüfen, Sichtbarkeits-/Markierungsrechte prüfen und den
@@ -57,7 +57,7 @@ diese Eigenschaften lassen sich in dieser Version nicht über das Dashboard-JSON
 frei einstellen.
 
 Gezählt werden ausschließlich `Case-Incident`-Objekte mit einem gültigen
-Shellhound-Label für die Unternehmensgröße, einschließlich `unknown`. Jeder
+SH-Label für die Unternehmensgröße, einschließlich `unknown`. Jeder
 Fall zählt einmal, auch wenn mehrere Fälle dasselbe Unternehmen betreffen.
 Alle Widgets zeigen standardmäßig alle Zeiten. Die Balken zählen die
 `object-label`-Verknüpfungen von diesen Fällen zu den Labels des jeweiligen
@@ -81,7 +81,7 @@ addieren sich deshalb nicht zur Gesamtzahl. Die 15 Kataloganbieter und unbekannt
 sind für die Auswertung berücksichtigt. Kategorien ohne Treffer erscheinen
 nicht als Balken; ohne Treffer zeigt das Widget keine Daten. Frei eingegebene
 Anbieter und die frei erfasste initiale CVE bleiben in den Fall-Labels sichtbar
-und filterbar, erhalten aber kein eigenes vorgefertigtes Diagramm. Die Achsen nutzen zusätzliche SH-Labels; die technischen Labels bleiben für die Fallfilter erhalten.
+und filterbar, erhalten aber kein eigenes vorgefertigtes Diagramm. Achsen und Fallfilter nutzen ausschließlich die kurzen SH-Labels.
 
 Fallzahlen liefern keine Schadenwahrscheinlichkeit: Versicherungsbestand,
 Expositionsdauer und Vergleichsgruppen fehlen. Kosten, Entdeckungsdauer,
@@ -120,8 +120,8 @@ die Darstellung in deiner laufenden OpenCTI-Instanz sind noch nicht geprüft.
 Den aktualisierten Katalog vor dem neuen Dashboard importieren. Dann entweder
 die Fälle aus der aktualisierten Shellhound-Version erneut übertragen oder
 [die vollständige Label-Zuordnung](LABELS.md) verwenden und die passenden
-Kurzlabels zusätzlich am jeweiligen Case eintragen. Technische Labels nicht
-löschen oder global umbenennen: Sie bleiben Grundlage der Fallfilter.
+Kurzlabels am jeweiligen Case eintragen und nach Prüfung die alten
+`shellhound:profile:`-Zuordnungen entfernen. Diese werden im neuen Dashboard nicht mehr verwendet.
 Jeder Shellhound-Case erhält außerdem `Webserver Compromise`. Dieses feste
 Falllabel ist eine Kennzeichnung des Workflows und kein automatischer Beweis
 einer Kompromittierung. Beide Labelgruppen gelten ausschließlich für Cases.
