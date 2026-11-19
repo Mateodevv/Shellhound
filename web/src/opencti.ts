@@ -3,12 +3,12 @@ import { api, type Job } from './api'
 
 export interface CaseContext {
   employee_count: string; hosting_model: string; hosting_providers: string[]; it_operating_model: string
-  initial_access: string; initial_access_status: string; spread: string[]
+  initial_access: string; initial_access_status: string; initial_cve: string; spread: string[]
   data_exfiltration: string; attacker_encryption: string; discovered_by: string; discovery_method: string
 }
 export function newCaseContext(): CaseContext {
   return { employee_count: 'unknown', hosting_model: 'unknown', hosting_providers: [], it_operating_model: 'unknown',
-    initial_access: 'unknown', initial_access_status: 'unknown', spread: [], data_exfiltration: 'unknown',
+    initial_access: 'unknown', initial_access_status: 'unknown', initial_cve: '', spread: [], data_exfiltration: 'unknown',
     attacker_encryption: 'unknown', discovered_by: 'unknown', discovery_method: 'unknown' }
 }
 export interface CaseProfile extends Partial<CaseContext> {

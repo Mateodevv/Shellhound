@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useId, useState, type Dispatch, type SetStateAction } from 'react'
 import { newCaseContext, useProfileOptions, type CaseContext, type CaseProfile } from '../../opencti'
 import { useT, type Translate } from '../../i18n'
 import { CtiError, CtiField, ctiInput } from './CaseProfile'
@@ -6,7 +6,7 @@ import { Button } from '../ui/ui'
 
 const groups: { name: string; fields: (keyof CaseContext)[] }[] = [
   { name: 'company', fields: ['employee_count', 'hosting_model', 'hosting_providers', 'it_operating_model'] },
-  { name: 'incident', fields: ['initial_access', 'initial_access_status', 'spread', 'data_exfiltration', 'attacker_encryption', 'discovered_by', 'discovery_method'] },
+  { name: 'incident', fields: ['initial_access', 'initial_access_status', 'initial_cve', 'spread', 'data_exfiltration', 'attacker_encryption', 'discovered_by', 'discovery_method'] },
 ]
 
 function optionLabel(field: keyof CaseContext, value: string, tr: Translate) {
@@ -19,6 +19,7 @@ export function CaseContextFields({ profile, onChange }: {
 }) {
   const tr = useT()
   const catalogue = useProfileOptions()
+  const initialCveHintId = useId()
   const context = { ...newCaseContext(), ...profile }
   const [customProvider, setCustomProvider] = useState('')
   const [showCustomProvider, setShowCustomProvider] = useState(false)
@@ -37,6 +38,13 @@ export function CaseContextFields({ profile, onChange }: {
       <p className="text-[12px] text-[var(--muted)] sm:col-span-2">{tr(`caseContext.hint.${group.name}`)}</p>
       {group.fields.map(field => {
         const choices = catalogue.data?.context_options?.[field] ?? []
+        if (field === 'initial_cve') return <CtiField key={field} label={tr('caseContext.field.initial_cve')}>
+          <input aria-label={tr('caseContext.field.initial_cve')} aria-describedby={initialCveHintId}
+            className={ctiInput} value={context.initial_cve} maxLength={200} placeholder="CVE-2026-12345"
+            pattern="CVE-[0-9]{4}-[0-9]{4,}" autoCapitalize="characters" spellCheck={false}
+            onChange={event => onChange(previous => ({ ...previous, initial_cve: event.target.value.trim().toUpperCase() }))} />
+          <span id={initialCveHintId}>{tr('caseContext.initialCveHint')}</span>
+        </CtiField>
         if (field === 'hosting_providers') return <fieldset key={field} className="min-w-0 space-y-2">
           <legend className="mb-1 text-[12px] text-[var(--muted)]">{tr('caseContext.field.hosting_providers')}</legend>
           <select aria-label={tr('caseContext.field.hosting_providers')} className={ctiInput} value={showCustomProvider ? '__other__' : ''} disabled={context.hosting_providers.length >= 20} onChange={event => {
@@ -92,7 +100,7 @@ export function CaseContextSummary({ profile }: { profile?: Partial<CaseContext>
       const value = context[field]
       const text = Array.isArray(value)
         ? value.map(item => field === 'hosting_providers' ? item : optionLabel(field, item, tr)).join(', ')
-        : optionLabel(field, value, tr)
+        : field === 'initial_cve' ? value : optionLabel(field, value, tr)
       return <div key={field} className="min-w-0 space-y-1"><dt className="text-[12px] text-[var(--muted)]">{tr(`caseContext.field.${field}`)}</dt>
         <dd className="whitespace-pre-wrap break-words text-[13px]">{text || tr('caseContext.unknown')}</dd></div>
     })}

@@ -46,14 +46,14 @@ CONTEXT_OPTIONS = {
 
 def context_defaults():
     return {**{key: 'unknown' for key in CONTEXT_OPTIONS if key != 'spread'},
-            'hosting_providers': [], 'spread': []}
+            'hosting_providers': [], 'spread': [], 'initial_cve': ''}
 
 
 def context_labels(context):
     labels = set()
     for key, default in context_defaults().items():
         value = context.get(key, default)
-        values = value if isinstance(value, list) else [value]
+        values = value if isinstance(value, list) else [value or 'unknown']
         for item in values or ['unknown']:
             labels.add(PROFILE_LABEL_PREFIX + key + ':' + item.strip().casefold())
     return sorted(labels)

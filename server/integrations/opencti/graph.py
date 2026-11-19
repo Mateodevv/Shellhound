@@ -20,7 +20,7 @@ from server.casework.profile_options import context_defaults, context_labels
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
 OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "file"}
 IOC_TYPES = {"ip", "vulnerability", "hash", "file"}
-MODEL_VERSION = 7
+MODEL_VERSION = 8
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}

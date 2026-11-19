@@ -61,7 +61,7 @@ it('restores and edits all company and incident fields without inferring missing
     discovered_by: ['unknown', 'soc_mdr'], discovery_method: ['unknown', 'monitoring'],
   } })
   vi.mocked(patch).mockResolvedValue({})
-  const profile = { ...newCaseProfile(), employee_count: '10-49', hosting_providers: ['Saved Hosting'] }
+  const profile = { ...newCaseProfile(), employee_count: '10-49', hosting_providers: ['Saved Hosting'], initial_cve: 'CVE-2025-12345' }
   const info = { name: 'Context case', reference: 'CONTEXT-1', profile_revision: 'r1', profile } as CaseInfo
   renderWithProviders(<CaseProfileForm slug="context" info={info} onClose={vi.fn()} />)
   expect(screen.getByRole('combobox', { name: 'Company size (employees)' })).toHaveValue('10-49')
@@ -70,6 +70,13 @@ it('restores and edits all company and incident fields without inferring missing
   expect(screen.getByRole('combobox', { name: 'Data exfiltration' })).toHaveValue('unknown')
   expect(screen.getByRole('combobox', { name: 'Encryption by attackers' })).toHaveValue('unknown')
   expect(screen.getByRole('combobox', { name: 'Initial access assessment' })).toBeDisabled()
+  const initialCve = screen.getByRole('textbox', { name: 'Initial CVE' })
+  expect(initialCve).toHaveValue('CVE-2025-12345')
+  fireEvent.change(initialCve, { target: { value: 'cve-2026-123' } })
+  expect(initialCve).toBeInvalid()
+  fireEvent.change(initialCve, { target: { value: ' cve-2026-12345 ' } })
+  expect(initialCve).toHaveValue('CVE-2026-12345')
+  expect(initialCve).toBeValid()
   await screen.findByRole('option', { name: 'Managed hosting' })
   for (const [label, value] of [
     ['Company size (employees)', '50-249'], ['Hosting model of the affected system', 'managed_hosting'],
@@ -85,7 +92,7 @@ it('restores and edits all company and incident fields without inferring missing
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/context', expect.objectContaining({ profile: {
     ...profile, employee_count: '50-249', hosting_model: 'managed_hosting', hosting_providers: ['Saved Hosting', 'Synthetic Cloud'],
-    it_operating_model: 'external', initial_access: 'software_vulnerability', initial_access_status: 'suspected',
+    it_operating_model: 'external', initial_access: 'software_vulnerability', initial_access_status: 'suspected', initial_cve: 'CVE-2026-12345',
     spread: ['web_server', 'other_servers'], data_exfiltration: 'not_observed', attacker_encryption: 'not_investigated',
     discovered_by: 'soc_mdr', discovery_method: 'monitoring',
   } })))
@@ -119,15 +126,19 @@ it('keeps legacy providers and allows a custom provider without submitting the f
 it('clears the access assessment when its route is reset to unknown', async () => {
   vi.mocked(api).mockResolvedValue({ sectors: [], context_options: {} })
   vi.mocked(patch).mockResolvedValue({})
-  const profile = { ...newCaseProfile(), initial_access: 'phishing', initial_access_status: 'confirmed' }
+  const profile = { ...newCaseProfile(), initial_access: 'phishing', initial_access_status: 'confirmed', initial_cve: 'CVE-2026-12345' }
   const info = { name: 'Saved case', reference: 'KEEP-1', profile_revision: 'r1', profile } as CaseInfo
   renderWithProviders(<CaseProfileForm slug="saved" info={info} onClose={vi.fn()} />)
   expect(screen.getByRole('combobox', { name: 'Initial access route' })).toHaveValue('phishing')
   fireEvent.change(screen.getByRole('combobox', { name: 'Initial access route' }), { target: { value: 'unknown' } })
   expect(screen.getByRole('combobox', { name: 'Initial access assessment' })).toHaveValue('unknown')
   expect(screen.getByRole('combobox', { name: 'Initial access assessment' })).toBeDisabled()
+  const initialCve = screen.getByRole('textbox', { name: 'Initial CVE' })
+  expect(initialCve).toHaveValue('CVE-2026-12345')
+  fireEvent.change(initialCve, { target: { value: '' } })
+  expect(initialCve).toBeValid()
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/saved', expect.objectContaining({
-    profile: expect.objectContaining({ initial_access: 'unknown', initial_access_status: 'unknown' }),
+    profile: expect.objectContaining({ initial_access: 'unknown', initial_access_status: 'unknown', initial_cve: '' }),
   })))
 })

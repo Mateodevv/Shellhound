@@ -26,6 +26,8 @@ export const en: Record<string, string> = {
   'caseContext.field.it_operating_model': 'IT operating model',
   'caseContext.field.initial_access': 'Initial access route',
   'caseContext.field.initial_access_status': 'Initial access assessment',
+  'caseContext.field.initial_cve': 'Initial CVE',
+  'caseContext.initialCveHint': 'CVE associated with initial access, for example CVE-2026-12345. Leave empty if unknown. Entering a CVE does not confirm exploitation.',
   'caseContext.field.spread': 'Spread / affected areas',
   'caseContext.field.data_exfiltration': 'Data exfiltration',
   'caseContext.field.attacker_encryption': 'Encryption by attackers',

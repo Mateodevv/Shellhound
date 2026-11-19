@@ -28,12 +28,13 @@ it('shows the sanitized reviewed profile, destination and TLP without exposing r
 it('shows the reviewed company and incident context before transfer', async () => {
   renderWithProviders(<OpenCtiExportDialog slug="qa" caseInfo={info} initial={{ ...preview, case_labels: ['shellhound:profile:employee_count:10-49', 'shellhound:profile:spread:web_server'], profile: {
     ...preview.profile, employee_count: '10-49', hosting_model: 'managed_hosting', hosting_providers: ['Reviewed provider'],
-    initial_access: 'software_vulnerability', initial_access_status: 'suspected', spread: ['web_server', 'other_servers'],
+    initial_access: 'software_vulnerability', initial_access_status: 'suspected', initial_cve: 'CVE-2026-12345', spread: ['web_server', 'other_servers'],
     data_exfiltration: 'not_observed', attacker_encryption: 'not_investigated', discovered_by: 'soc_mdr', discovery_method: 'monitoring',
   } }} initialOptions={{ ioc_ids: [1] }} onClose={vi.fn()} onQueued={vi.fn()} />)
   expect(screen.getByLabelText('Company and incident context')).toBeInTheDocument()
   expect(await screen.findByText('Reviewed provider')).toBeVisible()
   expect(screen.getByText('10–49 employees')).toBeVisible()
+  expect(screen.getByText('CVE-2026-12345')).toBeVisible()
   expect(screen.getByText('Web server, Other servers')).toBeVisible()
   expect(screen.getByText('No evidence found')).toBeVisible()
   expect(screen.getByText('Not investigated')).toBeVisible()

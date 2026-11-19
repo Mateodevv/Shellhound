@@ -31,8 +31,12 @@ Each main sector has a fixed local list of matching subsectors, selected directl
 within its group. New free-text values and cross-sector choices are rejected by
 the server. Existing custom values remain selectable as saved values; they are
 not renamed or deleted when the profile is edited.
-CVEs are managed once, in the IOC Box. The profile editor contains only the case
-context. Previously saved software and CVE profile details remain stored locally,
+CVEs are managed in the IOC Box. The profile editor also has an optional
+**Initial CVE** field for the CVE associated with initial access. Enter one
+identifier such as `CVE-2026-12345`; lowercase input is normalized to uppercase.
+Leave it empty if unknown. No value is inferred from the IOC Box or older CVE
+lists, and entering a CVE does not confirm exploitation. Previously saved
+software and CVE profile details remain stored locally,
 including in archives; editing the simplified form does not erase them.
 TLP:AMBER+STRICT remains the default marking.
 
@@ -77,11 +81,16 @@ Examples:
 shellhound:profile:employee_count:10-49
 shellhound:profile:hosting_model:managed_hosting
 shellhound:profile:hosting_providers:hetzner
+shellhound:profile:initial_cve:cve-2026-12345
 shellhound:profile:data_exfiltration:not_observed
 shellhound:profile:spread:web_server
 ```
 
 Use **Label** filters on Incident Response cases, including dashboard widgets.
+The initial CVE is included in the context Note and case labels; clearing it
+exports `shellhound:profile:initial_cve:unknown`. It does not automatically
+create a vulnerability IOC or an exploitation relationship. To transfer a
+Vulnerability object, select the corresponding CVE in the IOC Box as usual.
 For example, combine `shellhound:profile:hosting_model:managed_hosting` AND
 `shellhound:profile:data_exfiltration:confirmed` to count these cases. Labels
 are categories, not numeric or date fields for arithmetic or range comparisons.
