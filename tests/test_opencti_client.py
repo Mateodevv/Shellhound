@@ -57,6 +57,63 @@ class OpenCTIClientTests(unittest.TestCase):
         with self.assertRaisesRegex(api.OpenCTIError, 'could not be verified'):
             self.client.add_ip_labels('known-ip', ['Reviewed'])
 
+    def test_case_profile_labels_replace_only_reserved_associations_and_verify(self):
+        wanted = 'shellhound:profile:data_exfiltration:confirmed'
+        old = 'shellhound:profile:data_exfiltration:unknown'
+        foreign = [('foreign', 'Reviewed'), ('manual', 'shellhound:manual:keep'), ('similar', 'shellhound:profiled:keep')]
+        def case(*extra):
+            return {'data': {'caseIncident': {'id': 'our-case', 'entity_type': 'Case-Incident',
+                'objectLabel': [{'id': key, 'value': value} for key, value in [*foreign, *extra]]}}}
+        self._responses(case(('old', old)), {'data': {'labelAdd': {'id': 'new'}}},
+                        {'data': {'stixDomainObjectEdit': {'relationAdd': {'id': 'relation'}}}},
+                        case(('old', old), ('new', wanted)),
+                        {'data': {'stixDomainObjectEdit': {'relationDelete': {'id': 'our-case'}}}},
+                        case(('new', wanted)))
+        self.client.sync_case_labels('our-case', [wanted])
+        self.assertEqual({'input': {'value': wanted, 'update': False}}, self._payload(1)['variables'])
+        self.assertEqual({'id': 'our-case', 'input': {'toId': 'new', 'relationship_type': 'object-label'}}, self._payload(2)['variables'])
+        self.assertEqual({'id': 'our-case', 'toId': 'old', 'relationship_type': 'object-label'}, self._payload(4)['variables'])
+        for call in self.client._opener.open.call_args_list:
+            for forbidden in ('labelDelete', 'fieldPatch', 'askEnrichment', 'objectMarking'):
+                self.assertNotIn(forbidden, call.args[0].data.decode())
+        self.client._opener.open.reset_mock()
+        self._responses(case(('new', wanted)))
+        self.client.sync_case_labels('our-case', [wanted])
+        self.client._opener.open.assert_called_once()
+
+    def test_case_profile_sync_never_removes_old_values_before_replacement_is_visible(self):
+        old = {'id': 'old', 'value': 'shellhound:profile:employee_count:unknown'}
+        unchanged = {'data': {'caseIncident': {'id': 'our-case', 'entity_type': 'Case-Incident', 'objectLabel': [old]}}}
+        self._responses(unchanged, {'data': {'labelAdd': {'id': 'new'}}},
+                        {'data': {'stixDomainObjectEdit': {'relationAdd': {'id': 'relation'}}}}, unchanged)
+        with self.assertRaisesRegex(api.OpenCTIError, 'could not be verified'):
+            self.client.sync_case_labels('our-case', ['shellhound:profile:employee_count:10-49'])
+        self.assertFalse(any('relationDelete' in call.args[0].data.decode() for call in self.client._opener.open.call_args_list))
+
+    def test_case_profile_sync_requires_stale_labels_to_be_removed(self):
+        wanted = 'shellhound:profile:spread:unknown'
+        unchanged = {'data': {'caseIncident': {'id': 'our-case', 'entity_type': 'Case-Incident', 'objectLabel': [
+            {'id': 'new', 'value': wanted}, {'id': 'old', 'value': 'shellhound:profile:spread:web_server'}]}}}
+        self._responses(unchanged, {'data': {'stixDomainObjectEdit': {'relationDelete': {'id': 'our-case'}}}}, unchanged)
+        with self.assertRaisesRegex(api.OpenCTIError, 'could not be verified'):
+            self.client.sync_case_labels('our-case', [wanted])
+
+    def test_case_profile_sync_rejects_other_types_incomplete_labels_and_unreserved_input(self):
+        wanted = ['shellhound:profile:employee_count:unknown']
+        for row in (None, {'id': 'different-case', 'entity_type': 'Case-Incident', 'objectLabel': []},
+                    {'id': 'our-case', 'entity_type': 'Incident', 'objectLabel': []},
+                    {'id': 'our-case', 'entity_type': 'Case-Incident', 'objectLabel': [{'value': 'Unknown'}]}):
+            self.client._opener.open.reset_mock()
+            self._responses({'data': {'caseIncident': row}})
+            with self.assertRaises(api.OpenCTIError):
+                self.client.sync_case_labels('our-case', wanted)
+            self.client._opener.open.assert_called_once()
+        self.client._opener.open.reset_mock()
+        for invalid in ([], ['Foreign'], [None], ['shellhound:profile:x:' + 'a' * 500]):
+            with self.assertRaises(ValueError):
+                self.client.sync_case_labels('our-case', invalid)
+        self.client._opener.open.assert_not_called()
+
     def test_export_verification_batches_minimal_reads_and_preserves_missing(self):
         ids = [f"ipv4-addr--00000000-0000-4000-8000-{i:012d}" for i in range(51)]
         replies = []

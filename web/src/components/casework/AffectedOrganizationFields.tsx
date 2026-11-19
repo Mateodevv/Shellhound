@@ -1,7 +1,5 @@
 import { useState, type Dispatch, type SetStateAction } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../../api'
-import type { CaseProfile } from '../../opencti'
+import { useProfileOptions, type CaseProfile } from '../../opencti'
 import { useT } from '../../i18n'
 import { CtiField, CtiError, ctiInput } from './CaseProfile'
 import { SectorPicker } from './SectorPicker'
@@ -13,7 +11,7 @@ export function AffectedOrganizationFields({ profile, onChange, active, required
 }) {
   const tr = useT()
   const [countries, setCountries] = useState(profile.countries.join(', '))
-  const catalogue = useQuery({ queryKey: ['profile-sectors'], queryFn: () => api<{ sectors: string[]; subsectors: Record<string, string[]> }>('/api/profile/sectors'), staleTime: Infinity, enabled: active })
+  const catalogue = useProfileOptions(active)
   const change = <K extends keyof CaseProfile>(key: K, value: CaseProfile[K]) => onChange(previous => ({ ...previous, [key]: value }))
   return <>
     <CtiField label={`${tr('cti.organizationName')}${required ? ' *' : ''}`}><input required={active && required} maxLength={200} className={ctiInput} value={profile.organization_name || profile.pseudonym} onChange={event => onChange(previous => ({ ...previous, organization_name: event.target.value, pseudonym: '', organization_id: '' }))} /></CtiField>

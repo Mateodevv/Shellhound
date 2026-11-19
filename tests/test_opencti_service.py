@@ -163,6 +163,26 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.client.push.assert_called_once()
         self.assertEqual('complete', self.receipt(result['export_id'])['state'])
 
+    def test_case_profile_labels_are_required_and_retry_resumes_without_reimport(self):
+        workspace.update_case(self.case, profile={'employee_count': '10-49', 'hosting_providers': ['Hetzner']})
+        reviewed = self.preview()
+        result = service.transfer(self.root, self.case, reviewed['preview_id'])
+        self.client.sync_case_labels.side_effect = OpenCTIError('Synthetic case label permission failure')
+        with self.assertRaisesRegex(ValueError, 'permission'):
+            self.jobs.run()
+        receipt = self.receipt(result['export_id'])
+        self.assertEqual('partial', receipt['state'])
+        sent_case = next(obj for obj in self.client.push.call_args.args[0] if obj['id'] == reviewed['case_id'])
+        self.assertNotIn('labels', sent_case)
+        self.assertIsNone(service.state(self.root, self.case)['exports'][0]['case_url'])
+        self.client.sync_case_labels.assert_called_once_with('remote-' + reviewed['case_id'], reviewed['case_labels'])
+        self.client.sync_case_labels.side_effect = None
+        service.retry(self.root, self.case, result['export_id'])
+        self.jobs.run()
+        self.client.push.assert_called_once()
+        self.assertEqual(2, self.client.sync_case_labels.call_count)
+        self.assertEqual('complete', self.receipt(result['export_id'])['state'])
+
     def test_preflight_reads_are_bounded_and_cancellation_stops_next_chunk(self):
         barrier = threading.Barrier(4)
         context = _Context()

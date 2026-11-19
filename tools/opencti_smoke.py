@@ -16,7 +16,8 @@ def main(argv=None):
     with tempfile.TemporaryDirectory(prefix='shellhound-export-check-') as temporary:
         case = workspace.create_case(Path(temporary), 'Synthetic export', 'QA-EXPORT',
             profile={'organization_name': 'Manually entered QA organisation',
-                     'summary': 'Synthetic data only', 'sectors': ['Technology'], 'countries': ['DE']})
+                     'summary': 'Synthetic data only', 'sectors': ['Technology'], 'countries': ['DE'],
+                     'hosting_model': 'managed_hosting', 'hosting_providers': ['Hetzner']})
         conn = db.connect(case)
         try:
             db.add_ioc(conn, '198.51.100.4', 'ip', ['manual-tag'])
@@ -32,6 +33,9 @@ def main(argv=None):
         assert {item['type'] for item in result['iocs']} == {'ip', 'vulnerability', 'hash'}
         assert not {'indicator', 'artifact', 'malware', 'domain-name'} & {obj['type'] for obj in result['objects']}
         assert any(obj.get('labels') == ['manual-tag'] for obj in result['objects'])
+        case_object = next(obj for obj in result['objects'] if obj['id'] == result['case_id'])
+        assert case_object['labels'] == result['case_labels']
+        assert 'shellhound:profile:hosting_providers:hetzner' in case_object['labels']
         print(json.dumps({'offline': True, 'objects': len(result['objects']), 'iocs': len(result['iocs']), 'errors': result['errors']}))
     return 0
 

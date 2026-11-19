@@ -5,6 +5,7 @@ import { useT } from '../../i18n'
 import type { OpenCtiOptions, OpenCtiPreview } from '../../opencti'
 import { Button, Modal } from '../ui/ui'
 import { CaseProfileButton, CtiError } from '../casework/CaseProfile'
+import { CaseContextSummary } from '../casework/CaseContext'
 import { IocTag } from '../iocs/IocTags'
 import { OpenCtiReceipt } from './OpenCtiReceipt'
 
@@ -52,6 +53,12 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
             [tr('cti.period'), [profile?.first_seen, profile?.last_seen].filter(Boolean).join(' – ')],
             [tr('cti.marking'), profile?.marking]].map(([label, value]) => <div key={label} className="space-y-1"><dt className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">{label}</dt><dd className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">{value || '—'}</dd></div>)}
         </dl>
+        <CaseContextSummary profile={profile} />
+        {!!preview.case_labels?.length && <details className="space-y-2 border-t border-[var(--line)] pt-3">
+          <summary className="cursor-pointer text-[12px]">{tr('caseContext.exportLabels', { n: preview.case_labels.length })}</summary>
+          <p className="text-[12px] text-[var(--muted)]">{tr('caseContext.exportLabelsHint')}</p>
+          <ul className="space-y-1 font-mono text-[11px]">{preview.case_labels.map(label => <li key={label} className="break-all">{label}</li>)}</ul>
+        </details>}
       </section>
       {preview.redacted && <p role="status" className="text-[var(--review-text)]">{tr('cti.redacted')}</p>}
       {preview.already_exported && <div role="status" className="space-y-1 rounded-lg border border-[var(--line)] p-3"><p>{tr('cti.alreadyExported')}</p><OpenCtiReceipt counts={preview.counts} caseUrl={preview.already_exported.case_url} /></div>}

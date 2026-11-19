@@ -37,7 +37,10 @@ class OpenCTIGraphTests(unittest.TestCase):
             result = graph.build_preview(self.case)
         self.assertEqual({row['type'] for row in result['iocs']}, {'ip', 'vulnerability', 'hash'})
         types = {obj['type'] for obj in result['objects']}
-        self.assertFalse(types & {'indicator', 'artifact', 'malware', 'note', 'domain-name', 'url', 'user-account'})
+        self.assertFalse(types & {'indicator', 'artifact', 'malware', 'domain-name', 'url', 'user-account'})
+        notes = [obj for obj in result['objects'] if obj['type'] == 'note']
+        self.assertEqual(1, len(notes))
+        self.assertEqual('shellhound.case-context/v1', json.loads(notes[0]['content'])['schema'])
         wire = json.dumps(result)
         for private in ('LOCAL-ONLY-NOTE', 'LOCAL-ONLY-IOC-NOTE', 'example.invalid', 'private-user', str(self.case)):
             self.assertNotIn(private, wire)

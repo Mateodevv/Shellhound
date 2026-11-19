@@ -4,6 +4,7 @@ import { SlidersHorizontal } from 'lucide-react'
 import { api, patch, type CaseInfo } from '../../api'
 import { newCaseProfile, type CaseProfile } from '../../opencti'
 import { AffectedOrganizationFields } from './AffectedOrganizationFields'
+import { CaseContextFields } from './CaseContext'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
 
@@ -68,6 +69,7 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
     </>}
     <div hidden={section !== 'all' && section !== 'affected'}><div className="flex flex-col gap-4">
     <AffectedOrganizationFields profile={profile} onChange={onChange} active={section === 'all' || section === 'affected'} required={requiredContext} />
+    {(section === 'all' || section === 'affected') && <CaseContextFields profile={profile} onChange={onChange} />}
     <div className="grid gap-3 sm:grid-cols-2">
       <CtiField label={tr('cti.firstSeen')}><input type="date" className={ctiInput} value={profile.first_seen.slice(0, 10)} onChange={(e) => change('first_seen', e.target.value)} /></CtiField>
       <CtiField label={tr('cti.lastSeen')}><input type="date" className={ctiInput} value={profile.last_seen.slice(0, 10)} onChange={(e) => change('last_seen', e.target.value)} /></CtiField>

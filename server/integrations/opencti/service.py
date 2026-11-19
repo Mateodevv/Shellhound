@@ -271,7 +271,7 @@ def _prepare_shared(client, case_dir, receipt, payload, *, lookup=None, ctx=None
     """
     if payload.get("preflight_complete"):
         return
-    case_types = {"incident", "x-opencti-case-incident", "relationship"}
+    case_types = {"incident", "x-opencti-case-incident", "relationship", "note"}
     reused = {}
     candidates = [obj for obj in payload["objects"]
                   if not (obj["type"] in case_types and obj.get("x_shellhound_case_reference") == payload["case_reference"])]
@@ -302,6 +302,11 @@ def _prepare_shared(client, case_dir, receipt, payload, *, lookup=None, ctx=None
         return value
 
     wire = [rewrite(obj) for obj in payload["objects"] if obj["id"] not in reused]
+    # Reconcile case labels explicitly after import; do not rely on TAXII's
+    # label merge behavior to preserve another analyst's labels.
+    for obj in wire:
+        if obj['id'] == payload.get('case_id'):
+            obj.pop('labels', None)
     payload["reused_shared"] = reused
     payload["wire_objects"] = wire
     payload["batches"] = [{"ids": [o["id"] for o in wire[index:index + 100]], "state": "new", "work_id": ""}
@@ -424,6 +429,10 @@ def _queue_export(root, case_dir, receipt):
                         _save_export(case_dir, receipt, payload, 'paused')
                         return {'export_id': receipt['id'], 'state': 'paused'}
                     client.add_ip_labels(mapped[obj['id']], obj['labels'])
+            if ctx.cancelled():
+                _save_export(case_dir, receipt, payload, 'paused')
+                return {'export_id': receipt['id'], 'state': 'paused'}
+            client.sync_case_labels(mapped[payload['case_id']], payload['case_labels'])
             payload["timings"]["import_verify_seconds"] = round(time.monotonic() - phase_started, 3)
             _save_export(case_dir, receipt, payload, "complete")
             return {"export_id": receipt["id"], "objects": len(objects), "state": "complete"}

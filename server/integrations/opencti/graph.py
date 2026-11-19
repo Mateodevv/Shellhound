@@ -15,11 +15,12 @@ from pathlib import Path
 from server import db
 from server.ioc import model as ioc_model
 from server.paths import display_path, io_path
+from server.casework.profile_options import context_defaults, context_labels
 
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
 OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "file"}
 IOC_TYPES = {"ip", "vulnerability", "hash", "file"}
-MODEL_VERSION = 5
+MODEL_VERSION = 7
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
@@ -220,6 +221,13 @@ def build_preview(case_dir, options=None):
         if profile.get(key):
             incident[key] = _timestamp(profile[key], naive_utc=True)
     incident_id = add(incident)
+    context = {key: ([clean.text(item) for item in profile.get(key, default)] if isinstance(default, list)
+                     else profile.get(key, default)) for key, default in context_defaults().items()}
+    # A standard STIX Note needs no custom OpenCTI schema. Include unknowns
+    # so clearing a saved assessment also updates the previously exported context.
+    add(sdo('note', [reference, 'case-context'], abstract='Shellhound case profile',
+            content=json.dumps({'schema': 'shellhound.case-context/v1', **context}, ensure_ascii=False, sort_keys=True, indent=2),
+            object_refs=[incident_id], x_shellhound_case_reference=reference))
     organization = profile.get('organization_name') or profile.get('pseudonym')
     context_id = incident_id
     if organization and profile.get('organization_id'):
@@ -285,12 +293,14 @@ def build_preview(case_dir, options=None):
         entry['fingerprint'] = _digest(_stable([obj, profile]))
         output.append(entry)
     refs = [key for key in objects if key != author_id]
+    case_labels = context_labels(context)
     case_id = add(sdo('x-opencti-case-incident', [reference, 'case'], name=reference,
                       description=clean.text(profile.get('summary') or ''), object_refs=refs,
+                      labels=case_labels,
                       x_shellhound_case_reference=reference,
                       external_references=[{'source_name': 'Shellhound', 'external_id': reference + ':case'}]))
     result = {'model_version': MODEL_VERSION, 'case_reference': reference, 'incident_id': incident_id,
-              'case_id': case_id, 'objects': list(objects.values()), 'iocs': output,
+              'case_id': case_id, 'case_labels': case_labels, 'objects': list(objects.values()), 'iocs': output,
               'warnings': warnings, 'errors': errors}
     result['fingerprint'] = _digest(_stable(result))
     result['profile'] = {
@@ -303,10 +313,12 @@ def build_preview(case_dir, options=None):
         'state': clean.text(profile.get('state')), 'city': clean.text(profile.get('city')),
         'first_seen': incident.get('first_seen', ''), 'last_seen': incident.get('last_seen', ''),
         'marking': profile.get('marking', 'TLP:AMBER+STRICT'),
+        **context,
     }
     result['redacted'] = any(clean.text(value) != value for value in
                              [organization or '', profile.get('summary') or '',
                               profile.get('state') or '', profile.get('city') or '',
                               *(profile.get('sectors') or []),
-                              *(item['name'] for item in profile.get('subsectors') or [])])
+                               *(item['name'] for item in profile.get('subsectors') or []),
+                               *(profile.get('hosting_providers') or [])])
     return result

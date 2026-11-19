@@ -180,7 +180,11 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertEqual("account-of", detail["relationships"][0]["kind"])
         _, preview = self.request("POST", base + "/opencti/preview", {})
         notes = [obj["content"] for obj in preview["objects"] if obj["type"] == "note"]
-        self.assertEqual([], notes)
+        from server.casework.profile_options import context_defaults
+        self.assertEqual([{'schema': 'shellhound.case-context/v1', **context_defaults()}],
+                         [json.loads(content) for content in notes])
+        for private in ('account-test', 'account@example.invalid', '2024-02-03 04:05:06'):
+            self.assertNotIn(private, json.dumps(preview))
 
     def test_structured_ioc_api_validation_and_offline_details(self):
         base = f"/api/cases/{self.slug}"
@@ -301,6 +305,24 @@ class OpenCTIHTTPTests(unittest.TestCase):
         self.assertIn('x-opencti-case-incident', {obj['type'] for obj in preview['objects']})
         self.assertEqual(400, self.request('POST', f'/api/cases/{self.slug}/opencti/export', {'preview_id': preview['preview_id']})[0])
 
+    def test_case_context_api_roundtrip_validation_and_offline_preview(self):
+        from tests.test_case_context import CONTEXT
+        path = f'/api/cases/{self.slug}'
+        with patch('server.integrations.opencti.service.OpenCTIClient', side_effect=AssertionError('Unexpected network')):
+            code, saved = self.request('PATCH', path, {'profile': CONTEXT})
+            self.assertEqual(200, code, saved)
+            self.assertEqual(CONTEXT, {key: saved['profile'][key] for key in CONTEXT})
+            self.assertEqual(400, self.request('PATCH', path, {'profile': {'data_exfiltration': False}})[0])
+            self.assertEqual(saved['profile'], self.request('GET', path)[1]['profile'])
+            code, preview = self.request('POST', path + '/opencti/preview', {'ioc_ids': []})
+            self.assertEqual(200, code, preview)
+            note = next(obj for obj in preview['objects'] if obj['type'] == 'note')
+            self.assertEqual(CONTEXT['discovered_by'], json.loads(note['content'])['discovered_by'])
+            catalogue = self.request('GET', '/api/profile/sectors')[1]['context_options']
+            self.assertIn('not_observed', catalogue['data_exfiltration'])
+            self.assertIn('Hetzner', catalogue['hosting_providers'])
+            self.assertIn('shellhound:profile:employee_count:10-49', preview['case_labels'])
+
 
     def test_wizard_creates_complete_profile_before_any_transfer(self):
         profile = {
@@ -320,7 +342,8 @@ class OpenCTIHTTPTests(unittest.TestCase):
             })
             self.assertEqual(200, status, created)
             _, saved = self.request("GET", f"/api/cases/{created['slug']}")
-        expected = {**profile, "countries": ["DE", "AT"], "organization_name": "Manual organisation", "organization_id": saved["profile"]["organization_id"], "pseudonym": "Manual organisation", "subsectors": [], "state": "", "city": ""}
+        from server.casework.profile import defaults
+        expected = {**defaults(), **profile, "countries": ["DE", "AT"], "organization_name": "Manual organisation", "organization_id": saved["profile"]["organization_id"], "pseudonym": "Manual organisation", "subsectors": [], "state": "", "city": ""}
         self.assertEqual(expected, saved["profile"])
         self.assertEqual("PIM-WIZARD-1", saved["reference"])
         _, state = self.request("GET", f"/api/cases/{created['slug']}/opencti")

@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from server import diagnostics
+from server.casework.profile_options import PROFILE_LABEL_PREFIX
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_TAXII_BYTES = 90 * 1024 * 1024
@@ -434,6 +435,54 @@ class OpenCTIClient:
             known.add(value.casefold())
         if missing and not expected <= current():
             raise OpenCTIError('The exported IP tags could not be verified.', code='invalid_response')
+
+    def sync_case_labels(self, identifier, labels):
+        """Replace only reserved profile-label associations on a visible case."""
+        identifier = _identifier(identifier)
+        if not isinstance(labels, list) or not labels or any(
+                not isinstance(value, str) or not value.startswith(PROFILE_LABEL_PREFIX) or
+                len(value) > 500 or any(ord(char) < 32 for char in value) for value in labels):
+            raise ValueError('Invalid case profile labels')
+        expected = {value.casefold() for value in labels}
+
+        def current():
+            row = self._graphql('''query ShellhoundCaseLabels($id:String!) {
+              caseIncident(id:$id) { id entity_type objectLabel { id value } }
+            }''', {'id': identifier}).get('caseIncident')
+            if not isinstance(row, dict) or row.get('id') != identifier or row.get('entity_type') != 'Case-Incident':
+                raise OpenCTIError('The exported case is not visible for label verification.', code='invalid_response')
+            values = row.get('objectLabel')
+            if not isinstance(values, list) or any(not isinstance(item, dict) or not isinstance(item.get('value'), str)
+                                                 or not isinstance(item.get('id'), str) or not item['id'] for item in values):
+                raise OpenCTIError('OpenCTI returned incomplete case labels.', code='invalid_response')
+            return values
+
+        before = current()
+        known = {item['value'].casefold() for item in before}
+        stale = [item for item in before if item['value'].casefold().startswith(PROFILE_LABEL_PREFIX)
+                 and item['value'].casefold() not in expected]
+        missing = expected - known
+        for value in sorted(missing):
+            label = self._graphql('''mutation ShellhoundCaseLabel($input:LabelAddInput!) {
+              labelAdd(input:$input) { id }
+            }''', {'input': {'value': value, 'update': False}}).get('labelAdd')
+            if not isinstance(label, dict) or not label.get('id'):
+                raise OpenCTIError('OpenCTI did not return a label identity.', code='invalid_response')
+            self._graphql('''mutation ShellhoundCaseLabelAdd($id:ID!, $input:StixRefRelationshipAddInput!) {
+              stixDomainObjectEdit(id:$id) { relationAdd(input:$input) { id } }
+            }''', {'id': identifier, 'input': {'toId': _identifier(label['id']), 'relationship_type': 'object-label'}})
+        # Do not remove a prior assessment unless the replacement is visible.
+        if missing and not expected <= {item['value'].casefold() for item in current()}:
+            raise OpenCTIError('The exported case profile labels could not be verified.', code='invalid_response')
+        for item in stale:
+            self._graphql('''mutation ShellhoundCaseLabelRemove($id:ID!, $toId:StixRef!, $relationship_type:String!) {
+              stixDomainObjectEdit(id:$id) { relationDelete(toId:$toId, relationship_type:$relationship_type) { id } }
+            }''', {'id': identifier, 'toId': _identifier(item['id']), 'relationship_type': 'object-label'})
+        if missing or stale:
+            actual = {item['value'].casefold() for item in current()
+                      if item['value'].casefold().startswith(PROFILE_LABEL_PREFIX)}
+            if actual != expected:
+                raise OpenCTIError('The exported case profile labels could not be verified.', code='invalid_response')
 
     def push(self, objects):
         if not isinstance(objects, list) or not objects or any(not isinstance(item, dict) for item in objects):

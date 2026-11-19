@@ -14,11 +14,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from server.casework.profile_options import CONTEXT_OPTIONS, context_defaults
+
 REGISTRY_FILE = "pseudonyms.json"
 MARKINGS = ("TLP:CLEAR", "TLP:GREEN", "TLP:AMBER", "TLP:AMBER+STRICT", "TLP:RED")
 _LOCK = threading.RLock()
 _FIELDS = {"organization_id", "organization_name", "pseudonym", "summary", "sectors", "subsectors", "countries", "state", "city",
-           "first_seen", "last_seen", "software", "vulnerabilities", "marking"}
+           "first_seen", "last_seen", "software", "vulnerabilities", "marking"} | set(context_defaults())
 
 
 def defaults(profile=None):
@@ -26,7 +28,8 @@ def defaults(profile=None):
     result = {"organization_id": "", "organization_name": "", "pseudonym": "", "summary": "",
               "subsectors": [], "state": "", "city": "",
               "sectors": [], "countries": [], "first_seen": "", "last_seen": "",
-              "software": [], "vulnerabilities": [], "marking": "TLP:AMBER+STRICT"}
+              "software": [], "vulnerabilities": [], "marking": "TLP:AMBER+STRICT",
+              **context_defaults()}
     if isinstance(profile, dict):
         result.update({key: value for key, value in profile.items() if key in _FIELDS})
     return result
@@ -70,6 +73,24 @@ def _validated(profile):
     if not isinstance(profile, dict) or set(profile) - _FIELDS:
         raise ValueError("Case profile contains unsupported fields")
     result = defaults(profile)
+    for field, choices in CONTEXT_OPTIONS.items():
+        if field == 'spread':
+            values = _array(result[field], field, len(choices))
+            if any(not isinstance(value, str) or value not in choices for value in values):
+                raise ValueError('Choose valid affected areas')
+            result[field] = list(dict.fromkeys(values))
+        elif not isinstance(result[field], str) or result[field] not in choices:
+            raise ValueError(f'Choose a valid {field}')
+    providers = [_text(value, 'hosting provider', 200, required=True)
+                 for value in _array(result['hosting_providers'], 'hosting providers', 20)]
+    if any(any(ord(char) < 32 for char in value) for value in providers):
+        raise ValueError('Hosting providers must be single-line names')
+    result['hosting_providers'] = []
+    for value in providers:
+        if value.casefold() not in {item.casefold() for item in result['hosting_providers']}:
+            result['hosting_providers'].append(value)
+    if result['initial_access'] == 'unknown' and result['initial_access_status'] != 'unknown':
+        raise ValueError('Choose an initial access route before assessing it')
     for key in ("organization_id", "organization_name", "pseudonym", "city", "state"):
         result[key] = _text(result[key], key, 200)
     result["summary"] = _text(result["summary"], "summary", 10000)

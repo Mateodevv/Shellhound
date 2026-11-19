@@ -6,6 +6,7 @@ import { useOpenCtiSettings, newCaseProfile } from '../../opencti'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
 import { CaseProfileFields, CtiError, CtiField, ctiInput } from './CaseProfile'
+import { CaseContextSummary } from './CaseContext'
 
 export function CaseWizard({ onClose, onCreated }: { onClose: () => void; onCreated: (info: CaseInfo) => void }) {
   const settings = useOpenCtiSettings()
@@ -72,6 +73,7 @@ function CaseWizardForm({ configured, onClose, onCreated }: { configured: boolea
                 {summaryItem(tr('cti.firstSeen'), profile.first_seen)}{summaryItem(tr('cti.lastSeen'), profile.last_seen)}
               </>}
             </dl>
+            <CaseContextSummary profile={profile} />
 
             <p className="rounded-lg bg-[var(--panel-2)] p-3 text-[12px] text-[var(--muted)]">{tr(configured ? 'wizard.savedLocally' : 'wizard.savedLocally.local')}</p>
           </>}

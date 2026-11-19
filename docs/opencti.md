@@ -39,6 +39,61 @@ TLP:AMBER+STRICT remains the default marking.
 Saving a profile is local and never starts a transfer. Existing profile values,
 including older sector names, remain readable and are preserved on partial edits.
 
+The profile also records company size by employee band, the affected system's
+hosting model and providers, IT operating model, initial access route and its
+assessment, confirmed affected areas, exfiltration and attacker-encryption status,
+discovering party and discovery method. Use the company and system configuration
+immediately before the incident. Choose hosting providers from the dropdown;
+several providers can be added. Use **Other provider** for an unlisted name.
+Previously saved custom names remain available and are not replaced by the catalogue.
+
+Missing values remain unknown. Exfiltration and encryption distinguish unknown,
+not investigated, no evidence found, suspected and confirmed. An empty affected-area
+selection means unknown, not that the incident stayed on the web server. Saved
+values are restored when editing, including after archive import. CMS detections,
+IP-provider reports and the first known evidence event do not reliably establish
+these facts, so they are not used to prefill incident conclusions or company details.
+
+Export includes a generated STIX Note
+linked to the Incident and contained in its Case. Its JSON content uses the schema
+`shellhound.case-context/v1` and preserves the reviewed field names and values,
+including uncertainty. This requires no custom OpenCTI schema; it is stored as
+Note content, not as native dashboard-filterable custom fields. It never includes
+local case or IOC notes. The preview shows the same context before confirmation.
+
+### Community Edition: filterable case labels
+
+The Incident Response case also receives a label for each profile value, using
+the reserved namespace `shellhound:profile:<field>:<value>`. Scalar fields have
+one label; providers and affected areas have one per value. Missing values use
+an explicit `unknown` label. Values are lowercased, deduplicated and sorted;
+the JSON Note preserves original provider spelling. No organization name,
+summary, local notes or source paths become profile labels. These labels belong
+only to the case, not its shared IPs, hashes, CVEs or organization.
+
+Examples:
+
+```text
+shellhound:profile:employee_count:10-49
+shellhound:profile:hosting_model:managed_hosting
+shellhound:profile:hosting_providers:hetzner
+shellhound:profile:data_exfiltration:not_observed
+shellhound:profile:spread:web_server
+```
+
+Use **Label** filters on Incident Response cases, including dashboard widgets.
+For example, combine `shellhound:profile:hosting_model:managed_hosting` AND
+`shellhound:profile:data_exfiltration:confirmed` to count these cases. Labels
+are categories, not numeric or date fields for arithmetic or range comparisons.
+
+After TAXII imports the case, explicit GraphQL label updates add missing labels
+and check their visibility before detaching old
+labels in the reserved namespace. Labels outside `shellhound:profile:` are
+retained, including other Shellhound labels. Global Label objects are never
+deleted. The final reserved label set must exactly match the reviewed preview
+before a receipt becomes complete. Permission failures or mismatches remain
+incomplete; retry checks labels again without resubmitting completed TAXII batches.
+
 ## Review and transfer
 
 1. Choose **Transfer to OpenCTI** from the IOC box, an object, or the case close flow.
@@ -76,12 +131,13 @@ credentials or mappings require a new preview. Existing shared objects are reuse
 without overwriting another author's fields or markings. Completion requires
 consistent TAXII status and visible imported objects. Reviewed IP tags are added
 and verified even on reused IPs; existing remote tags are retained. The integration
-account needs permission to create labels and attach them to these IPs. Receipts survive failures,
+account needs permission to create labels, attach them to IPs and cases, and
+remove outdated profile-label associations from cases. Receipts survive failures,
 and completed batches are not resubmitted during retry.
 
 Older receipts for removed functionality remain local history and cannot be
 replayed. Create a fresh preview under the reduced transfer model. No existing
-remote OpenCTI data is deleted by this change.
+remote OpenCTI objects are deleted by this change.
 
 Direct VirusTotal and AbuseIPDB report lookups remain separate, explicit actions
 and work independently of the OpenCTI export connection.
@@ -92,3 +148,5 @@ Run `python -m tools.opencti_smoke --offline` for an isolated, harmless export f
 The check never contacts OpenCTI or uploads data. Focused regression tests are
 `tests.test_opencti_graph`, `tests.test_opencti_service`, `tests.test_opencti_client`,
 `tests.test_opencti_api`, `tests.test_case_profile`, and `tests.test_profile_options`.
+`tests.test_case_context` covers the additional profile fields, archive roundtrips
+and their reviewed STIX context.
