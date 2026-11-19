@@ -18,7 +18,7 @@ export const en: Record<string, string> = {
   'caseContext.addProvider': 'Add provider',
   'caseContext.removeProvider': 'Remove provider {name}',
   'caseContext.exportLabels': 'OpenCTI case labels ({n})',
-  'caseContext.exportLabelsHint': 'These labels describe this case. Transfer replaces only labels with the reserved shellhound:profile: prefix; other case labels are retained.',
+  'caseContext.exportLabelsHint': 'These labels describe this case. Transfer manages shellhound:profile: and SH labels plus Webserver Compromise; other case labels are retained.',
   'caseContext.spreadHint': 'Select confirmed affected areas. An empty selection means unknown; it does not mean the incident was limited to the web server.',
   'caseContext.field.employee_count': 'Company size (employees)',
   'caseContext.field.hosting_model': 'Hosting model of the affected system',

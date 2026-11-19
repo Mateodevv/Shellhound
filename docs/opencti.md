@@ -97,9 +97,9 @@ are categories, not numeric or date fields for arithmetic or range comparisons.
 
 After TAXII imports the case, explicit GraphQL label updates add missing labels
 and check their visibility before detaching old
-labels in the reserved namespace. Labels outside `shellhound:profile:` are
+labels in the reserved namespaces (`shellhound:profile:` and `SH `). Labels outside `shellhound:profile:` are
 retained, including other Shellhound labels. Global Label objects are never
-deleted. The final reserved label set must exactly match the reviewed preview
+deleted. The final managed label set (including `Webserver Compromise`) must exactly match the reviewed preview
 before a receipt becomes complete. Permission failures or mismatches remain
 incomplete; retry checks labels again without resubmitting completed TAXII batches.
 
@@ -151,6 +151,14 @@ remote OpenCTI objects are deleted by this change.
 Direct VirusTotal and AbuseIPDB report lookups remain separate, explicit actions
 and work independently of the OpenCTI export connection.
 
+## Importable dashboard
+
+A native dashboard for OpenCTI **7.261103.0**, its prerequisite STIX label
+catalogue and German import instructions are in
+[opencti-dashboard/README.md](opencti-dashboard/README.md). Import the catalogue
+before the dashboard so portable label IDs resolve to local IDs. The dashboard
+counts labelled cases; it does not calculate portfolio risk or loss costs.
+
 ## Offline checks
 
 Run `python -m tools.opencti_smoke --offline` for an isolated, harmless export fixture.
@@ -159,3 +167,14 @@ The check never contacts OpenCTI or uploads data. Focused regression tests are
 `tests.test_opencti_api`, `tests.test_case_profile`, and `tests.test_profile_options`.
 `tests.test_case_context` covers the additional profile fields, archive roundtrips
 and their reviewed STIX context.
+
+## Readable chart labels
+
+Cases additionally receive `Webserver Compromise` and readable labels in the
+reserved `SH ` namespace (for example `SH Größe: 10–49`). Technical profile
+labels remain unchanged. Synchronization verifies both managed namespaces and
+the fixed case label, replacing stale associations while preserving unrelated
+labels. These labels belong only to the Case-Incident, never shared entities.
+The fixed label describes the Shellhound workflow; it does not establish compromise.
+See [the complete label mapping](opencti-dashboard/LABELS.md) for manual updates
+and [the dashboard import instructions](opencti-dashboard/README.md).

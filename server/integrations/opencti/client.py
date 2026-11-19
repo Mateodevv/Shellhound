@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from server import diagnostics
-from server.casework.profile_options import PROFILE_LABEL_PREFIX
+from server.casework.profile_options import managed_case_label
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_TAXII_BYTES = 90 * 1024 * 1024
@@ -440,10 +440,11 @@ class OpenCTIClient:
         """Replace only reserved profile-label associations on a visible case."""
         identifier = _identifier(identifier)
         if not isinstance(labels, list) or not labels or any(
-                not isinstance(value, str) or not value.startswith(PROFILE_LABEL_PREFIX) or
+                not isinstance(value, str) or not managed_case_label(value) or
                 len(value) > 500 or any(ord(char) < 32 for char in value) for value in labels):
             raise ValueError('Invalid case profile labels')
         expected = {value.casefold() for value in labels}
+        desired = {value.casefold(): value for value in labels}
 
         def current():
             row = self._graphql('''query ShellhoundCaseLabels($id:String!) {
@@ -459,10 +460,11 @@ class OpenCTIClient:
 
         before = current()
         known = {item['value'].casefold() for item in before}
-        stale = [item for item in before if item['value'].casefold().startswith(PROFILE_LABEL_PREFIX)
+        stale = [item for item in before if managed_case_label(item['value'])
                  and item['value'].casefold() not in expected]
         missing = expected - known
-        for value in sorted(missing):
+        for key in sorted(missing):
+            value = desired[key]
             label = self._graphql('''mutation ShellhoundCaseLabel($input:LabelAddInput!) {
               labelAdd(input:$input) { id }
             }''', {'input': {'value': value, 'update': False}}).get('labelAdd')
@@ -480,7 +482,7 @@ class OpenCTIClient:
             }''', {'id': identifier, 'toId': _identifier(item['id']), 'relationship_type': 'object-label'})
         if missing or stale:
             actual = {item['value'].casefold() for item in current()
-                      if item['value'].casefold().startswith(PROFILE_LABEL_PREFIX)}
+                      if managed_case_label(item['value'])}
             if actual != expected:
                 raise OpenCTIError('The exported case profile labels could not be verified.', code='invalid_response')
 

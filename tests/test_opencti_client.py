@@ -90,6 +90,23 @@ class OpenCTIClientTests(unittest.TestCase):
             self.client.sync_case_labels('our-case', ['shellhound:profile:employee_count:10-49'])
         self.assertFalse(any('relationDelete' in call.args[0].data.decode() for call in self.client._opener.open.call_args_list))
 
+    def test_short_and_case_labels_preserve_readable_spelling(self):
+        for wanted, old in [('SH Abfluss: bestätigt', 'SH Abfluss: unbekannt'),
+                            ('Webserver Compromise', 'SH Größe: unbekannt')]:
+            def case(values):
+                return {'data': {'caseIncident': {'id': 'our-case', 'entity_type': 'Case-Incident',
+                    'objectLabel': [{'id': key, 'value': value} for key, value in values]}}}
+            self.client._opener.open.reset_mock()
+            self._responses(case([('old', old), ('foreign', 'Reviewed')]),
+                {'data': {'labelAdd': {'id': 'new'}}},
+                {'data': {'stixDomainObjectEdit': {'relationAdd': {'id': 'relation'}}}},
+                case([('old', old), ('new', wanted), ('foreign', 'Reviewed')]),
+                {'data': {'stixDomainObjectEdit': {'relationDelete': {'id': 'our-case'}}}},
+                case([('new', wanted), ('foreign', 'Reviewed')]))
+            self.client.sync_case_labels('our-case', [wanted])
+            self.assertEqual(wanted, self._payload(1)['variables']['input']['value'])
+            self.assertEqual('old', self._payload(4)['variables']['toId'])
+
     def test_case_profile_sync_requires_stale_labels_to_be_removed(self):
         wanted = 'shellhound:profile:spread:unknown'
         unchanged = {'data': {'caseIncident': {'id': 'our-case', 'entity_type': 'Case-Incident', 'objectLabel': [

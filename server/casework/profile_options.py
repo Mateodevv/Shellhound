@@ -30,6 +30,45 @@ HOSTING_PROVIDERS = ('Amazon Web Services (AWS)', 'Microsoft Azure', 'Google Clo
                      'OVHcloud', 'Host Europe', 'Strato', 'ALL-INKL', 'netcup', 'DigitalOcean',
                      'Akamai / Linode', 'Cloudflare', 'Vercel', 'Netlify')
 PROFILE_LABEL_PREFIX = 'shellhound:profile:'
+DISPLAY_LABEL_PREFIX = 'SH '
+CASE_LABEL = 'Webserver Compromise'
+DISPLAY_FIELDS = {
+    'employee_count': 'Größe', 'hosting_model': 'Hosting', 'hosting_providers': 'Anbieter',
+    'it_operating_model': 'IT', 'initial_access': 'Zugang', 'initial_access_status': 'Bewertung',
+    'spread': 'Ausbreitung', 'data_exfiltration': 'Abfluss', 'attacker_encryption': 'Verschlüss.',
+    'discovered_by': 'Entdecker', 'discovery_method': 'Entdeckung', 'initial_cve': 'Initial-CVE',
+}
+DISPLAY_VALUES = {
+    'unknown': 'unbekannt', 'on_premises': 'vor Ort', 'colocation': 'Colocation',
+    'dedicated_vps': 'Server/VPS', 'shared_hosting': 'Shared', 'managed_hosting': 'Managed',
+    'cloud': 'Cloud', 'mixed': 'gemischt', 'other': 'sonstige', 'internal': 'intern', 'external': 'extern',
+    'no_dedicated_support': 'keine Betreuung', 'software_vulnerability': 'Schwachstelle',
+    'stolen_credentials': 'Zugangsdaten', 'phishing': 'Phishing', 'misconfiguration': 'Fehlkonfig.',
+    'third_party': 'Drittpartei', 'suspected': 'vermutet', 'confirmed': 'bestätigt',
+    'not_investigated': 'nicht untersucht', 'not_observed': 'nicht beobachtet',
+    'web_application': 'Webanwendung', 'web_server': 'Webserver', 'other_servers': 'weitere Server',
+    'endpoints': 'Endgeräte', 'identity_services': 'Identität', 'cloud_saas': 'Cloud/SaaS',
+    'internal_it': 'interne IT', 'employee': 'Mitarbeitende', 'it_provider': 'IT-Dienstleister',
+    'soc_mdr': 'SOC/MDR', 'customer': 'Kunde', 'authority': 'Behörde', 'attacker': 'Angreifer',
+    'monitoring': 'Monitoring', 'user_report': 'Nutzermeldung', 'external_notification': 'extern',
+    'ransom_note': 'Erpresserbrief', 'incidental': 'Zufallsfund',
+}
+
+
+def display_label(field, value):
+    value = value.strip() or 'unknown'
+    if field == 'hosting_providers':
+        value = {name.casefold(): name for name in HOSTING_PROVIDERS}.get(value.casefold(), value.casefold())
+        value = {'Amazon Web Services (AWS)': 'AWS', 'Microsoft Azure': 'Azure',
+                 'Google Cloud': 'GCP', 'Akamai / Linode': 'Linode', 'aws': 'AWS'}.get(value, value)
+    elif field == 'employee_count':
+        value = value.replace('-', '–')
+    text = value if field == 'hosting_providers' and value != 'unknown' else DISPLAY_VALUES.get(value, value)
+    return DISPLAY_LABEL_PREFIX + DISPLAY_FIELDS[field] + ': ' + text
+
+
+def managed_case_label(value):
+    return value.casefold().startswith((PROFILE_LABEL_PREFIX, DISPLAY_LABEL_PREFIX.casefold())) or value.casefold() == CASE_LABEL.casefold()
 CONTEXT_OPTIONS = {
     'employee_count': ('unknown', '0', '1-9', '10-49', '50-249', '250-999', '1000+'),
     'hosting_model': ('unknown', 'on_premises', 'colocation', 'dedicated_vps', 'shared_hosting', 'managed_hosting', 'cloud', 'mixed', 'other'),
@@ -50,12 +89,13 @@ def context_defaults():
 
 
 def context_labels(context):
-    labels = set()
+    labels = {CASE_LABEL}
     for key, default in context_defaults().items():
         value = context.get(key, default)
         values = value if isinstance(value, list) else [value or 'unknown']
         for item in values or ['unknown']:
             labels.add(PROFILE_LABEL_PREFIX + key + ':' + item.strip().casefold())
+            labels.add(display_label(key, item))
     return sorted(labels)
 
 

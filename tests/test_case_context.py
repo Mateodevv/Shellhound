@@ -84,8 +84,10 @@ class CaseContextTests(unittest.TestCase):
             self.assertEqual(initial['id'], cleared['id'])
             self.assertEqual({'schema': 'shellhound.case-context/v1', **profile_options.context_defaults()}, json.loads(cleared['content']))
             labels = graph.build_preview(case)['case_labels']
-            self.assertEqual(len(profile_options.context_defaults()), len(labels))
-            self.assertTrue(all(value.endswith(':unknown') for value in labels))
+            self.assertEqual(2 * len(profile_options.context_defaults()) + 1, len(labels))
+            self.assertIn('Webserver Compromise', labels)
+            self.assertTrue(all(value.endswith(':unknown') for value in labels if value.startswith(profile_options.PROFILE_LABEL_PREFIX)))
+            self.assertIn('SH Größe: unbekannt', labels)
 
     def test_case_labels_are_stable_and_keep_fields_and_multiple_providers_separate(self):
         first = profile_options.context_labels({**CONTEXT, 'hosting_providers': ['Hetzner', 'AWS', 'hetzner']})
