@@ -1435,6 +1435,8 @@ export const en: Record<string, string> = {
   'tag.scanner.what': 'Appeared as a scanning tool.',
   'tag.brute-force.what': 'Attempted logins in bulk.',
   'tag.successful.what': 'Something about it succeeded (2xx or a login redirect).',
+  'tag.accessed-webshell.what': 'The access log records an HTTP 2xx response for a path classified as a webshell in this case.',
+  'tag.accessed-webshell.why': 'This records an observed request and response; it does not prove code execution.',
   'tag.threat-list.what': 'Appears on a threat list.',
 
   // --- IOC types -----------------------------------------------------------
@@ -1473,7 +1475,7 @@ export const en: Record<string, string> = {
   'export.json.hint': 'Machine-readable — for your own scripts.',
   'export.stix.hint': 'STIX 2.1 — the exchange format for SIEM and threat intel systems.',
   'iocbox.tags.what': 'The tags of an indicator',
-  'iocbox.tags.body': 'Where it came from (analyst, finding, hunt, actor, derived), what kind it is (webshell, injected-code, account) and what the case observed about it (scanner, brute-force, successful).',
+  'iocbox.tags.body': 'Where it came from (analyst, finding, hunt, actor, derived), what kind it is (webshell, injected-code, account) and what the case observed about it (scanner, brute-force, accessed-webshell).',
   'iocbox.tags.hint': 'Clicking a tag hides the entries whose tags are ALL hidden — an entry with one still-visible tag stays.',
   'iocbox.tag.hidden': 'Hidden — click brings entries with this tag back.',
   'iocbox.tag.hide': 'Click hides entries whose tags are all hidden.',

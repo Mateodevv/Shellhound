@@ -1,4 +1,6 @@
 """Bounded code navigation and exact-path requester periods for artifact review."""
+import csv
+import io
 import sqlite3
 import json
 import tempfile
@@ -84,6 +86,35 @@ class ArtifactPreviewTests(unittest.TestCase):
         ctx = self.endpoints['/api/cases/{slug}/artifact'](self.case.name, str(self.file), 'en')
         self.assertEqual('new', ctx['triage'])
         self.assertIsNone(ctx['file']['classifications'])
+
+    def test_webshell_requesters_get_specific_labels_in_ui_and_exports(self):
+        from server.ioc import formats, model
+        from server.integrations.opencti import graph
+        for index, (classes, ok_hits, expected) in enumerate([
+            (None, 1, ['accessed-webshell']),
+            (['webshell', 'dropper'], 1, ['accessed-webshell']),
+            (['webshell'], 0, []),
+            (['malware'], 1, ['successful']),
+        ]):
+            ip = f'192.0.2.{index + 1}'
+            request = dict(ip=ip, uri='/example.txt', hits=2, ok_hits=ok_hits)
+            with self.subTest(classes=classes, ok_hits=ok_hits), patch.object(
+                    logindex, 'requests_for_names', return_value=[request]):
+                self.decide(classes)
+                conn = db.connect(self.case)
+                try:
+                    row = db.one(conn, 'SELECT * FROM iocs WHERE value=? AND type=\'ip\'', (ip,))
+                    model.enrich_rows(conn, [row])
+                    self.assertEqual(expected, json.loads(row['tags']))
+                    self.assertEqual(expected, json.loads(formats.to_json([row]))['iocs'][0]['tags'])
+                    self.assertEqual(' '.join(expected), next(csv.DictReader(io.StringIO(formats.to_csv([row]))))['Tags'])
+                    stix = json.loads(formats.to_stix([row]))
+                    self.assertEqual(expected or ['indicator'], stix['objects'][0]['labels'])
+                finally:
+                    conn.close()
+                preview = graph.build_preview(self.case, {'ioc_ids': [row['id']]})
+                exported = next(obj for obj in preview['objects'] if obj['type'] == 'ipv4-addr')
+                self.assertEqual(expected, exported.get('labels', []))
 
     def test_selected_distant_line_has_a_bounded_inert_excerpt(self):
         result = self.preview(self.file, 90)

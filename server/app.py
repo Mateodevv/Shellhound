@@ -2484,7 +2484,8 @@ def create_app(config: Config) -> FastAPI:
             for hit in list(touches)[:25]:
                 tags = [ioclib.TAG_HUNT]
                 if hit["ok_hits"] > 0:
-                    tags.append(ioclib.TAG_SUCCESS)
+                    tags.append(ioclib.TAG_ACCESSED_WEBSHELL if file_classification == "webshell"
+                                else ioclib.TAG_SUCCESS)
                 ip_id = db.add_ioc(conn, hit["ip"], "ip", tags,
                                    origin=f"requested {name} ({hit['hits']}×, "
                                           f"{hit['ok_hits']}× 2xx)")

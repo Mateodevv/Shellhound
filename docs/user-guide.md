@@ -378,6 +378,11 @@ controls so the queue itself remains the starting point.
 Review the indicators collected from confirmed artifacts or added manually,
 then export the required scope.
 
+When confirming a file classified as a webshell, requesting IPs with a logged
+HTTP 2xx response receive the `accessed-webshell` tag. This describes the
+request and response, not proof of code execution. Older `successful` tags
+remain unchanged because that label was also used for other observations.
+
 ### 4 · Report & close
 
 Check readiness, preview the selected report sections, and close only when the

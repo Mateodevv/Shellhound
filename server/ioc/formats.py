@@ -32,11 +32,12 @@ TAG_ACCOUNT = "account"
 TAG_SCANNER = "scanner"
 TAG_BRUTE = "brute-force"
 TAG_SUCCESS = "successful"
+TAG_ACCESSED_WEBSHELL = "accessed-webshell"
 TAG_THREATLIST = "threat-list"
 
 TAGS = (TAG_ANALYST, TAG_FINDING, TAG_CONFIRMED, TAG_HUNT, TAG_ACTOR,
         TAG_DERIVED, TAG_WEBSHELL, TAG_INJECTED, TAG_MODIFIED, TAG_ACCOUNT,
-        TAG_SCANNER, TAG_BRUTE, TAG_SUCCESS, TAG_THREATLIST)
+        TAG_SCANNER, TAG_BRUTE, TAG_SUCCESS, TAG_ACCESSED_WEBSHELL, TAG_THREATLIST)
 
 # How two indicators belong together (see ioc_links in db.py). Every kind
 # stands here with BOTH reading directions: an edge is the same fact at its
