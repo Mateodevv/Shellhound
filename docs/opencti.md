@@ -1,7 +1,7 @@
 # OpenCTI transfer
 
 OpenCTI integration transfers the manually saved case profile and selected
-IPs, CVEs and file hashes. There is no OpenCTI lookup, score display, label import,
+IPs, CVEs, file hashes and software. There is no OpenCTI lookup, score display, label import,
 connector enrichment, Indicator creation or original-file upload.
 
 ## Configure
@@ -85,7 +85,7 @@ cases, never their shared organizations, CVEs, IPs or files.
 ## Review and transfer
 
 1. Choose **Transfer to OpenCTI** from the IOC box, an object, or the case close flow.
-2. Review the sanitized profile summary and the selected IPs, CVEs and hashes. Local
+2. Review the sanitized profile summary and the selected IPs, CVEs, hashes and software. Local
    paths and credentials are shown as redacted values; the saved profile stays unchanged. The
    close flow opens this same preview directly, without a separate profile step. Unsupported IOC
    types cannot be selected through the API either. IP tags become object labels.
@@ -102,7 +102,7 @@ An intervening incomplete transfer requires review instead of assuming an older
 successful snapshot still describes the remote case. This is a local receipt check,
 not a live comparison against later changes made directly in OpenCTI.
 
-After verification, the receipt shows the number of distinct IP, CVE and hash
+After verification, the receipt shows the number of distinct IP, CVE, hash and software
 objects and links to the imported case on its original OpenCTI server. Pending or
 failed work never displays a successful-transfer message or case link.
 
@@ -110,7 +110,12 @@ Hash-only File objects contain supported hashes, not filenames or source bytes.
 Paths, domains, URLs, emails, usernames, evidence excerpts, notes and file samples
 are never exported as IOCs. The profile transfers manually entered organization,
 sector, location, dates, summary and marking. Older software/CVE profile details
-are not exported separately: only CVEs selected from the IOC Box leave the case.
+are migrated to the IOC Box and only leave the case when selected there.
+Software exports as a native STIX Software observable with its name, version and
+vendor when available, linked to the Incident and included in the Case. CMS
+installations collected in the IOC Box can be selected; plugins and themes need
+to be collected there first. Inventory presence does not imply maliciousness.
+Category, local installation paths and evidence contents are not transferred.
 Local paths and credentials are redacted
 from transferred text. An IOC's case association does not assert maliciousness.
 

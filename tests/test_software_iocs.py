@@ -50,16 +50,36 @@ class SoftwareIocTests(unittest.TestCase):
         self.assertEqual('unassessed', row['assessment'])
         self.assertEqual(1, self.conn.execute('SELECT count(*) FROM ioc_observations').fetchone()[0])
 
-    def test_detected_and_legacy_profile_software_remain_local(self):
-        identifier = collect(self.conn, 'Joomla', '5.2')
+    def test_selected_software_exports_properties_and_case_links(self):
+        identifier = collect(self.conn, 'Joomla', '5.2', vendor='Example vendor')
         self.conn.commit()
-        with self.assertRaises(ValueError):
-            build_preview(self.case, {'ioc_ids': [identifier]})
-        self.assertFalse(any(o['type'] == 'software' for o in build_preview(self.case)['objects']))
+        result = build_preview(self.case, {'ioc_ids': [identifier]})
+        software = next(o for o in result['objects'] if o['type'] == 'software')
+        self.assertEqual({'name': 'Joomla', 'version': '5.2', 'vendor': 'Example vendor'},
+                         {k: software[k] for k in ('name', 'version', 'vendor')})
+        self.assertEqual(result['iocs'][0]['software'], {k: software[k] for k in ('name', 'version', 'vendor')})
+        case = next(o for o in result['objects'] if o['type'] == 'x-opencti-case-incident')
+        self.assertIn(software['id'], case['object_refs'])
+        self.assertTrue(any(o.get('source_ref') == result['incident_id'] and o.get('target_ref') == software['id']
+                            for o in result['objects']))
+        self.assertFalse(any(o['type'] == 'software' for o in build_preview(self.case, {'ioc_ids': []})['objects']))
         workspace.update_case(self.case, profile={'software': [{'name': 'Manually chosen CMS', 'version': '1'}]})
-        exported = [o for o in build_preview(self.case, {'ioc_ids': []})['objects'] if o['type'] == 'software']
-        self.assertEqual([], exported)
+        self.assertTrue(any(o.get('name') == 'Manually chosen CMS' for o in build_preview(self.case)['objects']))
         self.assertEqual([{'name': 'Manually chosen CMS', 'version': '1'}], workspace.case_info(self.case)['profile']['software'])
+
+    def test_software_metadata_cannot_export_credentials_or_local_paths(self):
+        for field in ('version', 'vendor'):
+            with self.subTest(field=field):
+                identifier = collect(self.conn, 'Example CMS', **{field: 'password=synthetic-secret'})
+                self.conn.commit()
+                result = build_preview(self.case, {'ioc_ids': [identifier]})
+                self.assertTrue(result['errors'])
+                self.assertNotIn('synthetic-secret', json.dumps(result))
+        identifier = collect(self.conn, 'Example CMS', version='C:/Users/Example/private.txt')
+        self.conn.commit()
+        result = build_preview(self.case, {'ioc_ids': [identifier]})
+        self.assertTrue(result['errors'])
+        self.assertNotIn('C:/Users/Example', json.dumps(result))
 
     def test_legacy_profile_migrates_once_and_preserves_context(self):
         profile = {'software':[{'name':'Legacy CMS','version':'2'}], 'vulnerabilities':[{'name':'CVE-2025-12345','status':'suspected','description':'Review required'}]}

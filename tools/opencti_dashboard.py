@@ -8,7 +8,7 @@ import json
 import uuid
 from pathlib import Path
 
-from server.casework.profile_options import (CONTEXT_OPTIONS, HOSTING_PROVIDERS, PROFILE_LABEL_PREFIX,
+from server.casework.profile_options import (CONTEXT_OPTIONS, HOSTING_PROVIDERS, PROFILE_LABEL_PREFIX, SECTORS,
                                              CASE_LABEL, display_label)
 
 VERSION = '7.261103.0'
@@ -16,15 +16,16 @@ OUTPUT = Path(__file__).resolve().parents[1] / 'docs' / 'opencti-dashboard'
 LABEL_NAMESPACE = uuid.UUID('00abedb4-aa42-466c-9c01-fed23315a9b7')
 ARTIFACT_NAMESPACE = uuid.UUID('9d78a3c4-f641-46bf-8702-d60aebee5496')
 TITLES = {
+    'data_exfiltration': 'Datenabfluss',
+    'attacker_encryption': 'Verschlüsselung durch Angreifer',
+    'initial_access': 'Initialer Zugangsweg',
+    'initial_cve': 'Initiale Schwachstelle / CVE',
     'employee_count': 'Unternehmensgröße · Mitarbeitende',
     'hosting_model': 'Hostingmodell',
     'hosting_providers': 'Hosting-/Cloudanbieter · Mehrfachnennungen',
     'it_operating_model': 'IT-Betriebsmodell',
-    'initial_access': 'Initialer Zugangsweg',
     'initial_access_status': 'Sicherheit der Zugangsbewertung',
     'spread': 'Ausbreitung · Mehrfachnennungen',
-    'data_exfiltration': 'Datenabfluss',
-    'attacker_encryption': 'Verschlüsselung durch Angreifer',
     'discovered_by': 'Entdeckende Partei',
     'discovery_method': 'Entdeckungsweg',
 }
@@ -43,7 +44,8 @@ def label_id(field, value, display=True):
 
 def options():
     return {**CONTEXT_OPTIONS, 'spread': (*CONTEXT_OPTIONS['spread'], 'unknown'),
-            'hosting_providers': (*HOSTING_PROVIDERS, 'unknown')}
+            'hosting_providers': (*HOSTING_PROVIDERS, 'unknown'),
+            'initial_cve': json.loads((OUTPUT / 'initial-cve-values.json').read_text(encoding='utf-8'))}
 
 
 def filter_group(filters=()):
@@ -95,23 +97,29 @@ def build_dashboard():
         'Eine Datumswahl filtert Balken nach Anlage der Label-Zuordnung in OpenCTI, '
         'Kennzahlen und Fallliste dagegen nach Anlage des Falls in Shellhound. '
         'Statuswerte beschreiben den zuletzt übertragenen Stand des Falls.'))
-    counters = [
-        ('total', 'Übertragene Shellhound-Fälle', ()),
-        ('exfil', 'Datenabfluss · bestätigt', (('data_exfiltration', 'confirmed'),)),
-        ('encryption', 'Verschlüsselung · bestätigt', (('attacker_encryption', 'confirmed'),)),
-        ('unknown-access', 'Zugangsweg · unbekannt', (('initial_access', 'unknown'),)),
-        ('unexamined-exfil', 'Datenabfluss · nicht untersucht', (('data_exfiltration', 'not_investigated'),)),
-        ('unexamined-encryption', 'Verschlüsselung · nicht untersucht', (('attacker_encryption', 'not_investigated'),)),
-    ]
-    for index, (key, title, categories) in enumerate(counters):
-        add(key, 'number', title, [selection(title, *categories)], index % 3 * 4,
-            3 + index // 3 * 2, 4, 2)
+    add('total', 'number', 'Übertragene Shellhound-Fälle', [selection()], 0, 3, 12, 2)
+    sectors = {'label': 'Fälle je Hauptbranche', 'number': len(SECTORS), 'attribute': 'internal_id',
+               'date_attribute': 'created_at', 'perspective': 'relationships', 'isTo': True,
+               'filters': filter_group([eq('entity_type', ['object']),
+                                        eq('fromTypes', ['Case-Incident']), eq('toTypes', ['Sector'])]),
+               'dynamicFrom': selection()['filters'],
+               'dynamicTo': filter_group([eq('name', list(SECTORS))])}
+    add('sectors', 'horizontal-bar', 'Branchen · Mehrfachnennungen', [sectors], 0, 8, 6, 3, distributed=False)
     for index, (field, title) in enumerate(TITLES.items()):
+        if index >= 2:
+            index += 1
         add(field, 'horizontal-bar', title, [distribution_selection(field)],
-            index % 2 * 6, 7 + index // 2 * 3, 6, 3, distributed=False)
+            index % 2 * 6, 5 + index // 2 * 3, 6, 3, distributed=False)
     add('exfil-hosting', 'horizontal-bar', 'Bestätigter Datenabfluss nach Hostingmodell · Fallzahlen',
         [distribution_selection('hosting_model', ('data_exfiltration', 'confirmed'))],
-        6, 22, 6, 3, distributed=False)
+        6, 23, 6, 3, distributed=False)
+    locations = {'label': 'Fallstandorte', 'number': 500, 'attribute': 'internal_id',
+                 'date_attribute': 'created_at', 'perspective': 'relationships', 'isTo': True,
+                 'filters': filter_group([eq('entity_type', ['object']),
+                                          eq('fromTypes', ['Case-Incident']), eq('toTypes', ['City'])]),
+                 'dynamicFrom': selection()['filters'], 'dynamicTo': filter_group(),
+                 'centerLat': 51.1657, 'centerLng': 10.4515, 'zoom': 5}
+    add('locations', 'map', 'Fallstandorte · Fokus Deutschland', [locations], 0, 26, 12, 7)
     cases = selection()
     cases.update(sort_by='created', sort_mode='desc', columns=[
         {'attribute': 'name', 'label': 'Fall'},
@@ -119,11 +127,15 @@ def build_dashboard():
         {'attribute': 'objectLabel', 'label': 'Labels'},
         {'attribute': 'objectMarking', 'label': 'Markierung'},
     ])
-    add('case-list', 'list', 'Neueste Fälle · maximal 20', [cases], 0, 25, 12, 6)
-    add('limits', 'text', 'Auswertung richtig einordnen', [], 0, 31, 12, 3, content=(
-        '**Mehrfachnennungen:** Ausbreitung und Anbieter können pro Fall mehrfach vorkommen; '
+    add('case-list', 'list', 'Neueste Fälle · maximal 20', [cases], 0, 33, 12, 6)
+    add('limits', 'text', 'Auswertung richtig einordnen', [], 0, 39, 12, 4, content=(
+        '**Mehrfachnennungen:** Branchen, Ausbreitung und Anbieter können pro Fall mehrfach vorkommen; '
+        'Branchen zeigt die Hauptbranchen des Shellhound-Katalogs; Fälle ohne Branche fehlen dort. '
         'ihre Summen sind keine Fallgesamtzahl. Anbieterdiagramm: nur Katalogwerte und unbekannt; '
         'frei eingegebene Anbieter bleiben über die Fall-Labels filterbar. '
+        '**CVE:** nur Werte des mitgelieferten Kategorienkatalogs; neue Werte erfordern eine aktualisierte Vorlage. '
+        '**Karte:** Städte im Fallcontainer mit hinterlegten Koordinaten; Stadtmittelpunkte, keine Serverstandorte. '
+        'Mehrere Fälle in einer Stadt teilen sich einen Marker. Deutschland ist der Startausschnitt, kein Länderfilter. '
         '**Unbekannt / nicht untersucht / nicht beobachtet / vermutet / bestätigt** sind unterschiedliche Angaben. '
         'Nicht beobachtet beweist keine Abwesenheit. Kategorien ohne Treffer werden nicht angezeigt. '
         'Die Balken verwenden kurze SH-Labels. Bestehende Fälle erneut übertragen oder die kurzen Labels manuell ergänzen. '
@@ -138,7 +150,7 @@ def build_dashboard():
 
 
 def build_catalogue():
-    timestamp = '2026-11-19T00:00:00.000Z'
+    timestamp = '2026-11-20T00:00:00.000Z'
     identity_id = 'identity--' + str(uuid.uuid5(ARTIFACT_NAMESPACE, 'catalogue-system'))
     grouping_id = 'grouping--' + str(uuid.uuid5(ARTIFACT_NAMESPACE, 'catalogue-grouping'))
     common = {'spec_version': '2.1', 'created': timestamp, 'modified': timestamp}
@@ -167,7 +179,7 @@ def write_artifacts():
                'Zusätzlich jedem Shellhound-Case `Webserver Compromise` geben. Das Label allein ist kein technischer Nachweis.',
                'Vor dem Dashboard den aktualisierten Labelkatalog importieren; danach das neue Dashboard importieren.', '',
                '| Vorhandenes technisches Label | Zusätzliches kurzes Label |', '|---|---|']
-    for field, values in {**options(), 'initial_cve': ('unknown', 'CVE-2026-12345')}.items():
+    for field, values in options().items():
         mapping.extend(f'| `{label_value(field, value)}` | `{display_label(field, value)}` |' for value in values)
     mapping.extend(['', 'Initial-CVE: die konkrete CVE einsetzen. Eigene Anbieter: `SH Anbieter: <Name>` verwenden.',
                     'Den Bereich `SH ` für Shellhound reservieren. Änderungen im Case Profile ersetzen alte SH-Labels beim nächsten Transfer.',

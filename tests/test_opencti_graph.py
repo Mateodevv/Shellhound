@@ -35,7 +35,7 @@ class OpenCTIGraphTests(unittest.TestCase):
     def test_preview_never_reads_evidence_or_builds_retired_objects(self):
         with patch.object(graph, '_snapshot', side_effect=AssertionError('Unexpected file read')):
             result = graph.build_preview(self.case)
-        self.assertEqual({row['type'] for row in result['iocs']}, {'ip', 'vulnerability', 'hash'})
+        self.assertEqual({row['type'] for row in result['iocs']}, {'ip', 'vulnerability', 'hash', 'software'})
         types = {obj['type'] for obj in result['objects']}
         self.assertFalse(types & {'indicator', 'artifact', 'malware', 'domain-name', 'url', 'user-account'})
         notes = [obj for obj in result['objects'] if obj['type'] == 'note']
@@ -51,7 +51,7 @@ class OpenCTIGraphTests(unittest.TestCase):
                      'Manual city'):
             self.assertIn(name, wire)
         self.assertFalse(result['warnings'])
-        self.assertNotIn('Manual software', wire)
+        self.assertIn('Manual software', wire)
         self.assertNotIn('Manual CVE context', wire)
         self.assertNotIn('Legacy non-CVE', wire)
         self.assertEqual(result['fingerprint'], graph.build_preview(self.case)['fingerprint'])

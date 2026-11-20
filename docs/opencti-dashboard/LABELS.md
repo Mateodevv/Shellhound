@@ -87,7 +87,8 @@ Vor dem Dashboard den aktualisierten Labelkatalog importieren; danach das neue D
 | `shellhound:profile:hosting_providers:netlify` | `SH Anbieter: Netlify` |
 | `shellhound:profile:hosting_providers:unknown` | `SH Anbieter: unbekannt` |
 | `shellhound:profile:initial_cve:unknown` | `SH Initial-CVE: unbekannt` |
-| `shellhound:profile:initial_cve:cve-2026-12345` | `SH Initial-CVE: CVE-2026-12345` |
+| `shellhound:profile:initial_cve:cve-2026-102785` | `SH Initial-CVE: CVE-2026-102785` |
+| `shellhound:profile:initial_cve:wp2shell` | `SH Initial-CVE: wp2shell` |
 
 Initial-CVE: die konkrete CVE einsetzen. Eigene Anbieter: `SH Anbieter: <Name>` verwenden.
 Den Bereich `SH ` für Shellhound reservieren. Änderungen im Case Profile ersetzen alte SH-Labels beim nächsten Transfer.

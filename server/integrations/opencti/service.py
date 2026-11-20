@@ -70,7 +70,8 @@ def _config(root):
 def _counts(payload):
     types = [obj['type'] for obj in payload.get('objects', [])]
     return {'ips': types.count('ipv4-addr') + types.count('ipv6-addr'),
-            'cves': types.count('vulnerability'), 'hashes': types.count('file')}
+            'cves': types.count('vulnerability'), 'hashes': types.count('file'),
+            'software': types.count('software')}
 
 
 def _export_fingerprint(payload):

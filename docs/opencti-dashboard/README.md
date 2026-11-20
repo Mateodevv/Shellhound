@@ -40,14 +40,19 @@ Katalogimport erneut importieren und das unbrauchbare erste Dashboard entfernen.
 
 ## Was angezeigt wird
 
-- Sechs Kennzahlen: Fallzahl, bestätigter Datenabfluss, bestätigte
-  Angreiferverschlüsselung, unbekannter Zugangsweg sowie nicht untersuchter
-  Datenabfluss und nicht untersuchte Verschlüsselung.
-- Zwölf horizontale Balkendiagramme, absteigend nach Fallzahl:
+- Eine Kennzahl für die Fallgesamtzahl. Direkt darunter eigene kompakte
+  Balkendiagramme für Datenabfluss, Verschlüsselung, Zugangsweg und initiale CVE.
+- Vierzehn horizontale Balkendiagramme, absteigend nach Fallzahl:
   Unternehmensgröße, Hostingmodell, Anbieter,
   IT-Betriebsmodell, Zugangsweg und dessen Bewertungsstatus, Ausbreitung,
   Datenabfluss, Verschlüsselung, entdeckende Partei, Entdeckungsweg sowie
-  bestätigter Datenabfluss nach Hostingmodell.
+  bestätigter Datenabfluss nach Hostingmodell, initiale Schwachstelle / CVE
+  und Branchen (links in der zweiten Diagrammreihe).
+- Karte mit Stadtmarkern und Startausschnitt Deutschland. Verwendet werden
+  ausschließlich City-Objekte, die in einem passenden Case-Incident enthalten
+  sind und Koordinaten haben. Mehrere Fälle derselben Stadt teilen sich einen
+  Marker; die Marker zeigen keine Fallhäufigkeit. Maximal 500 Städte werden
+  abgefragt. Städte außerhalb Deutschlands bleiben durch Verschieben erreichbar.
 - Die neuesten 20 Fälle mit Namen, Datum, Labels und Markierungen.
 
 Die Diagramm-Widgets belegen jeweils drei statt sechs Rasterzeilen und stehen
@@ -65,6 +70,14 @@ Profilfelds. Pro Fall und Label besteht eine Zuordnung. Die Filter auf Quellfäl
 und Ziel-Labels verhindern, dass Labels anderer Felder, Organisationen, IOCs
 oder der technische Labelkatalog die Balken verfälschen.
 
+Das Branchendiagramm zählt stattdessen `object`-Verknüpfungen von passenden
+Fällen zu enthaltenen `Sector`-Objekten. Es verwendet die Hauptbranchen aus
+dem Shellhound-Auswahlkatalog und schließt Unterbranchen über den Namensfilter
+aus. Mehrere Branchen pro Fall sind möglich; Fälle ohne Branchenangabe fehlen
+in diesem Diagramm. Neue Fälle und Zuordnungen erscheinen automatisch, ohne
+zusätzliche Labels oder einen erneuten Labelkatalog-Import. Nach einer Erweiterung
+des Hauptbranchenkatalogs muss die Dashboard-Vorlage neu erzeugt werden.
+
 **Für einen konsistenten Gesamtvergleich den globalen Datumsfilter leer lassen.**
 Die native Datumswahl wirkt auf unterschiedliche Datensätze: Bei Balken auf
 `created_at` der Label-Zuordnung in OpenCTI, bei Kennzahlen und Fallliste auf
@@ -80,8 +93,23 @@ Anbieter und Ausbreitung erlauben mehrere Werte pro Fall; deren Kategorien
 addieren sich deshalb nicht zur Gesamtzahl. Die 15 Kataloganbieter und unbekannt
 sind für die Auswertung berücksichtigt. Kategorien ohne Treffer erscheinen
 nicht als Balken; ohne Treffer zeigt das Widget keine Daten. Frei eingegebene
-Anbieter und die frei erfasste initiale CVE bleiben in den Fall-Labels sichtbar
-und filterbar, erhalten aber kein eigenes vorgefertigtes Diagramm. Achsen und Fallfilter nutzen ausschließlich die kurzen SH-Labels.
+Anbieter bleiben in den Fall-Labels sichtbar und filterbar. Die initiale CVE
+verwendet den editierbaren Kategorienkatalog [initial-cve-values.json](initial-cve-values.json).
+Dieser enthält die aktuell erfassten Werte `CVE-2026-102785`, `wp2shell` und
+`unknown`. `wp2shell` ist eine freie Schwachstellenbezeichnung, keine CVE-ID.
+Die Vorlage prüft nicht, ob eine erfasste CVE tatsächlich veröffentlicht oder
+ursächlich ist. Neue Werte in dieser Datei ergänzen, beide Importdateien neu
+erzeugen und zuerst den Katalog, dann das Dashboard importieren. Andernfalls
+bleiben neue Werte nur am Fall sichtbar und fehlen im CVE-Diagramm.
+Achsen und Fallfilter nutzen ausschließlich die kurzen SH-Labels.
+
+Die Karte zählt die `object`-Verknüpfungen von Fällen zu enthaltenen Städten;
+sie verwendet keine IP-Geolokalisierung und keine beliebigen Standortbeziehungen.
+`Latitude` und `Longitude` müssen am City-Objekt als Dezimalgrad hinterlegt sein.
+Stadtmittelpunkte stehen für den erfassten Unternehmensort, nicht für den
+Serverstandort oder den genauen Ort des Angriffs. Die Koordinaten bestehender
+Städte werden durch den Generator nicht verändert oder in der Vorlage gespeichert.
+Bei einer Datumswahl gilt auch hier das Anlagedatum der Container-Verknüpfung.
 
 Fallzahlen liefern keine Schadenwahrscheinlichkeit: Versicherungsbestand,
 Expositionsdauer und Vergleichsgruppen fehlen. Kosten, Entdeckungsdauer,
@@ -110,6 +138,8 @@ und [Datumsfilter](https://github.com/OpenCTI-Platform/opencti/blob/7.261103.0/o
 Die Balken verwenden das native [Beziehungs-Balkendiagramm](https://github.com/OpenCTI-Platform/opencti/blob/7.261103.0/opencti-platform/opencti-front/src/private/components/common/stix_relationships/StixRelationshipsHorizontalBars.tsx)
 mit der [unterstützten Beziehung `object-label`](https://github.com/OpenCTI-Platform/opencti/blob/7.261103.0/opencti-platform/opencti-front/src/utils/widget/widgetUtils.tsx)
 und Aggregation auf die Label-Zielseite (`internal_id`, `isTo: true`).
+Die Karte verwendet die native [Beziehungs-Karte](https://github.com/OpenCTI-Platform/opencti/blob/7.261103.0/opencti-platform/opencti-front/src/private/components/common/stix_relationships/StixRelationshipsMap.tsx)
+mit `object`-Verknüpfungen, City-Zielen und Startkoordinaten in der Datenauswahl.
 Die [offizielle Python-Implementierung der Label-IDs](https://github.com/OpenCTI-Platform/client-python/blob/master/pycti/entities/opencti_label.py)
 definiert die portablen Filter-IDs. Offline wurden Struktur, Labelbezüge,
 Filtereingrenzung und Layoutkollisionen geprüft. Ein tatsächlicher Import und

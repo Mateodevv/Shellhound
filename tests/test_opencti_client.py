@@ -300,6 +300,17 @@ class OpenCTIClientTests(unittest.TestCase):
                 self.assertEqual([remote_type], self._payload()["variables"]["types"])
                 self.assertNotIn("mutation", self._payload()["query"])
 
+    def test_shared_software_matches_name_version_and_vendor_without_mutation(self):
+        entity = {'id': 'known-software', 'standard_id': 'software--known', 'entity_type': 'Software'}
+        self._responses({'data': {'stixCyberObservables': {'edges': [{'node': entity}]}}})
+        obj = {'type': 'software', 'name': 'Example CMS', 'version': '5.2', 'vendor': 'Example vendor'}
+        self.assertEqual(entity, self.client.find_existing_shared(obj))
+        payload = self._payload()
+        self.assertEqual(['Software'], payload['variables']['types'])
+        self.assertEqual([(key, [obj[key]]) for key in ('name', 'version', 'vendor')],
+                         [(f['key'][0], f['values']) for f in payload['variables']['filters']['filters']])
+        self.assertNotIn('mutation', payload['query'])
+
     def test_shared_file_checks_strongest_hash_and_only_reuses_file_objects(self):
         hashes = {"MD5": "a" * 32, "SHA-256": "b" * 64}
         entity = {"id": "known-file", "standard_id": "file--known", "entity_type": "StixFile",

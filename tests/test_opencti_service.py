@@ -82,6 +82,21 @@ class OpenCTIServiceTests(unittest.TestCase):
         self.assertEqual("complete", self.receipt(result["export_id"])["state"])
         self.assertEqual({"preflight_seconds", "import_verify_seconds"}, set(payload["timings"]))
 
+    def test_selected_software_is_transferred_and_counted(self):
+        from server.ioc.software import collect
+        identifier = collect(self.conn, 'Example CMS', '5.2', vendor='Example vendor')
+        self.conn.commit()
+        result = self.export(ioc_ids=[identifier])
+        receipt = self.receipt(result['export_id'])
+        self.assertEqual('complete', receipt['state'])
+        self.assertEqual(1, service._counts(receipt['payload'])['software'])
+        sent = [obj for call in self.client.push.call_args_list for obj in call.args[0]]
+        software = next(obj for obj in sent if obj['type'] == 'software')
+        self.assertEqual(('Example CMS', '5.2', 'Example vendor'),
+                         (software['name'], software['version'], software['vendor']))
+        case = next(obj for obj in sent if obj['type'] == 'x-opencti-case-incident')
+        self.assertIn(software['id'], case['object_refs'])
+
     def test_target_counts_and_verified_case_link_use_original_destination(self):
         db.add_ioc(self.conn, 'CVE-2026-12345', 'vulnerability')
         db.add_ioc(self.conn, 'a' * 64, 'hash')
@@ -92,7 +107,7 @@ class OpenCTIServiceTests(unittest.TestCase):
         preview = self.preview()
         self.assertEqual({'url': self.config['url'], 'ingester_id': 'ingester'}, preview['target'])
         self.assertNotIn(self.config['token'], json.dumps(preview))
-        self.assertEqual({'ips': 2, 'cves': 1, 'hashes': 1}, preview['counts'])
+        self.assertEqual({'ips': 2, 'cves': 1, 'hashes': 1, 'software': 0}, preview['counts'])
         result = service.transfer(self.root, self.case, preview['preview_id'])
         self.assertIsNone(service.state(self.root, self.case)['exports'][0]['case_url'])
         self.jobs.run()

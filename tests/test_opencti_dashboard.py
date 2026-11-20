@@ -3,7 +3,7 @@ import base64
 import json
 import unittest
 
-from server.casework.profile_options import CONTEXT_OPTIONS, context_labels
+from server.casework.profile_options import CONTEXT_OPTIONS, SECTORS, context_labels
 from tools.opencti_dashboard import (OUTPUT, TITLES, VERSION, display_label, build_catalogue,
                                      build_dashboard, label_id, label_value, options)
 
@@ -55,7 +55,7 @@ class OpenCTIDashboardTests(unittest.TestCase):
                 for item in label_filters:
                     self.assertLessEqual(set(item['values']), ids)
         charts = [w for w in self.widgets if w['type'] == 'horizontal-bar']
-        self.assertEqual(len(charts), 12)
+        self.assertEqual(len(charts), 14)
         self.assertTrue(all(w['layout']['h'] == 3 for w in charts))
         self.assertFalse(any(w['type'] in ('vertical-bar', 'line', 'area', 'timeline') for w in self.widgets))
         for field in TITLES:
@@ -93,6 +93,43 @@ class OpenCTIDashboardTests(unittest.TestCase):
                      for y in range(layout['y'], layout['y'] + layout['h'])}
             self.assertFalse(occupied & cells, widget['parameters']['title'])
             occupied.update(cells)
+
+    def test_statuses_replace_counters_and_map_uses_case_city_memberships(self):
+        counters = [w for w in self.widgets if w['type'] == 'number']
+        self.assertEqual([w['parameters']['title'] for w in counters], ['Übertragene Shellhound-Fälle'])
+        for field in ('data_exfiltration', 'attacker_encryption', 'initial_access', 'initial_cve'):
+            chart = next(w for w in self.widgets if w['parameters']['title'] == TITLES[field])
+            self.assertLess(chart['layout']['y'], 14)
+        chart = next(w for w in self.widgets if w['type'] == 'map')
+        data = chart['dataSelection'][0]
+        self.assertEqual(data['filters']['filters'], [
+            {'key': ['entity_type'], 'values': ['object'], 'operator': 'eq', 'mode': 'or'},
+            {'key': ['fromTypes'], 'values': ['Case-Incident'], 'operator': 'eq', 'mode': 'or'},
+            {'key': ['toTypes'], 'values': ['City'], 'operator': 'eq', 'mode': 'or'},
+        ])
+        self.assertTrue(data['isTo'])
+        self.assertEqual(data['attribute'], 'internal_id')
+        self.assertEqual((data['centerLat'], data['centerLng'], data['zoom']), (51.1657, 10.4515, 5))
+        values = options()['initial_cve']
+        self.assertEqual(len(values), len(set(values)))
+        self.assertIn('unknown', values)
+        self.assertIn('CVE-2026-102785', values)
+
+    def test_sectors_count_case_memberships_for_main_sectors_in_second_row(self):
+        chart = next(w for w in self.widgets if w['parameters']['title'] == 'Branchen · Mehrfachnennungen')
+        self.assertEqual((chart['layout']['x'], chart['layout']['y'], chart['layout']['w'], chart['layout']['h']),
+                         (0, 8, 6, 3))
+        data = chart['dataSelection'][0]
+        self.assertEqual(data['attribute'], 'internal_id')
+        self.assertTrue(data['isTo'])
+        self.assertEqual(data['filters']['filters'], [
+            {'key': ['entity_type'], 'values': ['object'], 'operator': 'eq', 'mode': 'or'},
+            {'key': ['fromTypes'], 'values': ['Case-Incident'], 'operator': 'eq', 'mode': 'or'},
+            {'key': ['toTypes'], 'values': ['Sector'], 'operator': 'eq', 'mode': 'or'},
+        ])
+        self.assertEqual(data['dynamicTo']['filters'], [
+            {'key': ['name'], 'values': list(SECTORS), 'operator': 'eq', 'mode': 'or'},
+        ])
 
 
 if __name__ == '__main__':

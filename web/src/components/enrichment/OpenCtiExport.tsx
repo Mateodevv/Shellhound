@@ -38,6 +38,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
     { label: tr('hunt.flow.ipAddresses'), types: ['ip'] },
     { label: tr('iocWorkspace.group.CVEs'), types: ['vulnerability'] },
     { label: tr('iocWorkspace.group.Hashes'), types: ['hash', 'file'] },
+    { label: tr('iocWorkspace.group.Software'), types: ['software'] },
   ].map(group => ({ ...group, iocs: preview.iocs.filter(ioc => group.types.includes(ioc.type)) })).filter(group => group.iocs.length)
   const content = <div className="flex h-full min-h-0 flex-col gap-4 text-[13px]">
     <div className="min-h-0 flex-1 space-y-4 overflow-auto">
@@ -67,7 +68,7 @@ export function OpenCtiExportDialog({ slug, initial, initialOptions, onClose, on
           <tr><th scope="rowgroup" colSpan={3}><span className="text-[13px] font-semibold text-[var(--fg)]">{group.label}</span><span className="ml-2 text-[11px] text-[var(--muted)]">{group.iocs.length}</span></th></tr>
           {group.iocs.map(ioc => <tr key={ioc.id}>
           <td><input type="checkbox" aria-label={tr('cti.selectIoc', { value: ioc.value })} disabled={transfer.isPending} checked={ids.includes(ioc.id)} onChange={event => setIds(current => event.target.checked ? [...current, ioc.id] : current.filter(id => id !== ioc.id))} /></td>
-          <td className="break-all">{ioc.value}{ioc.warnings.map(warning => <p key={warning}>{warning}</p>)}</td><td><div className="flex flex-wrap gap-1">{ioc.tags.map(tag => <IocTag key={tag} value={tag} />)}</div></td>
+          <td className="break-all">{ioc.value}{ioc.software && <p className="text-[var(--muted)]">{[ioc.software.version, ioc.software.vendor].filter(Boolean).join(' · ')}</p>}{ioc.warnings.map(warning => <p key={warning}>{warning}</p>)}</td><td><div className="flex flex-wrap gap-1">{ioc.tags.map(tag => <IocTag key={tag} value={tag} />)}</div></td>
         </tr>)}</tbody>)}
       </table>
       {!preview.iocs.length && <p>{tr('cti.profileOnly')}</p>}

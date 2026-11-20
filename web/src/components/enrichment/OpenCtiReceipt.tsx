@@ -9,6 +9,7 @@ export function OpenCtiReceipt({ counts, caseUrl }: { counts?: OpenCtiCounts; ca
       ips: tr(counts.ips === 1 ? 'cti.ipCount' : 'cti.ipsCount', { n: counts.ips }),
       cves: tr(counts.cves === 1 ? 'cti.cveCount' : 'cti.cvesCount', { n: counts.cves }),
       hashes: tr(counts.hashes === 1 ? 'cti.hashCount' : 'cti.hashesCount', { n: counts.hashes }),
+      software: counts.software ? ', ' + tr('cti.softwareCount', { n: counts.software }) : '',
     })}</span>}
     {url && <a className="underline" href={url} target="_blank" rel="noreferrer">{tr('cti.openCase')}</a>}
   </span>

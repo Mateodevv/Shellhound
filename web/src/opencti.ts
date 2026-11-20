@@ -35,7 +35,7 @@ export interface OpenCtiState {
   jobs: (Job & { activity_hidden?: boolean })[]
 }
 export interface OpenCtiOptions { ioc_ids: number[] | null }
-export interface OpenCtiCounts { ips: number; cves: number; hashes: number }
+export interface OpenCtiCounts { ips: number; cves: number; hashes: number; software?: number }
 export interface OpenCtiPreview {
   preview_id: string; case_reference: string; fingerprint: string
   case_labels?: string[]
@@ -43,11 +43,11 @@ export interface OpenCtiPreview {
   target: { url: string; ingester_id: string }; counts: OpenCtiCounts; redacted: boolean
   already_exported: { id: string; updated: string; case_url?: string | null } | null
   objects: ({ id: string; type: string } & Record<string, unknown>)[]
-  iocs: { id: number; value: string; type: string; selected: boolean; tags: string[]; object_ids: string[]; warnings: string[] }[]
+  iocs: { id: number; value: string; type: string; selected: boolean; tags: string[]; object_ids: string[]; warnings: string[]; software?: { name: string; version?: string; vendor?: string } }[]
   warnings: string[]; errors: string[]
 }
 export const initialExportOptions = (ioc_ids: number[] | null = null): OpenCtiOptions => ({ ioc_ids })
-export const transferableIoc = (type: string) => ['ip', 'vulnerability', 'hash', 'file'].includes(type)
+export const transferableIoc = (type: string) => ['ip', 'vulnerability', 'hash', 'file', 'software'].includes(type)
 export const openCtiKey = (slug: string) => ['opencti', slug]
 export function useOpenCti(slug: string) {
   const settings = useOpenCtiSettings()

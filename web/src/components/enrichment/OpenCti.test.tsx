@@ -17,6 +17,15 @@ beforeEach(() => {
   vi.mocked(post).mockImplementation(async path => path.endsWith('/preview') ? preview : { job_id: 7, export_id: 'receipt' })
 })
 
+it('allows software selection and displays the reviewed version and vendor', async () => {
+  const software = { id: 7, type: 'software', value: 'Example CMS', selected: true, object_ids: ['software--example'],
+    tags: [], warnings: [], software: { name: 'Example CMS', version: '5.2', vendor: 'Example vendor' } }
+  renderWithProviders(<OpenCtiExportDialog slug="qa" initial={{ ...preview, iocs: [software] }}
+    initialOptions={{ ioc_ids: [7] }} onClose={vi.fn()} onQueued={vi.fn()} />)
+  expect(await screen.findByRole('checkbox', { name: 'Select Example CMS' })).toBeChecked()
+  expect(screen.getByText('5.2 · Example vendor')).toBeVisible()
+})
+
 it('shows the sanitized reviewed profile, destination and TLP without exposing raw profile text', async () => {
   renderWithProviders(<OpenCtiExportDialog slug="qa" caseInfo={info} initial={{ ...preview, profile: { ...preview.profile, organization_name: '[local path]', summary: 'password=[redacted]' }, redacted: true }} initialOptions={{ ioc_ids: [1] }} onClose={vi.fn()} onQueued={vi.fn()} />)
   expect(await screen.findByText('password=[redacted]')).toBeVisible()
@@ -57,11 +66,12 @@ it('blocks an unchanged completed export while allowing a fresh selection', asyn
 })
 
 it('offers only explicit transfer and filters unsupported selected types', async () => {
-  const iocs = [{ id: 1, type: 'ip', value: '198.51.100.4' }, { id: 2, type: 'domain', value: 'example.invalid' }] as Ioc[]
-  renderWithProviders(<OpenCtiToolbar slug="qa" iocs={iocs} selectedIds={[1, 2]} />)
+  const iocs = [{ id: 1, type: 'ip', value: '198.51.100.4' }, { id: 2, type: 'domain', value: 'example.invalid' },
+    { id: 3, type: 'software', value: 'Example CMS' }] as Ioc[]
+  renderWithProviders(<OpenCtiToolbar slug="qa" iocs={iocs} selectedIds={[1, 2, 3]} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Transfer to OpenCTI' }))
   expect(await screen.findByRole('dialog')).toBeVisible()
-  expect(post).toHaveBeenCalledWith('/api/cases/qa/opencti/preview', { ioc_ids: [1] })
+  expect(post).toHaveBeenCalledWith('/api/cases/qa/opencti/preview', { ioc_ids: [1, 3] })
   expect(screen.queryByRole('button', { name: /Check in OpenCTI|Enrich via OpenCTI/ })).not.toBeInTheDocument()
   expect(screen.queryByRole('checkbox', { name: /Indicator|sample/ })).not.toBeInTheDocument()
   expect(screen.getByText('manual-tag')).toBeVisible()

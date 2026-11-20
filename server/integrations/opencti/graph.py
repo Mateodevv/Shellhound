@@ -1,6 +1,6 @@
 """Build a reviewable STIX graph without networking or changing a case.
 
-Export only the manually saved profile, IPs with labels, CVEs and hashes.
+Export only the manually saved profile and selected IPs, CVEs, files and software.
 Previews never read source files or infer malware, indicators or relationships.
 """
 import hashlib
@@ -18,9 +18,9 @@ from server.paths import display_path, io_path
 from server.casework.profile_options import context_defaults, context_labels
 
 MAX_SAMPLE_BYTES = 25 * 1024 * 1024
-OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "file"}
-IOC_TYPES = {"ip", "vulnerability", "hash", "file"}
-MODEL_VERSION = 10
+OBSERVABLE_TYPES = {"ipv4-addr", "ipv6-addr", "file", "software"}
+IOC_TYPES = {"ip", "vulnerability", "hash", "file", "software"}
+MODEL_VERSION = 11
 _NS = uuid.UUID("a46ffb21-52b7-5ced-a45e-d75e52701cd4")
 _SCO_NS = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
 _HASH_TYPES = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
@@ -144,10 +144,16 @@ def _snapshot(path):
         return None, "File is missing or unreadable."
 
 
-def _observable(row, sanitized):
+def _observable(row, sanitized, clean):
     value = str(row['value']).strip()
     if value != sanitized:
         raise ValueError('An IOC contains private paths or credentials')
+    if row['type'] == 'software':
+        from server.ioc.software import properties
+        fields = properties(row)
+        if not value or any(clean.text(text) != text for text in fields.values()):
+            raise ValueError('Software needs a name and must not contain private paths or credentials')
+        return _sco('software', fields)
     if row['type'] == 'ip':
         address = ipaddress.ip_address(value)
         return _sco('ipv4-addr' if address.version == 4 else 'ipv6-addr', {'value': str(address)})
@@ -186,7 +192,7 @@ def build_preview(case_dir, options=None):
     selected = None if options.get('ioc_ids') is None else set(options['ioc_ids'])
     eligible = [row for row in rows if row['type'] in IOC_TYPES]
     if selected is not None and selected - {row['id'] for row in eligible}:
-        raise ValueError('Select existing IPs, CVEs or hashes only')
+        raise ValueError('Select existing IPs, CVEs, files or software only')
     stamp = _timestamp(info.get('created'))
     modified = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     marking = MARKINGS[profile.get('marking', 'TLP:AMBER+STRICT')]
@@ -274,7 +280,7 @@ def build_preview(case_dir, options=None):
                 obj = sdo('vulnerability', ['vulnerability', value.upper()], name=value.upper(),
                           external_references=[{'source_name': 'cve', 'external_id': value.upper()}])
             else:
-                obj = _observable(row, value)
+                obj = _observable(row, value, clean)
         except ValueError as exc:
             row_warnings.append(str(exc))
             if chosen:
@@ -290,6 +296,8 @@ def build_preview(case_dir, options=None):
                  'value': (obj.get('value') or obj.get('name') or value.lower()) if obj else value,
                  'selected': chosen, 'tags': tags,
                  'object_ids': [obj['id']] if obj else [], 'warnings': row_warnings}
+        if obj and obj['type'] == 'software':
+            entry['software'] = {key: obj[key] for key in ('name', 'version', 'vendor') if key in obj}
         entry['fingerprint'] = _digest(_stable([obj, profile]))
         output.append(entry)
     refs = [key for key in objects if key != author_id]
