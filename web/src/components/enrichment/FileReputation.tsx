@@ -5,7 +5,7 @@ import { api, post, type Enrichment } from '../../api'
 import { useDirectSettings } from '../../directEnrichment'
 import { absoluteTime, formatCount } from '../../format'
 import { useT } from '../../i18n'
-import { safeCtiUrl, useOpenCtiSettings } from '../../opencti'
+import { safeCtiUrl } from '../../opencti'
 import { Button } from '../ui/ui'
 import { InfoDot } from '../ui/Tooltip'
 
@@ -17,18 +17,17 @@ export function FileReputation({ slug, sha256, boxUrl }: { slug: string; sha256:
   return <HashLookup key={JSON.stringify([slug, sha256.toLowerCase()])} slug={slug} sha256={sha256.toLowerCase()} boxUrl={boxUrl} />
 }
 
-function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; boxUrl: string }) {
+function HashLookup({ slug, sha256 }: { slug: string; sha256: string; boxUrl: string }) {
   const tr = useT()
   const qc = useQueryClient()
   const settings = useDirectSettings()
-  const cti = useOpenCtiSettings()
   const validHash = /^[a-f0-9]{64}$/.test(sha256)
   const history = useQuery({ queryKey: ['enrichment', slug],
     queryFn: () => api<History>(`/api/cases/${slug}/enrichment`), enabled: validHash })
   const matches = (entry: Enrichment) => entry.service === 'virustotal' && entry.kind === 'hash' && entry.value.toLowerCase() === sha256
   const entry = entriesOf(history.data).find(matches)
-  const ready = validHash && !settings.isError && !cti.isError
-    && cti.data?.configured === false && settings.data?.services?.virustotal?.configured === true
+  const ready = validHash && !settings.isError
+    && settings.data?.services?.virustotal?.configured === true
   const lookupPending = useRef(false)
   const run = useMutation({
     onMutate: () => qc.cancelQueries({ queryKey: ['enrichment', slug] }),
@@ -51,26 +50,23 @@ function HashLookup({ slug, sha256, boxUrl }: { slug: string; sha256: string; bo
   const score = result?.known && Number.isInteger(result.score) && result.score! >= 0 ? result.score : undefined
   const tone = score == null ? 'var(--muted)' : score === 0 ? 'var(--ok)' : 'var(--danger-text)'
   const report = safeCtiUrl(result?.permalink)
-  const configurationError = settings.isError || cti.isError
+  const configurationError = settings.isError
 
   return <section aria-label={tr('enrich.virustotal')} className="mt-3 space-y-2 border-t border-[var(--line)] pt-3 text-[11px]">
     <div className="flex items-center gap-1 font-semibold text-[12px]">{tr('fileReputation.title')}
       <InfoDot label={tr('fileReputation.help')} body={tr('fileReputation.sends')} hint={tr('fileReputation.meaning')} />
     </div>
-    {cti.data?.configured ? <>
-      <p className="text-[var(--muted)]">{tr('fileReputation.opencti')}</p>
-      <a className="inline-flex items-center gap-1 rounded text-[var(--accent-text)] hover:underline" href={boxUrl}>{tr('cti.toBox')}<ExternalLink size={12} /></a>
-    </> : <>
+    <>
       <Button type="button" aria-keyshortcuts="V" className="w-full justify-center" disabled={!ready || history.isPending || run.isPending} onClick={lookup}>
         {run.isPending ? <LoaderCircle size={13} className="animate-spin" /> : entry ? <RefreshCw size={13} /> : <Search size={13} />}
         {tr(run.isPending ? 'direct.running' : entry ? 'fileReputation.refresh' : 'enrich.ask', { service: tr('enrich.virustotal') })}
         <kbd aria-hidden="true" className="ml-1 rounded border border-current/20 px-1 text-[10px] font-normal opacity-65">V</kbd>
       </Button>
-      {!ready && !configurationError && !settings.isPending && !cti.isPending && <p className="text-[var(--muted)]">{tr(validHash ? 'fileReputation.setup' : 'fileReputation.noHash')}</p>}
-    </>}
+      {!ready && !configurationError && !settings.isPending && <p className="text-[var(--muted)]">{tr(validHash ? 'fileReputation.setup' : 'fileReputation.noHash')}</p>}
+    </>
     {configurationError && <div role="alert" className="text-[var(--review-text)]">
       <p>{tr('fileReputation.settingsError')}</p>
-      <Button onClick={() => { void settings.refetch(); void cti.refetch() }}>{tr('common.retry')}</Button>
+      <Button onClick={() => { void settings.refetch() }}>{tr('common.retry')}</Button>
     </div>}
     {history.isPending && validHash && <p role="status" className="text-[var(--muted)]">{tr('fileReputation.loading')}</p>}
     {history.isError && <div role="alert" className="text-[var(--review-text)]">

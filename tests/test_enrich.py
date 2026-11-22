@@ -18,7 +18,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_unconfigured_defaults_are_offline(self):
         self.assertFalse(settings.opencti_public(self.ws)['configured'])
-        self.assertFalse(settings.opencti_public(self.ws)['sample_uploads'])
+        self.assertNotIn('sample_uploads', settings.opencti_public(self.ws))
         self.assertFalse(settings.path(self.ws).exists())
 
     def test_token_never_leaves_public_settings(self):
@@ -51,11 +51,11 @@ class SettingsTests(unittest.TestCase):
         ruleswitch.set_enabled(self.ws, 'test-rule', False)
         settings.set_yara_disabled(self.ws, ['test.yar'])
         self.assertEqual('test-token', settings.opencti_config(self.ws)['token'])
-        settings.set_opencti(self.ws, {'sample_uploads': True})
+        settings.set_opencti(self.ws, {'ingester_id': '11111111-1111-4111-8111-111111111111'})
         self.assertIn('test-rule', ruleswitch.disabled_ids(self.ws))
         self.assertIn('test.yar', settings.yara_disabled(self.ws))
 
-    def test_provider_keys_preserved_masked_and_gated_by_opencti(self):
+    def test_provider_keys_preserved_masked_and_independent_of_opencti(self):
         settings.set_key(self.ws, 'virustotal', 'provider-private-key')
         self.assertEqual('provider-private-key', settings.for_service(self.ws, 'virustotal'))
         self.assertNotIn('provider-private-key', json.dumps(settings.public(self.ws)))
@@ -63,7 +63,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual('provider-private-key', settings.for_service(self.ws, 'virustotal'))
         settings.set_opencti(self.ws, {'url':'https://cti.example','token':'test-token',
             'ingester_id':'dba5717c-b7d1-474f-8aad-bf9c2d61312c'})
-        self.assertEqual('', settings.for_service(self.ws, 'virustotal'))
+        self.assertEqual('provider-private-key', settings.for_service(self.ws, 'virustotal'))
         self.assertTrue(settings.public(self.ws)['services']['virustotal']['configured'])
         settings.set_key(self.ws, 'virustotal', '')
         self.assertFalse(settings.public(self.ws)['services']['virustotal']['configured'])

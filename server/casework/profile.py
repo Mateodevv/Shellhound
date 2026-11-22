@@ -14,11 +14,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from server.casework.profile_options import CONTEXT_OPTIONS, context_defaults
+
 REGISTRY_FILE = "pseudonyms.json"
 MARKINGS = ("TLP:CLEAR", "TLP:GREEN", "TLP:AMBER", "TLP:AMBER+STRICT", "TLP:RED")
 _LOCK = threading.RLock()
 _FIELDS = {"organization_id", "organization_name", "pseudonym", "summary", "sectors", "subsectors", "countries", "state", "city",
-           "first_seen", "last_seen", "software", "vulnerabilities", "marking"}
+           "first_seen", "last_seen", "software", "vulnerabilities", "marking"} | set(context_defaults())
 
 
 def defaults(profile=None):
@@ -26,7 +28,8 @@ def defaults(profile=None):
     result = {"organization_id": "", "organization_name": "", "pseudonym": "", "summary": "",
               "subsectors": [], "state": "", "city": "",
               "sectors": [], "countries": [], "first_seen": "", "last_seen": "",
-              "software": [], "vulnerabilities": [], "marking": "TLP:AMBER+STRICT"}
+              "software": [], "vulnerabilities": [], "marking": "TLP:AMBER+STRICT",
+              **context_defaults()}
     if isinstance(profile, dict):
         result.update({key: value for key, value in profile.items() if key in _FIELDS})
     return result
@@ -70,6 +73,27 @@ def _validated(profile):
     if not isinstance(profile, dict) or set(profile) - _FIELDS:
         raise ValueError("Case profile contains unsupported fields")
     result = defaults(profile)
+    for field, choices in CONTEXT_OPTIONS.items():
+        if field == 'spread':
+            values = _array(result[field], field, len(choices))
+            if any(not isinstance(value, str) or value not in choices for value in values):
+                raise ValueError('Choose valid affected areas')
+            result[field] = list(dict.fromkeys(values))
+        elif not isinstance(result[field], str) or result[field] not in choices:
+            raise ValueError(f'Choose a valid {field}')
+    providers = [_text(value, 'hosting provider', 200, required=True)
+                 for value in _array(result['hosting_providers'], 'hosting providers', 20)]
+    if any(any(ord(char) < 32 for char in value) for value in providers):
+        raise ValueError('Hosting providers must be single-line names')
+    result['hosting_providers'] = []
+    for value in providers:
+        if value.casefold() not in {item.casefold() for item in result['hosting_providers']}:
+            result['hosting_providers'].append(value)
+    if result['initial_access'] == 'unknown' and result['initial_access_status'] != 'unknown':
+        raise ValueError('Choose an initial access route before assessing it')
+    result['initial_cve'] = _text(result['initial_cve'], 'initial CVE', 200).upper()
+    if result['initial_cve'] and not re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,}', result['initial_cve']):
+        raise ValueError('Initial CVE must use the format CVE-YYYY-NNNN (at least four sequence digits)')
     for key in ("organization_id", "organization_name", "pseudonym", "city", "state"):
         result[key] = _text(result[key], key, 200)
     result["summary"] = _text(result["summary"], "summary", 10000)
@@ -83,9 +107,6 @@ def _validated(profile):
     geo = geography()
     if any(value not in {item['code'] for item in geo['countries']} for value in result['countries']):
         raise ValueError('Choose a valid country')
-    if result['state'] and (not result['countries'] or result['state'] not in
-            {item['code'] for item in geo['states'].get(result['countries'][0], [])}):
-        raise ValueError('State must belong to the selected country')
     subsectors = []
     for value in _array(result['subsectors'], 'subsectors'):
         item = _entry(value, ('name', 'sector'), 'subsector')
@@ -164,18 +185,16 @@ def _write_organizations(workspace, entries):
     os.replace(temporary, path)
 
 
-def create_organization(workspace, name=None):
-    """Register a chosen name; retain generated names for legacy callers."""
-    if name is not None:
-        name = _organization({'id': str(uuid.uuid4()), 'name': name})['name']
+def create_organization(workspace, name):
+    """Register a manually chosen organization name."""
+    name = _organization({'id': str(uuid.uuid4()), 'name': name})['name']
     with _LOCK:
         entries = list_organizations(workspace)
-        if name is not None:
-            existing = next((item for item in entries if item['name'].casefold() == name.casefold()), None)
-            if existing:
-                return existing
+        existing = next((item for item in entries if item['name'].casefold() == name.casefold()), None)
+        if existing:
+            return existing
         identifier = str(uuid.uuid4())
-        item = {"id": identifier, "name": name if name is not None else f"Organization-{uuid.uuid4().hex[:12]}"}
+        item = {"id": identifier, "name": name}
         entries.append(item)
         _write_organizations(workspace, entries)
         return item
@@ -218,6 +237,14 @@ def normalize(profile, workspace, existing=None):
     if not isinstance(profile, dict) or set(profile) - _FIELDS:
         raise ValueError("Case profile contains unsupported fields")
     result = _validated({**defaults(existing), **profile})
+    from server.casework.profile_options import SECTORS, SUBSECTORS
+    allowed = set(SECTORS) | set(defaults(existing)['sectors'])
+    if any(sector not in allowed for sector in result['sectors']):
+        raise ValueError('Choose a main sector from the catalogue')
+    previous_subsectors = {(item['sector'], item['name']) for item in defaults(existing)['subsectors']}
+    for item in result['subsectors']:
+        if item['name'] not in SUBSECTORS.get(item['sector'], ()) and (item['sector'], item['name']) not in previous_subsectors:
+            raise ValueError('Choose a subsector from the catalogue for its main sector')
     with _LOCK:
         if result['organization_name']:
             # A different chosen name resolves to its own registry entry, so
@@ -232,8 +259,8 @@ def normalize(profile, workspace, existing=None):
             # while changing its id. Always derive the name from the registry.
         else:
             if profile.get("pseudonym"):
-                raise ValueError("Choose an existing organization or generate a pseudonym")
-            item = create_organization(workspace)
+                raise ValueError("Enter the organization name manually")
+            return result
         result.update(organization_id=item["id"], pseudonym=item["name"])
         if result['organization_name']:
             result['organization_name'] = item['name']

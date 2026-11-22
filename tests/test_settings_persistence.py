@@ -36,7 +36,7 @@ class SettingsPersistenceTests(unittest.TestCase):
             "detection": lambda: settings.set_indirect_php(self.ws, True),
             "yara": lambda: settings.set_yara_disabled(self.ws, ["sentinel.yar"]),
             "provider": lambda: settings.set_key(self.ws, "virustotal", "replacement-sentinel"),
-            "integration": lambda: settings.set_opencti(self.ws, {"sample_uploads": True}),
+            "integration": lambda: settings.set_opencti(self.ws, {"ingester_id": "dba5717c-b7d1-474f-8aad-bf9c2d61312c"}),
             "rule": lambda: ruleswitch.set_enabled(self.ws, "sentinel-rule", False),
         }
 

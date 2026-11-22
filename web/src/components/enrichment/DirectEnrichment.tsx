@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, RefreshCw, Search } from 'lucide-react'
 import { api, post, type Enrichment, type Ioc } from '../../api'
 import { directSupported, providerTypes, useDirectSettings } from '../../directEnrichment'
-import { safeCtiUrl, useOpenCtiSettings } from '../../opencti'
+import { safeCtiUrl } from '../../opencti'
 import { useT } from '../../i18n'
 import { Button, Tag } from '../ui/ui'
 import { IocField } from '../iocs/IocField'
@@ -14,11 +14,8 @@ import { CtiError } from '../casework/CaseProfile'
 export function DirectEnrichment({ slug, ids }: { slug: string; ids: number[] }) {
   const tr = useT()
   const settings = useDirectSettings()
-  const cti = useOpenCtiSettings()
-  const enabled = cti.data?.configured === false
-  const iocs = useQuery({ queryKey: ['iocs', slug], queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`), enabled: enabled && ids.length > 0 })
-  const history = useQuery({ queryKey: ['enrichment', slug], queryFn: () => api<{ entries: Enrichment[] }>(`/api/cases/${slug}/enrichment`), enabled })
-  if (!enabled) return null
+  const iocs = useQuery({ queryKey: ['iocs', slug], queryFn: () => api<Ioc[]>(`/api/cases/${slug}/iocs`), enabled: ids.length > 0 })
+  const history = useQuery({ queryKey: ['enrichment', slug], queryFn: () => api<{ entries: Enrichment[] }>(`/api/cases/${slug}/enrichment`) })
   const objects = Array.isArray(iocs.data) ? iocs.data.filter(object => ids.includes(object.id) && directSupported(settings.data, object.type)) : []
   return <section className="space-y-3 text-[13px]">
     <div><h3 className="ioc-section-title">{tr('direct.title')}</h3><p className="mt-1 text-[12px] text-[var(--muted)]">{tr('direct.reportOnly')}</p></div>

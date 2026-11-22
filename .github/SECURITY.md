@@ -57,16 +57,16 @@ machine without network access you place the `*.mmdb` into the workspace by
 hand instead.
 
 **OpenCTI integration** uses a dedicated token configured under *Settings*.
-Direct VirusTotal and AbuseIPDB network calls are retired; historical results
-remain local and readable.
+Direct VirusTotal and AbuseIPDB report lookups are separate explicit actions.
+The OpenCTI connection is used only for reviewed profile and IOC transfer.
 
 | Point | What holds |
 |---|---|
-| **Separate actions** | Lookup reads existing OpenCTI knowledge. Transfer submits only a reviewed preview. Enrichment requires a separate connector selection; unknown observables need explicit creation consent. |
+| **Explicit transfer** | Only a reviewed profile and selected IPs with labels, CVEs and hashes are transferred. No OpenCTI lookup or enrichment action is exposed. |
 | **No network on display** | Views read stored responses. Explicit jobs may poll their submitted work; a separate status action resumes later checks. |
 | **Manual enrichment** | Transfers are refused while any active internal enrichment connector is automatic. External feed imports may continue. |
-| **Original files** | Uploads default off, require per-file selection, and verify the exact snapshot against preview hashes. Metadata enrichment refuses Artifacts and files with attached content. |
-| **Privacy review** | Random organization pseudonyms do not anonymize domains, emails, notes or evidence. Preview exclusions and workstation-path redaction apply before transfer. TLP markings do not replace OpenCTI permissions. |
+| **Original files** | Export creates hash-only File objects. There is no sample-upload or Indicator option; legacy options are rejected server-side. |
+| **Privacy review** | Profile values are entered manually. Unsupported IOC types, local notes and evidence are excluded; transferred text is redacted for local paths and credentials. TLP markings do not replace OpenCTI permissions. |
 | **Token storage** | The integration token lives in cleartext `settings.json` outside case archives, owner-readable where supported. Public settings expose only its last four characters. Changing the server URL clears the old token. TLS verification stays enabled; redirects are refused. |
 
 What comes back is stored as a **third-party opinion**: apart from the

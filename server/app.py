@@ -37,7 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from server.casework import profile as case_profile, report as case_report, incident_summary
+from server.casework import report as case_report, incident_summary
 from server import correlation, coverage, db, diagnostics
 from server.integrations import geoip
 from server import huntrules, hunt_batches
@@ -707,23 +707,11 @@ def create_app(config: Config) -> FastAPI:
             diagnostics.exception(config.workspace, "opencti", exc, operation=operation)
             raise HTTPException(502, opencti_service._error(exc)) from None
 
-    @app.get("/api/organizations", dependencies=[auth])
-    def organizations_list():
-        return case_profile.list_organizations(config.workspace)
-
-    @app.get("/api/profile/geography", dependencies=[auth])
-    def profile_geography():
-        from server.casework.profile_options import geography
-        return geography()
-
-    @app.get("/api/opencti/sectors", dependencies=[auth])
+    @app.get("/api/profile/sectors", dependencies=[auth])
     def profile_sectors():
-        from server.casework.profile_options import sectors
-        return _cti_call(sectors, config.workspace)
-
-    @app.post("/api/organizations", dependencies=[auth])
-    def organization_create():
-        return _cti_call(case_profile.create_organization, config.workspace)
+        from server.casework.profile_options import SECTORS, SUBSECTORS, CONTEXT_OPTIONS, HOSTING_PROVIDERS
+        return {"sectors": SECTORS, "subsectors": SUBSECTORS,
+                "context_options": {**CONTEXT_OPTIONS, "hosting_providers": HOSTING_PROVIDERS}}
 
     @app.get("/api/opencti/settings", dependencies=[auth])
     def opencti_settings():
@@ -733,7 +721,7 @@ def create_app(config: Config) -> FastAPI:
         url: str | None = None
         token: str | None = None
         ingester_id: str | None = None
-        sample_uploads: bool | None = None
+        model_config = {"extra": "forbid"}
 
     @app.patch("/api/opencti/settings", dependencies=[auth])
     def opencti_settings_update(body: OpenCTISettings):
@@ -748,31 +736,9 @@ def create_app(config: Config) -> FastAPI:
     def opencti_state(slug: str):
         return _cti_call(opencti_service.state, config.workspace, case_dir_or_404(slug))
 
-    @app.get("/api/cases/{slug}/opencti/profile-changes", dependencies=[auth])
-    def opencti_profile_changes(slug: str):
-        return _cti_call(opencti_service.profile_changes, config.workspace, case_dir_or_404(slug))
-
-    @app.post("/api/cases/{slug}/opencti/activity/clear", dependencies=[auth])
-    def opencti_clear_activity(slug: str):
-        return _cti_call(opencti_service.clear_activity, case_dir_or_404(slug))
-
-    class OpenCTISelection(BaseModel):
+    class OpenCTIPreview(BaseModel):
+        model_config = {"extra": "forbid"}
         ioc_ids: list[int] | None = None
-
-    @app.post("/api/cases/{slug}/opencti/lookup", dependencies=[auth])
-    def opencti_lookup(slug: str, body: OpenCTISelection):
-        return _cti_call(opencti_service.lookup, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids)
-
-    class OpenCTIPreview(OpenCTISelection):
-        exclude_relationship_ids: list[int] = Field(default_factory=list)
-        indicator_ids: list[int] = Field(default_factory=list)
-        sample_ids: list[str] = Field(default_factory=list)
-        include_notes: bool = False
-        include_evidence: bool = False
-        exclude_note_ioc_ids: list[int] = Field(default_factory=list)
-        exclude_evidence_ioc_ids: list[int] = Field(default_factory=list)
-        exclude_profile_fields: list[str] = Field(default_factory=list)
 
     @app.post("/api/cases/{slug}/opencti/preview", dependencies=[auth])
     def opencti_preview(slug: str, body: OpenCTIPreview):
@@ -794,25 +760,6 @@ def create_app(config: Config) -> FastAPI:
     def opencti_retry(slug: str, body: OpenCTIRetry):
         return _cti_call(opencti_service.retry, config.workspace,
                          case_dir_or_404(slug), body.export_id)
-
-    @app.post("/api/cases/{slug}/opencti/enrichment/preview", dependencies=[auth])
-    def opencti_enrichment_preview(slug: str, body: OpenCTISelection):
-        return _cti_call(opencti_service.enrichment_preview, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids)
-
-    class OpenCTIEnrich(OpenCTISelection):
-        connector_ids: list[str] = Field(default_factory=list)
-        create_missing: bool = False
-
-    @app.post("/api/cases/{slug}/opencti/enrichment/status", dependencies=[auth])
-    def opencti_enrichment_status(slug: str):
-        return _cti_call(opencti_service.refresh_enrichment, config.workspace,
-                         case_dir_or_404(slug))
-
-    @app.post("/api/cases/{slug}/opencti/enrich", dependencies=[auth])
-    def opencti_enrich(slug: str, body: OpenCTIEnrich):
-        return _cti_call(opencti_service.enrich, config.workspace,
-                         case_dir_or_404(slug), body.ioc_ids, body.connector_ids, body.create_missing)
 
     @app.get("/api/cases/{slug}/coverage", dependencies=[auth])
     def log_coverage(slug: str, lang: str = lang_dep, tz: str = tz_dep):
@@ -2535,37 +2482,17 @@ def create_app(config: Config) -> FastAPI:
                                  context=artifact, path_context="system")
             _track_ioc(conn, path_id, artifact, "direct")
             out.append({"value": value, "type": "path"})
-            # Decisions reuse the identity analysis prepared; no content reads
-            # or hash calculations belong in this save request.
-            indexed_info = None
-            try:
-                indexed_info = backups.indexed_file(conn, artifact)
-            except backups.BackupError:
-                pass
-            digest = indexed_info['sha256'] if indexed_info else None
-            file_id = None
-            if digest:
-                hash_id = db.add_ioc(conn, digest, "hash",
-                                     [ioclib.TAG_DERIVED, ioclib.TAG_CONFIRMED],
-                                     origin=f"sha-256 of {os.path.basename(artifact)}")
-                _track_ioc(conn, hash_id, artifact, "hash")
-                if manual_webshell or manual_malware or explicit_classes is not None:
-                    conn.execute("UPDATE ioc_sources SET active=0 WHERE artifact=? "
-                                 "AND role='hash' AND ioc_id != ?", (artifact, hash_id))
-                # Path and hash describe THE SAME file. Only here is that
-                # still known: afterwards the box holds two rows one cannot
-                # tell it from.
-                db.link_iocs(conn, hash_id, path_id, ioclib.LINK_HASH_OF)
-                file_id = ioc_model.collect_file(conn, artifact, digest, hash_id, path_id,
-                                                 file_classification, findings,
-                                                 indexed_info=indexed_info)
-                out.append({"value": digest, "type": "hash"})
+            content = ioc_model.complete_file_iocs(conn, artifact, path_id, findings, prepare=True)
+            file_id = content['file_id'] if content else None
+            if content:
+                out.append({"value": content['digest'], "type": "hash"})
             # instant hunt: who requested exactly this path?
             name = os.path.basename(artifact.replace("\\", "/"))
             for hit in list(touches)[:25]:
                 tags = [ioclib.TAG_HUNT]
                 if hit["ok_hits"] > 0:
-                    tags.append(ioclib.TAG_SUCCESS)
+                    tags.append(ioclib.TAG_ACCESSED_WEBSHELL if file_classification == "webshell"
+                                else ioclib.TAG_SUCCESS)
                 ip_id = db.add_ioc(conn, hit["ip"], "ip", tags,
                                    origin=f"requested {name} ({hit['hits']}×, "
                                           f"{hit['ok_hits']}× 2xx)")

@@ -21,7 +21,7 @@ it('never retrieves a full token or tests a connection implicitly', async () => 
   fireEvent.change(screen.getByLabelText('TAXII push ingester ID'), { target: { value: 'ingester-b' } })
   expect(screen.getByRole('button', { name: 'Test saved connection' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/opencti/settings', { url: 'https://cti.example', ingester_id: 'ingester-b', sample_uploads: false }))
+  await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/opencti/settings', { url: 'https://cti.example', ingester_id: 'ingester-b' }))
 })
 
 it('clears a stored token only when explicitly selected', async () => {
@@ -32,11 +32,11 @@ it('clears a stored token only when explicitly selected', async () => {
   expect(post).not.toHaveBeenCalled()
 })
 
-it('tests the saved connection on click and shows automatic connector warnings', async () => {
-  vi.mocked(post).mockResolvedValue({ ok: true, version: '6.8', connectors: [{ id: 'vt', name: 'VirusTotal', scope: ['StixFile'], auto: true, active: true }], warnings: ['Set enrichment connectors to manual before transfer.'] })
+it('tests only the saved export connection on explicit click', async () => {
+  vi.mocked(post).mockResolvedValue({ ok: true, version: 'test-version' })
   renderWithProviders(<OpenCtiSettings />)
   fireEvent.click(await screen.findByRole('button', { name: 'Test saved connection' }))
-  expect(await screen.findByText('Set enrichment connectors to manual before transfer.')).toBeInTheDocument()
-  expect(post).toHaveBeenCalledWith('/api/opencti/test', {})
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/opencti/test', {}))
+  expect(screen.queryByRole('checkbox', { name: /sample/i })).not.toBeInTheDocument()
   expect(patch).not.toHaveBeenCalled()
 })

@@ -113,7 +113,9 @@ class HuntBatchTests(unittest.TestCase):
         exported = [o for o in preview["objects"] if o["type"] == "relationship"
                     and o["source_ref"].startswith("ipv4-addr--")
                     and o["target_ref"].startswith("vulnerability--")]
-        self.assertEqual(412, len(exported))
+        self.assertEqual([], exported)
+        self.assertEqual(206, sum(o["type"] == "ipv4-addr" for o in preview["objects"]))
+        self.assertEqual(2, sum(o["type"] == "vulnerability" for o in preview["objects"]))
         self.assertTrue(all(o["relationship_type"] == "related-to" for o in exported))
 
     def test_cve_collection_rejects_a_different_index_generation(self):

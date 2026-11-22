@@ -10,7 +10,7 @@ type Event = JobEvent | InvalidateEvent
 // Which query keys a finished engine invalidates. "Everything relevant"
 // beats a stale view; the queries are cheap reads of local SQLite.
 const SCOPE_KEYS: Record<string, string[]> = {
-  'opencti-lookup': ['iocs', 'opencti', 'jobs'],
+  'opencti-export': ['opencti', 'jobs'],
   first_sign: ['first-sign', 'dashboard', 'chain'],
   index_logs: ['dashboard', 'actors', 'findings', 'jobs', 'case', 'trace', 'hunt-batches', 'hunt-batch', 'hunt-clients', 'hunt-clusters', 'hunt-request', 'access-search', 'access-overview', 'access-patterns', 'access-segments', 'access-request', 'access-clips'],
   hunt: ['dashboard', 'hunt-batches', 'hunt-batch', 'hunt-tests', 'jobs'],

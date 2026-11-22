@@ -68,7 +68,7 @@ class SettingsStorageHTTPTests(unittest.TestCase):
                      ('POST', '/api/settings/enrichment-ack', {'accepted': True}),
                      ('POST', '/api/settings/key', {'service': 'virustotal', 'key': 'synthetic-new-key'}),
                      ('POST', '/api/settings/detection', {'indirect_php': True}),
-                     ('PATCH', '/api/opencti/settings', {'sample_uploads': True})]
+                     ('PATCH', '/api/opencti/settings', {'token': 'synthetic-new-token'})]
             for method, path, body in calls:
                 with self.subTest(path=path):
                     status, result = self.request(method, path, body)

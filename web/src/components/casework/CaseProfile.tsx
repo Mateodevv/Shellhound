@@ -2,8 +2,9 @@ import { useState, type ReactNode, type Dispatch, type SetStateAction } from 're
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { SlidersHorizontal } from 'lucide-react'
 import { api, patch, type CaseInfo } from '../../api'
-import { newCaseProfile, useOpenCtiSettings, type CaseProfile, type CaseProfileChanges } from '../../opencti'
+import { newCaseProfile, type CaseProfile } from '../../opencti'
 import { AffectedOrganizationFields } from './AffectedOrganizationFields'
+import { CaseContextFields } from './CaseContext'
 import { useT } from '../../i18n'
 import { Button, Modal } from '../ui/ui'
 
@@ -18,14 +19,12 @@ export function CtiError({ error }: { error: unknown }) {
 export function CaseProfileButton({ slug }: { slug: string }) {
   const tr = useT()
   const [open, setOpen] = useState(false)
-  const settings = useOpenCtiSettings()
-  const changes = useQuery({ queryKey: ['opencti', slug, 'profile-changes'], queryFn: () => api<CaseProfileChanges>(`/api/cases/${slug}/opencti/profile-changes`), enabled: settings.data?.configured === true })
-  return <div className="flex flex-wrap items-center gap-2"><Button onClick={() => setOpen(true)}><SlidersHorizontal size={14} />{tr('cti.profile')}</Button>{changes.data?.status === 'changed' && <span className="text-[11px] text-[var(--muted)]">{tr('profileChanges.pending', { n: changes.data.entries.length })}</span>}{open && <CaseProfileDialog slug={slug} onClose={() => setOpen(false)} />}</div>
+  return <div className="flex flex-wrap items-center gap-2"><Button onClick={() => setOpen(true)}><SlidersHorizontal size={14} />{tr('cti.profile')}</Button>{open && <CaseProfileDialog slug={slug} onClose={() => setOpen(false)} />}</div>
 }
 function CaseProfileDialog({ slug, onClose }: { slug: string; onClose: () => void }) {
   const tr = useT()
   const query = useQuery({ queryKey: ['case', slug], queryFn: () => api<CaseInfo>(`/api/cases/${slug}`) })
-  return <Modal open onClose={onClose} title={tr('cti.profile')}>
+  return <Modal open onClose={onClose} title={tr('cti.profile')} maxWidth={900}>
     <CtiError error={query.error} />
     {query.isError && <Button onClick={() => void query.refetch()}>{tr('evidence.skips.retry')}</Button>}
     {query.data ? <CaseProfileForm slug={slug} info={query.data} onClose={onClose} unavailable={query.isError || query.isFetching} /> : !query.error && <p>{tr('common.loading')}</p>}
@@ -49,19 +48,19 @@ export function CaseProfileForm({ slug, info, onClose, unavailable = false }: { 
     onClose()
   } })
   return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!unavailable && !invalidDates && name.trim() && !save.isPending) save.mutate() }}>
-    <p className="text-[12px] text-[var(--muted)]">{tr('profileChanges.localSave')}</p>
-    <fieldset disabled={save.isPending || unavailable} className="flex flex-col gap-4">
-    <CtiField label={tr('wizard.name')}><input aria-label={tr('wizard.name')} required value={name} onChange={e => setName(e.target.value)} className={ctiInput} /><span>{tr('profileChanges.localName')}</span></CtiField>
-    <CtiField label={tr('cti.caseId')}><input aria-label={tr('cti.caseId')} value={reference} readOnly={info.reference_locked} onChange={(e) => setReference(e.target.value)} className={ctiInput} /><span>{tr(info.reference_locked ? 'profileChanges.referenceLocked' : 'cti.caseIdHint')}</span></CtiField>
-    <CaseProfileFields profile={profile} onChange={setProfile} />
+    <fieldset disabled={unavailable || save.isPending} className="grid gap-4 sm:grid-cols-2">
+    <CtiField label={tr('wizard.name')}><input aria-label={tr('wizard.name')} required value={name} onChange={e => setName(e.target.value)} className={ctiInput} /></CtiField>
+    <CtiField label={tr('cti.caseId')}><input aria-label={tr('cti.caseId')} value={reference} readOnly={info.reference_locked} onChange={(e) => setReference(e.target.value)} className={ctiInput} />{info.reference_locked && <span>{tr('profileChanges.referenceLocked')}</span>}</CtiField>
+    <div className="flex flex-col gap-4 sm:col-span-2"><CaseProfileFields profile={profile} onChange={setProfile} /></div>
     </fieldset>
+    {!!(profile.software.length || profile.vulnerabilities.length) && <p className="text-[12px] text-[var(--muted)]">{tr('cti.retainedProfileData')}</p>}
     <CtiError error={invalidDates ? tr('cti.dateError') : save.error} />
     <div className="flex justify-end gap-2"><Button type="button" disabled={save.isPending} onClick={onClose}>{tr('common.cancel')}</Button><Button type="submit" variant="primary" disabled={unavailable || save.isPending || invalidDates || !name.trim()}>{tr('common.save')}</Button></div>
   </form>
 }
 
 export function CaseProfileFields({ profile, onChange, section = 'all', requiredContext = false }: {
-  profile: CaseProfile; onChange: Dispatch<SetStateAction<CaseProfile>>; section?: 'all' | 'affected' | 'technical' | 'hidden'; requiredContext?: boolean
+  profile: CaseProfile; onChange: Dispatch<SetStateAction<CaseProfile>>; section?: 'all' | 'affected' | 'hidden'; requiredContext?: boolean
 }) {
   const tr = useT()
   const change = <K extends keyof CaseProfile>(key: K, value: CaseProfile[K]) => onChange(previous => ({ ...previous, [key]: value }))
@@ -71,6 +70,7 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
     </>}
     <div hidden={section !== 'all' && section !== 'affected'}><div className="flex flex-col gap-4">
     <AffectedOrganizationFields profile={profile} onChange={onChange} active={section === 'all' || section === 'affected'} required={requiredContext} />
+    {(section === 'all' || section === 'affected') && <CaseContextFields profile={profile} onChange={onChange} />}
     <div className="grid gap-3 sm:grid-cols-2">
       <CtiField label={tr('cti.firstSeen')}><input type="date" className={ctiInput} value={profile.first_seen.slice(0, 10)} onChange={(e) => change('first_seen', e.target.value)} /></CtiField>
       <CtiField label={tr('cti.lastSeen')}><input type="date" className={ctiInput} value={profile.last_seen.slice(0, 10)} onChange={(e) => change('last_seen', e.target.value)} /></CtiField>
@@ -79,5 +79,6 @@ export function CaseProfileFields({ profile, onChange, section = 'all', required
       {['TLP:CLEAR', 'TLP:GREEN', 'TLP:AMBER', 'TLP:AMBER+STRICT', 'TLP:RED'].map((marking) => <option key={marking}>{marking}</option>)}
     </select><span>{tr('cti.markingHint')}</span></CtiField>
     </div></div>
+
   </>
 }

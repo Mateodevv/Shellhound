@@ -1,5 +1,4 @@
 """Provider boundaries: explicit reads, cache integrity and credential handling."""
-import json
 import tempfile
 import unittest
 import urllib.error
@@ -42,10 +41,11 @@ class DirectEnrichmentTests(unittest.TestCase):
             for service,value,kind in [('abuseipdb','a'*64,'hash'),('virustotal','CVE-2023-1234','vulnerability'),('virustotal','../file.php','file'),('virustotal','bad-ip','ip'),('virustotal','https://user:pass@example.test','url'),('virustotal','example.test/path','domain')]:
                 with self.subTest(value=value),self.assertRaises(enrich.EnrichError):enrich.lookup(self.ws,self.case,service,value,kind=kind)
             remote.assert_not_called()
-    def test_opencti_prevents_direct_calls_even_with_key(self):
-        settings.set_opencti(self.ws,{'url':'https://cti.example','token':'test-token','ingester_id':'dba5717c-b7d1-474f-8aad-bf9c2d61312c'})
-        with patch.object(enrich,'_get') as remote,self.assertRaises(enrich.EnrichError) as raised:enrich.lookup(self.ws,self.case,'abuseipdb','1.1.1.1')
-        self.assertEqual(409,raised.exception.status);remote.assert_not_called()
+    def test_opencti_export_does_not_block_explicit_direct_calls(self):
+        settings.set_opencti(self.ws,{'url':'https://cti.example','token':'test-token','ingester_id':'11111111-1111-4111-8111-111111111111'})
+        with patch.object(enrich, '_get', return_value={'data': {'abuseConfidenceScore': 0}}) as remote:
+            self.assertEqual(0, enrich.lookup(self.ws, self.case, 'abuseipdb', '198.51.100.1')['result']['score'])
+        remote.assert_called_once()
     def test_failed_refresh_keeps_last_success(self):
         with patch.object(enrich,'_get',return_value={'data':{'abuseConfidenceScore':15}}):enrich.lookup(self.ws,self.case,'abuseipdb','1.1.1.1')
         with patch.object(enrich,'_get',side_effect=enrich.EnrichError('Limit',429)),self.assertRaises(enrich.EnrichError):enrich.lookup(self.ws,self.case,'abuseipdb','1.1.1.1',True)

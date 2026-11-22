@@ -343,6 +343,57 @@ def enrich_rows(conn, rows):
     return apply_labels(conn, rows)
 
 
+def complete_file_iocs(conn, artifact, path_id, findings=(), *, prepare=False):
+    """Collect verified content for an already confirmed path, idempotently."""
+    from server import backups, db
+    findings = list(findings)
+    if not backups.registered(conn, artifact):
+        return None
+    try:
+        try:
+            info = backups.indexed_file(conn, artifact)
+        except backups.BackupError:
+            if not prepare:
+                return None
+            backups.remember(conn, artifact, backups.hash_file(artifact))
+            info = backups.indexed_file(conn, artifact)
+    except (OSError, backups.BackupError):
+        return None
+    digest = info['sha256']
+    hash_id = db.add_ioc(conn, digest, 'hash', ['derived', 'confirmed'],
+                         origin='sha-256 of ' + artifact.replace('\\', '/').rsplit('/', 1)[-1])
+    conn.execute("INSERT INTO ioc_sources(ioc_id,artifact,role,active,added) VALUES(?,?,'hash',1,?) "
+                 "ON CONFLICT(ioc_id,artifact,role) DO UPDATE SET active=1", (hash_id, artifact, now()))
+    observe(conn, hash_id, 'source', source_ref='hash', local_path=artifact,
+            detail='Structured collection provenance')
+    from server.file_classifications import saved
+    if saved(conn, artifact) is not None or any(f.get('rule_id') == 'analyst.file_review' for f in findings):
+        conn.execute("UPDATE ioc_sources SET active=0 WHERE artifact=? AND role='hash' AND ioc_id!=? "
+                     "AND ioc_id IN (SELECT id FROM iocs WHERE type='hash')", (artifact, hash_id))
+    db.link_iocs(conn, hash_id, path_id, 'hash-of')
+    from server.file_classifications import current
+    classification = next(iter(current(conn, artifact, findings) or []), '')
+    file_id = collect_file(conn, artifact, digest, hash_id, path_id, classification, findings, indexed_info=info)
+    return {'hash_id': hash_id, 'file_id': file_id, 'digest': digest}
+
+
+def complete_indexed_file_iocs(conn):
+    """Fill confirmed path-only collections after content analysis."""
+    from server import db
+    completed = 0
+    paths = db.rows(conn, "SELECT DISTINCT i.id,s.artifact FROM iocs i JOIN ioc_sources s ON s.ioc_id=i.id "
+                    "WHERE i.type='path' AND s.role='direct' AND s.active=1 "
+                    "AND NOT EXISTS (SELECT 1 FROM ioc_sources fs JOIN iocs fi ON fi.id=fs.ioc_id "
+                    "WHERE fs.artifact=s.artifact AND fs.active=1 AND fi.type='file')")
+    for path in paths:
+        findings = db.rows(conn, 'SELECT f.* FROM findings f ' + db.RETIRE_JOIN +
+                           " WHERE f.artifact=? AND f.artifact_kind='file' AND f.triage='confirmed' AND " +
+                           db.LIVE_PREDICATE, (path['artifact'],))
+        if findings and complete_file_iocs(conn, path['artifact'], path['id'], findings):
+            completed += 1
+    return completed
+
+
 def collect_file(conn, artifact, digest, hash_id, path_id, classification="", findings=(), *, indexed_info=None):
     """Attach metadata only if a coherent read matches the recorded hash."""
     from server.integrations.opencti.graph import _snapshot

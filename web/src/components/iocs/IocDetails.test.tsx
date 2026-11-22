@@ -190,25 +190,6 @@ describe('Structured IOC details', () => {
     expect(vi.mocked(post).mock.calls.every(([url]) => url.startsWith('/api/cases/synthetic/trace'))).toBe(true)
   })
 
-  it.each(['ip', 'file', 'hash', 'domain', 'url', 'email', 'user', 'vulnerability'])('shows cached enrichment for %s without starting network work', async type => {
-    const object = { ...ip, type, context: type === 'user' ? 'account-context' : '' }
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true }
-      : url.endsWith('/detail') ? { ...detail, object } : { lookups: [{ ioc_id: 1, status: 'known', checked_at: '2026-09-10', stale: true,
-        entities: [{ id: 'remote', type: type === 'vulnerability' ? 'Vulnerability' : 'IPv4-Addr', name: 'Remote result', description: 'Saved provider details', labels: ['provider-tag'], sources: [{ source_name: 'Example provider', url: 'https://example.test/report' }],
-          x_opencti_epss_score: 0.025, x_opencti_epss_percentile: 0.8, x_opencti_cvss_base_score: 9.8 }] }] })
-    renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[object]} onClose={() => {}} embedded />)
-    fireEvent.click(await screen.findByRole('tab', { name: 'Enrichment' }))
-    expect(screen.getByText('Saved provider details')).toBeVisible()
-    expect(screen.getByText('Example provider')).toBeVisible()
-    expect(!!screen.queryByRole('tab', { name: 'Trace' })).toBe(type === 'ip')
-    if (type === 'vulnerability') {
-      expect(screen.getByText('2.50%')).toBeVisible()
-      expect(screen.getByText('80.00%')).toBeVisible()
-      expect(screen.getByText('9.8 / 10')).toBeVisible()
-    }
-    expect(post).not.toHaveBeenCalled()
-  })
-
   it('falls back to Overview for a non-IP opened with a saved Trace tab', async () => {
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: cve } : { lookups: [] })
     renderWithProviders(<IocDetails slug="synthetic" id={2} iocs={[ip, cve]} tab="Trace" onClose={() => {}} embedded />)
@@ -216,83 +197,6 @@ describe('Structured IOC details', () => {
     expect(screen.queryByRole('tab', { name: 'Trace' })).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(post).not.toHaveBeenCalled()
-  })
-
-  it('shows the cached OpenCTI score and explains it without changing the case assessment', async () => {
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [
-      { ioc_id: 1, status: 'known', stale: true, checked_at: '2026-09-08 12:00 UTC', entities: [{ id: 'cti-ip', name: ip.value, score: 58 }] },
-    ] })
-    const { container } = show()
-    expect(await screen.findByText('58 / 100')).toBeVisible()
-    expect(screen.getByText('Unassessed')).toBeVisible()
-    expect(screen.queryByText(/2026-09-08 12:00 UTC/)).not.toBeInTheDocument()
-    const score = [...container.querySelectorAll('div')].find(el => el.textContent === 'Score')!
-    fireEvent.focus(score.querySelector('[tabindex="0"]')!)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Higher values indicate a stronger assessment of maliciousness.')
-    expect(screen.getByRole('tooltip')).toHaveTextContent('2026-09-08 12:00 UTC')
-    expect(post).not.toHaveBeenCalled()
-  })
-
-  it('uses identical editable tags and score badges in Overview and Enrichment', async () => {
-    const object = { ...ip, tags: ['CVE-2026-12345', 'Provider tag', 'Manual tag'] }
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true }
-      : url.endsWith('/detail') ? { ...detail, object } : { lookups: [{ ioc_id: 1, status: 'known', checked_at: '2026-09-11',
-        entities: [{ id: 'remote', type: 'IPv4-Addr', name: ip.value, score: 58, labels: ['Provider tag'], sources: [] }] }] })
-    const { container } = show()
-    const badge = await screen.findByText('58 / 100')
-    const overviewScore = badge.outerHTML
-    const tags = () => [...container.querySelectorAll('.ioc-tag')].map(el => el.textContent).sort()
-    const overviewTags = tags()
-    expect(overviewTags).toEqual([...object.tags].sort())
-    fireEvent.click(screen.getByRole('tab', { name: 'Enrichment' }))
-    expect(screen.getByText('58 / 100').outerHTML).toEqual(overviewScore)
-    expect(tags()).toEqual(overviewTags)
-    expect(screen.getByRole('button', { name: 'Add tag' })).toBeVisible()
-    expect(post).not.toHaveBeenCalled()
-  })
-
-  it('keeps different entity scores distinct, including zero, and shows missing scores explicitly', async () => {
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [
-      { ioc_id: 1, status: 'known', entities: [{ id: 'a', name: 'First observable', score: 0 }, { id: 'b', name: 'Second observable', score: 100 }] },
-    ] })
-    const view = show()
-    expect(await screen.findByText('0 / 100')).toBeVisible()
-    expect(screen.getByText('100 / 100')).toBeVisible()
-    expect(screen.getByText('First observable')).toBeVisible()
-    view.unmount()
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [{ ioc_id: 1, status: 'known', entities: [{ id: 'a', score: null }] }] })
-    show()
-    expect(await screen.findByText('No score available')).toBeVisible()
-    expect(screen.queryByText('0 / 100')).not.toBeInTheDocument()
-  })
-
-  it('groups object actions while retaining the associated file hash scope', async () => {
-    const file = { ...ip, type: 'file', value: 'sample.php', assessment: 'malicious' as const }
-    const hash = { ...ip, id: 3, type: 'hash', value: 'a'.repeat(64), file_ids: [1] }
-    vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: file }
-      : url === '/api/opencti/settings' ? { configured: true } : { lookups: [] })
-    const { container } = renderWithProviders(<IocDetails slug="synthetic" id={1} iocs={[file, hash, cve]} onClose={() => {}} embedded />)
-    await screen.findByRole('heading', { name: 'sample.php' })
-    expect(container.querySelector('header summary')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'IOC actions' })).toBeVisible()
-    const toggle = await screen.findByRole('button', { name: 'OpenCTI actions' })
-    expect(screen.queryByRole('button', { name: 'Check in OpenCTI' })).not.toBeInTheDocument()
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.keyDown(toggle, { key: 'Escape' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(toggle)
-    fireEvent.pointerDown(document.body)
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(toggle)
-    expect(screen.queryByRole('button', { name: 'Transfer to OpenCTI' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Enrich via OpenCTI' })).toBeVisible()
-    const check = screen.getByRole('button', { name: 'Check in OpenCTI' })
-    await waitFor(() => expect(check).toBeEnabled())
-    expect(post).not.toHaveBeenCalled()
-    fireEvent.click(check)
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/synthetic/opencti/lookup', { ioc_ids: [1, 3] }))
   })
 
   it('explains the field with a descriptive tooltip on keyboard focus', async () => {
@@ -308,7 +212,7 @@ describe('Structured IOC details', () => {
     await screen.findByRole('heading', { name: ip.value })
     expect(post).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Save assessment' })).not.toBeInTheDocument()
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Trace', 'Enrichment'])
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Trace'])
     expect(post).not.toHaveBeenCalled()
   })
 
@@ -372,19 +276,6 @@ describe('Structured IOC details', () => {
     expect(screen.queryByRole('tab', { name: tab })).not.toBeInTheDocument()
   })
 
-  it('links to the cached OpenCTI object and rejects unsafe links', async () => {
-    vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [{ ioc_id: 1, entities: [
-      { id: 'remote', name: ip.value, url: 'https://cti.example/dashboard/observations/observables/remote' },
-      { id: 'unsafe', name: 'Unsafe URL', url: 'javascript:void(0)' },
-    ] }] })
-    show()
-    const link = await screen.findByRole('link', { name: 'Open in OpenCTI' })
-    expect(link).toHaveAttribute('href', 'https://cti.example/dashboard/observations/observables/remote')
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    expect(screen.getAllByRole('link')).toHaveLength(1)
-    expect(post).not.toHaveBeenCalled()
-  })
-
   it('adds and removes tags with local deltas', async () => {
     vi.mocked(api).mockImplementation(async url => url.endsWith('/detail') ? { ...detail, object: { ...ip, tags: ['IOC'] } } : { lookups: [] })
     show()
@@ -427,4 +318,14 @@ describe('Structured IOC details', () => {
     expect(navigate).toHaveBeenCalledWith(2)
   })
 
+})
+
+it('does not revive cached OpenCTI scores or lookup actions', async () => {
+  vi.mocked(api).mockImplementation(async url => url === '/api/opencti/settings' ? { configured: true } : url.endsWith('/detail') ? detail : { lookups: [{ ioc_id: 1, entities: [{ score: 58 }] }] })
+  show()
+  await screen.findByRole('heading', { name: ip.value })
+  expect(screen.getByText('Unassessed')).toBeVisible()
+  expect(screen.queryByText('58 / 100')).not.toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
 })

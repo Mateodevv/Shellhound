@@ -339,6 +339,8 @@ def index_content(conn, ctx=None):
         conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)', ('content_inventory_sources', source_signature(conn)))
     else:
         conn.execute("DELETE FROM meta WHERE key='content_inventory_sources'")
+    from server.ioc.model import complete_indexed_file_iocs
+    complete_indexed_file_iocs(conn)
     return {'files': len(seen), 'skipped_count': failures, 'incomplete': bool(failures)}
 
 
@@ -507,9 +509,11 @@ def grouping(conn):
                    "JOIN evidence e ON e.id=b.evidence_id WHERE f.sha256!='' AND b.state IN ('ready','partial')")
     allowed = {s['id'] for s in settings(conn)['snapshots'] if s['available']}
     members = {r['artifact']: {**r, 'key': json.dumps([r['site_id'], r['relative_path'], r['sha256']])} for r in rows if r['snapshot_id'] in allowed}
-    identities = {canonical_file(path): entry for path, entry in members.items()}
+    identities = None
     for item in db.rows(conn, "SELECT DISTINCT artifact FROM findings WHERE artifact_kind='file'"):
         if item['artifact'] not in members:
+            if identities is None:
+                identities = {canonical_file(path): entry for path, entry in members.items()}
             member = identities.get(canonical_file(item['artifact']))
             if member:
                 members[item['artifact']] = member

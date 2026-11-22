@@ -25,7 +25,6 @@ import { InfoDot, Tooltip } from '../ui/Tooltip'
 import { IpFlag } from '../ui/IpFlag'
 import { TraceWindow, type TraceMarks } from '../logview/TraceWindow'
 import { explainRule } from '../../explain'
-import { useOpenCtiSettings } from '../../opencti'
 import { useGeo } from '../../geo'
 import { GroupedActions } from '../enrichment/OpenCti'
 import { ArtifactEnrichment } from '../enrichment/ArtifactEnrichment'
@@ -239,7 +238,6 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   const splitRef = useRef<HTMLDivElement>(null)
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
   const [selectedExportPath, setSelectedExportPath] = useState<string | null>(null)
-  const conf = useOpenCtiSettings(!!artifact)
   const direct = useDirectSettings(!!artifact)
   const geo = useGeo(artifact?.artifact_kind === 'client' ? artifact.artifact : null)
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
@@ -316,7 +314,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
   shortcutRef.current = () => {}
   if (!artifact) return null
   const kind = artifact.artifact_kind
-  const canEnrich = kind === 'client' && (conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'ip')))
+  const canEnrich = kind === 'client' && directSupported(direct.data, 'ip')
   const tab = evidenceTab === 'enrichment' && !canEnrich ? (kind === 'client' ? 'trace' : 'findings') : evidenceTab
   const activeFinding = selectedFinding ?? ctx?.findings.find(item => item.retired !== 1) ?? ctx?.findings[0]
   const tableSources = ctx?.table_sources ?? []
@@ -605,7 +603,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
             {kind === 'file' ? <FileContentPane slug={slug} path={artifact.artifact} focusLine={focusLine} showPath={false} className="min-h-0 w-full flex-1" />
               : <ContextPreview sql preview={sqlQuery.data} loading={sqlQuery.isFetching} />}
           </div>
-        ) : logReview ? <LogFindingReview key={artifactKey} slug={slug} events={ctx?.log_observations ?? []} configured={conf.data?.configured === true || (conf.data?.configured === false && directSupported(direct.data, 'file'))} onFile={onView} /> : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
+        ) : logReview ? <LogFindingReview key={artifactKey} slug={slug} events={ctx?.log_observations ?? []} configured={directSupported(direct.data, 'file')} onFile={onView} /> : <div ref={splitRef} data-artifact-scroll className="review-split min-h-0 flex-1 overflow-y-auto" style={{ '--review-left': `${leftWidth}%` } as React.CSSProperties}>
           <aside data-artifact-scroll tabIndex={0} className={clsx('min-w-0 space-y-4 p-3 lg:overflow-y-auto', kind === 'table' && 'hidden lg:block')}>
             {identity}{kind === 'file' ? fileFacts : nonFileContext}
             {kind === 'dump' && !!ctx?.tables?.length && <Block title={tr('review.tables')}><div className="space-y-1">{ctx.tables.map(table => <button key={table.id} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:bg-[var(--panel-2)]" onClick={() => { setSelectedTable(table.id); setEvidenceTab('tables') }}><Database size={13} /><span className="mono min-w-0 flex-1 truncate">{table.name}</span><ChevronRight size={13} /></button>)}</div></Block>}

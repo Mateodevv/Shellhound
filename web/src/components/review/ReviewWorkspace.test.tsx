@@ -5,7 +5,6 @@ import { api, post, type ArtifactContext, type Finding } from '../../api'
 import { renderWithProviders, testQueryClient } from '../../test/setup'
 import { ArtifactWindow } from './ArtifactWindow'
 import { SuccessfulAccesses, TableRecord, FindingRequests } from './ReviewEvidence'
-import { ArtifactEnrichment } from '../enrichment/ArtifactEnrichment'
 vi.mock('../../api', async orig => ({ ...(await orig<typeof import('../../api')>()), api: vi.fn(), post: vi.fn() }))
 vi.mock('../../geo', () => ({ useGeo: () => null }))
 const finding: Finding = { id: 1, fingerprint: 'safe', source: 'webshell', severity: 1, rule: 'Synthetic observation', artifact_kind: 'file', artifact: '/evidence/note.txt', line: 2, evidence: 'marker', triage: 'new', triage_note: '', retired: 0, created: '', last_seen: '' }
@@ -15,16 +14,17 @@ function renderReview(context: ArtifactContext, configured = false) {
   return renderWithProviders(<ArtifactWindow slug="case" artifact={{ artifact: context.artifact, artifact_kind: context.kind, worst: 1, triage: 'new', triage_note: '' }} roots={[]} collected={[]} onClose={vi.fn()} onSave={vi.fn()} onView={vi.fn()} onTrace={vi.fn()} />,testQueryClient())
 }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(post).mockResolvedValue({ total: 0, rows: [], methods: [], timeline: [] }) })
-it('keeps code visible on Linked IPs and moves file navigation into one dropdown', async () => {
+it('keeps code and file navigation available on Linked IPs', async () => {
   renderReview(base)
   expect(await screen.findByText('selected marker')).toBeVisible()
   await userEvent.click(screen.getByRole('tab', { name: /Linked IPs/ }))
   expect(screen.getByText('selected marker')).toBeVisible()
   expect(screen.getAllByRole('button', { name: /Expand file/ })).toHaveLength(1)
-  expect(screen.queryByRole('button', { name: 'Show in file manager' })).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'Open…' }))
-  expect(screen.getByRole('button', { name: 'Show in file manager' })).toBeVisible()
-  expect(screen.getByRole('link', { name: 'Open IOC Box' })).toBeVisible()
+  const navigation = screen.getByRole('button', { name: 'Open…' }).parentElement!
+  expect(within(navigation).queryByRole('button', { name: 'Show in file manager' })).not.toBeInTheDocument()
+  await userEvent.click(within(navigation).getByRole('button', { name: 'Open…' }))
+  expect(screen.getAllByRole('button', { name: 'Show in file manager' }).length).toBeGreaterThan(0)
+  expect(within(navigation).getByRole('link', { name: 'Open IOC Box' })).toBeVisible()
   expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
 })
 it('uses an embedded Trace tab without a separate Requests tab or trace button', async () => {
@@ -36,15 +36,6 @@ it('uses an embedded Trace tab without a separate Requests tab or trace button',
   expect(await screen.findByRole('button', { name: /Synthetic observation/ })).toBeVisible()
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/trace', expect.objectContaining({ ips: ['192.0.2.1'] })))
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
-})
-it('keeps OpenCTI file enrichment in the IOC Box without silently collecting an artifact', async () => {
-  renderReview(base,true)
-  expect(await screen.findByText(/Lookups use your configured OpenCTI/)).toBeVisible()
-  expect(screen.queryByRole('tab', { name: 'Enrichment' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Ask VirusTotal' })).not.toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'Open IOC Box' })).toBeVisible()
-  expect(screen.getByText('selected marker')).toBeVisible()
-  expect(post).not.toHaveBeenCalled()
 })
 it('resizes context with keyboard without triggering review scrolling', async () => {
   renderReview(base)
@@ -69,17 +60,6 @@ it('requires source choice for table records and moves between real row ordinals
   expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=2&expected_dump_path=%2Fb.sql&expected_table=items&finding_id=1')
   await userEvent.click(screen.getByRole('button',{name:'Next row'}))
   await waitFor(() => expect(api).toHaveBeenCalledWith('/api/cases/case/database/table-row?table_id=20&row=3&expected_dump_path=%2Fb.sql&expected_table=items'))
-})
-it('previews compatible connectors and runs only explicitly selected enrichment', async () => {
-  vi.mocked(api).mockImplementation(async url => (url==='/api/opencti/settings' ? { configured:true } : url.endsWith('/iocs') ? [{id:7,type:'ip',value:'192.0.2.1',tags:[]}] : { lookups:[],jobs:[],enrichments:[] }) as never)
-  vi.mocked(post).mockResolvedValue({entities:[{ioc_id:7,type:'ip',value:'192.0.2.1',requires_creation:false}],connectors:[{id:'one',name:'Example connector',active:true,scope:['IPv4-Addr'],auto:false}],warnings:[]})
-  renderWithProviders(<ArtifactEnrichment slug="case" ids={[7]} />)
-  await userEvent.click(await screen.findByRole('button',{name:/Choose.*connector/i}))
-  const run=await screen.findByRole('button',{name:'Run enrichment'})
-  expect(run).toBeDisabled()
-  await userEvent.click(screen.getByRole('checkbox'))
-  await userEvent.click(run)
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case/opencti/enrich',{ioc_ids:[7],connector_ids:['one'],create_missing:false}))
 })
 it('displays SQL export evidence and tables instead of interpreting the dump as a table row', async () => {
   const ctx={...base,kind:'dump' as const,artifact:'/evidence/data.sql',file:undefined,dump:{id:1,path:'/evidence/data.sql',meta:{},statements:4,size:99,cms:'WordPress'},tables:[{id:10,name:'items',rows:2,columns:2,dump_id:1}],findings:[{...finding,artifact:'/evidence/data.sql',artifact_kind:'dump' as const,line:3}]}

@@ -79,12 +79,12 @@ class StructuredIocTests(unittest.TestCase):
         self.assertEqual(2, len(detail["relationships"]))
         self.assertEqual({"cve-context"}, {l["kind"] for l in detail["relationships"]})
         self.conn.commit()
-        preview = graph.build_preview(self.case, {"include_evidence": True})
+        preview = graph.build_preview(self.case)
         exported_ip = next(o for o in preview['objects'] if o['type'] == 'ipv4-addr')
         self.assertEqual(detail['object']['tags'], exported_ip['labels'])
         self.assertNotIn("PrivateCustomer", json.dumps(preview))
-        self.assertIn("Pattern Hunt test #5", json.dumps(preview))
-        self.assertEqual(2, sum(o["type"] == "relationship" and o["source_ref"].startswith("ipv4-addr--")
+        self.assertNotIn("Pattern Hunt test #5", json.dumps(preview))
+        self.assertEqual(0, sum(o["type"] == "relationship" and o["source_ref"].startswith("ipv4-addr--")
                                and o["target_ref"].startswith("vulnerability--") for o in preview["objects"]))
         for link in detail["relationships"]:
             model.withdraw(self.conn, link["id"], "Reviewed false positive")
@@ -104,11 +104,11 @@ class StructuredIocTests(unittest.TestCase):
                 exported = next(o for o in preview['objects'] if o['type'] == 'file')
                 self.assertCountEqual([label, 'Reviewed'], exported['labels'])
                 from server.integrations.opencti.service import _revisions
-                before = _revisions(self.case)[file_id]
+                before = _revisions(self.case)[str(file_id)]
                 model.edit_tags(self.conn, file_id, remove=[label])
                 self.assertEqual(['Reviewed'], model.detail(self.conn, file_id)['object']['tags'])
                 self.conn.commit()
-                self.assertNotEqual(before, _revisions(self.case)[file_id])
+                self.assertNotEqual(before, _revisions(self.case)[str(file_id)])
                 model.edit_tags(self.conn, file_id, add=[label])
                 self.assertIn(label, model.detail(self.conn, file_id)['object']['tags'])
 
@@ -158,15 +158,15 @@ class StructuredIocTests(unittest.TestCase):
         self.assertFalse(detail["relationships"][0]["active"])
         self.assertIn("no longer active", detail["relationships"][0]["withdrawal_reason"])
 
-    def test_scoped_accounts_export_separately_and_context_is_not_disclosed(self):
+    def test_scoped_accounts_remain_local_and_context_is_not_disclosed(self):
         first = db.add_ioc(self.conn, "admin", "user", context="private-system-one")
         second = db.add_ioc(self.conn, "admin", "user", context="private-system-two")
         db.add_ioc(self.conn, "unscoped-admin", "user")
         self.conn.commit()
         preview = graph.build_preview(self.case)
         accounts = [o for o in preview["objects"] if o["type"] == "user-account"]
-        self.assertEqual(2, len(accounts))
-        self.assertNotEqual(accounts[0]["id"], accounts[1]["id"])
+        self.assertEqual([], accounts)
+        self.assertEqual([], preview["iocs"])
         self.assertNotIn("private-system", json.dumps(preview))
         self.assertNotEqual(first, second)
 
@@ -265,8 +265,9 @@ class StructuredIocTests(unittest.TestCase):
         new = next(o for o in after["objects"] if o["type"] == "file")
         self.assertEqual(old["id"], new["id"])
         self.assertEqual(old["hashes"], new["hashes"])
-        self.assertEqual(old["size"], new["size"])
-        self.assertFalse(any(s["available"] for s in after["samples"]))
+        self.assertNotIn("size", new)
+        self.assertNotIn("name", new)
+        self.assertNotIn("samples", after)
 
     def test_structured_export_cve_relationships_privacy_and_withdrawal(self):
         ip = db.add_ioc(self.conn, "198.51.100.9", "ip")
@@ -283,17 +284,16 @@ class StructuredIocTests(unittest.TestCase):
         for hidden in ("PrivateCustomer", "/opt/private-copy", "private source", "private supporting", "private assessment", "private evidence"):
             self.assertNotIn(hidden, wire)
         objects = before["objects"]
-        self.assertTrue(any(o["type"] == "relationship" and o["target_ref"].startswith("vulnerability--")
+        self.assertFalse(any(o["type"] == "relationship" and o["target_ref"].startswith("vulnerability--")
                             and o["source_ref"].startswith("ipv4-addr--") for o in objects))
-        disclosed = graph.build_preview(self.case, {"include_evidence": True, "include_notes": True})
-        self.assertIn("private supporting detail", json.dumps(disclosed))
-        self.assertNotIn("PrivateCustomer", json.dumps(disclosed))
+        with self.assertRaises(ValueError):
+            graph.build_preview(self.case, {"include_evidence": True, "include_notes": True})
         model.withdraw(self.conn, link, "Retracted test assertion")
         self.conn.commit()
         after = graph.build_preview(self.case)
         self.assertFalse(any(o["type"] == "relationship" and o["target_ref"].startswith("vulnerability--")
                              and o["source_ref"].startswith("ipv4-addr--") for o in after["objects"]))
-        self.assertTrue(any(o["type"] == "relationship" for o in graph.withdrawal_objects(before["objects"], after["objects"], "PIM-OBJECT-QA")))
+        self.assertEqual(before["fingerprint"], after["fingerprint"])
         self.assertIsNotNone(local)
 
     def test_excluded_endpoint_removes_relationship_and_evidence(self):
@@ -301,7 +301,7 @@ class StructuredIocTests(unittest.TestCase):
         cve = db.add_ioc(self.conn, "CVE-2026-12345", "vulnerability")
         model.relationship(self.conn, ip, cve, "cve-context", "private reference")
         self.conn.commit()
-        preview = graph.build_preview(self.case, {"ioc_ids": [ip], "include_evidence": True})
+        preview = graph.build_preview(self.case, {"ioc_ids": [ip]})
         self.assertNotIn("CVE-2026-12345", json.dumps(preview["objects"]))
         self.assertNotIn("private reference", json.dumps(preview["objects"]))
 

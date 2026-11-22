@@ -51,14 +51,14 @@ it('does not substitute another URL report differing only in path case', async (
   kind = 'url'; value = 'https://example.test/Report'
   entries = [{ service: 'virustotal', value: 'https://example.test/report', kind, fetched: '2026-09-15', result: { known: true, score: 99, of: 100 } }]
   renderWithProviders(<DirectEnrichment slug="demo" ids={[1]} />)
-  expect(await screen.findByRole('button', { name: 'Lookup' })).toBeVisible()
+  expect((await screen.findAllByRole('button', { name: 'Lookup' }))[0]).toBeVisible()
   expect(screen.queryByText('99 / 100')).not.toBeInTheDocument()
 })
-it('does not offer direct actions when OpenCTI is configured', async () => {
+it('keeps explicit direct provider actions independent of OpenCTI transfer settings', async () => {
   configured = true
   renderWithProviders(<DirectEnrichment slug="demo" ids={[1]} />)
-  await waitFor(() => expect(api).toHaveBeenCalledWith('/api/opencti/settings'))
-  expect(screen.queryByRole('button', { name: 'Lookup' })).not.toBeInTheDocument()
+  expect((await screen.findAllByRole('button', { name: 'Lookup' }))[0]).toBeVisible()
+  expect(api).not.toHaveBeenCalledWith('/api/opencti/settings')
   expect(post).not.toHaveBeenCalled()
 })
 it('saves and removes keys explicitly while leaving inputs empty on read', async () => {
