@@ -133,13 +133,15 @@ class IncidentDashboardTests(unittest.TestCase):
     def test_default_demo_is_analysed_with_cms_but_no_decisions(self):
         case = generate(self.root)
         conn = db.connect(case)
+        self.addCleanup(conn.close)
         self.assertGreater(conn.execute('SELECT count(*) FROM findings').fetchone()[0], 0)
         self.assertEqual(0, conn.execute("SELECT count(*) FROM findings WHERE triage!='new'").fetchone()[0])
-        self.assertEqual(0, conn.execute('SELECT count(*) FROM iocs').fetchone()[0])
+        self.assertEqual([{'type': 'software', 'value': 'WordPress', 'assessment': 'unassessed'}],
+                         db.rows(conn, 'SELECT type, value, assessment FROM iocs'))
+        self.assertEqual(0, conn.execute('SELECT count(*) FROM ioc_assessments').fetchone()[0])
         self.assertEqual(1, conn.execute('SELECT count(*) FROM cms_installs').fetchone()[0])
         self.assertEqual(3, conn.execute('SELECT count(*) FROM cms_items').fetchone()[0])
         self.assertGreater(conn.execute('SELECT count(*) FROM db_tables').fetchone()[0], 0)
-        conn.close()
         self.assertTrue(logindex.status(case, [str(case / 'training-evidence/access.log')])['fresh'])
 
     def test_http_requires_token_and_returns_openable_case(self):
