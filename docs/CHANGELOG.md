@@ -6,6 +6,13 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Faster case navigation
+
+- Routine status refreshes reuse log checks for unchanged files. Accepting,
+  reopening or retrying a warning still verifies the selected source on disk.
+- Findings and the dashboard group backup copies once per request and reuse
+  the groups for review counts, filters and summaries.
+
 ### Fixed — saved libraries and log-warning review
 
 - Block pattern-library and case-profile saves when their saved files cannot

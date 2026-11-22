@@ -177,7 +177,7 @@ def clock_offsets(conn):
 
 
 def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP,
-               *, scope="confirmed", muted=()):
+               *, scope="confirmed", muted=(), log_targets=None, log_sources=None):
     """The chronology as data -- shared by the route and the exports: what
     the analyst reads in the dashboard has to be the same thing the case
     hands out.
@@ -256,7 +256,8 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP,
     off_logs, off_dump = offsets["logs"], offsets["dump"]
     overview = logindex.overview(case_dir) or {}
     from server import log_evidence
-    log_targets = log_evidence.access_targets(case_dir)
+    if log_targets is None:
+        log_targets = log_evidence.access_targets(case_dir)
     log_fresh = bool(log_targets and not indexing and not overview.get("partial")
                      and logindex.status(case_dir, log_targets)["fresh"])
     index_fingerprint = logindex.index_fingerprint(case_dir) if log_fresh else ""
@@ -574,7 +575,7 @@ def case_chain(case_dir, lang="en", tz_mode="log", event_cap=EVENT_CAP,
                 event["first_sign_selectable"] = False
                 event["fresh"] = False
 
-    for event in log_evidence.timeline_events(case_dir, artifacts=set(by_artifact)):
+    for event in log_evidence.timeline_events(case_dir, artifacts=set(by_artifact), log_sources=log_sources):
         epoch = event.get("epoch")
         if epoch is None:
             continue

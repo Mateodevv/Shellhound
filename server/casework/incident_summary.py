@@ -10,10 +10,13 @@ SUMMARY_GROUPS = frozenset({'ips', 'malware_files'})
 MALWARE_CLASSES = frozenset({'webshell', 'malware', 'backdoor', 'dropper'})
 
 
-def review_summary(conn, muted=()):
+def review_summary(conn, muted=(), *, artifacts=None, grouped=None):
     """Dashboard work counts use exactly the logical units shown in Findings."""
-    artifacts = db.rows(conn, f'WITH art AS ({art_sql(muted)}) SELECT * FROM art')
-    visible = [row for row in grouped_review_artifacts(conn, artifacts) if row['review_visible']]
+    if artifacts is None:
+        artifacts = db.rows(conn, f'WITH art AS ({art_sql(muted)}) SELECT * FROM art')
+    if grouped is None:
+        grouped = grouped_review_artifacts(conn, artifacts)
+    visible = [row for row in grouped if row['review_visible']]
 
     def count(rows, field):
         totals = defaultdict(int)
@@ -51,14 +54,15 @@ def review_summary(conn, muted=()):
             'has_confirmed_findings': any(row['triage'] == 'confirmed' for row in artifacts)}
 
 
-def summary_groups(conn, muted=()):
+def summary_groups(conn, muted=(), *, artifacts=None, grouped=None):
     """Current visible artifacts, using the same decision fold as Findings.
 
     Explicit file classifications, including an empty list, outrank scanner
     suggestions. Historical confirmations remain in Findings but cannot add
     to a summary of what current evidence reports.
     """
-    artifacts = db.rows(conn, f'WITH art AS ({art_sql(muted)}) SELECT * FROM art')
+    if artifacts is None:
+        artifacts = db.rows(conn, f'WITH art AS ({art_sql(muted)}) SELECT * FROM art')
     by_artifact = {row['artifact']: row for row in artifacts}
     by_file = defaultdict(list)
     if any(item['artifact_kind'] == 'file' for item in artifacts):
@@ -66,7 +70,9 @@ def summary_groups(conn, muted=()):
                                     f"WHERE f.artifact_kind='file' AND {db.LIVE_PREDICATE}"):
             by_file[finding['artifact']].append(finding)
     groups = {key: [] for key in SUMMARY_GROUPS}
-    for item in grouped_review_artifacts(conn, artifacts):
+    if grouped is None:
+        grouped = grouped_review_artifacts(conn, artifacts)
+    for item in grouped:
         if item['triage'] == 'dismissed' or not item['review_visible']:
             continue
         candidates = [by_artifact[name] for name in item['backup_members']
@@ -96,24 +102,27 @@ def summary_groups(conn, muted=()):
     return groups
 
 
-def group_artifacts(conn, group, muted=()):
+def group_artifacts(conn, group, muted=(), *, artifacts=None, grouped=None):
     """All supporting artifacts; an unknown URL group deliberately matches none."""
     if group not in SUMMARY_GROUPS:
         return set()
-    return {artifact for item in summary_groups(conn, muted)[group]
+    return {artifact for item in summary_groups(conn, muted, artifacts=artifacts, grouped=grouped)[group]
             for artifact in item['supporting_artifacts']}
 
 
-def summarize(case_dir, chain, muted=()):
-    conn = db.connect(case_dir)
-    try:
-        groups = summary_groups(conn, muted)
-        confirmed = {row['artifact'] for row in db.rows(conn, f"""
-            WITH art AS ({art_sql(muted)})
-            SELECT artifact FROM art WHERE triage='confirmed' AND findings > 0
-        """)}
-    finally:
-        conn.close()
+def summarize(case_dir, chain, muted=(), *, groups=None, confirmed=None):
+    if groups is None or confirmed is None:
+        conn = db.connect(case_dir)
+        try:
+            if groups is None:
+                groups = summary_groups(conn, muted)
+            if confirmed is None:
+                confirmed = {row['artifact'] for row in db.rows(conn, f"""
+                    WITH art AS ({art_sql(muted)})
+                    SELECT artifact FROM art WHERE triage='confirmed' AND findings > 0
+                """)}
+        finally:
+            conn.close()
 
     def decisions(group):
         return (sum(item['triage'] == 'confirmed' for item in groups[group]),

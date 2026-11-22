@@ -1,10 +1,13 @@
 """Dashboard review counts and their links share the grouped Findings scope."""
 import unittest
+from unittest.mock import patch
 
-from server import db, file_classifications
+from server import backups, db, file_classifications
 from server.app import create_app
 from server.chain import case_chain
+from server.casework import incident_summary
 from server.config import Config
+from server.finding_categories import top_findings
 from tests import test_backups as backup_fixtures
 
 
@@ -59,6 +62,36 @@ class BackupDashboardCountsTests(unittest.TestCase):
         observed = {row['artifact'] for row in chain['events'] if row['artifact_kind'] == 'file'}
         self.assertEqual(observed, {str(root / 'same.txt') for root in self.fixture.roots})
         self.assertEqual(len(result['evidence']), 3)
+
+    def test_summary_link_reuses_grouping_and_keeps_global_facets(self):
+        self.prepare(['confirmed'] * 3)
+        for muted in (set(), {'synthetic.observation'}):
+            with self.subTest(muted=muted), \
+                 patch('server.app.ruleswitch.disabled_ids', return_value=muted), \
+                 patch('server.backups.grouping', wraps=backups.grouping) as grouping:
+                result = self.list(summary_group='malware_files', source='webshell', limit=1)
+            self.assertEqual(grouping.call_count, 1)
+            self.assertEqual(result['total'], 1)
+            self.assertEqual(len(result['findings']), 3)
+            self.assertEqual(result['counts']['source'], {'webshell': 1})
+            self.assertEqual(result['counts']['triage'], {'confirmed': 1})
+
+    def test_dashboard_shares_groups_without_changing_review_projections(self):
+        self.prepare(['confirmed', 'dismissed', 'reviewed'])
+        for muted in (set(), {'synthetic.observation'}):
+            with self.subTest(muted=muted):
+                self.conn.commit()
+                expected_review = incident_summary.review_summary(self.conn, muted)
+                expected_top = top_findings(self.conn, muted)
+                chain = case_chain(self.fixture.case, lang='en', tz_mode='utc', event_cap=None)
+                expected_summary = incident_summary.summarize(self.fixture.case, chain, muted)
+                with patch('server.app.ruleswitch.disabled_ids', return_value=muted), \
+                     patch('server.backups.grouping', wraps=backups.grouping) as grouping:
+                    result = self.overview()
+                self.assertEqual(grouping.call_count, 1)
+                self.assertEqual({key: result[key] for key in expected_review}, expected_review)
+                self.assertEqual(result['top_findings'], expected_top)
+                self.assertEqual(result['incident_summary'], expected_summary)
 
     def test_conflicting_group_is_pending_without_retracting_compromise(self):
         self.prepare(['confirmed', 'dismissed', 'reviewed'])

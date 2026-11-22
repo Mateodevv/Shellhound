@@ -364,7 +364,7 @@ def create_app(config: Config) -> FastAPI:
                     _refresh_meta(conn, e)
         finally:
             conn.close()
-        log_targets = log_evidence.access_targets(case_dir)
+        log_targets = log_evidence.access_targets(case_dir, cache_detection=True)
         info["evidence_items"] = evidence
         info["log_index"] = logindex.status(
             case_dir, log_targets, lang)
@@ -1246,7 +1246,6 @@ def create_app(config: Config) -> FastAPI:
     def jobs_list(slug: str):
         case_dir = case_dir_or_404(slug)
         manager.recover_interrupted(case_dir)
-        log_sources = log_evidence.source_status(case_dir, detect=False)
         conn = db.connect(case_dir)
         try:
             rows = db.rows(conn,
@@ -1255,6 +1254,8 @@ def create_app(config: Config) -> FastAPI:
                            "COALESCE(json_extract(scan_context, '$.mode'), '') != 'retry' AND "
                            "run_id IN (SELECT json_extract(stats, '$.last_attempt.run_id') FROM evidence)) "
                            "ORDER BY id DESC")
+            log_sources = (log_evidence.source_status(case_dir, detect=False)
+                           if any(row["kind"] == "log_events" for row in rows) else None)
             return [{**describe_job(conn, r, log_sources), **manager.progress_snapshot(case_dir, r["id"])}
                     if r["state"] in ("running", "queued") else describe_job(conn, r, log_sources)
                     for r in rows]
@@ -1341,8 +1342,14 @@ def create_app(config: Config) -> FastAPI:
         log_sources = log_evidence.source_status(case_dir, detect=False)
         conn = db.connect(case_dir)
         try:
-            review_summary = incident_summary.review_summary(conn, ruleswitch.disabled_ids(config.workspace))
-            top_groups = top_findings(conn, ruleswitch.disabled_ids(config.workspace))
+            from server.artifacts import grouped_review_artifacts
+            muted = ruleswitch.disabled_ids(config.workspace)
+            review_rows = db.rows(conn, f'WITH art AS ({categorized_art_sql(muted)}) SELECT * FROM art')
+            review_groups = grouped_review_artifacts(conn, review_rows)
+            review_summary = incident_summary.review_summary(conn, muted, artifacts=review_rows, grouped=review_groups)
+            top_groups = top_findings(conn, muted, rows=review_groups)
+            summary_groups = incident_summary.summary_groups(conn, muted, artifacts=review_rows, grouped=review_groups)
+            confirmed = {row['artifact'] for row in review_rows if row['triage'] == 'confirmed' and row['findings'] > 0}
             has_hunt_runs = conn.execute(
                 "SELECT 1 FROM jobs WHERE kind='hunt' AND run_id!='' LIMIT 1").fetchone()
             findings_total = conn.execute(
@@ -1401,6 +1408,8 @@ def create_app(config: Config) -> FastAPI:
             supported_evidence = [e for e in evidence
                                   if e["kind"] in ("webroot", "access_logs", "logs", "sql_dump")]
             present = {e["kind"] for e in supported_evidence}
+            current_access = (log_evidence.access_targets(case_dir, cache_detection=True)
+                              if present.intersection({"logs", "access_logs"}) else [])
             required_engines = set()
             if "webroot" in present:
                 required_engines.update(("webshell", "cms", "yara"))
@@ -1412,7 +1421,7 @@ def create_app(config: Config) -> FastAPI:
                 required_engines.add("sqldb")
             if "logs" in present:
                 required_engines.add("log_events")
-                if log_evidence.access_targets(case_dir):
+                if current_access:
                     required_engines.update(("index_logs", "sigma"))
             analysis_complete = (
                 bool(supported_evidence)
@@ -1435,8 +1444,9 @@ def create_app(config: Config) -> FastAPI:
         hunt_summary = None
         if has_hunt_runs:
             manager.recover_interrupted(case_dir)
-            hunt_summary = hunt_batches.dashboard_summary(case_dir, current_hunt_fingerprint(case_dir))
-        chain = case_chain(case_dir, lang, tz, event_cap=None)
+            hunt_summary = hunt_batches.dashboard_summary(case_dir, current_hunt_fingerprint(case_dir, current_access))
+        chain = case_chain(case_dir, lang, tz, event_cap=None,
+                           log_targets=current_access, log_sources=log_sources)
         events = chain["events"]
         observations = []
         seen = set()
@@ -1473,7 +1483,6 @@ def create_app(config: Config) -> FastAPI:
         analysis_accepted += log_accepted
         if "logs" in present:
             analysis_complete = analysis_complete and all(s["fresh"] or s["accepted"] or s["state"] == "failed" for s in additional_sources)
-            current_access = log_evidence.access_targets(case_dir)
             if current_access:
                 analysis_complete = analysis_complete and bool(logindex.status(case_dir, current_access).get("fresh"))
 
@@ -1493,7 +1502,7 @@ def create_app(config: Config) -> FastAPI:
             "logs": logindex.overview(case_dir),
             "timeline": logindex.timeline(case_dir),
             "incident_summary": incident_summary.summarize(
-                case_dir, chain, ruleswitch.disabled_ids(config.workspace)),
+                case_dir, chain, muted, groups=summary_groups, confirmed=confirmed),
             "chronology": {
                 "total_events": chain["total_events"],
                 "event_span": chain["event_span"],
@@ -1839,7 +1848,9 @@ def create_app(config: Config) -> FastAPI:
         where.append(muted_clause)
         conn = db.connect(case_dir)
         try:
-            if summary_group:
+            # A scanner can publish new findings between the page and facet reads.
+            conn.execute("BEGIN")
+            if summary_group and not group_backups:
                 selected = incident_summary.group_artifacts(conn, summary_group, muted)
                 # A set-backed SQLite predicate avoids a variable for every
                 # artifact in a large case while filtering before pagination.
@@ -1847,36 +1858,37 @@ def create_app(config: Config) -> FastAPI:
                                      lambda artifact: artifact in selected,
                                      deterministic=True)
                 where.append("incident_summary_member(artifact)")
-            clause = "WHERE " + " AND ".join(where)
-            total = conn.execute(
-                f"WITH art AS ({art}) SELECT count(*) FROM art {clause}",
-                params).fetchone()[0]
-            # How many left the list without the analyst hiding them, split
-            # by WHY -- "the switches cost me N" and "M were not seen again"
-            # are different sentences, and charging a retirement to the
-            # switches would send somebody hunting through rule toggles for
-            # a file that is simply gone. Same chip filters otherwise.
-            without = [w for w in where if w is not muted_clause]
-            silent_clause = ("WHERE " + " AND ".join(without)) if without else ""
-            hidden = conn.execute(
-                f"WITH art AS ({art}) SELECT count(*) FROM art "
-                f"{silent_clause}", params).fetchone()[0] - total
-            # Counted against the UNWIDENED clause on purpose: with the
-            # toggle on, the retired ones sit in the list and `hidden` no
-            # longer contains them -- but the banner they are toggled from
-            # still has to say how many they are.
-            retired_where = " AND ".join(
-                without + [f"NOT {MUTED_CLAUSE}", "findings = 0",
-                           "retired > 0"])
-            retired_hidden = conn.execute(
-                f"WITH art AS ({art}) SELECT count(*) FROM art "
-                f"WHERE {retired_where}", params).fetchone()[0]
-            muted_hidden = hidden - (0 if show_retired else retired_hidden)
-            artifacts = db.rows(
-                conn,
-                f"WITH art AS ({art}) SELECT * FROM art {clause} "
-                f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
-                params + [min(limit, 2000), offset])
+            if not group_backups:
+                clause = "WHERE " + " AND ".join(where)
+                total = conn.execute(
+                    f"WITH art AS ({art}) SELECT count(*) FROM art {clause}",
+                    params).fetchone()[0]
+                # How many left the list without the analyst hiding them, split
+                # by WHY -- "the switches cost me N" and "M were not seen again"
+                # are different sentences, and charging a retirement to the
+                # switches would send somebody hunting through rule toggles for
+                # a file that is simply gone. Same chip filters otherwise.
+                without = [w for w in where if w is not muted_clause]
+                silent_clause = ("WHERE " + " AND ".join(without)) if without else ""
+                hidden = conn.execute(
+                    f"WITH art AS ({art}) SELECT count(*) FROM art "
+                    f"{silent_clause}", params).fetchone()[0] - total
+                # Counted against the UNWIDENED clause on purpose: with the
+                # toggle on, the retired ones sit in the list and `hidden` no
+                # longer contains them -- but the banner they are toggled from
+                # still has to say how many they are.
+                retired_where = " AND ".join(
+                    without + [f"NOT {MUTED_CLAUSE}", "findings = 0",
+                               "retired > 0"])
+                retired_hidden = conn.execute(
+                    f"WITH art AS ({art}) SELECT count(*) FROM art "
+                    f"WHERE {retired_where}", params).fetchone()[0]
+                muted_hidden = hidden - (0 if show_retired else retired_hidden)
+                artifacts = db.rows(
+                    conn,
+                    f"WITH art AS ({art}) SELECT * FROM art {clause} "
+                    f"ORDER BY worst, artifact LIMIT ? OFFSET ?",
+                    params + [min(limit, 2000), offset])
             if group_backups:
                 from server.artifacts import grouped_review_artifacts
                 # A filter selects logical review units. Filtering individual
@@ -1885,7 +1897,8 @@ def create_app(config: Config) -> FastAPI:
                 all_rows = db.rows(conn, f'WITH art AS ({art}) SELECT * FROM art ORDER BY worst,artifact')
                 grouped_rows = grouped_review_artifacts(conn, all_rows)
                 source_members = {}
-                for finding in db.rows(conn, 'SELECT DISTINCT artifact,source FROM findings'):
+                source_rows = db.rows(conn, 'SELECT DISTINCT artifact,source FROM findings')
+                for finding in source_rows:
                     source_members.setdefault(finding['artifact'], set()).add(finding['source'])
                 search_members = None
                 if search:
@@ -1893,7 +1906,9 @@ def create_app(config: Config) -> FastAPI:
                         conn, "SELECT DISTINCT artifact FROM findings WHERE rule LIKE ? ESCAPE '\\' "
                               "OR artifact LIKE ? ESCAPE '\\' OR evidence LIKE ? ESCAPE '\\'",
                         (like, like, like))}
-                summary_members = incident_summary.group_artifacts(conn, summary_group, muted) if summary_group else None
+                summary_members = (incident_summary.group_artifacts(
+                    conn, summary_group, muted, artifacts=all_rows, grouped=grouped_rows)
+                    if summary_group else None)
 
                 def matches_group(row):
                     members = set(row['backup_members'])
@@ -1948,7 +1963,8 @@ def create_app(config: Config) -> FastAPI:
                                 f"WHERE {selection} "
                                 f"ORDER BY retired, f.severity, f.artifact, "
                                 f"f.line, f.id", selection_params)
-            counts = artifact_counts(conn, group_backups=group_backups)
+            counts = (artifact_counts(conn, grouped=grouped_rows, source_rows=source_rows)
+                      if group_backups else artifact_counts(conn, group_backups=False))
             # The evidence roots travel with the findings so the UI can show a
             # path the way an analyst thinks about it -- `images/shell.php`
             # under a named webroot, not 90 characters of absolute path.
@@ -3238,8 +3254,9 @@ def create_app(config: Config) -> FastAPI:
     def hunt_log_targets(case_dir):
         return log_evidence.access_targets(case_dir)
 
-    def current_hunt_fingerprint(case_dir):
-        targets = hunt_log_targets(case_dir)
+    def current_hunt_fingerprint(case_dir, targets=None):
+        if targets is None:
+            targets = hunt_log_targets(case_dir)
         if not targets or not logindex.status(case_dir, targets)["fresh"]:
             return ""
         return logindex.index_fingerprint(case_dir)
