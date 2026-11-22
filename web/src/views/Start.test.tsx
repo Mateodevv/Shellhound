@@ -131,3 +131,18 @@ it('shows background progress and cancels the case jobs', async () => {
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/large-case/jobs/9/cancel', {}))
   expect(await screen.findByText('cancelled')).toBeVisible()
 })
+
+it('isolates an unavailable case and leaves other cases usable', async () => {
+  const original = vi.mocked(api).getMockImplementation()!
+  vi.mocked(api).mockImplementation(path => path === '/api/state' ? Promise.resolve({ ...STATE, cases: [...STATE.cases, { slug: 'broken', name: 'broken', metadata_available: false, metadata_error: 'Case metadata unavailable' }] }) : original(path))
+  const onOpen = vi.fn()
+  renderWithProviders(<Start onOpen={onOpen} />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Case metadata unavailable')
+  const unavailable = screen.getByRole('button', { name: /broken/ })
+  expect(unavailable).toBeDisabled()
+  expect(unavailable).not.toHaveTextContent(/Created|artifacts|confirmed|IOCs/i)
+  fireEvent.click(screen.getByRole('button', { name: /The case/ }))
+  expect(onOpen).toHaveBeenCalledWith('the-case')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(vi.mocked(api).mock.calls.filter(([path]) => path === '/api/state').length).toBeGreaterThan(1))
+})

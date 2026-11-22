@@ -4,6 +4,8 @@ Active for the whole session until the user says "stop ponytail" or "normal mode
 
 Codi reminder: access-log freshness requires the current schema, completed parsing and matching sources. Rebuilds must invalidate cached request IDs when the index generation changes.
 
+Codi reminder: settings, pattern-library and case-profile edits need a valid saved snapshot; unreadable or invalid data must never be replaced with defaults. Log-warning acceptance is bound to the current source and warning, not just an old skipped-file row.
+
 Before you write
 Read the task and the code it touches. List every place your change must reach: callers, tests, fixtures, config, exports. Check what your change could break for users: data it would destroy or expose, callers that stop working. That is scope. Extra features are not.
 

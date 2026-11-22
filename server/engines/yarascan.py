@@ -186,15 +186,17 @@ def write_rule(workspace, name, text):
 
 def delete_rule(workspace, name):
     name, full = _safe_path(workspace, name)
-    try:
-        os.remove(full)
-    except OSError as e:
-        raise RuleError("No such rule file.", "err.yaraUnknown") from e
-    # A file that is gone must not stay on the off-list, or a later file of
-    # the same name would arrive switched off for no visible reason.
-    off = settingslib.yara_disabled(workspace)
-    if name in off:
-        settingslib.set_yara_disabled(workspace, off - {name})
+    with settingslib._LOCK:
+        data = settingslib.load(workspace, for_write=True)
+        try:
+            os.remove(full)
+        except OSError as e:
+            raise RuleError("No such rule file.", "err.yaraUnknown") from e
+        # A later file of the same name must not inherit the deleted file's off-switch.
+        off = set(data["yara_disabled"])
+        if name in off:
+            data["yara_disabled"] = sorted(off - {name})
+            settingslib.save(workspace, data)
     return {"name": name, "removed": 1}
 
 
@@ -202,9 +204,11 @@ def set_rule_enabled(workspace, name, enabled):
     name, full = _safe_path(workspace, name)
     if not os.path.isfile(full):
         raise RuleError("No such rule file.", "err.yaraUnknown")
-    off = settingslib.yara_disabled(workspace)
-    off = (off - {name}) if enabled else (off | {name})
-    settingslib.set_yara_disabled(workspace, off)
+    with settingslib._LOCK:
+        data = settingslib.load(workspace, for_write=True)
+        off = set(data["yara_disabled"])
+        data["yara_disabled"] = sorted((off - {name}) if enabled else (off | {name}))
+        settingslib.save(workspace, data)
     return {"name": name, "enabled": bool(enabled)}
 
 

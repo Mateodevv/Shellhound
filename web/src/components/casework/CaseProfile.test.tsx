@@ -9,6 +9,32 @@ vi.mock('../../api', async original => ({ ...(await original<typeof import('../.
 
 beforeEach(() => vi.clearAllMocks())
 
+it('keeps the draft and its original revision when the saved profile is temporarily unavailable', async () => {
+  vi.mocked(api).mockResolvedValue({ sectors: [], context_options: {} })
+  vi.mocked(patch).mockRejectedValue(new Error('Profile changed in another editor'))
+  const info = { name: 'Local case', reference: 'QA-1', reference_locked: true,
+    profile_revision: 'original', profile: newCaseProfile() } as CaseInfo
+  const onClose = vi.fn()
+  const view = renderWithProviders(<CaseProfileForm slug="qa" info={info} onClose={onClose} />)
+  expect(screen.getByLabelText('Case ID')).toHaveAttribute('readonly')
+  const cve = screen.getByRole('textbox', { name: 'Initial CVE' })
+  fireEvent.change(cve, { target: { value: 'CVE-2026-12345' } })
+  view.rerender(<CaseProfileForm slug="qa" info={info} unavailable onClose={onClose} />)
+  expect(cve).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  expect(patch).not.toHaveBeenCalled()
+
+  view.rerender(<CaseProfileForm slug="qa" info={{ ...info, profile_revision: 'newer' }} onClose={onClose} />)
+  expect(cve).toHaveValue('CVE-2026-12345')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Profile changed in another editor')
+  expect(patch).toHaveBeenCalledWith('/api/cases/qa', expect.objectContaining({
+    expected_profile_revision: 'original', profile: expect.objectContaining({ initial_cve: 'CVE-2026-12345' }),
+  }))
+  expect(cve).toHaveValue('CVE-2026-12345')
+  expect(onClose).not.toHaveBeenCalled()
+})
+
 it('edits the core profile while retaining hidden software and CVE data unchanged', async () => {
   vi.mocked(api).mockResolvedValue({ sectors: ['Healthcare'] })
   vi.mocked(patch).mockResolvedValue({})

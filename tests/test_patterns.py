@@ -379,13 +379,14 @@ class WorkspaceFileTests(unittest.TestCase):
             encoding="utf-8")
         self.assertEqual(["old"], [p["name"] for p in patterns.load(self.ws)])
 
-    def test_a_broken_file_costs_the_own_patterns_and_nothing_else(self):
-        """It must never be the reason the interface no longer opens -- and
-        the shipped patterns have nothing to do with that file."""
+    def test_a_broken_file_is_unavailable_instead_of_an_empty_library(self):
         patterns.library_path(self.ws).write_text("{ not json",
                                                   encoding="utf-8")
-        self.assertEqual([], patterns.load(self.ws))
-        self.assertTrue(patterns.library(self.ws))
+        with self.assertRaises(patterns.PatternStorageError):
+            patterns.load(self.ws)
+        with self.assertRaises(patterns.PatternStorageError):
+            patterns.library(self.ws)
+        self.assertTrue(patterns.bundled())
 
     def test_saving_does_not_write_derived_fields(self):
         """`source` and `enabled` say which half an entry came from and

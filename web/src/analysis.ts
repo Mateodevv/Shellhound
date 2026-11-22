@@ -24,7 +24,7 @@ export function jobComplete(job: Job): boolean {
 }
 
 export function jobWarnings(job: Job): number {
-  if (job.kind === 'log_events') return Number(job.stats?.log_warnings || 0)
+  if (job.kind === 'log_events') return job.current_warning_count ?? Number(job.stats?.log_warnings || 0)
   if (job.warning_count !== undefined) return job.warning_count
   return jobComplete(job) ? Number(job.stats?.file_skips || 0) : 0
 }

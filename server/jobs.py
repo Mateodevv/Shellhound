@@ -36,6 +36,7 @@ class JobContext:
         self.cancel_event = threading.Event()
         self._last_db_write = 0.0
         self.skipped_files = []
+        self.log_warning_snapshots = {}
         self.scan_context = scan_context or {}
         self._retry_entries = {(display_path(e["path"]), display_path(e["root"])): e["id"]
                                for e in self.scan_context.get("entries", [])}
@@ -281,6 +282,8 @@ class JobManager:
                 conn.executemany(
                     "INSERT OR REPLACE INTO file_scan_results(job_id, ordinal, status, reason) "
                     "VALUES (?,?,?,?)", ((ctx.job_id, *result) for result in ctx.file_results))
+                if ctx.log_warning_snapshots:
+                    fields["scan_context"] = json.dumps({**ctx.scan_context, "log_warnings": ctx.log_warning_snapshots})
                 fields["progress_details"] = json.dumps(ctx.progress_details)
                 if state == "done":
                     fields["progress"] = 1.0

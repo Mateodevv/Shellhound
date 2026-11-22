@@ -200,7 +200,8 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
   const dirty = Boolean(draft && draftHash(draft) !== cleanHash)
   const tested = Boolean(previewTest && session.testedHash === draftHash(draft))
   const stale = Boolean(previewTest && session.testedHash !== draftHash(draft))
-  const pending = validate.isPending || testRule.isPending || saveRule.isPending || restore.isPending
+  const libraryUnavailable = library.isPending || library.isFetching || library.isError
+  const pending = libraryUnavailable || validate.isPending || testRule.isPending || saveRule.isPending || restore.isPending
   const currentRun = runs.data?.runs.find((r) => ['queued', 'running'].includes(r.state))
   const canRun = runReady && !runs.isPending && !runs.isError && !currentRun && !batch.isPending
   const metadata = showingEvidence ? { name: tr('hunt.linked.title', { id: linkedTestId }), means: '', notMeans: '' } : session.page === 'preview' ? { name: draft?.name, means: draft?.means, notMeans: draft?.notMeans }
@@ -230,7 +231,7 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
     <PatternPicker onRun={() => batch.mutate(enabledPatterns.map(p => p.id))} canRun={canRun && !!enabledPatterns.length && !toggle.isPending}
       footer={<><Button variant="ghost" onClick={() => mutateSession({ page: 'runs', runPatternId: '' })}>{tr('hunt.workspace.history')}</Button>{draft && <Button variant="ghost" onClick={() => mutateSession({ page: 'editor' })}>{tr('hunt.flow.resumeDraft')}</Button>}</>}
       patterns={patterns} tests={audits} selectedId={chosen?.id ?? ''} search={session.search} filter={session.filter}
-      busy={toggle.isPending} onSearch={search => mutateSession({ search })} onFilter={filter => mutateSession({ filter })}
+      busy={toggle.isPending || libraryUnavailable} unavailable={libraryUnavailable} onSearch={search => mutateSession({ search })} onFilter={filter => mutateSession({ filter })}
       onSelect={p => { setDetailTab('results'); mutateSession({ selectedId: p.id, runPatternId: p.id, page: 'overview', selectedClusters: [] }) }}
       onToggle={p => toggle.mutate(p)} onNew={() => chooseDraft(emptyDraft())} />
     <div className="min-w-0 space-y-3">
@@ -254,17 +255,17 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
           </div>
           <div className="mt-4 flex gap-5 border-b border-[var(--line)]">{(['results', 'rule'] as const).map(tab => <button type="button" key={tab} aria-pressed={detailTab === tab} onClick={() => setDetailTab(tab)} className={`cursor-pointer border-b-2 pb-2 text-sm ${detailTab === tab ? 'border-[var(--accent)] font-semibold' : 'border-transparent text-[var(--muted)]'}`}>{tr(`hunt.workspace.${tab}`)}</button>)}</div>
         </section>
-        {detailTab === 'rule' ? <Card className="p-4"><div className="mb-3 flex flex-wrap gap-2"><Button onClick={() => beginEdit(chosen)}>{tr('hunt.flow.editPattern')}</Button><Button disabled={clone.isPending} onClick={() => clone.mutate(chosen)}>{tr('hunt.workbench.duplicate')}</Button>{chosen.source === 'own' && !chosen.archived && <Button disabled={archive.isPending} onClick={() => archive.mutate(chosen)}>{tr('hunt.workbench.archive')}</Button>}</div><p className="mb-3 text-sm text-[var(--muted)]">{splitDescription(chosen.description).notMeans || tr('hunt.flow.matchLimits')}</p><pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs">{chosen.dsl}</pre></Card>
+        {detailTab === 'rule' ? <Card className="p-4"><div className="mb-3 flex flex-wrap gap-2"><Button disabled={libraryUnavailable} onClick={() => beginEdit(chosen)}>{tr('hunt.flow.editPattern')}</Button><Button disabled={libraryUnavailable || clone.isPending} onClick={() => clone.mutate(chosen)}>{tr('hunt.workbench.duplicate')}</Button>{chosen.source === 'own' && !chosen.archived && <Button disabled={libraryUnavailable || archive.isPending} onClick={() => archive.mutate(chosen)}>{tr('hunt.workbench.archive')}</Button>}</div><p className="mb-3 text-sm text-[var(--muted)]">{splitDescription(chosen.description).notMeans || tr('hunt.flow.matchLimits')}</p><pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs">{chosen.dsl}</pre></Card>
           : runQuery.isError ? <ErrorMessage message={runQuery.error.message} onRetry={() => void runQuery.refetch()} />
           : activeTest ? <HuntResults compact key={`${chosen.id}:${activeTest.id}`} slug={slug} test={activeTest} ruleName={runPattern?.name ?? chosen.name} ruleMeaning={splitDescription(runPattern?.description ?? '').means} ruleNotMeaning={splitDescription(runPattern?.description ?? '').notMeans}
               selected={selected} onSelected={value => mutateSession({ selectedClusters: [...value] })} fresh={Boolean(run?.fresh)} applyHint={applyHint} applying={applyRule.isPending} onApply={() => applyRule.mutate()} />
           : <Card className="p-4 text-sm"><p role="status">{run?.state === 'running' || run?.state === 'queued' ? tr('hunt.flow.waitingResult') : tr('hunt.workspace.noResult')}</p></Card>}
-      </> : <Card className="p-4">{tr('hunt.workspace.select')}</Card>}
+      </> : !libraryUnavailable && <Card className="p-4">{tr('hunt.workspace.select')}</Card>}
     </> : session.page === 'editor' ? <div className="mx-auto max-w-4xl overflow-hidden rounded-xl border border-[var(--line)]">
-      <RuleEditor draft={draft} dirty={dirty} tested={tested} stale={stale} selectedClusters={0} pending={pending}
+      <fieldset disabled={libraryUnavailable}><RuleEditor draft={draft} dirty={dirty} tested={tested} stale={stale} selectedClusters={0} pending={pending}
         error={error} versions={versions.data?.versions ?? []} onChange={(next) => mutateSession({ draft: next })}
         onTest={() => draft && testRule.mutate(structuredClone(draft))} onSave={() => draft?.source === 'bundled' ? setConfirmVariant(true) : draft && saveRule.mutate({ draft: structuredClone(draft), disable: false, identity: draftIdentity.current })}
-        onValidateDsl={() => draft && validate.mutate(structuredClone(draft))} onRestore={(version) => draft && restore.mutate({ version, draft: structuredClone(draft), identity: draftIdentity.current })} onClose={() => mutateSession({ page: 'library' })} />
+        onValidateDsl={() => draft && validate.mutate(structuredClone(draft))} onRestore={(version) => draft && restore.mutate({ version, draft: structuredClone(draft), identity: draftIdentity.current })} onClose={() => mutateSession({ page: 'library' })} /></fieldset>
       {draft?.sourceId && !dirty && <div className="border-t border-[var(--line)] bg-[var(--panel)] p-4">
         <Button disabled={!canRun || !patterns.find((p) => p.id === draft.sourceId)?.enabled} onClick={() => batch.mutate([draft.sourceId])}>{tr('hunt.flow.checkThisSavedPattern')}</Button></div>}
     </div> : <>
@@ -294,7 +295,7 @@ function HuntCase({ slug, gotoView }: { slug: string; gotoView: Navigate }) {
         <input type="checkbox" checked={disableOriginal} onChange={(e) => setDisableOriginal(e.target.checked)} />
         <span><b className="block">{tr('hunt.workbench.disableOriginal')}</b>{tr('hunt.workbench.disableOriginalHint')}</span></label>
       <div className="mt-5 flex justify-end gap-2"><Button onClick={() => setConfirmVariant(false)}>{tr('common.cancel')}</Button>
-        <Button variant="primary" disabled={saveRule.isPending} onClick={() => draft && saveRule.mutate({ draft: structuredClone(draft), disable: disableOriginal, identity: draftIdentity.current })}>{tr('hunt.workbench.createVariant')}</Button></div>
+        <Button variant="primary" disabled={libraryUnavailable || saveRule.isPending} onClick={() => draft && saveRule.mutate({ draft: structuredClone(draft), disable: disableOriginal, identity: draftIdentity.current })}>{tr('hunt.workbench.createVariant')}</Button></div>
     </Modal>
     <Modal open={Boolean(replaceDraft)} onClose={() => setReplaceDraft(null)} title={tr('hunt.flow.keepYourUnsavedPattern')}>
       <p className="text-sm">{tr('hunt.flow.replaceDraftWarning')}</p>

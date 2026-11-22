@@ -99,6 +99,8 @@ export async function downloadSelection(path: string, ids: number[], format: str
 // ---- types -----------------------------------------------------------------
 
 export interface CaseInfo {
+  metadata_available?: boolean
+  metadata_error?: string
   reference_locked?: boolean
   profile_revision?: string
   profile?: import('./opencti').CaseProfile

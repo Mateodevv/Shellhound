@@ -165,10 +165,66 @@ def _can_accept(job, entry, state, current_ids):
     return entry["ordinal"] in current_ids
 
 
+def _log_skipped_details(conn, job, offset, limit, busy, group, status):
+    from server import log_evidence
+    if group not in ("all", "manual_review", "unsupported", "processing_error") or status not in ("all", "pending", "accepted"):
+        raise RetryError("Choose a valid warning group and review status.", 400)
+    case_dir = Path(conn.execute("PRAGMA database_list").fetchone()["file"]).parent
+    sources = {s["id"]: s for s in log_evidence.source_status(case_dir, detect=False)}
+    snapshots = job["scan_context"].get("log_warnings", {})
+    legacy_sources = {path_key(s["path"]): s for s in sources.values() if s["warning"]} if not snapshots else {}
+    entries = db.rows(conn, "SELECT * FROM job_skips WHERE job_id=? ORDER BY ordinal", (job["id"],))
+    items, counts = [], {"manual_review": 0, "unsupported": 0, "processing_error": 0, "accepted": 0}
+    selection_ids = {"retryable": [], "acceptable": [], "reopenable": [], "forceable": []}
+    unresolved = accepted = 0
+    selection_warnings = {}
+    for entry in entries:
+        snap = snapshots.get(str(entry["ordinal"]), {})
+        source = sources.get(snap.get("source_id"))
+        legacy_source = legacy_sources.get(path_key(entry["path"]))
+        current_source_warning = bool(not snapshots and legacy_source and legacy_source["warning"] == entry["reason"])
+        if current_source_warning:
+            source = legacy_source
+            snap = {"source_id": source["id"], "warning_key": source["warning_key"]}
+        current = bool(source and source["warning"] and source["warning_key"] == snap.get("warning_key")
+                       and path_key(source["path"]) == path_key(entry["path"]))
+        group_name = (source["warning_group"] if current else
+                      "unsupported" if "Binary content" in entry["reason"] else
+                      "manual_review" if "Not automatically analyzed" in entry["reason"] or "could not be interpreted" in entry["reason"] else "processing_error")
+        is_accepted = current and source["accepted"]
+        state = "accepted" if is_accepted else "unresolved" if current else "historical"
+        counts[group_name] += 1
+        counts["accepted"] += is_accepted
+        unresolved += current and not is_accepted
+        accepted += is_accepted
+        item = {"id": entry["ordinal"], "path": entry["path"], "reason": entry["reason"],
+                "category": entry["category"], "group": group_name, "status": state,
+                "source_id": snap.get("source_id", ""), "warning_key": snap.get("warning_key", ""),
+                "current_source_warning": current_source_warning,
+                "retryable": current and group_name == "processing_error" and not busy, "acceptable": current and not is_accepted and not busy,
+                "reopenable": current and is_accepted and not busy, "forceable": False,
+                "latest_reason": entry["reason"], "action_reason": "" if current else "This warning is historical; review the current source.",
+                "accepted_at": None, "retry_job_id": None}
+        if (group == "all" or group == group_name) and (status == "all" or
+                (status == "accepted" and is_accepted) or (status == "pending" and current and not is_accepted)):
+            items.append(item)
+            if current:
+                selection_warnings[str(item["id"])] = {"source_id": item["source_id"], "warning_key": item["warning_key"]}
+            for action in selection_ids:
+                if item[action]:
+                    selection_ids[action].append(item["id"])
+    offset, limit = max(0, offset), max(1, min(limit, 200))
+    return {"items": items[offset:offset + limit], "total": len(items), "recorded": "skip_details" in job["stats"],
+            "unresolved": unresolved, "accepted": accepted, "counts": counts, "selection_ids": selection_ids, "selection_warnings": selection_warnings,
+            **{key: len(ids) for key, ids in selection_ids.items()}, "busy": busy, "blocked_reason": ""}
+
+
 def skipped_details(conn, job_id, workspace, offset=0, limit=100, busy=False,
                     group="all", status="all"):
-    _filters(group, status)
     job = _job(conn, job_id)
+    if job["kind"] == "log_events":
+        return _log_skipped_details(conn, job, offset, limit, busy, group, status)
+    _filters(group, status)
     blocked = _block_reason(job, workspace)
     outcomes = skip_outcomes(conn, job_id)
     entries = db.rows(conn, "SELECT * FROM job_skips WHERE job_id = ? ORDER BY ordinal", (job_id,))

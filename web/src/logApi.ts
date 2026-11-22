@@ -4,6 +4,7 @@ export interface LogSettings {
 export interface LogSource {
   id: string; path: string; format: string; family: string; settings: Partial<LogSettings>
   fresh: boolean; state: string; warning: string; accepted: boolean; fingerprint: string
+  warning_key?: string; warning_group?: 'manual_review' | 'unsupported' | 'processing_error'
   stats: { events?: number; unparsed?: number; undated?: number }
   detected?: { ambiguous: boolean; error: string }
 }

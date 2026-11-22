@@ -4,7 +4,7 @@ import { api, post } from '../api'
 import { renderWithProviders } from '../test/setup'
 import type { LogEvent, LogSource } from '../logApi'
 import { Logs } from './Logs'
-import { LogImport } from '../components/logview/LogSources'
+import { LogImport, LogSourceList } from '../components/logview/LogSources'
 import { LogEntryContext } from '../components/logview/LogEntryContext'
 
 vi.mock('../api', async orig => ({ ...(await orig<typeof import('../api')>()), api: vi.fn(), post: vi.fn(), patch: vi.fn() }))
@@ -91,4 +91,19 @@ it('retains the saved excerpt when current context is stale', async () => {
   renderWithProviders(<LogEntryContext slug="demo" event={entry} />)
   expect(await screen.findByRole('alert')).toHaveTextContent('Source changed')
   expect(screen.getByText(entry.raw)).toBeInTheDocument()
+})
+
+
+it('allows analyzing a manual source again after its settings were corrected', async () => {
+  const changed = { ...source, fresh: false, state: 'new', warning: 'Previous manual review warning',
+    warning_group: 'manual_review', warning_key: 'b'.repeat(64) }
+  vi.mocked(api).mockResolvedValue({ sources: [changed], formats })
+  vi.mocked(post).mockResolvedValue({ job: 9 })
+  renderWithProviders(<LogSourceList slug="demo" />)
+  const analyze = await screen.findByRole('button', { name: /^Analyze source$/ })
+  expect(analyze).toBeEnabled()
+  fireEvent.click(analyze)
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/demo/log-sources/analyze', {
+    source_ids: [source.id], warning_selections: [{ source_id: source.id, warning_key: changed.warning_key }],
+  }))
 })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, Check, FileText, Settings2, TriangleAlert } from 'lucide-react'
 import { api, patch, post, type CaseDetail } from '../../api'
@@ -84,8 +84,11 @@ export function LogSourceList({ slug, family, onInspect }: { slug: string; famil
   const qc = useQueryClient()
   const query = useLogSources(slug)
   const [editing, setEditing] = useState<LogSource | null>(null)
-  const run = useMutation({ mutationFn: (id: string) => post(`/api/cases/${slug}/log-sources/analyze`, { source_ids: [id] }), onSuccess: () => qc.invalidateQueries() })
-  const accept = useMutation({ mutationFn: (id: string) => post(`/api/cases/${slug}/log-sources/${id}/accept-warning`), onSuccess: () => qc.invalidateQueries() })
+  const [requested] = useState(() => new URL(location.href).searchParams.get('view') === 'evidence' ? new URL(location.href).searchParams.get('source') : null)
+  const [handled, setHandled] = useState(false)
+  useEffect(() => { const source = query.data?.sources.find(s => s.id === requested); if (source && !handled) { setEditing(source); setHandled(true) } }, [query.data, requested, handled])
+  const run = useMutation({ mutationFn: (source: LogSource) => post(`/api/cases/${slug}/log-sources/analyze`, { source_ids: [source.id], ...(source.warning_key ? { warning_selections: [{ source_id: source.id, warning_key: source.warning_key }] } : {}) }), onSuccess: () => qc.invalidateQueries() })
+  const accept = useMutation({ mutationFn: (source: LogSource) => post(`/api/cases/${slug}/log-sources/review-warnings`, { decision: source.accepted ? 'reopen' : 'accept', selections: [{ source_id: source.id, warning_key: source.warning_key }] }), onSettled: () => qc.invalidateQueries() })
   const rows = query.data?.sources.filter(s => (!family || s.family === family)) ?? []
   return <div className="space-y-2">
     {query.isPending && <p role="status">{tr('common.loading')}</p>}
@@ -97,7 +100,7 @@ export function LogSourceList({ slug, family, onInspect }: { slug: string; famil
         <Tag>{query.data!.formats[source.format]}</Tag>
         {source.family !== 'access' && <span className="text-xs text-[var(--muted)]">{tr('logEvidence.entries', { n: formatCount(source.stats.events ?? 0) })}</span>}
         <Button aria-label={tr('logEvidence.settingsFor', { name: source.path })} onClick={() => setEditing(source)}><Settings2 size={14} /></Button>
-        {source.family !== 'access' && <Button disabled={run.isPending || source.state === 'indexing'} onClick={() => run.mutate(source.id)}>{tr(source.fresh ? 'logEvidence.recheck' : 'logEvidence.retry')}</Button>}
+        {source.family !== 'access' && <Button disabled={query.isError || query.isPending || run.isPending || source.state === 'indexing' || source.state !== 'new' && (source.warning_group === 'manual_review' || source.warning_group === 'unsupported')} onClick={() => run.mutate(source)}>{tr(source.fresh ? 'logEvidence.recheck' : 'logEvidence.retry')}</Button>}
       </div>
       {source.family === 'access' && <p className="mt-2 text-xs text-[var(--muted)]">{tr('logEvidence.accessShared')}</p>}
       {!source.fresh && <p className="mt-2 flex items-center gap-2 text-xs text-[var(--review-text)]"><TriangleAlert size={13} />{tr(source.state === 'new' ? 'logEvidence.notIndexed' : 'logEvidence.stale')}</p>}
@@ -105,7 +108,7 @@ export function LogSourceList({ slug, family, onInspect }: { slug: string; famil
       {source.warning && <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--panel-2)] p-2 text-xs">
         {source.accepted ? <Check size={14} className="text-[var(--ok)]" /> : <TriangleAlert size={14} className="text-[var(--review-text)]" />}
         <span className="min-w-0 flex-1">{source.warning}</span>
-        {source.accepted ? <Tag>{tr('logEvidence.accepted')}</Tag> : <Button disabled={accept.isPending} onClick={() => accept.mutate(source.id)}>{tr('logEvidence.accept')}</Button>}
+        {source.accepted && <Tag>{tr('logEvidence.accepted')}</Tag>}<Button disabled={query.isError || accept.isPending || !source.warning_key} onClick={() => accept.mutate(source)}>{source.accepted ? tr('logWarnings.reopenSource') : tr('logEvidence.accept')}</Button>
       </div>}
     </Card>)}
     {(run.error || accept.error) && <p role="alert" className="text-[var(--danger-text)]">{(run.error || accept.error)?.message}</p>}

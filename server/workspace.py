@@ -109,8 +109,7 @@ def create_case(workspace, name, reference="", notes="", profile=None):
     identity = {"name": name.strip() or case_dir.name, "reference": reference,
                 "notes": notes, "created": datetime.now().isoformat(timespec="seconds"),
                 "profile": profile}
-    (case_dir / CASE_FILE).write_text(
-        json.dumps(identity, indent=2, ensure_ascii=False), encoding="utf-8")
+    _write_identity(case_dir / CASE_FILE, identity)
     conn = db.connect(case_dir)
     try:
         conn.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)",
@@ -127,6 +126,49 @@ class CaseProfileConflict(ValueError):
     pass
 
 
+class CaseMetadataError(RuntimeError):
+    """Case identity could not safely be read or replaced."""
+
+    def __init__(self):
+        super().__init__("Case metadata is unavailable; no changes were saved.")
+
+
+def _read_identity(case_dir):
+    try:
+        identity = json.loads((Path(case_dir) / CASE_FILE).read_text(encoding="utf-8"))
+        if not isinstance(identity, dict):
+            raise ValueError()
+        for key in ("name", "reference", "notes", "created"):
+            if key in identity and not isinstance(identity[key], str):
+                raise ValueError()
+        if "profile" in identity:
+            case_profile.validate(identity["profile"])
+    except (OSError, ValueError, TypeError):
+        raise CaseMetadataError() from None
+    return identity
+
+
+def _write_identity(path, identity):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                prefix=".case-", suffix=".tmp", dir=path.parent,
+                delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(identity, stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except OSError:
+        raise CaseMetadataError() from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def profile_revision(identity):
     value = {key: identity.get(key, "") for key in ("name", "reference")}
     value["profile"] = case_profile.defaults(identity.get("profile"))
@@ -136,12 +178,10 @@ def profile_revision(identity):
 def case_info(case_dir):
     case_dir = Path(case_dir)
     identity = {"name": case_dir.name, "reference": "", "notes": "", "created": ""}
-    try:
-        identity.update(json.loads((case_dir / CASE_FILE).read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        pass
+    identity.update(_read_identity(case_dir))
     identity["profile"] = case_profile.defaults(identity.get("profile"))
-    info = {"slug": case_dir.name, "dir": str(case_dir), **identity}
+    info = {"slug": case_dir.name, "dir": str(case_dir), **identity,
+            "metadata_available": True}
     info["profile_revision"] = profile_revision(identity)
     info["reference_locked"] = False
     if db.case_db_path(case_dir).is_file():
@@ -172,12 +212,7 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
     """Update the human-owned case identity, atomically on disk and in DB."""
     case_dir = Path(case_dir)
     path = case_dir / CASE_FILE
-    identity = {"name": case_dir.name, "reference": "", "notes": "",
-                "created": ""}
-    try:
-        identity.update(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        pass
+    identity = _read_identity(case_dir)
     if expected_profile_revision is not None and expected_profile_revision != profile_revision(identity):
         raise CaseProfileConflict("The case profile changed since this editor was opened. Reopen the editor to load the latest version; your changes were not saved.")
     if name is not None and not str(name).strip():
@@ -203,10 +238,7 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
                        ("notes", notes)):
         if value is not None:
             identity[key] = str(value).strip() if key != "notes" else str(value)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(identity, indent=2, ensure_ascii=False),
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    _write_identity(path, identity)
     conn = db.connect(case_dir)
     try:
         conn.executemany(
@@ -227,8 +259,14 @@ def list_cases(workspace):
         return []
     out = []
     for entry in sorted(workspace.iterdir()):
-        if entry.is_dir() and entry.name != ARCHIVE_DIR and (entry / CASE_FILE).is_file():
-            out.append(case_info(entry))
+        if entry.is_dir() and entry.name != ARCHIVE_DIR and (
+                (entry / CASE_FILE).is_file() or db.case_db_path(entry).is_file()):
+            try:
+                out.append(case_info(entry))
+            except CaseMetadataError as exc:
+                out.append({"slug": entry.name, "dir": str(entry),
+                            "name": entry.name, "metadata_available": False,
+                            "metadata_error": str(exc)})
     return out
 
 
@@ -237,7 +275,8 @@ def resolve_case(workspace, case_slug):
     workspace (slug comes from the client and is treated accordingly)."""
     workspace = Path(workspace).resolve()
     candidate = (workspace / str(case_slug)).resolve()
-    if candidate.parent != workspace or not (candidate / CASE_FILE).is_file():
+    if candidate.parent != workspace or not (
+            (candidate / CASE_FILE).is_file() or db.case_db_path(candidate).is_file()):
         return None
     return candidate
 

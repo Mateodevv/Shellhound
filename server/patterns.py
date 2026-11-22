@@ -31,14 +31,34 @@ WHAT A HIT PROVES, for either half: that a request was made. Not that it
 succeeded. The status code decides, and reporting that is the hunt's job.
 """
 import json
+import os
+import tempfile
+import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from server import huntrules
 
 LIBRARY_FILE = "hunt_patterns.json"
 LIBRARY_SCHEMA = 2
+_LIBRARY_LOCK = threading.RLock()
+
+
+class PatternStorageError(RuntimeError):
+    """The saved library cannot safely be read or replaced."""
+
+    def __init__(self):
+        super().__init__("The pattern library is unavailable; no changes were saved.")
+
+
+def _serialized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _LIBRARY_LOCK:
+            return function(*args, **kwargs)
+    return wrapped
 
 # Shipped alongside the code, so `pip install` carries it -- see the
 # package-data entry in pyproject.toml.
@@ -84,15 +104,99 @@ def library_path(workspace):
 
 
 def _read(workspace):
-    """The raw workspace file. A broken file does not raise -- it must never
-    be the reason the interface no longer opens."""
+    """Read the complete saved snapshot; only an absent library is empty."""
     try:
         data = json.loads(library_path(workspace).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError):
+        raise PatternStorageError() from None
     if isinstance(data, list):          # the oldest form: a bare list
-        return {"patterns": data}
-    return data if isinstance(data, dict) else {}
+        data = {"patterns": data}
+    _validate_storage(data)
+    return data
+
+
+def _validate_stored_row(row, *, snapshot=False):
+    if not isinstance(row, dict):
+        raise ValueError()
+    if snapshot and ("version" not in row or "rule" not in row):
+        raise ValueError()
+    for key in ("id", "name", "label", "cve", "note", "description", "about",
+                "added", "created_at", "updated_at", "technology", "match"):
+        if key in row and not isinstance(row[key], str):
+            raise ValueError()
+    if "id" in row and not row["id"]:
+        raise ValueError()
+    for key in ("archived", "own_enabled"):
+        if key in row and not isinstance(row[key], bool):
+            raise ValueError()
+    if "version" in row and (isinstance(row["version"], bool)
+            or not isinstance(row["version"], (int, str))
+            or str(row["version"]) != str(int(row["version"]))
+            or int(row["version"]) < 1):
+        raise ValueError()
+    if "derived_from" in row and row["derived_from"] is not None \
+            and not isinstance(row["derived_from"], dict):
+        raise ValueError()
+    provenance = row.get("derived_from") or {}
+    if any(key in provenance and not isinstance(provenance[key], str)
+           for key in ("id", "source")):
+        raise ValueError()
+    if "version" in provenance and (type(provenance["version"]) is not int or
+                                    provenance["version"] < 1):
+        raise ValueError()
+    for key in ("patterns", "pattern"):
+        if key in row and not (isinstance(row[key], str) or
+                key == "patterns" and isinstance(row[key], list) and
+                all(isinstance(item, str) and item.strip() for item in row[key])):
+            raise ValueError()
+    if "request" in row:
+        if not isinstance(row["request"], dict):
+            raise ValueError()
+        for value in row["request"].values():
+            if not (isinstance(value, str) or isinstance(value, list) and
+                    all(isinstance(item, str) for item in value)):
+                raise ValueError()
+    if "rule" in row:
+        rule = row["rule"]
+        huntrules.normalise_rule(rule)
+        for request in rule["requests"]:
+            for clause in request["clauses"]:
+                values = clause.get("values")
+                if not (isinstance(values, str) or isinstance(values, list) and
+                        all(isinstance(item, str) for item in values)):
+                    raise ValueError()
+    if not snapshot and _normalise(row) is None:
+        raise ValueError()
+    if "history" in row:
+        if not isinstance(row["history"], list):
+            raise ValueError()
+        for value in row["history"]:
+            _validate_stored_row(value, snapshot=True)
+
+
+def _validate_storage(data):
+    try:
+        if not isinstance(data, dict):
+            raise ValueError()
+        rows = data.get("patterns", [])
+        off = data.get("disabled", [])
+        if not isinstance(rows, list) or not isinstance(off, list) or \
+                any(not isinstance(value, str) or not value for value in off):
+            raise ValueError()
+        if "schema" in data and (type(data["schema"]) is not int or
+                                 not 1 <= data["schema"] <= LIBRARY_SCHEMA):
+            raise ValueError()
+        ids = set()
+        for row in rows:
+            _validate_stored_row(row)
+            if row.get("id") in ids:
+                raise ValueError()
+            if row.get("id"):
+                ids.add(row["id"])
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise PatternStorageError() from None
 
 
 def bundled():
@@ -116,6 +220,7 @@ def bundled():
     return out
 
 
+@_serialized
 def disabled_ids(workspace):
     """Bundled ids this workspace has switched off."""
     raw = _read(workspace).get("disabled", [])
@@ -191,15 +296,15 @@ def _normalise(row):
         "version": version,
         "archived": bool(row.get("archived", False)),
         "own_enabled": bool(row.get("own_enabled", True)),
-        "derived_from": row.get("derived_from") \
-            if isinstance(row.get("derived_from"), dict) else None,
+        "derived_from": _provenance(row.get("derived_from")),
     }
     history = row.get("history")
-    entry["history"] = history if isinstance(history, list) and history \
+    entry["history"] = [_snapshot(item) for item in history] if isinstance(history, list) and history \
         else [_snapshot(entry)]
     return entry
 
 
+@_serialized
 def load(workspace, include_archived=True):
     """The analyst's OWN patterns. Not the bundled ones -- see `library`."""
     out = []
@@ -212,6 +317,7 @@ def load(workspace, include_archived=True):
     return out
 
 
+@_serialized
 def library(workspace, include_disabled=False, include_archived=False):
     """What the hunt runs: the enabled bundled patterns, then the analyst's
     own. Bundled first because they are the same everywhere and therefore the
@@ -245,27 +351,67 @@ def find(workspace, pattern_id):
     return None
 
 
+def _merge_stored_entry(old, entry):
+    value = {**old, **entry}
+    # Keep raw metadata only while its public value has not been edited.
+    if old.get("rule") and entry.get("rule") == huntrules.normalise_rule(old["rule"]):
+        value["rule"] = old["rule"]
+    if old.get("derived_from") and entry.get("derived_from") == _provenance(old["derived_from"]):
+        value["derived_from"] = old["derived_from"]
+    return value
+
+
+@_serialized
 def save(workspace, patterns, disabled=None):
     path = library_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    previous = _read(workspace)
     if disabled is None:
-        disabled = disabled_ids(workspace)
+        disabled = previous.get("disabled", [])
     # `source` is derived, not stored: it says which half of the library an
     # entry came from, and everything in this file came from the same half.
-    body = {"schema": LIBRARY_SCHEMA,
-            "patterns": [{k: v for k, v in p.items()
-                          if k not in ("source", "enabled")}
-                         for p in patterns],
+    stored = []
+    old_rows = previous.get("patterns", [])
+    by_id = {row.get("id"): row for row in old_rows if row.get("id")}
+    for index, entry in enumerate(patterns):
+        old = by_id.get(entry.get("id"), {})
+        if not old and index < len(old_rows) and not old_rows[index].get("id"):
+            old = old_rows[index]
+        value = _merge_stored_entry(old, {k: v for k, v in entry.items()
+                                         if k not in ("source", "enabled")})
+        history = {item.get("version"): item for item in old.get("history", [])}
+        value["history"] = [_merge_stored_entry(history.get(item.get("version"), {}), item)
+                            for item in value.get("history", [])]
+        stored.append(value)
+    body = {**previous, "schema": LIBRARY_SCHEMA,
+            "patterns": stored,
             "disabled": sorted(disabled)}
+    _validate_storage(body)
     payload = json.dumps(body, indent=2, ensure_ascii=False)
     # Write beside it first, then replace: a crash in the middle of writing
     # must not halve the library.
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(payload + "\n", encoding="utf-8")
-    tmp.replace(path)
+    tmp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                prefix=".hunt-patterns-", suffix=".tmp", dir=path.parent,
+                delete=False) as stream:
+            tmp = Path(stream.name)
+            stream.write(payload + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    except OSError:
+        raise PatternStorageError() from None
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     return patterns
 
 
+@_serialized
 def set_enabled(workspace, pattern_id, enabled):
     """Switch a bundled or own pattern off or on for this workspace."""
     ids = {p["id"] for p in bundled()}
@@ -356,18 +502,29 @@ def _signature(entry):
     return huntrules.rule_hash(rule)
 
 
+def _provenance(value):
+    return {key: value[key] for key in ("id", "version", "source") if key in value} \
+        if isinstance(value, dict) else None
+
+
 def _snapshot(entry):
-    return {key: entry.get(key) for key in (
+    snapshot = {key: entry[key] for key in (
         "version", "technology", "name", "cve", "description", "rule",
         "created_at", "updated_at", "archived", "own_enabled",
         "derived_from",
-    )}
+    ) if key in entry}
+    if snapshot.get("rule") is not None:
+        snapshot["rule"] = huntrules.normalise_rule(snapshot["rule"])
+    if "derived_from" in snapshot:
+        snapshot["derived_from"] = _provenance(snapshot["derived_from"])
+    return snapshot
 
 
 def _stamp():
     return datetime.now().isoformat(timespec="seconds")
 
 
+@_serialized
 def add(workspace, patterns_in, name="", cve="", description="",
         match=MATCH_ANY, request=None, *, rule=None, technology="",
         derived_from=None):
@@ -411,6 +568,7 @@ def add(workspace, patterns_in, name="", cve="", description="",
     return {**entry, "source": "own", "enabled": True}
 
 
+@_serialized
 def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
            description=None, match=None, request=None, *, rule=None,
            technology=None, expected_version=None, archived=None):
@@ -478,6 +636,7 @@ def update(workspace, pattern_id, patterns_in=None, name=None, cve=None,
     raise PatternError("Unknown pattern.", "err.patternUnknown")
 
 
+@_serialized
 def remove(workspace, pattern_id):
     """Archive an own pattern; switch off a bundled one.
 
@@ -512,6 +671,7 @@ def versions(workspace, pattern_id):
     return list(entry.get("history") or [_snapshot(entry)])
 
 
+@_serialized
 def restore(workspace, pattern_id, version, expected_version=None):
     entry = find(workspace, pattern_id)
     if not entry or entry["source"] != "own":
@@ -528,6 +688,7 @@ def restore(workspace, pattern_id, version, expected_version=None):
         archived=bool(wanted.get("archived", False)))
 
 
+@_serialized
 def clone(workspace, pattern_id, *, disable_original=False, rule=None,
           name=None, cve=None, description=None, technology=None):
     source = find(workspace, pattern_id)
@@ -578,6 +739,7 @@ def clone(workspace, pattern_id, *, disable_original=False, rule=None,
     return {**entry, "source": "own", "enabled": True}
 
 
+@_serialized
 def import_text(workspace, text):
     """Read in a list: either JSON (as the export writes it) or one line per
     pattern, optionally `pattern | label | note`. Known patterns are skipped,

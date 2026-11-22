@@ -6,6 +6,21 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+### Fixed — saved libraries and log-warning review
+
+- Block pattern-library and case-profile saves when their saved files cannot
+  be read safely; preserve existing data and allow retry without losing drafts.
+- Group log warnings by manual review, unsupported files and processing errors.
+  Accept or reopen selected warnings across pages; retry only affected sources.
+- Keep accepted warnings out of active coverage gaps while retaining their
+  history, and require fresh review when the source or warning changes.
+
+### Fixed — workspace enrichment keys
+
+- Preserve existing settings when the settings file is unreadable or corrupt;
+  write settings atomically with private permissions. Clearing a key now needs
+  its explicit key field.
+
 ### Changed — log index and manual IOCs
 
 - Show reliable partial log-index status and allow a one-time explicit rebuild
