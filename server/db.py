@@ -13,7 +13,9 @@ threads read and write concurrently without hand-rolled file locking.
 """
 import json
 import hashlib
+import ipaddress
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +36,11 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS opencti_lookups (
     ioc_id INTEGER PRIMARY KEY, identity TEXT NOT NULL,
     checked_at TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS opencti_case_matches (
+    authority TEXT NOT NULL, case_reference TEXT NOT NULL,
+    kind TEXT NOT NULL, value TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (authority, case_reference, kind, value)
 );
 CREATE TABLE IF NOT EXISTS opencti_previews (
     id TEXT PRIMARY KEY, created TEXT NOT NULL, fingerprint TEXT NOT NULL,
@@ -170,6 +177,7 @@ CREATE TABLE IF NOT EXISTS findings (
 );
 CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity, artifact);
 CREATE INDEX IF NOT EXISTS idx_findings_source ON findings(source, artifact);
+CREATE INDEX IF NOT EXISTS idx_findings_artifact ON findings(artifact, artifact_kind);
 CREATE TABLE IF NOT EXISTS iocs (
     id INTEGER PRIMARY KEY,
     value TEXT UNIQUE NOT NULL,
@@ -555,7 +563,8 @@ _ADDED_COLUMNS = {
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
 # 23: index file scan receipts for artifact-scoped review and backup history.
 # 24: SQL findings retain source/column identity and decoded-row match spans.
-CASE_SCHEMA_VERSION = 24
+# 26: index artifact-scoped finding checks for scan receipt publication.
+CASE_SCHEMA_VERSION = 26
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a
@@ -767,6 +776,76 @@ def _relativize_ioc_paths(conn):
         conn.execute("UPDATE iocs SET value = ? WHERE id = ?", (relative, ioc_id))
 
 
+_finding_subscribers = ()
+_finding_subscriber_lock = threading.Lock()
+
+
+def subscribe_finding_changes(callback):
+    """Subscribe a quick callback taking the absolute case directory after commit."""
+    global _finding_subscribers
+    entry = (callback,)
+    with _finding_subscriber_lock:
+        _finding_subscribers += (entry,)
+
+    def unsubscribe():
+        global _finding_subscribers
+        with _finding_subscriber_lock:
+            _finding_subscribers = tuple(item for item in _finding_subscribers if item is not entry)
+
+    return unsubscribe
+
+
+class _CaseConnection(sqlite3.Connection):
+    _case_dir = None
+    _finding_changed = False
+    _new_proofs = None
+
+    def _after_transaction(self, committed):
+        changed, proofs = self._finding_changed, self._new_proofs
+        self._finding_changed, self._new_proofs = False, None
+        subscribers = _finding_subscribers
+        if not committed or not self._case_dir or not subscribers or not (changed or proofs):
+            return
+        if not changed:
+            try:
+                # Scanners also record clean files. Check one batch per commit.
+                changed = self.execute(f"""
+                    SELECT 1 FROM findings f {RETIRE_JOIN}
+                    WHERE f.artifact IN (SELECT value FROM json_each(?))
+                    AND f.artifact_kind='file' AND f.triage!='dismissed' AND {LIVE_PREDICATE}
+                    LIMIT 1
+                """, (json.dumps(list(proofs)),)).fetchone() is not None
+            except sqlite3.Error:
+                changed = True  # Let the worker check eligibility if this read failed.
+        if changed:
+            for (callback,) in subscribers:
+                try:
+                    callback(self._case_dir)
+                except Exception:
+                    # The write already succeeded and must remain usable.
+                    continue
+
+    def commit(self):
+        committing = self.in_transaction
+        super().commit()
+        self._after_transaction(committing)
+
+    def rollback(self):
+        super().rollback()
+        self._after_transaction(False)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        committing = exc_type is None and self.in_transaction
+        try:
+            result = super().__exit__(exc_type, exc_value, traceback)
+        except sqlite3.Error:
+            if not self.in_transaction:
+                self._after_transaction(False)
+            raise
+        self._after_transaction(committing)
+        return result
+
+
 def connect(case_dir):
     """Open (and if needed create) the case database.
 
@@ -781,7 +860,7 @@ def connect(case_dir):
     CASE_SCHEMA_VERSION: once per case instead of once per request. The
     normal path is thereby read-only and collides with nothing."""
     path = case_db_path(case_dir)
-    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
+    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000, factory=_CaseConnection)
     # Explicitly, not only via `timeout`: this makes SQLite wait on a held
     # lock instead of giving up immediately.
     conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_MS)}")
@@ -806,6 +885,7 @@ def connect(case_dir):
                 # upgrade gets the next attempt -- the running read request
                 # does not fail because of it. The tables are already there.
                 conn.rollback()
+    conn._case_dir = path.parent.absolute()
     return conn
 
 
@@ -896,11 +976,81 @@ def complete_file_scan(conn, engine, run):
     """Finish a full traversal, retaining overrides for its unreadable files."""
     conn.execute("DELETE FROM file_completion WHERE engine = ? AND keep_run != ?",
                  (engine, int(run)))
+    if observing_finding_changes(conn):
+        try:
+            # Retiring a scanner's unreproduced finding can unblock another
+            # still-visible finding on the same file with a current receipt.
+            if conn.execute(f"""
+                SELECT 1 FROM findings f {RETIRE_JOIN}
+                JOIN file_scan_receipts r ON r.artifact=f.artifact AND r.engine=f.engine
+                WHERE f.engine=? AND r.run=? AND f.seen_run<r.run AND {LIVE_PREDICATE}
+                AND EXISTS (SELECT 1 FROM findings other WHERE other.artifact=f.artifact
+                            AND other.engine!=f.engine AND other.artifact_kind='file'
+                            AND other.triage!='dismissed')
+                AND NOT EXISTS (SELECT 1 FROM findings seen WHERE seen.artifact=f.artifact
+                                AND seen.engine=f.engine AND seen.seen_run=r.run)
+                LIMIT 1
+            """, (engine, int(run))).fetchone():
+                mark_finding_changed(conn)
+        except sqlite3.Error:
+            mark_finding_changed(conn)
     complete_run(conn, engine, run)
 
 
+def observing_finding_changes(conn):
+    return bool(_finding_subscribers and isinstance(conn, _CaseConnection)
+                and not conn._finding_changed)
+
+
+def mark_finding_changed(conn):
+    if isinstance(conn, _CaseConnection):
+        conn._finding_changed = True
+
+
+def mark_file_scan_proof(conn, artifact):
+    if isinstance(conn, _CaseConnection) and not conn._finding_changed:
+        if _finding_subscribers:
+            if conn._new_proofs is None:
+                conn._new_proofs = set()
+            conn._new_proofs.add(artifact)
+        else:
+            # A scanner may already be writing when matching is turned on.
+            conn._finding_changed = True
+
+
+def finding_ip(value):
+    if isinstance(value, str) and '%' not in value:
+        try:
+            return ipaddress.ip_address(value)
+        except ValueError:
+            pass
+    return None
+
+
+def mark_finding_triage_changed(conn, artifact, artifact_kind, state):
+    if state == 'dismissed':
+        return
+    if artifact_kind == 'file' or artifact_kind == 'client' and finding_ip(artifact):
+        mark_finding_changed(conn)
+    elif artifact_kind == 'log_observation' and observing_finding_changes(conn):
+        try:
+            if conn.execute("""
+                SELECT 1 FROM log_observations o JOIN findings f
+                ON f.fingerprint=o.finding_fingerprint WHERE f.artifact=?
+                AND CASE WHEN json_valid(o.snapshot) THEN
+                    COALESCE(json_extract(o.snapshot,'$.ip'), '') != '' END
+                LIMIT 1
+            """, (artifact,)).fetchone():
+                mark_finding_changed(conn)
+        except sqlite3.Error:
+            mark_finding_changed(conn)
+    elif artifact_kind == 'log_observation':
+        mark_finding_changed(conn)
+
+
 def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
-                   line=None, evidence="", rule_id="", engine="", run=0):
+                   line=None, evidence="", rule_id="", engine="", run=0, *,
+                   observed_ip=None):
     """Insert a finding or refresh last_seen -- triage state is never reset.
 
     `rule_id`, `engine` and `seen_run` are stored but NOT fingerprinted. The
@@ -911,6 +1061,19 @@ def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
     them at their defaults and their rows are never retired."""
     fp = fingerprint(source, rule, artifact, line)
     ts = now()
+    severity, rule_id, engine = int(severity), str(rule_id or ""), str(engine or "")
+    eligible = (artifact_kind == 'file' or
+                artifact_kind == 'client' and finding_ip(artifact) or
+                artifact_kind == 'log_observation' and finding_ip(observed_ip))
+    previous = None
+    if eligible and observing_finding_changes(conn):
+        try:
+            previous = conn.execute(f"""
+                SELECT f.severity, f.evidence, f.rule_id, f.engine, f.triage, {LIVE_PREDICATE} AS live
+                FROM findings f {RETIRE_JOIN} WHERE f.fingerprint=?
+            """, (fp,)).fetchone()
+        except sqlite3.Error:
+            pass
     conn.execute(
         """INSERT INTO findings (fingerprint, source, severity, rule, rule_id,
                artifact_kind, artifact, line, evidence, created, last_seen,
@@ -920,8 +1083,13 @@ def upsert_finding(conn, source, severity, rule, artifact_kind, artifact,
                severity=excluded.severity, evidence=excluded.evidence,
                rule_id=excluded.rule_id, last_seen=excluded.last_seen,
                engine=excluded.engine, seen_run=excluded.seen_run""",
-        (fp, source, int(severity), rule, str(rule_id or ""), artifact_kind,
-         artifact, line, evidence, ts, ts, str(engine or ""), int(run or 0)))
+        (fp, source, severity, rule, rule_id, artifact_kind,
+         artifact, line, evidence, ts, ts, engine, int(run or 0)))
+    changed = previous is None or (
+        previous["triage"] != "dismissed" and
+        (not previous["live"] or tuple(previous)[:4] != (severity, evidence, rule_id, engine)))
+    if eligible and changed:
+        mark_finding_changed(conn)
     return fp
 
 

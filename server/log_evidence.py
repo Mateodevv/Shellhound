@@ -345,6 +345,27 @@ def _resolve(conn, logged, options, roots=None):
     return next(iter(found.values())) if len(found) == 1 else ""
 
 
+def _record_observation(conn, event, fingerprint, snapshot, *, replace=False):
+    ip = db.finding_ip(snapshot.get('ip'))
+    previous_ip = None
+    if ip and db.observing_finding_changes(conn):
+        try:
+            previous = conn.execute("""SELECT CASE WHEN json_valid(snapshot) THEN
+                json_extract(snapshot, '$.ip') END FROM log_observations
+                WHERE event_id=? AND finding_fingerprint=?""", (event["id"], fingerprint)).fetchone()
+            previous_ip = db.finding_ip(previous[0]) if previous else None
+        except sqlite3.Error:
+            pass
+    values = (event["id"], fingerprint, event["source_id"], json.dumps(snapshot))
+    if replace:
+        conn.execute("INSERT OR REPLACE INTO log_observations VALUES (?,?,?,?)", values)
+    else:
+        conn.execute("INSERT INTO log_observations VALUES (?,?,?,?) ON CONFLICT(event_id,finding_fingerprint) "
+                     "DO UPDATE SET snapshot=excluded.snapshot", values)
+    if ip and ip != previous_ip:
+        db.mark_finding_changed(conn)
+
+
 def _save_finding(conn, event, *, manual=False, note=""):
     artifact = event["artifact"] or "log-observation:" + event["id"]
     kind = "file" if event["artifact"] else "log_observation"
@@ -364,15 +385,14 @@ def _save_finding(conn, event, *, manual=False, note=""):
     fingerprint_value = db.upsert_finding(conn, source, db.SEV_MEDIUM if event["detection"] else db.SEV_LOW,
         rule + " · " + event["id"][:10], kind, artifact, evidence=parsers.redact(
             f"{event['source_name']}:{event['line']} · {note or event['raw']}" )[:1000], rule_id=rule_id,
-        engine="" if manual else "log_source:" + event["source_id"], run=event.get("run", 0))
+        engine="" if manual else "log_source:" + event["source_id"], run=event.get("run", 0),
+        observed_ip=event.get("ip"))
     if before:
         conn.execute("UPDATE findings SET triage=?,triage_note=?,triaged_at=? WHERE fingerprint=?",
                      (before["triage"], before["triage_note"], before["triaged_at"], fingerprint_value))
     safe = {**event, "raw": parsers.redact(event["raw"]), "mapped_artifact": event["artifact"],
             "artifact": artifact, "artifact_kind": kind}
-    conn.execute("INSERT INTO log_observations VALUES (?,?,?,?) ON CONFLICT(event_id,finding_fingerprint) "
-                 "DO UPDATE SET snapshot=excluded.snapshot",
-                 (event["id"], fingerprint_value, event["source_id"], json.dumps(safe)))
+    _record_observation(conn, event, fingerprint_value, safe)
     return fingerprint_value
 
 
@@ -394,13 +414,14 @@ def _save_error_finding(conn, event, disabled):
     fp = db.upsert_finding(conn, "errorlog", db.SEV_MEDIUM if hard else db.SEV_LOW,
         ("PHP error names this file (fatal/parse)" if hard else "PHP error names this file") + " · " + event["source_id"][:10], kind, artifact,
         line=event.get("file_line") if kind == "file" else None, evidence=parsers.redact(f"{event['source_name']}:{event['line']} · {event['raw']}")[:400],
-        rule_id=rule_id, engine="log_source:" + event["source_id"], run=event["run"])
+        rule_id=rule_id, engine="log_source:" + event["source_id"], run=event["run"],
+        observed_ip=event.get("ip"))
     if before:
         conn.execute("UPDATE findings SET triage=?,triage_note=?,triaged_at=? WHERE fingerprint=?",
                      (before["triage"], before["triage_note"], before["triaged_at"], fp))
-    conn.execute("INSERT OR REPLACE INTO log_observations VALUES (?,?,?,?)", (event["id"], fp, event["source_id"],
-        json.dumps({**event, "raw": parsers.redact(event["raw"]), "mapped_artifact": event["artifact"],
-                    "artifact": artifact, "artifact_kind": kind})))
+    _record_observation(conn, event, fp,
+                        {**event, "raw": parsers.redact(event["raw"]), "mapped_artifact": event["artifact"],
+                         "artifact": artifact, "artifact_kind": kind}, replace=True)
 
 
 def build(case_dir, ctx=None, source_ids=None):

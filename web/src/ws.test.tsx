@@ -74,4 +74,18 @@ describe('analysis receipt updates', () => {
     unmount()
   })
 
+  it('invalidates automatic matches only for the affected case', () => {
+    let receive: ((event: { data: string }) => void) | undefined
+    class Socket { set onmessage(handler: (event: { data: string }) => void) { receive = handler } close() {} }
+    vi.stubGlobal('WebSocket', Socket)
+    const qc = testQueryClient()
+    qc.setQueryData(['opencti-matches', 'first', 'host', 'ip', '1'], {})
+    qc.setQueryData(['opencti-matches', 'second', 'host', 'ip', '1'], {})
+    const { unmount } = renderHook(() => useLiveEvents(), { wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider> })
+    act(() => receive?.({ data: JSON.stringify({ type: 'invalidate', scope: 'opencti-matches', case_slug: 'first' }) }))
+    expect(qc.getQueryState(['opencti-matches', 'first', 'host', 'ip', '1'])?.isInvalidated).toBe(true)
+    expect(qc.getQueryState(['opencti-matches', 'second', 'host', 'ip', '1'])?.isInvalidated).toBe(false)
+    unmount()
+  })
+
 })

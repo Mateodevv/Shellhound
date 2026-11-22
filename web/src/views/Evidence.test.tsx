@@ -292,3 +292,48 @@ it.each([false, true])('labels log warnings accurately in a %s mixed run', async
   expect(screen.getAllByText(`Processing finished · ${mixed ? 3 : 2} warning(s)`).length).toBeGreaterThan(0)
   expect(screen.queryByText(/2 file\(s\) skipped/)).not.toBeInTheDocument()
 })
+
+it('starts analysis without per-scan OpenCTI options', async () => {
+  vi.mocked(api).mockImplementation(async path => path.endsWith('/jobs') ? [] : { ...CASE, evidence_items: [{ id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '', scanned_at: '', stats: {}, label: '', exists: true }] })
+  renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+  const button = await screen.findByRole('button', { name: 'Run analysis' })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/analyze', { mode: 'all' }))
+})
+
+it('keeps optional match failures separate from analysis and shows their reason', async () => {
+  vi.mocked(api).mockImplementation(async path => {
+    if (path.endsWith('/jobs')) return [{ id: 9, kind: 'opencti-matches', state: 'done', stats: { partial: true, reason: 'Local analysis was cancelled or failed. OpenCTI was not queried.' } }]
+    return CASE
+  })
+  renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+  expect(await screen.findByText('Local analysis was cancelled or failed. OpenCTI was not queried.')).toBeVisible()
+  expect(screen.queryByText(/Checked: 0/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/engines complete/)).not.toBeInTheDocument()
+})
+
+it('opens locally cached case matches only for the selected linked value', async () => {
+  vi.mocked(api).mockImplementation(async path => {
+    if (path === '/api/opencti/settings') return { lookup_configured: true, url: 'https://cti.example' }
+    if (path.endsWith('/jobs')) return [{ id: 9, kind: 'opencti-matches', state: 'done', stats: { linked: 2, missing_hashes: 1, linked_values: [{ kind: 'ip', value: '192.0.2.1' }] } }]
+    if (path.includes('/opencti/matches?')) return { result: { kind: 'ip', value: '192.0.2.1', known: true, cases: [{ id: '1', name: 'Case one', url: 'https://cti.example/case/1' }], truncated: false, checked_at: 'today' } }
+    return CASE
+  })
+  renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+  expect(await screen.findByText(/Missing hashes: 1/)).toBeVisible()
+  expect(vi.mocked(api).mock.calls.some(([path]) => path.includes('/opencti/matches?'))).toBe(false)
+  fireEvent.click(screen.getByText('Show linked values (up to 20)'))
+  fireEvent.click(screen.getByText('192.0.2.1'))
+  expect(await screen.findByRole('link', { name: 'Case one' })).toHaveAttribute('href', 'https://cti.example/case/1')
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('allows cancelling an optional running check without exposing a server trace', async () => {
+  vi.mocked(api).mockImplementation(async path => path.endsWith('/jobs') ? [{ id: 9, kind: 'opencti-matches', state: 'running', progress: 0.5, error: 'Traceback\nsecret internals', stats: {} }] : CASE)
+  renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/jobs/9/cancel'))
+  expect(screen.getByText('OpenCTI case matching failed.')).toBeVisible()
+  expect(screen.queryByText(/secret internals/)).not.toBeInTheDocument()
+})

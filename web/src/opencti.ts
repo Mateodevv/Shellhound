@@ -27,7 +27,7 @@ export function useProfileOptions(enabled = true) {
     queryFn: () => api<{ sectors: string[]; subsectors: Record<string, string[]>; context_options?: Partial<Record<keyof CaseContext, string[]>> }>('/api/profile/sectors') })
 }
 export interface OpenCtiSettings {
-  url: string; ingester_id: string; configured: boolean; token_hint: string; timeout: number
+  url: string; ingester_id: string; configured: boolean; lookup_configured: boolean; auto_match?: boolean; token_hint: string; timeout: number
 }
 export interface OpenCtiState {
   exports: { id: string; state: string; created: string; updated: string; error?: string; case_url?: string | null; activity_hidden?: boolean; stats: { counts?: OpenCtiCounts } & Record<string, unknown> }[]
@@ -63,4 +63,8 @@ export function useOpenCtiSettings(enabled = true) {
 export function safeCtiUrl(value: string | undefined): string | undefined {
   if (!value) return undefined
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined } catch { return undefined }
+}
+
+export function openCtiHost(value: string | undefined): string {
+  try { return new URL(value || '').host || 'OpenCTI' } catch { return 'OpenCTI' }
 }

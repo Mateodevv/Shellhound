@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { TOKEN, type Job } from './api'
 
 interface JobEvent { type: 'job'; case_slug?: string; job: Partial<Job> & { id: number } }
-interface InvalidateEvent { type: 'invalidate'; scope: string }
+interface InvalidateEvent { type: 'invalidate'; scope: string; case_slug?: string }
 type Event = JobEvent | InvalidateEvent
 
 // Which query keys a finished engine invalidates. "Everything relevant"
@@ -60,6 +60,9 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
               qc.invalidateQueries({ queryKey: event.case_slug ? [key, event.case_slug] : [key] })
             }
           }
+          if (event.job.kind === 'opencti-matches' && ['done', 'failed', 'cancelled'].includes(event.job.state ?? '')) {
+            qc.invalidateQueries({ queryKey: event.case_slug ? ['opencti-matches', event.case_slug] : ['opencti-matches'] })
+          }
           if (event.job.state && event.job.state !== 'running') {
             qc.invalidateQueries({ queryKey: ['chain'] })
             qc.invalidateQueries({ queryKey: ['first-sign'] })
@@ -72,6 +75,10 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
             qc.invalidateQueries({ queryKey: ['job-skips'] })
           }
         } else if (event.type === 'invalidate') {
+          if (event.scope === 'opencti-matches') {
+            qc.invalidateQueries({ queryKey: event.case_slug ? ['opencti-matches', event.case_slug] : ['opencti-matches'] })
+            return
+          }
           if (['findings', 'index_logs', 'webshell', 'yara', 'sqldb'].includes(event.scope)) {
             qc.invalidateQueries({ queryKey: ['chain'] })
             qc.invalidateQueries({ queryKey: ['first-sign'] })

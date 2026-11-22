@@ -23,7 +23,7 @@ import { OpenCtiSettings } from '../components/settings/OpenCtiSettings'
 
 type Tab = 'intel' | 'detection'
 
-export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
+export function Settings({ slug, initialTab = 'intel' }: { slug?: string; initialTab?: Tab }) {
   const tr = useT()
   const [tab, setTab] = useState<Tab>(initialTab)
   const { data } = useQuery({
@@ -50,7 +50,7 @@ export function Settings({ initialTab = 'intel' }: { initialTab?: Tab }) {
       ]} active={tab} onChange={setTab} />
 
       {tab === 'intel' && <>
-        <OpenCtiSettings />
+        <OpenCtiSettings slug={slug} />
         <DirectEnrichmentSettings />
         <GeoSettings />
       </>}

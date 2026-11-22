@@ -353,7 +353,7 @@ function CaseShell({ slug, onBack }: { slug: string; onBack: () => void }) {
             {view === 'evidence' && <Evidence {...props} />}
             {view === 'timeline' && <Timeline {...props} />}
             {view === 'report' && <Report {...props} onClosed={leaveCase} />}
-            {view === 'settings' && <Settings />}
+            {view === 'settings' && <Settings slug={slug} />}
           </Suspense>
         </div>
         </main>

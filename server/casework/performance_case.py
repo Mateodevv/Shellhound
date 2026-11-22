@@ -8,7 +8,7 @@ import threading
 import time
 
 from server import db, workspace as workspaces
-from server.casework.testcase import PHP_EXAMPLE
+from server.casework.testcase import PHP_EXAMPLE, TESTCASE_MANIFEST
 
 VERSION = 1
 SEED = 1701
@@ -28,7 +28,7 @@ class Scale:
 
 
 def manifest(case, **changes):
-    path = Path(case) / 'testcase-generation.json'
+    path = Path(case) / TESTCASE_MANIFEST
     data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     data.update(changes)
     temporary = path.with_suffix('.tmp')

@@ -332,6 +332,7 @@ GET_ROUTES = {
     "/api/organizations": "",
     "/api/opencti/settings": "",
     "/api/cases/{slug}/opencti": "",
+    "/api/cases/{slug}/opencti/matches": "kind=ip&value=192.0.2.1",
     "/api/cases/{slug}/opencti/profile-changes": "",
     "/api/state": "",
     "/api/archives": "",

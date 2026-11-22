@@ -1,3 +1,4 @@
+import { OpenCtiMatches } from '../enrichment/OpenCtiMatches'
 import { directSupported, useDirectSettings } from '../../directEnrichment'
 // ArtifactWindow.tsx -- one bounded evidence workspace and an explicit save.
 //
@@ -447,6 +448,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
           <a href={boxUrl.toString()} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded px-3 py-2 text-[12px] hover:bg-[var(--panel-2)]"><ExternalLink size={13} />{tr('cti.toBox')}</a>
         </GroupedActions></>}
     </div>}
+    {kind === 'client' && <OpenCtiMatches key={`${slug}:ip:${artifact.artifact}`} slug={slug} kind="ip" value={artifact.artifact} />}
     {revealError && <p role="alert" className="mt-2 text-[12px] text-[var(--danger-text)]">{tr('artifact.revealError')}: {revealError}</p>}
   </Block>
 
@@ -481,6 +483,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
       </MetaCell>
       {fileHashes.sha256 && <div className="border-t border-[var(--line)] pt-3"><div className="mb-2 flex items-center gap-2 text-[12px]">SHA-256<InfoDot body={tr('field.sha256')} /><CopyButton value={fileHashes.sha256} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{fileHashes.sha256}</p></div>}
       {(fileHashes.md5 || fileHashes.sha1) && <details className="mt-2 text-[12px]"><summary className="cursor-pointer text-[var(--muted)]">{tr('review.otherHashes')}</summary><div className="mt-2 space-y-2">{[['MD5', fileHashes.md5], ['SHA-1', fileHashes.sha1]].filter(([, value]) => value).map(([label, value]) => <div key={label}><div className="flex items-center gap-2">{label}<CopyButton value={value!} label={tr('copy.hash')} /></div><p className="mono break-all text-[11px]">{value}</p></div>)}</div></details>}
+      {fileHashes.sha256 && <OpenCtiMatches key={`${slug}:hash:${fileHashes.sha256}`} slug={slug} kind="hash" value={fileHashes.sha256} />}
       {fileHashes.sha256 && <FileReputation slug={slug} sha256={fileHashes.sha256} boxUrl={boxUrl.toString()} />}
     </div>
   )
@@ -629,7 +632,7 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
               className={clsx('flex min-h-0 flex-col gap-3', kind === 'file' ? 'max-h-[42%] overflow-y-auto' : 'flex-1 overflow-y-auto')}>
               {tab === 'findings' && <FindingList key={artifactKey} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} preview={kind === 'dump' ? sqlQuery.data : preview} loading={kind === 'dump' ? sqlQuery.isFetching : needsPreview && previewLoading} />}
               {kind === 'file' && tab === 'findings' && <ArtifactBackups slug={slug} artifact={artifact.artifact} onOpenFile={path => onView(path, null)} />}
-              {tab === 'findings' && ctx?.log_observations?.map(event => <details key={event.id} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary><div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onView} /></div></details>)}
+              {tab === 'findings' && ctx?.log_observations && <LogObservationList slug={slug} events={ctx.log_observations} onFile={onView} />}
               {tab === 'ips' && <Clients slug={slug} ips={ips} marks={marks} onTrace={onTrace} />}
               {tab === 'accesses' && <SuccessfulAccesses key={artifactKey} slug={slug} ip={artifact.artifact} onView={onView} />}
               {kind === 'client' && tab === 'trace' && <div className="max-h-36 shrink-0 overflow-y-auto"><FindingList key={`trace:${artifactKey}`} kind={kind} findings={findings} selected={activeFinding?.fingerprint ?? null} onSelect={setSelectedFinding} loading={false} /></div>}
@@ -745,4 +748,10 @@ export function ArtifactWindow({ slug, artifact, roots, collected, onClose,
     </Modal>
 
   </>)
+}
+
+function LogObservationList({ slug, events, onFile }: { slug: string; events: NonNullable<ArtifactContext['log_observations']>; onFile: (path: string, line: number | null) => void }) {
+  const tr = useT()
+  const [open, setOpen] = useState('')
+  return <>{events.map(event => <details key={event.id} open={open === event.id} onToggle={e => { if (e.currentTarget.open) setOpen(event.id); else setOpen(current => current === event.id ? '' : current) }} className="rounded-lg border border-[var(--line)] p-3"><summary className="cursor-pointer text-sm font-medium">{event.source_name}:{event.line} · {tr('logEvidence.entry')}</summary>{open === event.id && <div className="mt-3"><LogEntryContext slug={slug} event={event} onFile={onFile} finding /></div>}</details>)}</>
 }

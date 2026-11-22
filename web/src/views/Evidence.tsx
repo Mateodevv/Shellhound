@@ -1,3 +1,4 @@
+import { OpenCtiMatches } from '../components/enrichment/OpenCtiMatches'
 // Evidence.tsx — register evidence paths, analyze, watch jobs.
 import { useT } from '../i18n'
 import { SkippedFiles } from '../components/review/SkippedFiles'
@@ -359,6 +360,7 @@ export function Evidence({ slug }: {
         </div>
       </Section>
 
+      {(jobs ?? []).filter(job => job.kind === 'opencti-matches').map(job => <OpenCtiMatchJob key={job.id} job={job} slug={slug} />)}
       <BackupPanel key={slug} slug={slug} evidence={evidence} />
 
       {evidence.some(e => e.kind === 'logs') && <Section title={tr('logEvidence.sources')} sub={tr('logEvidence.sourcesHelp')}><LogSourceList slug={slug} /></Section>}
@@ -595,6 +597,34 @@ export function CloseCase({ slug, caseName, onClosed }: {
 // the job list under their internal names.
 const JOB_KINDS = ['backup_comparison', 'content_index', 'log_events', 'index_logs', 'webshell', 'cms', 'sqldb', 'errorlog',
                    'yara', 'sigma']
+
+function OpenCtiMatchJob({ job, slug }: { job: Job; slug: string }) {
+  const tr = useT()
+  const qc = useQueryClient()
+  const cancel = useMutation({ mutationFn: () => post(`/api/cases/${slug}/jobs/${job.id}/cancel`), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs', slug] }) })
+  const active = job.state === 'running' || job.state === 'queued'
+  const stats = job.stats ?? {}
+  const reason = typeof stats.reason === 'string' ? stats.reason.split('\n')[0].slice(0, 250) : ''
+  return <section className="space-y-2 rounded-lg border border-[var(--line)] p-3 text-[13px]" aria-label={tr('ctiMatches.title')}>
+    <div className="flex flex-wrap items-center gap-2"><strong>{tr('ctiMatches.title')}</strong><span>· {job.state}</span>{active && <Button disabled={cancel.isPending} onClick={() => cancel.mutate()}>{tr('common.cancel')}</Button>}</div>
+    {job.state === 'running' && <ProgressBar value={job.progress} label={tr('ctiMatches.title')} />}
+    <p>{(['checked', 'known', 'linked', 'failed', 'total', 'missing_hashes'] as const).filter(key => typeof stats[key] === 'number').map(key => `${tr(`ctiMatches.${key === 'checked' || key === 'known' ? `${key}Count` : key}`)}: ${stats[key]}`).join(' · ')}</p>
+    {Array.isArray(stats.linked_values) && stats.linked_values.length > 0 && <details><summary className="cursor-pointer text-[var(--accent-text)]">{tr('ctiMatches.linkedValues')}</summary>
+      {stats.linked_values.slice(0, 20).map((entry: unknown, index: number) => {
+        if (!entry || typeof entry !== 'object' || !('kind' in entry) || !('value' in entry) || (entry.kind !== 'ip' && entry.kind !== 'hash') || typeof entry.value !== 'string') return null
+        return <LinkedMatch key={`${entry.kind}:${entry.value}:${index}`} slug={slug} kind={entry.kind} value={entry.value} />
+      })}
+    </details>}
+    {reason && <p>{reason}</p>}
+    {job.error && <p role="alert">{tr('ctiMatches.jobError')}</p>}
+    {cancel.isError && <p role="alert">{tr('ctiMatches.cancelError')}</p>}
+  </section>
+}
+
+function LinkedMatch({ slug, kind, value }: { slug: string; kind: 'ip' | 'hash'; value: string }) {
+  const [open, setOpen] = useState(false)
+  return <details className="ml-3" onToggle={event => setOpen(event.currentTarget.open)}><summary className="cursor-pointer break-all">{value}</summary>{open && <OpenCtiMatches slug={slug} kind={kind} value={value} />}</details>
+}
 
 interface RunGroup { id: string; created: string; jobs: Job[] }
 

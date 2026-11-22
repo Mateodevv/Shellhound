@@ -29,7 +29,7 @@ from pathlib import Path
 
 SETTINGS_FILE = "settings.json"
 _LOCK = threading.RLock()
-_CTI_DEFAULTS = {"url": "", "token": "", "ingester_id": "", "timeout": 30}
+_CTI_DEFAULTS = {"url": "", "token": "", "ingester_id": "", "timeout": 30, "auto_match": False}
 
 # Direct reputation providers, independent of the OpenCTI export connection.
 SERVICES = {
@@ -101,6 +101,9 @@ def load(workspace, *, for_write=False) -> dict:
         out["opencti"]["external_file_uploads"] = False
     cti = raw.get("opencti")
     if isinstance(cti, dict):
+        if for_write and "auto_match" in cti and type(cti["auto_match"]) is not bool:
+            raise SettingsError("Saved OpenCTI matching setting is invalid. Restore a valid copy before saving changes.")
+        out["opencti"]["auto_match"] = cti.get("auto_match") is True
         for key in ("url", "token", "ingester_id"):
             if isinstance(cti.get(key), str):
                 out["opencti"][key] = cti[key].strip()
@@ -231,12 +234,13 @@ def _public_opencti(data) -> dict:
     token = data["token"]
     visible = {key: data[key] for key in _CTI_DEFAULTS if key != "token"}
     return {**visible, "configured": bool(token and data["url"] and data["ingester_id"]),
+            "lookup_configured": bool(token and data["url"]),
             "token_hint": "…" + token[-4:] if len(token) >= 4 else ("…" if token else "")}
 
 
 def set_opencti(workspace, changes) -> dict:
     """Keep credentials out of URLs and bind a token to its explicit host."""
-    unknown = set(changes) - {"url", "token", "ingester_id"}
+    unknown = set(changes) - {"url", "token", "ingester_id", "auto_match"}
     if unknown:
         raise ValueError("Unsupported OpenCTI setting")
     with _LOCK:
@@ -259,6 +263,7 @@ def set_opencti(workspace, changes) -> dict:
                 raise ValueError("OpenCTI requires an HTTPS URL without credentials, query or fragment")
             if url != current["url"]:
                 current["token"] = ""
+                current["auto_match"] = False
             current["url"] = url
         if "ingester_id" in changes:
             value = changes["ingester_id"].strip()
@@ -273,5 +278,13 @@ def set_opencti(workspace, changes) -> dict:
             if len(token) > 4096 or any(not 33 <= ord(c) <= 126 for c in token):
                 raise ValueError("Invalid integration token")
             current["token"] = token
+        if "auto_match" in changes:
+            if type(changes["auto_match"]) is not bool:
+                raise ValueError("Automatic matching must be enabled or disabled explicitly.")
+            if changes["auto_match"] and not (current["url"] and current["token"]):
+                raise ValueError("Save an OpenCTI URL and token to enable automatic matching.")
+            current["auto_match"] = changes["auto_match"]
+        if not current["url"] or not current["token"]:
+            current["auto_match"] = False
         save(workspace, data)
     return opencti_public(workspace)

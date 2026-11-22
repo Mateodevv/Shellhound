@@ -63,6 +63,7 @@ def record(conn, engine, path, run, identity, ctx=None):
                  '(engine,artifact,sha256,marker,run,scanned_at,job_id) VALUES (?,?,?,?,?,?,?)',
                  (engine, path, identity['sha256'], identity['marker'], run, db.now(),
                   getattr(ctx, 'job_id', 0)))
+    db.mark_file_scan_proof(conn, path)
 
 
 def invalidate(conn, engine, path):

@@ -6,6 +6,10 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+- Enable automatic OpenCTI checks for new finding IPs and SHA-256 hashes in
+  Settings. Review saved case links, recheck a single value, or refresh all
+  eligible findings in the current case. Local analysis works independently.
+
 ### Faster case navigation
 
 - Routine status refreshes reuse log checks for unchanged files. Accepting,

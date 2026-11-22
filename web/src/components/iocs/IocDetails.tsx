@@ -1,3 +1,4 @@
+import { OpenCtiMatches } from '../enrichment/OpenCtiMatches'
 import { IocVulnerability } from './IocVulnerability'
 import { directSupported, useDirectSettings } from '../../directEnrichment'
 import { DirectEnrichment } from '../enrichment/DirectEnrichment'
@@ -92,6 +93,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
       .map(o => ({ path: o.local_path, label: o.path || o.local_path, evidenceId: o.evidence_id }))
     : object?.type === 'path' && current?.resolved
       ? [{ path: current.resolved, label: object.value, evidenceId: null }] : []
+  const matchValue = object?.type === 'ip' ? object.value : object?.type === 'file' ? object.file?.hashes?.sha256 : object?.type === 'hash' && /^[a-f0-9]{64}$/i.test(object.value) ? object.value : undefined
   const associatedFiles = object?.type === 'hash' ? iocs.filter(i => i.type === 'file' && object.file_ids?.includes(i.id)) : []
   const contentPath = fileLocations.find(location => location.path === viewPath)?.path ?? (fileLocations.length === 1 ? fileLocations[0].path : null)
   const activity = observed.filter(o => ['http-request', 'pattern-hunt'].includes(o.kind))
@@ -185,6 +187,7 @@ export function IocDetails({ slug, id, iocs, onClose, embedded = false, tab: con
         </IocField>
         <IocField name={tr('iocTags.title')} help={tr('iocTags.localHelp')}><IocTags key={object.id} slug={slug} object={object} /></IocField>
       </div>
+      {matchValue && <OpenCtiMatches key={`${slug}:${id}:${matchValue}`} slug={slug} kind={object.type === 'ip' ? 'ip' : 'hash'} value={matchValue} />}
       {object.file && <div className="space-y-2">
             <Button disabled={verifyFile.isPending} onClick={() => verifyFile.mutate()}>{tr('iocWorkspace.verify_available_file_metadata')}</Button>
             {verifyFile.data && <p role="status">{verifyFile.data.verified_locations} {tr('iocWorkspace.verified')} {verifyFile.data.unavailable_or_changed_locations} {tr('iocWorkspace.unavailable_or_changed')}</p>}
