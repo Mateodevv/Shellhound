@@ -1,12 +1,13 @@
-# OpenCTI transfer
+# OpenCTI case matches and transfer
 
-OpenCTI integration transfers the manually saved case profile and selected
-IPs, CVEs, file hashes and software. There is no OpenCTI lookup, score display, label import,
-connector enrichment, Indicator creation or original-file upload.
+OpenCTI is optional. Shellhound can check an IP or SHA-256 for links to other
+incident cases. A separate reviewed transfer sends the saved case profile and
+selected IPs, CVEs, file hashes and software.
 
 ## Configure
 
-In Settings, save an HTTPS OpenCTI URL, a dedicated integration token and the
+For case matching, save an HTTPS OpenCTI URL and a dedicated token with read
+access to observables and incident cases. For transfers, also configure the
 TAXII push ingester ID. Tokens remain in workspace settings and never enter case
 archives or API responses. Changing the URL clears the previous token. TLS
 verification and redirect refusal remain enabled.
@@ -14,6 +15,44 @@ verification and redirect refusal remain enabled.
 Use **Test saved connection** explicitly to check the saved configuration and
 TAXII write access. Active internal enrichment connectors must be manual: transfer
 refuses configurations that could automatically start external enrichment.
+
+## Check for earlier cases
+
+- Open a finding for a file with a SHA-256 or for a client IP, or open the
+  corresponding object in the IOC Box. Choose **Check OpenCTI** to send that
+  single value to the displayed OpenCTI server. Reopening the item shows its
+  last saved result and check time locally.
+- In **Evidence & analysis**, select the OpenCTI option before starting a scan
+  to check all distinct finding IPs and available SHA-256 values afterward.
+  The option starts off for each run. Shellhound uses hashes already recorded
+  during analysis. Files without a usable hash are counted separately. An
+  incomplete local scan leaves individual checks available in review.
+- Open a case link to review the earlier incident. The result distinguishes an
+  exact observable with visible linked cases, a known observable with no visible
+  case links, and no visible match. The token's permissions determine visibility.
+  Shellhound shows up to ten linked cases per value and marks a limited result.
+  A match leaves all analyst decisions unchanged.
+
+An unavailable OpenCTI server affects only the optional check. The local scan
+keeps its own completion status. Match requests send the IP or SHA-256, with no
+case profile, evidence contents or export. Checked results are saved in the case
+database and travel with a case archive.
+
+### Verify on your instance
+
+1. Pick an IP or SHA-256 already linked **directly** to an incident case your
+   token can read. Open that value in a different Shellhound case and choose
+   **Check OpenCTI**. Follow the returned link and confirm the expected case.
+2. Try an observable with no case links, then a value absent from your instance.
+   Check that the two results are distinct. An unavailable server or denied
+   request should show an error.
+3. Run a small analysis with the OpenCTI option off, then on. Only the second
+   run should add an OpenCTI job. Check that the matching finding shows the
+   saved result and that its analyst decision is unchanged.
+
+The query uses the observable's `containers` field to find incident cases that
+directly contain it. It was checked against the
+[OpenCTI 7.261103.0 schema](https://github.com/OpenCTI-Platform/opencti/blob/7.261103.0/opencti-platform/opencti-front/src/schema/relay.schema.graphql).
 
 ## Fill the case profile
 

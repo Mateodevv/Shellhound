@@ -41,7 +41,7 @@ from server.casework import report as case_report, incident_summary
 from server import correlation, coverage, db, diagnostics
 from server.integrations import geoip
 from server import huntrules, hunt_batches
-from server.integrations.opencti import service as opencti_service
+from server.integrations.opencti import matches as opencti_matches, service as opencti_service
 from server.integrations import enrich
 from server.ioc import model as ioc_model
 from server.ioc import formats as ioclib
@@ -49,7 +49,7 @@ from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
 from server.analysis import (AnalysisReceipts, current_warning_count, decode_job,
-                             describe_job)
+                             describe_job, stats_complete)
 from server import scan_retries
 from server.paths import display_path, io_path
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
@@ -736,6 +736,21 @@ def create_app(config: Config) -> FastAPI:
     def opencti_state(slug: str):
         return _cti_call(opencti_service.state, config.workspace, case_dir_or_404(slug))
 
+    @app.get("/api/cases/{slug}/opencti/matches", dependencies=[auth])
+    def saved_opencti_match(slug: str, kind: str, value: str):
+        return {"result": _cti_call(opencti_matches.saved, config.workspace, case_dir_or_404(slug), kind, value)}
+
+    class OpenCTIMatch(BaseModel):
+        kind: str
+        value: str = Field(max_length=64)
+        expected_url: str | None = None
+        model_config = {"extra": "forbid"}
+
+    @app.post("/api/cases/{slug}/opencti/matches", dependencies=[auth])
+    def check_opencti_match(slug: str, body: OpenCTIMatch):
+        return _cti_call(opencti_matches.lookup, config.workspace, case_dir_or_404(slug), body.kind, body.value,
+                         expected_url=body.expected_url)
+
     class OpenCTIPreview(BaseModel):
         model_config = {"extra": "forbid"}
         ioc_ids: list[int] | None = None
@@ -994,6 +1009,8 @@ def create_app(config: Config) -> FastAPI:
 
     class AnalyzeBody(BaseModel):
         mode: str = "all"
+        opencti_matches: StrictBool = False
+        opencti_url: str | None = None
 
     @app.post("/api/cases/{slug}/analyze", dependencies=[auth])
     def analyze(slug: str, body: AnalyzeBody | None = None):
@@ -1029,6 +1046,14 @@ def create_app(config: Config) -> FastAPI:
         mode = body.mode if body is not None else "all"
         if mode not in ("new", "all"):
             raise HTTPException(400, "analysis mode must be 'new' or 'all'")
+
+        check_opencti = getattr(body, "opencti_matches", False)
+        if check_opencti:
+            try:
+                match_authority = opencti_matches.authority(config.workspace, body.opencti_url)
+            except (settingslib.SettingsError, ValueError):
+                # An unavailable optional connection must not prevent local analysis.
+                match_authority = None
 
         supported = ("webroot", "access_logs", "logs", "sql_dump")
         pending_by_kind = {
@@ -1240,6 +1265,19 @@ def create_app(config: Config) -> FastAPI:
             scan_context=contexts[kind],
             on_cancel=lambda engine=kind: cancel_engine(engine))}
             for kind, fn, _kinds in tasks]
+        if check_opencti:
+            def check_after_scan(ctx):
+                if match_authority is None:
+                    return {"partial": True, "reason": "OpenCTI settings changed or were unavailable. Review the connection and check again."}
+                with closing(db.connect(case_dir)) as conn:
+                    local_jobs = db.rows(conn, "SELECT kind,state,stats FROM jobs WHERE run_id=?", (run_id,))
+                if any(j["state"] != "done" or not stats_complete(json.loads(j["stats"] or "{}"), j["kind"])
+                       for j in local_jobs):
+                    return {"partial": True, "reason": "Local analysis was incomplete. Check individual findings or retry analysis."}
+                return opencti_matches.scan(config.workspace, case_dir, ctx, expected_authority=match_authority)
+
+            job_id = manager.submit_after_current(case_dir, "opencti-matches", check_after_scan)
+            started.append({"kind": "opencti-matches", "job": job_id})
         return {"run_id": run_id, "started": started}
 
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])

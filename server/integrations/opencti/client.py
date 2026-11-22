@@ -20,12 +20,14 @@ import urllib.parse
 import urllib.request
 from server import diagnostics
 from server.casework.profile_options import managed_case_label
+from server.integrations.opencti import graph
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_TAXII_BYTES = 90 * 1024 * 1024
 _TAXII_TYPE = "application/taxii+json;version=2.1"
 _HASH_ALGORITHMS = {32: "MD5", 40: "SHA-1", 64: "SHA-256"}
 _CONNECTOR_FIELDS = "id name active auto connector_type connector_scope"
+_CASE_MATCH_LIMIT = 10
 
 class OpenCTIError(Exception):
     """A sanitized error suitable for local job status and HTTP responses."""
@@ -63,6 +65,20 @@ def _edges(connection):
         return []
     return [edge["node"] for edge in connection.get("edges", [])
             if isinstance(edge, dict) and isinstance(edge.get("node"), dict)]
+
+
+def _exact_filter(field, value):
+    return {"key": [field], "values": [value], "operator": "eq", "mode": "or"}
+
+
+def _case_match_page(connection):
+    edges = connection.get("edges") if isinstance(connection, dict) else None
+    page = connection.get("pageInfo") if isinstance(connection, dict) else None
+    nodes = _edges(connection) if isinstance(edges, list) else []
+    if (not isinstance(edges, list) or len(nodes) != len(edges) or len(nodes) > _CASE_MATCH_LIMIT or not isinstance(page, dict)
+            or type(page.get("hasNextPage")) is not bool or (not nodes and page["hasNextPage"])):
+        raise OpenCTIError("OpenCTI returned an incomplete case match lookup.", code="invalid_response")
+    return nodes, page["hasNextPage"]
 
 
 def _taxii_receipt(result, expected_id=None):
@@ -312,6 +328,87 @@ class OpenCTIClient:
                                code="shared_object_conflict")
         return matches
 
+    def case_matches(self, kind, value, *, exclude_reference=""):
+        """Find visible exact observables and the incident cases containing them."""
+        entity_type, _, field, value = _observable(kind, value)
+        if field not in ("value", "hashes.SHA-256") or (field == "value" and "%" in value):
+            raise ValueError("Only IP addresses and SHA-256 hashes can be checked.")
+        is_file = entity_type == "StixFile"
+        own_stix_id = graph._id("x-opencti-case-incident", [exclude_reference, "case"]) if exclude_reference else ""
+        query = """query ShellhoundCaseMatches($filters:FilterGroup,$types:[String],$file:Boolean!,
+                                               $limit:Int!,$excludeCurrent:Boolean!) {
+          stixCyberObservables(filters:$filters,types:$types,first:$limit) {
+            edges { node {
+              entity_type
+              observable_value @skip(if:$file)
+              ... on StixFile @include(if:$file) { hashes { algorithm hash } }
+              containers(first:$limit,entityTypes:["Case-Incident"]) {
+                edges { node {
+                  id entity_type
+                  ... on CaseIncident {
+                    name
+                    standard_id @include(if:$excludeCurrent)
+                    x_opencti_stix_ids @include(if:$excludeCurrent)
+                    externalReferences(first:$limit) @include(if:$excludeCurrent) {
+                      edges { node { source_name external_id } }
+                      pageInfo { hasNextPage }
+                    }
+                  }
+                } }
+                pageInfo { hasNextPage }
+              }
+            } }
+            pageInfo { hasNextPage }
+          }
+        }"""
+        variables = {"filters": {"mode": "and", "filters": [_exact_filter(field, value)], "filterGroups": []},
+                     "types": [entity_type], "file": is_file, "limit": _CASE_MATCH_LIMIT,
+                     "excludeCurrent": bool(own_stix_id)}
+        data = self._graphql(query, variables)
+        observables, truncated = _case_match_page(data.get("stixCyberObservables"))
+        cases = {}
+        for observable in observables:
+            if observable.get("entity_type") != entity_type:
+                raise OpenCTIError("OpenCTI returned a different observable for an exact lookup.",
+                                   code="invalid_response")
+            try:
+                if is_file:
+                    hashes = {item["hash"].lower() for item in observable["hashes"]
+                              if item["algorithm"] == "SHA-256"}
+                    exact = hashes == {value}
+                else:
+                    exact = _observable("ip", observable.get("observable_value"))[3] == value
+            except (ValueError, KeyError, TypeError, AttributeError):
+                exact = False
+            if not exact:
+                raise OpenCTIError("OpenCTI returned a different observable for an exact lookup.",
+                                   code="invalid_response")
+            containers, more = _case_match_page(observable.get("containers"))
+            truncated = truncated or more
+            for case in containers:
+                try:
+                    identifier = _identifier(case.get("id"), "case ID")
+                except ValueError:
+                    raise OpenCTIError("OpenCTI returned an invalid case identity.", code="invalid_response") from None
+                name = case.get("name")
+                if (case.get("entity_type") != "Case-Incident" or not isinstance(name, str)
+                        or not name.strip() or identifier == self._token):
+                    raise OpenCTIError("OpenCTI returned an invalid case identity.", code="invalid_response")
+                if own_stix_id:
+                    aliases = case.get("x_opencti_stix_ids")
+                    if own_stix_id == case.get("standard_id") or isinstance(aliases, list) and own_stix_id in aliases:
+                        continue
+                    references = case.get("externalReferences")
+                    if references is not None:
+                        refs, _ = _case_match_page(references)
+                        if any(ref.get("source_name") == "Shellhound" and ref.get("external_id") == exclude_reference + ":case"
+                               for ref in refs):
+                            continue
+                cases[identifier] = {"id": identifier, "name": name.replace(self._token, "[redacted]"),
+                                     "url": self.url + "/dashboard/id/" + identifier}
+        return {"known": bool(observables), "cases": list(cases.values())[:_CASE_MATCH_LIMIT],
+                "truncated": truncated or len(cases) > _CASE_MATCH_LIMIT}
+
     def find_existing_shared(self, obj):
         """Find content already in OpenCTI without changing its author or marking.
 
@@ -319,9 +416,6 @@ class OpenCTIClient:
         observable value, file hashes and domain-object names. In particular a
         weak File hash must not attach a case to a different file version.
         """
-        def exact(field, value):
-            return {"key": [field], "values": [value], "operator": "eq", "mode": "or"}
-
         def checked(entity):
             if entity is None:
                 return None
@@ -345,7 +439,7 @@ class OpenCTIClient:
                     raise ValueError("Invalid file hash algorithm")
             existing = None
             for algorithm in ordered:
-                matches = self._shared_matches("stixCyberObservables", [exact("hashes." + algorithm, hashes[algorithm])],
+                matches = self._shared_matches("stixCyberObservables", [_exact_filter("hashes." + algorithm, hashes[algorithm])],
                                                types=["StixFile"], file=True)
                 for candidate in matches:
                     checked(candidate)
@@ -360,15 +454,15 @@ class OpenCTIClient:
                     existing = candidate
             return existing
         if kind == "software":
-            filters = [exact("name", obj["name"])]
+            filters = [_exact_filter("name", obj["name"])]
             for field in ("version", "vendor"):
-                filters.append(exact(field, obj.get(field, "")))
+                filters.append(_exact_filter(field, obj.get(field, "")))
             matches = self._shared_matches("stixCyberObservables", filters, types=["Software"])
             return checked(matches[0]) if matches else None
         ioc_types = {"ipv4-addr": "ip", "ipv6-addr": "ip"}
         if kind in ioc_types:
             entity_type, _, field, value = _observable(ioc_types[kind], obj.get("value"))
-            matches = self._shared_matches("stixCyberObservables", [exact(field, value)], types=[entity_type])
+            matches = self._shared_matches("stixCyberObservables", [_exact_filter(field, value)], types=[entity_type])
             if not matches:
                 return None
             result = checked(matches[0])
@@ -392,7 +486,7 @@ class OpenCTIClient:
             name = str(obj.get("name") or obj.get("country") or "").strip()
             if not name:
                 raise ValueError("A shared domain object needs a name")
-            matches = self._shared_matches(collection, [exact("name", name)], types=types)
+            matches = self._shared_matches(collection, [_exact_filter("name", name)], types=types)
             if matches:
                 result = checked(matches[0])
                 if str(result.get("name", "")).casefold() != name.casefold():

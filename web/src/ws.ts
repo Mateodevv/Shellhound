@@ -60,6 +60,9 @@ export function useLiveEvents(onJob?: (job: JobEvent['job']) => void) {
               qc.invalidateQueries({ queryKey: event.case_slug ? [key, event.case_slug] : [key] })
             }
           }
+          if (event.job.kind === 'opencti-matches' && ['done', 'failed', 'cancelled'].includes(event.job.state ?? '')) {
+            qc.invalidateQueries({ queryKey: event.case_slug ? ['opencti-matches', event.case_slug] : ['opencti-matches'] })
+          }
           if (event.job.state && event.job.state !== 'running') {
             qc.invalidateQueries({ queryKey: ['chain'] })
             qc.invalidateQueries({ queryKey: ['first-sign'] })

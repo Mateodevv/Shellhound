@@ -6,6 +6,10 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
+- Optionally check finding IPs and SHA-256 hashes against incident cases visible
+  in OpenCTI, individually or after a selected analysis run. Local analysis works
+  without an OpenCTI connection.
+
 ### Faster case navigation
 
 - Routine status refreshes reuse log checks for unchanged files. Accepting,

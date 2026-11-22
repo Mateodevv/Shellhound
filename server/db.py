@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS opencti_lookups (
     ioc_id INTEGER PRIMARY KEY, identity TEXT NOT NULL,
     checked_at TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS opencti_case_matches (
+    authority TEXT NOT NULL, case_reference TEXT NOT NULL,
+    kind TEXT NOT NULL, value TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (authority, case_reference, kind, value)
+);
 CREATE TABLE IF NOT EXISTS opencti_previews (
     id TEXT PRIMARY KEY, created TEXT NOT NULL, fingerprint TEXT NOT NULL,
     options TEXT NOT NULL, payload TEXT NOT NULL, destination TEXT NOT NULL
@@ -555,7 +560,7 @@ _ADDED_COLUMNS = {
 # 16: integrate main scan retries, skip reviews and saved hunt batches.
 # 23: index file scan receipts for artifact-scoped review and backup history.
 # 24: SQL findings retain source/column identity and decoded-row match spans.
-CASE_SCHEMA_VERSION = 24
+CASE_SCHEMA_VERSION = 25
 
 # A version marker is the fast path, not proof by itself. A process can be
 # interrupted between stamping a development/pre-release schema and adding a

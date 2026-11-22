@@ -375,6 +375,92 @@ class OpenCTIClientTests(unittest.TestCase):
             with self.subTest(connection=connection), self.assertRaises(api.OpenCTIError):
                 self.client.find_existing_shared({"type": "vulnerability", "name": good["name"]})
 
+    @staticmethod
+    def _page(*nodes, more=False):
+        return {"edges": [{"node": node} for node in nodes], "pageInfo": {"hasNextPage": more}}
+
+    def test_exact_ip_case_lookup_deduplicates_visible_cases_and_excludes_own_case(self):
+        reference = "Current reference"
+        own_stix_id = api.graph._id("x-opencti-case-incident", [reference, "case"])
+        same_title = {"id": "prior", "entity_type": "Case-Incident", "name": reference,
+                      "url": "https://untrusted.example/prior", "externalReferences": self._page(
+                          {"source_name": "A different source", "external_id": reference + ":case"})}
+        own_alias = {"id": "current-alias", "entity_type": "Case-Incident", "name": "Renamed",
+                     "x_opencti_stix_ids": [own_stix_id]}
+        own_reference = {"id": "current-by-reference", "entity_type": "Case-Incident", "name": "Renamed again",
+                         "externalReferences": self._page({"source_name": "Shellhound", "external_id": reference + ":case"})}
+        found = {"entity_type": "IPv6-Addr", "observable_value": "2001:0db8:0:0:0:0:0:1"}
+        self._responses({"data": {"stixCyberObservables": self._page(
+            {**found, "containers": self._page(same_title, own_alias, own_reference)},
+            {**found, "containers": self._page(same_title)})}})
+        result = self.client.case_matches("ip", "2001:DB8::1", exclude_reference=reference)
+        self.assertEqual({"known": True, "cases": [{"id": "prior", "name": reference,
+                         "url": "https://ti.example/opencti/dashboard/id/prior"}], "truncated": False}, result)
+        payload = self._payload()
+        self.assertEqual(["IPv6-Addr"], payload["variables"]["types"])
+        self.assertEqual([{"key": ["value"], "values": ["2001:db8::1"], "operator": "eq", "mode": "or"}],
+                         payload["variables"]["filters"]["filters"])
+        self.assertIn('entityTypes:["Case-Incident"]', payload["query"])
+        for forbidden in (reference, own_stix_id, "mutation", "askEnrichment"):
+            self.assertNotIn(forbidden, json.dumps(payload))
+        self.assertEqual("https://ti.example/opencti/graphql", self._request().full_url)
+        self.client._opener.open.assert_called_once()
+
+    def test_case_lookup_distinguishes_visible_sha256_without_cases_from_no_visible_observable(self):
+        value = "a" * 64
+        sha256 = {"algorithm": "SHA-256", "hash": value.upper()}
+        found = {"entity_type": "StixFile", "hashes": [sha256], "containers": self._page()}
+        self._responses({"data": {"stixCyberObservables": self._page(found)}},
+                        {"data": {"stixCyberObservables": self._page()}})
+        self.assertEqual({"known": True, "cases": [], "truncated": False}, self.client.case_matches("hash", value.upper()))
+        variables = self._payload()["variables"]
+        self.assertEqual(["StixFile"], variables["types"])
+        self.assertEqual([{"key": ["hashes.SHA-256"], "values": [value], "operator": "eq", "mode": "or"}],
+                         variables["filters"]["filters"])
+        self.assertEqual({"known": False, "cases": [], "truncated": False}, self.client.case_matches("ip", "192.0.2.1"))
+
+    def test_case_lookup_reports_both_remote_and_local_result_limits(self):
+        incident = {"id": "prior", "entity_type": "Case-Incident", "name": "Other case"}
+        found = {"entity_type": "IPv4-Addr", "observable_value": "192.0.2.1"}
+        for observable_page in (
+                self._page({**found, "containers": self._page()}, more=True),
+                self._page({**found, "containers": self._page(incident, more=True)}),
+                self._page({**found, "containers": self._page(*[
+                    {**incident, "id": f"case-{index}"} for index in range(api._CASE_MATCH_LIMIT)])},
+                    {**found, "containers": self._page(incident)}),
+        ):
+            self._responses({"data": {"stixCyberObservables": observable_page}})
+            result = self.client.case_matches("ip", "192.0.2.1")
+            self.assertTrue(result["known"])
+            self.assertTrue(result["truncated"])
+            self.assertLessEqual(len(result["cases"]), api._CASE_MATCH_LIMIT)
+
+    def test_case_lookup_errors_never_return_a_negative_result_or_untrusted_link(self):
+        ip = "192.0.2.1"
+        found = {"entity_type": "IPv4-Addr", "observable_value": ip, "containers": self._page()}
+        invalid_case = {"id": "../../evil", "entity_type": "Case-Incident", "name": "Invalid path"}
+        for data in ({}, {"stixCyberObservables": None},
+                     {"stixCyberObservables": {"edges": []}},
+                     {"stixCyberObservables": self._page({**found, "observable_value": "192.0.2.2"})},
+                     {"stixCyberObservables": self._page({**found, "containers": None})},
+                     {"stixCyberObservables": self._page({**found, "containers": self._page(invalid_case)})}):
+            self._responses({"data": data})
+            with self.subTest(data=data), self.assertRaises(api.OpenCTIError) as caught:
+                self.client.case_matches("ip", ip)
+            self.assertEqual("invalid_response", caught.exception.code)
+        self._responses({"errors": [{"message": "test-secret-token", "extensions": {"code": "FORBIDDEN"}}],
+                         "data": {"stixCyberObservables": self._page()}})
+        with self.assertRaises(api.OpenCTIError) as caught:
+            self.client.case_matches("ip", ip)
+        self.assertEqual("permission", caught.exception.code)
+        self.assertNotIn("test-secret-token", str(caught.exception))
+
+    def test_case_lookup_rejects_weaker_hashes_and_scoped_addresses_before_sending(self):
+        for kind, value in (("hash", "a" * 32), ("hash", "a" * 40), ("ip", "fe80::1%2")):
+            with self.subTest(kind=kind, value=value), self.assertRaises(ValueError):
+                self.client.case_matches(kind, value)
+        self.client._opener.open.assert_not_called()
+
     def test_taxii_uses_objects_envelope_and_retains_pending_state(self):
         self._responses({"id": "work-1", "status": "pending", "total_count": 1,
                          "success_count": 0, "failure_count": 0, "pending_count": 1},

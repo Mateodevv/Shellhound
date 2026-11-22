@@ -231,6 +231,7 @@ def _public_opencti(data) -> dict:
     token = data["token"]
     visible = {key: data[key] for key in _CTI_DEFAULTS if key != "token"}
     return {**visible, "configured": bool(token and data["url"] and data["ingester_id"]),
+            "lookup_configured": bool(token and data["url"]),
             "token_hint": "…" + token[-4:] if len(token) >= 4 else ("…" if token else "")}
 
 

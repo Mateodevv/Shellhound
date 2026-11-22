@@ -15,6 +15,7 @@ from unittest.mock import patch
 from server import backups, db, workspace
 from server.app import create_app
 from server.config import Config
+from server.jobs import manager
 from tests.test_http import _LiveServer
 
 
@@ -259,6 +260,109 @@ class OpenCTIHTTPTests(unittest.TestCase):
                 {"service": "virustotal", "key": "not-a-key"})[0])
             self.assertEqual(400, self.request("POST", f"/api/cases/{self.slug}/enrich",
                 {"service": "abuseipdb", "value": "198.51.100.7"})[0])
+
+    def test_read_only_match_is_explicit_and_does_not_need_a_transfer_ingester(self):
+        url = f'/api/cases/{self.slug}/opencti/matches'
+        value = {'kind': 'ip', 'value': '192.0.2.42'}
+        query = url + '?kind=ip&value=192.0.2.42'
+        self.assertEqual(401, self.request('POST', url, value, token='wrong')[0])
+        self.assertEqual(401, self.request('GET', query, token='wrong')[0])
+        self.assertEqual((200, {'result': None}), self.request('GET', query))
+        self.assertEqual(400, self.request('POST', url, value)[0])
+        status, config = self.request('PATCH', '/api/opencti/settings',
+                                      {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})
+        self.assertEqual(200, status)
+        self.assertTrue(config['lookup_configured'])
+        self.assertFalse(config['configured'])
+        prior = {'id': 'prior', 'name': 'Prior case', 'entity_type': 'Case-Incident'}
+        page = {'hasNextPage': False}
+        observed = {'entity_type': 'IPv4-Addr', 'observable_value': value['value'],
+                    'containers': {'edges': [{'node': prior}], 'pageInfo': page}}
+        reply = {'data': {'stixCyberObservables': {'edges': [{'node': observed}], 'pageInfo': page}}}
+        with patch('server.integrations.opencti.client.OpenCTIClient._request', return_value=reply) as transport:
+            self.assertEqual(400, self.request('POST', url, {'kind': 'hash', 'value': 'x'})[0])
+            self.assertEqual(400, self.request('POST', url, {**value, 'expected_url': 'https://old.example.test'})[0])
+            self.assertEqual((200, {'result': None}), self.request('GET', query))
+            transport.assert_not_called()
+            status, match = self.request('POST', url, value)
+            self.assertEqual(200, status, match)
+            self.assertTrue(match['known'])
+            self.assertEqual('https://cti.example.test/dashboard/id/prior', match['cases'][0]['url'])
+            self.assertEqual((200, {'result': match}), self.request('GET', query))
+            transport.assert_called_once()
+            target, payload = transport.call_args.args
+            self.assertEqual('/graphql', target)
+            self.assertTrue(payload['query'].startswith('query '))
+            self.assertNotIn('PIM-LOCAL-1', json.dumps(payload))
+
+    def test_opencti_is_an_optional_follow_up_and_cannot_fail_local_analysis(self):
+        base = f'/api/cases/{self.slug}'
+        source = self.root / 'sample.sql'
+        source.write_text("CREATE TABLE sample (id int);\n", encoding='utf-8')
+        self.assertEqual(200, self.request('POST', base + '/evidence', {'kind': 'sql_dump', 'path': str(source)})[0])
+
+        def run(options):
+            status, result = self.request('POST', base + '/analyze', options)
+            self.assertEqual(200, status, result)
+            ids = [entry['job'] for entry in result['started']]
+            self.assertFalse(manager.wait_for(self.case.resolve(), ids, timeout=10))
+            return {j['kind']: j for j in self.request('GET', base + '/jobs')[1] if j['id'] in ids}
+
+        with patch('server.integrations.opencti.matches.OpenCTIClient') as client:
+            self.assertEqual({'sqldb'}, set(run({})))
+            unconfigured = run({'opencti_matches': True})
+            self.assertTrue(unconfigured['opencti-matches']['stats']['partial'])
+            self.assertEqual('done', unconfigured['sqldb']['state'])
+            self.request('PATCH', '/api/opencti/settings',
+                         {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})
+            self.assertEqual({'sqldb'}, set(run({})))
+            changed = run({'opencti_matches': True, 'opencti_url': 'https://old.example.test'})
+            self.assertTrue(changed['opencti-matches']['stats']['partial'])
+            with patch('server.app.sqldump.scan', return_value={'partial': True}):
+                incomplete = run({'opencti_matches': True})
+            self.assertEqual('done', incomplete['sqldb']['state'])
+            self.assertIn('incomplete', incomplete['opencti-matches']['stats']['reason'])
+            client.assert_not_called()
+            with closing(db.connect(self.case)) as conn:
+                db.upsert_finding(conn, 'logs', 1, 'Test observation', 'client', '192.0.2.42')
+                conn.commit()
+            from server.integrations.opencti.client import OpenCTIError
+            client.return_value.case_matches.side_effect = OpenCTIError('Offline', code='network')
+            jobs = run({'opencti_matches': True})
+            self.assertEqual('done', jobs['sqldb']['state'])
+            self.assertEqual(1, jobs['opencti-matches']['stats']['failed'])
+            self.assertTrue(jobs['opencti-matches']['stats']['partial'])
+            client.return_value.case_matches.assert_called_once()
+            with closing(db.connect(self.case)) as conn:
+                evidence = db.one(conn, 'SELECT scanned_at,stats FROM evidence')
+                self.assertTrue(evidence['scanned_at'])
+                self.assertEqual('complete', json.loads(evidence['stats'])['last_attempt']['status'])
+
+    def test_scan_checks_identical_flagged_files_once_after_hashes_are_published(self):
+        base = f'/api/cases/{self.slug}'
+        folder = self.root / 'synthetic-site'
+        folder.mkdir()
+        content = b'Harmless detector marker\n'
+        for name in ('original.php', 'copy.php'):
+            (folder / name).write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
+        self.assertEqual(200, self.request('POST', base + '/evidence', {'kind': 'webroot', 'path': str(folder)})[0])
+        self.assertEqual(200, self.request('PATCH', '/api/opencti/settings',
+                         {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})[0])
+        marker = [('fixture.marker', 1, 'Harmless test observation', 1, 'marker')]
+        prior = {'id': 'prior', 'name': 'Prior case'}
+        with patch('server.app.webshell._yara_findings', return_value=marker), \
+                patch('server.integrations.opencti.matches.OpenCTIClient') as remote:
+            remote.return_value.case_matches.return_value = {'known': True, 'cases': [prior], 'truncated': False}
+            status, result = self.request('POST', base + '/analyze', {'opencti_matches': True})
+            self.assertEqual(200, status, result)
+            self.assertFalse(manager.wait_for(self.case.resolve(), [e['job'] for e in result['started']], timeout=15))
+            remote.return_value.case_matches.assert_called_once_with('hash', digest, exclude_reference='PIM-LOCAL-1')
+            stats = next(j['stats'] for j in self.request('GET', base + '/jobs')[1] if j['kind'] == 'opencti-matches')
+            self.assertEqual([{'kind': 'hash', 'value': digest}], stats['linked_values'])
+            self.assertEqual((1, 1, 0), (stats['checked'], stats['linked'], stats['missing_hashes']))
+            self.assertEqual('prior', self.request('GET', base + '/opencti/matches?kind=hash&value='
+                             + digest)[1]['result']['cases'][0]['id'])
 
     def test_direct_provider_api_auth_cache_and_opencti_precedence(self):
         path = f"/api/cases/{self.slug}/enrich"

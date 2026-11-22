@@ -27,6 +27,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
     url, ingester_id: ingester, ...(clearToken ? { token: '' } : token.trim() ? { token: token.trim() } : {}),
   }), onSuccess: () => {
     setToken(''); setClearToken(false); setSaved(true)
+    qc.removeQueries({ queryKey: ['opencti-matches'] })
     qc.invalidateQueries({ queryKey: ['opencti-settings'] })
   } })
   const test = useMutation({ mutationFn: () => post<{ ok: boolean; version?: string }>('/api/opencti/test', {}) })

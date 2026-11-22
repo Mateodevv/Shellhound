@@ -607,9 +607,13 @@ it never searches raw findings or evidence.
 
 ### OpenCTI integration
 
-Configure an HTTPS URL, dedicated integration token and TAXII push ingester ID
-in Settings. OpenCTI is used only for explicit transfer of the saved case profile
-and selected IPs with tags, CVEs and hashes. Review the preview before confirming.
+OpenCTI is optional. Configure an HTTPS URL and a dedicated read token in
+Settings to check an individual finding IP or SHA-256 for earlier incident cases.
+In **Evidence & analysis**, opt in for a single scan to check distinct finding
+values after local analysis. Open an item to see the saved result and case links.
+For transfer of the saved case profile and selected IPs with tags, CVEs,
+software and hashes, also configure a TAXII push ingester with an authorized
+token. Review the preview before confirming.
 The case may be transferred without IOCs. Failed or pending imports retain a
 receipt and can be resumed without resubmitting completed work.
 
@@ -618,13 +622,12 @@ subsectors are selected from the matching fixed list for each main sector. Saved
 custom subsectors are preserved. Organization, country codes, region, city and
 incident details are entered manually. CVEs are maintained in the IOC Box. Older software and CVE
 profile fields remain stored and survive edits and archives, but are not exported
-separately. Saving never sends data. OpenCTI lookup, score display,
-connector enrichment, Indicators and original-file uploads are removed.
+separately. Saving stays local.
 Paths, domains, URLs, emails, usernames, local notes and evidence excerpts are
 excluded from IOC transfer. Existing local profiles and historical receipts remain
 readable; old transfer models require a fresh preview.
 
-See [OpenCTI transfer](opencti.md) for configuration, supported data and retry rules.
+See [OpenCTI case matches and transfer](opencti.md) for configuration and an environment test.
 Direct VirusTotal and AbuseIPDB report lookups remain separate explicit actions;
 they do not upload original files or initiate new scans.
 
@@ -687,7 +690,8 @@ During analysis, outbound network access is explicit:
 | Request | Transmitted value |
 |---|---|
 | GeoIP database download | — |
-| OpenCTI transfer | the manually saved profile and reviewed IPs with tags, CVEs and hashes |
+| Optional OpenCTI case check | an exact IP or SHA-256 |
+| OpenCTI transfer | the manually saved profile and reviewed IPs with tags, CVEs, software and hashes |
 
 TLP:AMBER+STRICT is the default intended sharing boundary, not an access-control
 mechanism. Review the manually entered case profile and selected IOC labels before transfer.
