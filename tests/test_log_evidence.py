@@ -275,9 +275,15 @@ class LogEvidenceTests(unittest.TestCase):
         conn.execute("UPDATE findings SET triage='confirmed'")
         conn.commit()
         conn.close()
+        sources = logs.source_status(self.case, detect=False)
+        self.assertTrue(any(e['first_sign_eligible'] for e in
+                            case_chain(self.case, event_cap=None, log_sources=sources)['events']))
         original = path.stat()
         path.write_text(FTP.replace("10:02:03", "09:02:03"), encoding="utf-8")
         os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+        sources = logs.source_status(self.case, detect=False)
+        self.assertFalse(any(e['first_sign_eligible'] for e in
+                             case_chain(self.case, event_cap=None, log_sources=sources)['events']))
         self.assertFalse(logs.timeline_events(self.case)[0]["fresh"])
 
     def test_bulk_selection_hashes_each_source_once(self):

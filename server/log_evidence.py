@@ -8,19 +8,29 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import uuid
-from collections import Counter
+from collections import Counter, OrderedDict
 from pathlib import Path
+from time import time_ns
 
 from server import db, log_parsers as parsers, ruleswitch
 from server.engines import errorlog
 from server.artifacts import ART_SQL
 from server.engines.fsutil import canonical_file, path_within_any
-from server.paths import display_path, io_path
+from server.paths import display_path, io_path, windows_change_time
 
 INDEX_NAME = "logevents.db"
 MAX_FILES = 10000
 MAX_SELECTION = 200
+_SOURCE_READS = OrderedDict()
+_SOURCE_READS_LOCK = threading.Lock()
+_SOURCE_READ_REVISION = 0
+_DETECTION = ("detect",)
+_DETECTION_IO_ERROR = "Cannot read this text source"
+_WARNING_CHANGED = "A selected warning changed or is no longer available. Refresh the list."
+_FILETIME_EPOCH_NS = 11_644_473_600_000_000_000
+_METADATA_SETTLE_NS = 100_000_000
 _INDEX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS generations (source_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
@@ -45,12 +55,21 @@ def _hash(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def marker(path):
+def _file_signature(path, *, include_change_time=True):
     try:
         st = os.stat(io_path(path))
-        return f"{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}"
     except OSError:
-        return "missing"
+        return ("missing",)
+    signature = (f"{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}", st.st_dev, st.st_ino, st.st_mode)
+    change_time = st.st_ctime_ns
+    if include_change_time and os.name == "nt":
+        token = windows_change_time(path)
+        change_time = token * 100 - _FILETIME_EPOCH_NS if token is not None else None
+    return (*signature, change_time)
+
+
+def marker(path):
+    return _file_signature(path, include_change_time=False)[0]
 
 
 def fingerprint(path, options, ctx=None):
@@ -61,6 +80,70 @@ def fingerprint(path, options, ctx=None):
                 raise LogEvidenceError("Cancelled before this source finished")
             digest.update(block)
     return digest.hexdigest()
+
+
+def _source_read(path, signature, variant, read, *, verify=False):
+    global _SOURCE_READ_REVISION
+    # Edits within one filesystem clock tick can share timestamps.
+    change_time = signature[-1] if signature[0] != "missing" else None
+    if change_time is None or time_ns() - change_time < _METADATA_SETTLE_NS:
+        return read()
+    key = (path, signature, parsers.VERSION, variant)
+    with _SOURCE_READS_LOCK:
+        revision = _SOURCE_READ_REVISION
+        if not verify and key in _SOURCE_READS:
+            _SOURCE_READS.move_to_end(key)
+            return _SOURCE_READS[key]
+    try:
+        value = read()
+        if variant == _DETECTION and value["error"] == _DETECTION_IO_ERROR:
+            with _SOURCE_READS_LOCK:
+                _SOURCE_READ_REVISION += 1
+                _SOURCE_READS.pop(key, None)
+            return value
+    except OSError:
+        with _SOURCE_READS_LOCK:
+            _SOURCE_READ_REVISION += 1
+            _SOURCE_READS.pop(key, None)
+            _SOURCE_READS.pop((path, signature, parsers.VERSION, _DETECTION), None)
+        raise
+    if _file_signature(path) == signature:
+        with _SOURCE_READS_LOCK:
+            if verify:
+                previous = _SOURCE_READS.get(key)
+                if previous != value:
+                    if variant != _DETECTION and previous is not None:
+                        _SOURCE_READS.pop((path, signature, parsers.VERSION, _DETECTION), None)
+                    if revision != _SOURCE_READ_REVISION:
+                        _SOURCE_READS.pop(key, None)
+                        _SOURCE_READ_REVISION += 1
+                        return value
+                    _SOURCE_READS[key] = value
+                    _SOURCE_READ_REVISION += 1
+            elif revision != _SOURCE_READ_REVISION:
+                return _SOURCE_READS.get(key, value)
+            else:
+                value = _SOURCE_READS.setdefault(key, value)
+            _SOURCE_READS.move_to_end(key)
+            if len(_SOURCE_READS) > 2 * MAX_FILES:
+                _SOURCE_READS.popitem(last=False)
+    return value
+
+
+def current_fingerprint(source, *, verify=False, signature=None):
+    """Reuse stable source reads for display; actions always verify the bytes."""
+    path, options = source["path"], source["settings"]
+    signature = signature or _file_signature(path)
+    try:
+        value = _source_read(path, signature, _fingerprint_variant(options),
+                             lambda: fingerprint(path, options), verify=verify)
+    except OSError:
+        value = "unreadable"
+    return "changed" if verify and _file_signature(path) != signature else value
+
+
+def _fingerprint_variant(options):
+    return ("fingerprint", json.dumps(options, sort_keys=True))
 
 
 def files(paths, ctx=None):
@@ -102,7 +185,7 @@ def _detect(path):
         return {**parsers.detect(list(parsers.text_lines(path, preview=True))), "error": ""}
     except (OSError, ValueError, EOFError, lzma_error()) as exc:
         return {"format": "text", "ambiguous": False, "candidates": [], "recognized": False,
-                "error": "Cannot read this text source" if isinstance(exc, OSError) else str(exc)}
+                "error": _DETECTION_IO_ERROR if isinstance(exc, OSError) else str(exc)}
 
 
 def lzma_error():
@@ -153,7 +236,7 @@ def validate_settings(options):
     return result
 
 
-def inventory(case_dir, *, persist=False, ctx=None, detect=True):
+def inventory(case_dir, *, persist=False, ctx=None, detect=True, cache_detection=False, source_ids=None):
     conn = db.connect(case_dir)
     try:
         evidence = db.rows(conn, "SELECT * FROM evidence WHERE kind IN ('logs','access_logs') ORDER BY id")
@@ -161,14 +244,20 @@ def inventory(case_dir, *, persist=False, ctx=None, detect=True):
         rows = []
         for path, identity in files([e["path"] for e in evidence], ctx):
             old = known.get(identity)
+            source_id = old["id"] if old else _hash(identity)[:24]
+            if source_ids is not None and source_id not in source_ids:
+                continue
             options = json.loads(old["settings"]) if old else {}
-            detected = _detect(path) if detect else {"format": old["format"] if old else "text", "error": ""}
+            signature = _file_signature(path, include_change_time=detect)
+            detected = (_source_read(path, signature, _DETECTION, lambda: _detect(path),
+                                     verify=not cache_detection) if detect else
+                        {"format": old["format"] if old else "text", "error": ""})
             fmt = options.get("format", "auto")
             fmt = detected["format"] if fmt == "auto" else fmt
-            item = {**(old or {}), "id": old["id"] if old else _hash(identity)[:24],
+            item = {**(old or {}), "id": source_id,
                     "path": path, "identity": identity, "settings": options,
                     "format": fmt, "family": parsers.FAMILIES[fmt],
-                    "detected": detected, "current_marker": marker(path),
+                    "detected": detected, "current_marker": signature[0],
                     "evidence_ids": [e["id"] for e in evidence if path_within_any(path, [e["path"]])]}
             item["fresh"] = bool(old and old["state"] == "ready" and old["marker"] == item["current_marker"]
                                  and json.loads(old["stats"]).get("parser_version") == parsers.VERSION)
@@ -208,7 +297,7 @@ def configure(case_dir, source_id, options, source=None):
         conn.close()
 
 
-def access_targets(case_dir, *, detect=True):
+def access_targets(case_dir, *, detect=True, cache_detection=False, sources=None):
     """Keep legacy registrations byte-for-byte compatible until explicitly migrated."""
     conn = db.connect(case_dir)
     try:
@@ -218,7 +307,9 @@ def access_targets(case_dir, *, detect=True):
         conn.close()
     if not has_new:
         return legacy
-    return [s["path"] for s in inventory(case_dir, detect=detect) if s["format"] == "access"]
+    if sources is None:
+        sources = inventory(case_dir, detect=detect, cache_detection=cache_detection)
+    return [s["path"] for s in sources if s["format"] == "access"]
 
 
 def _open_index(case_dir, write=False):
@@ -313,12 +404,10 @@ def _save_error_finding(conn, event, disabled):
 
 
 def build(case_dir, ctx=None, source_ids=None):
-    sources = inventory(case_dir, persist=True, ctx=ctx)
-    if source_ids is not None:
-        wanted = set(source_ids)
-        if wanted - {s["id"] for s in sources}:
-            raise LogEvidenceError("A selected source is no longer registered")
-        sources = [s for s in sources if s["id"] in wanted]
+    wanted = None if source_ids is None else set(source_ids)
+    sources = inventory(case_dir, persist=True, ctx=ctx, source_ids=wanted)
+    if wanted is not None and wanted - {s["id"] for s in sources}:
+        raise LogEvidenceError("A selected source is no longer registered")
     stats = {"files": 0, "events": 0, "log_warnings": 0, "failed_sources": 0}
     conn = db.connect(case_dir)
     index = _open_index(case_dir, write=True)
@@ -335,9 +424,11 @@ def build(case_dir, ctx=None, source_ids=None):
                 conn.commit()
                 continue  # HTTP records belong exclusively to the existing index.
             run = db.begin_run(conn, "log_source:" + sid)
-            before = marker(source["path"])
+            signature = _file_signature(source["path"])
+            before = signature[0]
             warning = ""
             current_fp = ""
+            warning_marker = before
             try:
                 conn.execute("UPDATE log_sources SET state='indexing' WHERE id=?", (sid,))
                 conn.commit()
@@ -374,8 +465,11 @@ def build(case_dir, ctx=None, source_ids=None):
                     if ctx and counts["events"] % 1000 == 0:
                         ctx.phase_progress(n / max(len(sources), 1), f"Reading log source: {counts['events']:,} entries",
                                            "indexing", n, len(sources))
-                if marker(source["path"]) != before or fingerprint(source["path"], options, ctx) != current_fp:
+                if (_file_signature(source["path"]) != signature
+                        or fingerprint(source["path"], options, ctx) != current_fp):
                     raise LogEvidenceError("Source changed while it was being read; retry this source")
+                _source_read(source["path"], signature, _fingerprint_variant(options),
+                             lambda: current_fp, verify=True)
                 if fmt == "text":
                     warning = "Not automatically analyzed. Search this text and select relevant entries for review."
                 elif counts["unparsed"]:
@@ -406,6 +500,9 @@ def build(case_dir, ctx=None, source_ids=None):
                 conn.rollback()
                 warning = str(exc) if isinstance(exc, (LogEvidenceError, parsers.LogReadError)) else "Unable to read or index this source. Check access and file integrity, then retry."
                 state = "cancelled" if ctx and ctx.cancelled() else "failed"
+                if state == "failed":
+                    warning_marker = marker(source["path"])
+                    current_fp = current_fingerprint(source, verify=True)
                 conn.execute("UPDATE log_sources SET state=?,warning=? WHERE id=?", (state, warning, sid))
                 conn.commit()
                 stats["failed_sources"] += 1
@@ -415,11 +512,8 @@ def build(case_dir, ctx=None, source_ids=None):
                 stats["log_warnings"] += 1
                 if ctx:
                     ctx.detailed_skip(source["path"], warning, "log_source", source["path"])
-                    snapshot = {**source, "warning": warning, "current_marker": marker(source["path"])}
-                    try:
-                        snapshot["warning_fingerprint"] = fingerprint(source["path"], options)
-                    except OSError:
-                        snapshot["warning_fingerprint"] = "unreadable"
+                    snapshot = {**source, "warning": warning, "current_marker": warning_marker,
+                                "warning_fingerprint": current_fp}
                     ctx.log_warning_snapshots[str(len(ctx.skipped_files) - 1)] = {
                         "source_id": sid, "warning_key": _warning_key(snapshot)}
         # A completed migration replaces the old case-wide error engine.
@@ -436,14 +530,16 @@ def build(case_dir, ctx=None, source_ids=None):
     return stats
 
 
-def source_status(case_dir, *, detect=True):
-    sources = inventory(case_dir, detect=detect)
+def source_status(case_dir, *, detect=True, verify=False, source_ids=None):
+    sources = inventory(case_dir, detect=detect, cache_detection=not verify, source_ids=source_ids)
     http_status = {}
     http_indexing = False
     if any(s["format"] == "access" for s in sources):
         from server.engines import logindex
         from server.jobs import manager
-        http_status = logindex.status(case_dir, access_targets(case_dir, detect=detect))
+        http_status = logindex.status(case_dir, access_targets(
+            case_dir, detect=detect, cache_detection=not verify,
+            sources=sources if source_ids is None else None))
         conn = db.connect(case_dir)
         try:
             jobs = db.rows(conn, "SELECT id FROM jobs WHERE kind='index_logs' AND state IN ('queued','running')")
@@ -476,10 +572,11 @@ def source_status(case_dir, *, detect=True):
             finally:
                 conn.close()
         if s["warning"]:
-            try:
-                s["warning_fingerprint"] = fingerprint(s["path"], s["settings"])
-            except OSError:
-                s["warning_fingerprint"] = "unreadable"
+            if verify and source_ids is not None:
+                s["_verified_signature"] = _file_signature(s["path"])
+                if s["_verified_signature"][0] != s["current_marker"]:
+                    raise LogEvidenceError(_WARNING_CHANGED)
+            s["warning_fingerprint"] = current_fingerprint(s, verify=verify, signature=s.get("_verified_signature"))
         s["warning_key"] = _warning_key(s) if s["warning"] else ""
         s["warning_group"] = ("unsupported" if "Binary content" in s["warning"] else
                               "processing_error" if s["state"] in ("failed", "cancelled") else "manual_review") if s["warning"] else ""
@@ -492,29 +589,43 @@ def _warning_key(source):
 
 
 def validate_warning_selection(case_dir, selections):
-    sources = {s["id"]: s for s in source_status(case_dir, detect=False)}
-    if len({s["source_id"] for s in selections}) != len(selections) or any(
+    ids = {s["source_id"] for s in selections}
+    sources = {s["id"]: s for s in source_status(case_dir, detect=False, verify=True, source_ids=ids)}
+    if len(ids) != len(selections) or any(
             not sources.get(s["source_id"]) or not sources[s["source_id"]]["warning"] or
             sources[s["source_id"]]["warning_key"] != s["warning_key"] for s in selections):
-        raise LogEvidenceError("A selected warning changed or is no longer available. Refresh the list.")
+        raise LogEvidenceError(_WARNING_CHANGED)
+    _require_stable_warning_sources(sources.values())
 
 
 def review_warnings(case_dir, decision, selections):
     if decision not in ("accept", "reopen") or not selections:
         raise ValueError("Choose a review decision and at least one warning")
-    sources = {s["id"]: s for s in source_status(case_dir, detect=False)}
-    seen = set()
+    ids = {s["source_id"] for s in selections}
+    if len(ids) != len(selections):
+        raise LogEvidenceError(_WARNING_CHANGED)
+    sources = {s["id"]: s for s in source_status(case_dir, detect=False, verify=True, source_ids=ids)}
     selected = []
     for selection in selections:
         sid, key = selection["source_id"], selection["warning_key"]
         source = sources.get(sid)
-        if (sid in seen or not source or source["format"] == "access" or not source["warning"]
+        if (not source or source["format"] == "access" or not source["warning"]
                 or source["warning_key"] != key or source["accepted"] != (decision == "reopen")):
-            raise LogEvidenceError("A selected warning changed or is no longer available. Refresh the list.")
-        seen.add(sid)
+            raise LogEvidenceError(_WARNING_CHANGED)
         selected.append(source)
+    return _save_warning_review(case_dir, decision, selected)
+
+
+def _require_stable_warning_sources(sources):
+    if any(s["warning_fingerprint"] == "changed" or _file_signature(s["path"]) != s["_verified_signature"]
+           for s in sources):
+        raise LogEvidenceError(_WARNING_CHANGED)
+
+
+def _save_warning_review(case_dir, decision, selected):
     conn = db.connect(case_dir)
     try:
+        _require_stable_warning_sources(selected)
         for source in selected:
             sid = source["id"]
             conn.execute("UPDATE log_sources SET accepted_fingerprint=? WHERE id=?",
@@ -531,12 +642,13 @@ def review_warnings(case_dir, decision, selections):
 
 
 def accept_warning(case_dir, sid):
-    source = next((s for s in source_status(case_dir, detect=False) if s["id"] == sid and s["warning"]), None)
+    source = next((s for s in source_status(case_dir, detect=False, verify=True, source_ids={sid})
+                   if s["warning"] and s["format"] != "access"), None)
     if not source:
         raise LogEvidenceError("No current warning for this source")
     if source["accepted"]:
         return {"updated": 0}
-    return review_warnings(case_dir, "accept", [{"source_id": sid, "warning_key": source["warning_key"]}])
+    return _save_warning_review(case_dir, "accept", [source])
 
 
 def warning_counts(case_dir):
@@ -573,14 +685,12 @@ def reconcile_receipts(conn):
         def unresolved(source):
             if not source or not source["warning"]:
                 return False
+            if not source["accepted_fingerprint"]:
+                return True
             if source["id"] not in warning_cache:
-                options = json.loads(source["settings"])
-                try:
-                    warning_fp = fingerprint(source["path"], options)
-                except OSError:
-                    warning_fp = "unreadable"
-                snapshot = {**source, "settings": options, "current_marker": marker(source["path"]),
-                            "warning_fingerprint": warning_fp}
+                snapshot = {**source, "settings": json.loads(source["settings"]),
+                            "current_marker": marker(source["path"])}
+                snapshot["warning_fingerprint"] = current_fingerprint(snapshot)
                 warning_cache[source["id"]] = source["accepted_fingerprint"] != _warning_key(snapshot)
             return warning_cache[source["id"]]
         warnings = sum(unresolved(s) for s in others)
@@ -768,7 +878,7 @@ def retire_removed(case_dir):
         conn.close()
 
 
-def timeline_events(case_dir, *, artifacts=None):
+def timeline_events(case_dir, *, artifacts=None, log_sources=None):
     conn = db.connect(case_dir)
     try:
         confirmed = (set(artifacts) if artifacts is not None else
@@ -776,12 +886,8 @@ def timeline_events(case_dir, *, artifacts=None):
         saved = [e for artifact in confirmed for e in saved_for_artifact(conn, artifact)]
     finally:
         conn.close()
-    sources = {s["id"]: s for s in source_status(case_dir)}
-    for source in sources.values():
-        try:
-            source["fresh"] = source["fresh"] and fingerprint(source["path"], source["settings"]) == source["fingerprint"]
-        except OSError:
-            source["fresh"] = False
+    if not confirmed:
+        return []
     selected = {e["id"]: e for e in saved}
     index = _open_index(case_dir)
     try:
@@ -798,8 +904,17 @@ def timeline_events(case_dir, *, artifacts=None):
     finally:
         if index:
             index.close()
+    if not selected:
+        return []
+    contributing = {event["source_id"] for event in selected.values()}
+    # Dashboard polls reuse their status snapshot. Standalone chronology, reports
+    # and analyst overrides verify the bytes behind dated evidence on each read.
+    verify = log_sources is None
+    sources = source_status(case_dir, source_ids=contributing) if verify else log_sources
+    current = {s["id"]: s["fingerprint"] for s in sources
+               if s["id"] in contributing and s["fresh"]
+               and current_fingerprint(s, verify=verify) == s["fingerprint"]}
     for event in selected.values():
-        source = sources.get(event["source_id"], {})
-        event["fresh"] = bool(source.get("fresh") and event["fingerprint"] == source.get("fingerprint"))
+        event["fresh"] = event["fingerprint"] == current.get(event["source_id"])
         event["raw"] = parsers.redact(event["raw"])
     return list(selected.values())

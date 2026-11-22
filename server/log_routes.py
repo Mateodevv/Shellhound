@@ -116,20 +116,21 @@ def install(app, auth, case_dir_or_404, manager):
     @app.post("/api/cases/{slug}/log-sources/analyze", dependencies=[auth])
     def analyze(slug: str, body: AnalyzeBody):
         def submit(case):
-            current = log_evidence.inventory(case)
-            if body.source_ids is not None and (not body.source_ids or set(body.source_ids) - {s["id"] for s in current}):
-                raise log_evidence.LogEvidenceError("Choose currently registered sources")
-            if body.source_ids and any(s["format"] == "access" and s["id"] in body.source_ids for s in current):
-                raise log_evidence.LogEvidenceError("Access logs share the HTTP index. Use Run analysis in Evidence to rebuild it")
             selections = [s.model_dump() for s in body.warning_selections] if body.warning_selections else None
-            if selections and (not body.source_ids or set(body.source_ids) != {s["source_id"] for s in selections}):
+            ids = None if body.source_ids is None else set(body.source_ids)
+            if selections and (not ids or ids != {s["source_id"] for s in selections}):
                 raise log_evidence.LogEvidenceError("The selected warnings changed. Refresh the list")
+            if selections:
+                log_evidence.validate_warning_selection(case, selections)
+            current = log_evidence.inventory(case, source_ids=ids)
+            if ids is not None and (not ids or ids - {s["id"] for s in current}):
+                raise log_evidence.LogEvidenceError("Choose currently registered sources")
+            if ids and any(s["format"] == "access" for s in current):
+                raise log_evidence.LogEvidenceError("Access logs share the HTTP index. Use Run analysis in Evidence to rebuild it")
             def run(ctx):
                 if selections:
                     log_evidence.validate_warning_selection(case, selections)
                 return log_evidence.build(case, ctx, body.source_ids)
-            if selections:
-                log_evidence.validate_warning_selection(case, selections)
             return {"job": manager.submit(case, "log_events", run,
                                           scan_context={"mode": "log_retry"})}
         return change(slug, submit)

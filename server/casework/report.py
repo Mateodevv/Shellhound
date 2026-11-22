@@ -204,7 +204,7 @@ def collect(case_dir: Path, lang="en", tz_mode="log", cross_case=None) -> dict:
     cov = coverage.report(case_dir, lang, tz_mode)
     cov["notes"] = [redact(note) for note in cov.get("notes") or []]
     from server import log_evidence
-    log_sources = [s for s in log_evidence.source_status(case_dir) if s["format"] != "access"]
+    log_sources = [s for s in log_evidence.source_status(case_dir, verify=True) if s["format"] != "access"]
     if log_sources:
         manual = sum(s["format"] == "text" for s in log_sources)
         unresolved = sum(bool(s["warning"] and not s["accepted"]) for s in log_sources)

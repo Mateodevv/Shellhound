@@ -129,10 +129,11 @@ def grouped_review_artifacts(conn, rows):
     return grouped
 
 
-def counts(conn, group_backups=True):
+def counts(conn, group_backups=True, grouped=None, source_rows=None):
     """The chip counts -- artifacts, not findings, in every dimension."""
-    rows = db.rows(conn, f'WITH art AS ({ART_SQL}) SELECT * FROM art')
-    grouped = grouped_review_artifacts(conn, rows) if group_backups else rows
+    if grouped is None:
+        rows = db.rows(conn, f'WITH art AS ({ART_SQL}) SELECT * FROM art')
+        grouped = grouped_review_artifacts(conn, rows) if group_backups else rows
     def group(column):
         result = {}
         for row in grouped:
@@ -146,7 +147,9 @@ def counts(conn, group_backups=True):
     units = {name: row.get('version_key', row['artifact'])
              for row in grouped for name in row.get('backup_members', [row['artifact']])}
     source_units = {}
-    for row in db.rows(conn, 'SELECT DISTINCT source,artifact FROM findings'):
+    if source_rows is None:
+        source_rows = db.rows(conn, 'SELECT DISTINCT source,artifact FROM findings')
+    for row in source_rows:
         source_units.setdefault(row['source'], set()).add(units[row['artifact']])
     sources = {source: len(members) for source, members in source_units.items()}
     return {"severity": sev, "triage": group("triage"),

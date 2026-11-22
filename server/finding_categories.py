@@ -69,12 +69,13 @@ def categorized_art_sql(muted=()):
     """
 
 
-def top_findings(conn, muted=()):
+def top_findings(conn, muted=(), *, rows=None):
     """Three whole-case categories counted in the same review units as Findings."""
     from server.artifacts import grouped_review_artifacts
     from server.log_evidence import artifact_label
-    rows = grouped_review_artifacts(conn, db.rows(
-        conn, f'WITH art AS ({categorized_art_sql(muted)}) SELECT * FROM art'))
+    if rows is None:
+        rows = grouped_review_artifacts(conn, db.rows(
+            conn, f'WITH art AS ({categorized_art_sql(muted)}) SELECT * FROM art'))
     informational = sum(row['triage'] != 'dismissed' and row['review_visible']
                         and row['worst'] == 3 and row['triage'] != 'confirmed' for row in rows)
     hidden = sum(row['triage'] != 'dismissed' and not row['review_visible'] for row in rows)
