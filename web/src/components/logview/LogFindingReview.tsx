@@ -10,6 +10,7 @@ import { LogEventEvidence, LogEventFacts } from './LogEntryContext'
 import { FileContentPane } from '../review/FileViewer'
 import { IocTypeBadge } from '../iocs/IocTypeBadge'
 import { ArtifactEnrichment } from '../enrichment/ArtifactEnrichment'
+import { OpenCtiMatches } from '../enrichment/OpenCtiMatches'
 
 /** Keeps log observations distinct from the linked file's own review and IOC state. */
 export function LogFindingReview({ slug, events, configured, onFile }: {
@@ -64,7 +65,7 @@ function LogFindingDetail({ slug, event, configured, onFile }: {
         ...(available && configured ? [{ id: 'enrichment', label: tr('review.enrichment') }] : []),
       ]} /></div>
       <div role="tabpanel" aria-label={tr(active === 'evidence' ? 'logReview.evidence' : active === 'file' ? 'logReview.linkedFile' : 'review.enrichment')} data-artifact-scroll="primary" tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-        {active === 'evidence' ? <LogEventEvidence event={shown} context={query.data} loading={query.isPending} error={query.error} onFile={available ? () => setTab('file') : undefined} /> : <>
+        {active === 'evidence' ? <><LogEventEvidence event={shown} context={query.data} loading={query.isPending} error={query.error} onFile={available ? () => setTab('file') : undefined} />{event.ip && <OpenCtiMatches slug={slug} kind="ip" value={event.ip} />}</> : <>
           <div className="flex flex-wrap items-center gap-2"><IocTypeBadge type="file" /><span className="mono min-w-0 flex-1 break-all text-[12px]">{current?.artifact.replace(/\\/g, '/').split('/').pop()}</span>{linkedCurrent && <Button variant="special" onClick={() => onFile(current!.artifact, null)}><FileText size={13} />{tr('artifact.expandFile')}</Button>}</div>
           {linked.isPending && <p role="status" className="text-[12px]">{tr('common.loading')}</p>}
           {linked.error && <p role="alert" className="text-[12px] text-[var(--danger-text)]">{linked.error.message}</p>}

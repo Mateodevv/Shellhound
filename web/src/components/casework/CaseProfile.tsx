@@ -45,6 +45,7 @@ export function CaseProfileForm({ slug, info, onClose, unavailable = false }: { 
     qc.invalidateQueries({ queryKey: ['state'] })
     qc.invalidateQueries({ queryKey: ['close-summary', slug] })
     qc.invalidateQueries({ queryKey: ['opencti', slug] })
+    if (reference.trim() !== info.reference) void qc.resetQueries({ queryKey: ['opencti-matches', slug] })
     onClose()
   } })
   return <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); if (!unavailable && !invalidDates && name.trim() && !save.isPending) save.mutate() }}>

@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { api, patch, type CaseInfo } from '../../api'
 import { newCaseProfile } from '../../opencti'
-import { renderWithProviders } from '../../test/setup'
+import { renderWithProviders, testQueryClient } from '../../test/setup'
 import { CaseProfileForm } from './CaseProfile'
 
 vi.mock('../../api', async original => ({ ...(await original<typeof import('../../api')>()), api: vi.fn(), patch: vi.fn() }))
@@ -167,4 +167,23 @@ it('clears the access assessment when its route is reset to unknown', async () =
   await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/saved', expect.objectContaining({
     profile: expect.objectContaining({ initial_access: 'unknown', initial_access_status: 'unknown', initial_cve: '' }),
   })))
+})
+
+
+it('clears old case match results when the case ID changes', async () => {
+  vi.mocked(api).mockResolvedValue({ sectors: [] })
+  vi.mocked(patch).mockResolvedValue({})
+  const qc = testQueryClient()
+  const oldKey = ['opencti-matches', 'qa', 'https://cti.example', 'ip', '192.0.2.1']
+  const otherKey = ['opencti-matches', 'other', 'https://cti.example', 'ip', '192.0.2.1']
+  qc.setQueryData(oldKey, { result: { known: true } })
+  qc.setQueryData(otherKey, { result: { known: true } })
+  const info = { name: 'Case', reference: 'OLD', profile_revision: 'r1', profile: newCaseProfile() } as CaseInfo
+  const onClose = vi.fn()
+  renderWithProviders(<CaseProfileForm slug="qa" info={info} onClose={onClose} />, qc)
+  fireEvent.change(screen.getByLabelText('Case ID'), { target: { value: 'NEW' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  expect(qc.getQueryData(oldKey)).toBeUndefined()
+  expect(qc.getQueryData(otherKey)).toEqual({ result: { known: true } })
 })

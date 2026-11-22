@@ -293,19 +293,13 @@ it.each([false, true])('labels log warnings accurately in a %s mixed run', async
   expect(screen.queryByText(/2 file\(s\) skipped/)).not.toBeInTheDocument()
 })
 
-it('sends the match option only after explicit selection and resets it after launch', async () => {
-  vi.mocked(api).mockImplementation(async path => {
-    if (path === '/api/opencti/settings') return { lookup_configured: true, url: 'https://cti.example' }
-    if (path.endsWith('/jobs')) return []
-    return { ...CASE, evidence_items: [{ id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '', scanned_at: '', stats: {}, label: '', exists: true }] }
-  })
+it('starts analysis without per-scan OpenCTI options', async () => {
+  vi.mocked(api).mockImplementation(async path => path.endsWith('/jobs') ? [] : { ...CASE, evidence_items: [{ id: 1, kind: 'webroot', path: 'C:/Synthetic/site', added: '', scanned_at: '', stats: {}, label: '', exists: true }] })
   renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
-  const option = await screen.findByRole('checkbox', { name: /send finding IPs and SHA-256 hashes to cti.example/ })
-  expect(option).not.toBeChecked()
-  fireEvent.click(option)
-  fireEvent.click(screen.getByRole('button', { name: 'Run analysis' }))
-  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/analyze', { mode: 'all', opencti_matches: true, opencti_url: 'https://cti.example' }))
-  expect(option).not.toBeChecked()
+  const button = await screen.findByRole('button', { name: 'Run analysis' })
+  await waitFor(() => expect(button).toBeEnabled())
+  fireEvent.click(button)
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/cases/case-1/analyze', { mode: 'all' }))
 })
 
 it('keeps optional match failures separate from analysis and shows their reason', async () => {
@@ -317,15 +311,6 @@ it('keeps optional match failures separate from analysis and shows their reason'
   expect(await screen.findByText('Local analysis was cancelled or failed. OpenCTI was not queried.')).toBeVisible()
   expect(screen.queryByText(/Checked: 0/)).not.toBeInTheDocument()
   expect(screen.queryByText(/engines complete/)).not.toBeInTheDocument()
-})
-
-it('clears match consent when switching away and back', async () => {
-  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { lookup_configured: true, url: 'https://cti.example' } : path.endsWith('/jobs') ? [] : CASE)
-  const { rerender } = renderWithProviders(<Evidence slug="case-1" gotoView={vi.fn()} />)
-  fireEvent.click(await screen.findByRole('checkbox', { name: /send finding IPs/ }))
-  rerender(<Evidence slug="case-2" gotoView={vi.fn()} />)
-  rerender(<Evidence slug="case-1" gotoView={vi.fn()} />)
-  expect(screen.getByRole('checkbox', { name: /send finding IPs/ })).not.toBeChecked()
 })
 
 it('opens locally cached case matches only for the selected linked value', async () => {

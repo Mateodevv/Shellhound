@@ -2,12 +2,25 @@
 import ipaddress
 import json
 import re
+import threading
 from urllib.parse import quote, urlsplit
 
 from server import db, ruleswitch, settings, workspace
 from server.artifacts import MUTED_CLAUSE, art_sql
 from server.integrations.opencti import service
 from server.integrations.opencti.client import OpenCTIClient, OpenCTIError
+
+_locks = [threading.Lock() for _ in range(64)]
+
+
+def _lock(case_dir, destination, reference, kind, value):
+    return _locks[hash((str(case_dir.resolve()), destination, reference, kind, value)) % len(_locks)]
+
+
+def _current(root, case_dir, destination, reference, only_new=False):
+    config = settings.opencti_config(root)
+    return (service._destination(config) == destination and _reference(case_dir) == reference
+            and (not only_new or config.get('auto_match') is True))
 
 
 def _config(root, expected_url=None):
@@ -75,9 +88,11 @@ def _save(case_dir, destination, reference, result):
         conn.close()
 
 
-def _lookup(client, config, case_dir, destination, reference, kind, value):
+def _lookup(client, config, case_dir, destination, reference, kind, value, current):
     payload = client.case_matches(kind, value, exclude_reference=reference)
     result = _safe_result({**payload, 'checked_at': db.now()}, kind, value, config)
+    if not current():
+        raise ValueError('OpenCTI connection, automatic matching, or case reference changed during the check.')
     _save(case_dir, destination, reference, result)
     return result
 
@@ -86,10 +101,11 @@ def lookup(root, case_dir, kind, value, *, expected_url=None):
     kind, value = _key(kind, value)
     config = _config(root, expected_url)
     destination, reference = service._destination(config), _reference(case_dir)
-    result = _lookup(OpenCTIClient(config), config, case_dir, destination, reference, kind, value)
-    if service._destination(settings.opencti_config(root)) != destination or _reference(case_dir) != reference:
-        raise ValueError('OpenCTI connection or case reference changed during the check. Start a new check.')
-    return result
+    with _lock(case_dir, destination, reference, kind, value):
+        current = lambda: _current(root, case_dir, destination, reference)
+        if not current():
+            raise ValueError('OpenCTI connection or case reference changed during the check. Start a new check.')
+        return _lookup(OpenCTIClient(config), config, case_dir, destination, reference, kind, value, current)
 
 
 def saved(root, case_dir, kind, value):
@@ -105,17 +121,22 @@ def saved(root, case_dir, kind, value):
         conn.close()
     if not row:
         return None
+    return _read_result(row['payload'], kind, value, config)
+
+
+def _read_result(payload, kind, value, config):
     try:
-        return _safe_result(json.loads(row['payload']), kind, value, config)
+        return _safe_result(json.loads(payload), kind, value, config)
     except (ValueError, TypeError, AttributeError, OpenCTIError):
         return None
 
 
-def _candidates(root, case_dir):
+def _candidates(root, case_dir, *, cache_scope=None):
     conn = db.connect(case_dir)
     try:
-        art = art_sql(ruleswitch.disabled_ids(root))
-        eligible = f"SELECT artifact, artifact_kind FROM art WHERE {MUTED_CLAUSE} AND triage != 'dismissed' AND findings > 0 AND artifact_kind IN ('file','client')"
+        disabled = ruleswitch.disabled_ids(root)
+        art = art_sql(disabled)
+        eligible = f"SELECT artifact, artifact_kind FROM art WHERE {MUTED_CLAUSE} AND triage != 'dismissed' AND findings > 0"
         rows = db.rows(conn, f"""WITH art AS ({art}), eligible AS ({eligible}),
             latest_skip AS (SELECT s.path, MAX(s.job_id) AS job_id FROM job_skips s
                             JOIN eligible e ON e.artifact=s.path AND e.artifact_kind='file' WHERE s.category='file' GROUP BY s.path),
@@ -137,6 +158,16 @@ def _candidates(root, case_dir):
             LEFT JOIN active_skip a ON a.path=e.artifact""")
         files = {}
         keys, missing = set(), 0
+        observations = db.rows(conn, f"""WITH art AS ({art}), eligible AS ({eligible})
+            SELECT o.snapshot FROM log_observations o JOIN findings f ON f.fingerprint=o.finding_fingerprint
+            JOIN eligible e ON e.artifact=f.artifact {db.RETIRE_JOIN}
+            WHERE {db.LIVE_PREDICATE} AND f.triage != 'dismissed'
+            AND (f.rule_id = '' OR f.triage != 'new' OR f.rule_id NOT IN ({','.join('?' for _ in disabled) or "''"}))""", tuple(disabled))
+        for observation in observations:
+            try:
+                keys.add(_key('ip', json.loads(observation['snapshot']).get('ip')))
+            except (ValueError, TypeError, AttributeError):
+                pass
         for row in rows:
             artifact = row['artifact']
             if row['artifact_kind'] == 'client':
@@ -162,44 +193,80 @@ def _candidates(root, case_dir):
                     invalid = True
                     continue
                 hashes.add(digest)
-                if row['engine'] == row['required_engine'] and row['run'] >= row['seen_run']:
+                # A newer scan may have recorded clean replacement bytes before retiring this finding.
+                if row['engine'] == row['required_engine'] and row['run'] == row['seen_run']:
                     proven.add(row['engine'])
             if not invalid and len(hashes) == 1 and required <= proven:
                 keys.update(hashes)
             else:
                 missing += 1
-        return sorted(keys), missing
+        cached = set()
+        if cache_scope:
+            destination, reference, config = cache_scope
+            for row in db.rows(conn, 'SELECT kind,value,payload FROM opencti_case_matches WHERE authority=? AND case_reference=?',
+                               (destination, reference)):
+                key = (row['kind'], row['value'])
+                if key in keys and _read_result(row['payload'], *key, config) is not None:
+                    cached.add(key)
+        return sorted(keys), missing, cached
     finally:
         conn.close()
 
 
-def scan(root, case_dir, ctx, *, expected_authority):
+def scan(root, case_dir, ctx, *, expected_authority, only_new=False):
     config = _config(root)
     destination = service._destination(config)
     if destination != expected_authority:
         raise ValueError('OpenCTI connection changed while the check was queued. Start a new check.')
+    if only_new and config.get('auto_match') is not True:
+        raise ValueError('Automatic OpenCTI matching is not enabled.')
     reference = _reference(case_dir)
-    client = OpenCTIClient(config)
-    candidates, missing = _candidates(root, case_dir)
+    client = None
+    candidates, missing, cached = _candidates(root, case_dir, cache_scope=(destination, reference, config) if only_new else None)
     stats = {'total': len(candidates), 'checked': 0, 'known': 0, 'linked': 0,
-             'failed': 0, 'missing_hashes': missing, 'partial': False, 'cancelled': False, 'reason': '',
+             'failed': 0, 'skipped': len(cached), 'missing_hashes': missing, 'partial': False, 'cancelled': False, 'reason': '',
              'linked_values': []}
-    for kind, value in candidates:
+    if ctx.cancelled() or not _current(root, case_dir, destination, reference, only_new):
+        stats['cancelled'] = bool(ctx.cancelled())
+        stats['partial'] = True
+        stats['reason'] = 'OpenCTI connection, automatic matching, or case reference changed.'
+        return stats
+    for kind, value in (key for key in candidates if key not in cached):
         if ctx.cancelled():
             stats['cancelled'] = True
             break
-        if service._destination(settings.opencti_config(root)) != destination or _reference(case_dir) != reference:
+        if not _current(root, case_dir, destination, reference, only_new):
             stats['partial'] = True
             stats['reason'] = 'OpenCTI connection or case reference changed. Start a new check.'
             break
         try:
-            result = _lookup(client, config, case_dir, destination, reference, kind, value)
+            lock = _lock(case_dir, destination, reference, kind, value)
+            while not lock.acquire(timeout=0.1):
+                if ctx.cancelled() or not _current(root, case_dir, destination, reference, only_new):
+                    raise ValueError('Matching stopped while waiting for another check.')
+            try:
+                if ctx.cancelled() or not _current(root, case_dir, destination, reference, only_new):
+                    raise ValueError('Matching stopped before the check.')
+                if only_new and saved(root, case_dir, kind, value) is not None:
+                    stats['skipped'] += 1
+                    continue
+                if client is None:
+                    client = OpenCTIClient(config)
+                result = _lookup(client, config, case_dir, destination, reference, kind, value,
+                                 lambda: _current(root, case_dir, destination, reference, only_new) and not ctx.cancelled())
+            finally:
+                lock.release()
             stats['checked'] += 1
             stats['known'] += int(result['known'])
             if result['cases']:
                 stats['linked'] += 1
                 if len(stats['linked_values']) < 20:
                     stats['linked_values'].append({'kind': kind, 'value': value})
+        except ValueError:
+            stats['cancelled'] = bool(ctx.cancelled())
+            stats['partial'] = True
+            stats['reason'] = 'OpenCTI connection, automatic matching, or case reference changed.'
+            break
         except OpenCTIError as exc:
             stats['failed'] += 1
             stats['reason'] = {

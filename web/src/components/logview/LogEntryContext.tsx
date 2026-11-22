@@ -5,6 +5,7 @@ import { useT } from '../../i18n'
 import { logEventTime, logReviewReason, logSourceLink, useLogContext } from '../../logReview'
 import { Button, CopyButton, Tag } from '../ui/ui'
 import { IocTypeBadge } from '../iocs/IocTypeBadge'
+import { OpenCtiMatches } from '../enrichment/OpenCtiMatches'
 
 export function LogEventFacts({ event, sourcePath, compact = false }: { event: LogEvent; sourcePath?: string; compact?: boolean }) {
   const tr = useT()
@@ -61,9 +62,9 @@ export function LogEventEvidence({ event, context, error, loading, onFile }: {
   </section>
 }
 
-export function LogEntryContext({ slug, event, onFile }: { slug: string; event: LogEvent; onFile?: (path: string, line: number | null) => void }) {
+export function LogEntryContext({ slug, event, onFile, finding = false }: { slug: string; event: LogEvent; onFile?: (path: string, line: number | null) => void; finding?: boolean }) {
   const tr = useT()
   const query = useLogContext(slug, event)
   const shown = !query.isError && query.data ? query.data.event : event
-  return <div className="space-y-4"><LogEventFacts event={shown} sourcePath={query.data?.source_path} compact /><LogEventEvidence event={shown} context={query.data} loading={query.isPending} error={query.error} onFile={onFile && query.data?.event.artifact_available ? () => onFile(query.data!.event.artifact, null) : undefined} /><a className="inline-block text-[12px] text-[var(--accent)] underline underline-offset-4" href={logSourceLink(slug, event)}>{tr('logEvidence.openLogs')}</a></div>
+  return <div className="space-y-4"><LogEventFacts event={shown} sourcePath={query.data?.source_path} compact /><LogEventEvidence event={shown} context={query.data} loading={query.isPending} error={query.error} onFile={onFile && query.data?.event.artifact_available ? () => onFile(query.data!.event.artifact, null) : undefined} />{finding && event.ip && <OpenCtiMatches slug={slug} kind="ip" value={event.ip} />}<a className="inline-block text-[12px] text-[var(--accent)] underline underline-offset-4" href={logSourceLink(slug, event)}>{tr('logEvidence.openLogs')}</a></div>
 }

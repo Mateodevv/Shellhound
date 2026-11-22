@@ -17,3 +17,29 @@ it('reads local cache until explicitly checked and displays visible cases', asyn
   expect(screen.getByText(/list is truncated/)).toBeVisible()
   expect(screen.getByText('Checked: 2026-01-01')).toBeVisible()
 })
+
+
+it('shows an automatically saved result without sending a lookup', async () => {
+  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { lookup_configured: true, auto_match: true, url: 'https://cti.example' } : { result: { known: false, cases: [], checked_at: 'today', truncated: false } })
+  vi.mocked(post).mockClear()
+  renderWithProviders(<OpenCtiMatches slug="qa" kind="ip" value="192.0.2.1" />)
+  expect(await screen.findByText('No visible match in OpenCTI.')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Recheck' })).toHaveAttribute('title', 'Check this value in cti.example.')
+  expect(screen.queryByText('Check this value in cti.example.')).not.toBeInTheDocument()
+  expect(post).not.toHaveBeenCalled()
+})
+
+it('distinguishes automatic pending from unchecked', async () => {
+  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { lookup_configured: true, auto_match: true, url: 'https://cti.example' } : { result: null, auto_status: 'pending' })
+  renderWithProviders(<OpenCtiMatches slug="qa" kind="ip" value="192.0.2.1" />)
+  expect(await screen.findByText('First automatic check pending.')).toBeVisible()
+})
+
+
+it('shows a failed automatic check separately from a miss and permits a manual retry', async () => {
+  vi.mocked(api).mockImplementation(async path => path === '/api/opencti/settings' ? { lookup_configured: true, auto_match: true, url: 'https://cti.example' } : { result: null, auto_status: 'unavailable' })
+  renderWithProviders(<OpenCtiMatches slug="qa" kind="ip" value="192.0.2.1" />)
+  expect(await screen.findByText(/Automatic check could not finish/)).toBeVisible()
+  expect(screen.queryByText('No visible match in OpenCTI.')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Check OpenCTI' })).toBeEnabled()
+})

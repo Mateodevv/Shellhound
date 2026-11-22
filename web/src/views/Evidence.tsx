@@ -1,4 +1,3 @@
-import { openCtiHost, useOpenCtiSettings } from '../opencti'
 import { OpenCtiMatches } from '../components/enrichment/OpenCtiMatches'
 // Evidence.tsx — register evidence paths, analyze, watch jobs.
 import { useT } from '../i18n'
@@ -39,9 +38,6 @@ export function Evidence({ slug }: {
 }) {
   const tr = useT()
   const qc = useQueryClient()
-  const settings = useOpenCtiSettings()
-  const [matchConsent, setMatchConsent] = useState('')
-  useEffect(() => { setMatchConsent('') }, [slug, settings.data?.url])
   const { data: caseInfo } = useQuery({
     queryKey: ['case', slug],
     queryFn: () => api<CaseDetail>(`/api/cases/${slug}`),
@@ -81,11 +77,7 @@ export function Evidence({ slug }: {
     onSuccess: invalidate,
   })
   const analyze = useMutation({
-    mutationFn: (mode: 'new' | 'all') => {
-      const enabled = matchConsent === `${slug}:${settings.data?.url}` && settings.data?.lookup_configured === true
-      setMatchConsent('')
-      return post(`/api/cases/${slug}/analyze`, { mode, ...(enabled ? { opencti_matches: true, opencti_url: settings.data?.url } : {}) })
-    },
+    mutationFn: (mode: 'new' | 'all') => post(`/api/cases/${slug}/analyze`, { mode }),
     onSuccess: () => {
       setAnalysisMenuOpen(false)
       setConfirmReanalyze(false)
@@ -171,7 +163,6 @@ export function Evidence({ slug }: {
           </div>
         }
       >
-        {settings.data?.lookup_configured && <label className="mb-3 flex items-start gap-2 text-[13px]"><input type="checkbox" checked={matchConsent === `${slug}:${settings.data?.url}`} onChange={event => setMatchConsent(event.target.checked ? `${slug}:${settings.data?.url}` : '')} />{tr('ctiMatches.runOption', { host: openCtiHost(settings.data?.url) })}</label>}
         <Card surface="raised" className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--line-soft)] px-4 py-3">
             <div>

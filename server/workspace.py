@@ -234,6 +234,7 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
     if profile is not None:
         identity["profile"] = case_profile.normalize(
             profile, case_dir.parent, existing=identity.get("profile"))
+    reference_changed = reference is not None and reference != identity.get("reference", "")
     for key, value in (("name", name), ("reference", reference),
                        ("notes", notes)):
         if value is not None:
@@ -247,6 +248,8 @@ def update_case(case_dir, *, name=None, reference=None, notes=None, profile=None
             _meta_values(identity))
         from server.ioc.software import migrate_profile
         migrate_profile(conn, identity.get("profile") or {})
+        if reference_changed:
+            db.mark_finding_changed(conn)  # OpenCTI links exclude the case's own reference.
         conn.commit()
     finally:
         conn.close()

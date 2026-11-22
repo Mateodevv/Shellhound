@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
@@ -267,7 +268,7 @@ class OpenCTIHTTPTests(unittest.TestCase):
         query = url + '?kind=ip&value=192.0.2.42'
         self.assertEqual(401, self.request('POST', url, value, token='wrong')[0])
         self.assertEqual(401, self.request('GET', query, token='wrong')[0])
-        self.assertEqual((200, {'result': None}), self.request('GET', query))
+        self.assertEqual({'result': None, 'auto_status': 'idle'}, self.request('GET', query)[1])
         self.assertEqual(400, self.request('POST', url, value)[0])
         status, config = self.request('PATCH', '/api/opencti/settings',
                                       {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})
@@ -282,61 +283,118 @@ class OpenCTIHTTPTests(unittest.TestCase):
         with patch('server.integrations.opencti.client.OpenCTIClient._request', return_value=reply) as transport:
             self.assertEqual(400, self.request('POST', url, {'kind': 'hash', 'value': 'x'})[0])
             self.assertEqual(400, self.request('POST', url, {**value, 'expected_url': 'https://old.example.test'})[0])
-            self.assertEqual((200, {'result': None}), self.request('GET', query))
+            self.assertEqual({'result': None, 'auto_status': 'idle'}, self.request('GET', query)[1])
             transport.assert_not_called()
             status, match = self.request('POST', url, value)
             self.assertEqual(200, status, match)
             self.assertTrue(match['known'])
             self.assertEqual('https://cti.example.test/dashboard/id/prior', match['cases'][0]['url'])
-            self.assertEqual((200, {'result': match}), self.request('GET', query))
+            self.assertEqual({'result': match, 'auto_status': 'idle'}, self.request('GET', query)[1])
             transport.assert_called_once()
             target, payload = transport.call_args.args
             self.assertEqual('/graphql', target)
             self.assertTrue(payload['query'].startswith('query '))
             self.assertNotIn('PIM-LOCAL-1', json.dumps(payload))
 
-    def test_opencti_is_an_optional_follow_up_and_cannot_fail_local_analysis(self):
+    def wait_for_match(self, slug, kind, value, *, status=None):
+        path = f'/api/cases/{slug}/opencti/matches?kind={kind}&value={value}'
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            response = self.request('GET', path)[1]
+            if (status is not None and response['auto_status'] == status) or (status is None and response['result'] is not None):
+                return response
+            time.sleep(0.05)
+        self.fail(f'Matching did not reach {status or "a saved result"}: {response}')
+
+    def test_automatic_matching_is_opt_in_scoped_and_deduplicated(self):
+        base = f'/api/cases/{self.slug}/opencti/matches'
+        other = workspace.create_case(self.root, 'Other test', 'PIM-LOCAL-2')
+        def finding(case, value, rule='Test observation'):
+            with closing(db.connect(case)) as conn:
+                db.upsert_finding(conn, 'logs', 1, rule, 'client', value)
+                conn.commit()
+        finding(self.case, '192.0.2.41')
+        finding(other, '192.0.2.99')
+        with patch('server.integrations.opencti.matches.OpenCTIClient') as remote:
+            remote.return_value.case_matches.side_effect = lambda kind, value, **kw: {
+                'known': value.endswith('42'),
+                'cases': [{'id': 'prior', 'name': 'Prior'}] if value.endswith('42') else [],
+                'truncated': False}
+            # Unconfigured and legacy configured installations remain offline.
+            self.assertEqual('idle', self.wait_for_match(self.slug, 'ip', '192.0.2.41', status='idle')['auto_status'])
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {
+                'url': 'https://cti.example.test', 'token': 'offline-lookup-test', 'case_slug': self.slug})[0])
+            self.assertFalse(self.request('GET', '/api/opencti/settings')[1]['auto_match'])
+            self.assertEqual('idle', self.wait_for_match(self.slug, 'ip', '192.0.2.41', status='idle')['auto_status'])
+            remote.assert_not_called()
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {
+                'auto_match': True, 'case_slug': self.slug})[0])
+            self.assertFalse(self.wait_for_match(self.slug, 'ip', '192.0.2.41')['result']['known'])
+            self.assertIsNone(self.request('GET', f'/api/cases/{other.name}/opencti/matches?kind=ip&value=192.0.2.99')[1]['result'])
+            # A commit alone triggers matching, even without opening the case UI.
+            finding(self.case, '192.0.2.42')
+            self.assertTrue(self.wait_for_match(self.slug, 'ip', '192.0.2.42')['result']['known'])
+            self.wait_for_match(self.slug, 'ip', '192.0.2.42', status='idle')
+            self.assertEqual(2, remote.return_value.case_matches.call_count)
+            finding(self.case, '192.0.2.41', 'Another observation')
+            finding(self.case, '192.0.2.42', 'Another observation')
+            self.wait_for_match(self.slug, 'ip', '192.0.2.42', status='pending')
+            self.wait_for_match(self.slug, 'ip', '192.0.2.42', status='idle')
+            self.assertEqual(2, remote.return_value.case_matches.call_count)
+            # Explicit checks refresh even cached positive and negative results.
+            for value in ('192.0.2.41', '192.0.2.42'):
+                self.assertEqual(200, self.request('POST', base, {'kind': 'ip', 'value': value,
+                    'expected_url': 'https://cti.example.test'})[0])
+            self.assertEqual(4, remote.return_value.case_matches.call_count)
+            self.assertEqual(400, self.request('POST', base + '/recheck', {'expected_url': 'https://old.example.test'})[0])
+            code, job = self.request('POST', base + '/recheck', {'expected_url': 'https://cti.example.test'})
+            self.assertEqual(200, code)
+            self.assertFalse(manager.wait_for(self.case.resolve(), [job['job_id']], timeout=10))
+            self.assertEqual(6, remote.return_value.case_matches.call_count)
+            self.assertIsNone(self.request('GET', f'/api/cases/{other.name}/opencti/matches?kind=ip&value=192.0.2.99')[1]['result'])
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {'auto_match': False})[0])
+            finding(self.case, '192.0.2.43')
+            self.assertEqual('idle', self.wait_for_match(self.slug, 'ip', '192.0.2.43', status='idle')['auto_status'])
+            time.sleep(0.5)
+            self.assertEqual(6, remote.return_value.case_matches.call_count)
+
+    def test_remote_failure_does_not_fail_local_analysis(self):
+        from server.integrations.opencti.client import OpenCTIError
         base = f'/api/cases/{self.slug}'
         source = self.root / 'sample.sql'
-        source.write_text("CREATE TABLE sample (id int);\n", encoding='utf-8')
+        source.write_text('CREATE TABLE sample (id int);\n', encoding='utf-8')
         self.assertEqual(200, self.request('POST', base + '/evidence', {'kind': 'sql_dump', 'path': str(source)})[0])
-
-        def run(options):
-            status, result = self.request('POST', base + '/analyze', options)
+        with closing(db.connect(self.case)) as conn:
+            db.upsert_finding(conn, 'logs', 1, 'Test observation', 'client', '192.0.2.42')
+            conn.commit()
+        with patch('server.integrations.opencti.matches.OpenCTIClient') as remote:
+            remote.return_value.case_matches.side_effect = OpenCTIError('Offline', code='connection')
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {'url': 'https://cti.example.test',
+                'token': 'offline-lookup-test', 'auto_match': True, 'case_slug': self.slug})[0])
+            self.wait_for_match(self.slug, 'ip', '192.0.2.42', status='unavailable')
+            status, result = self.request('POST', base + '/analyze', {})
             self.assertEqual(200, status, result)
             ids = [entry['job'] for entry in result['started']]
             self.assertFalse(manager.wait_for(self.case.resolve(), ids, timeout=10))
-            return {j['kind']: j for j in self.request('GET', base + '/jobs')[1] if j['id'] in ids}
+            jobs = [j for j in self.request('GET', base + '/jobs')[1] if j['id'] in ids]
+            self.assertEqual(['sqldb'], [j['kind'] for j in jobs])
+            self.assertEqual('done', jobs[0]['state'])
+            with closing(db.connect(self.case)) as conn:
+                self.assertTrue(db.one(conn, 'SELECT scanned_at FROM evidence')['scanned_at'])
 
-        with patch('server.integrations.opencti.matches.OpenCTIClient') as client:
-            self.assertEqual({'sqldb'}, set(run({})))
-            unconfigured = run({'opencti_matches': True})
-            self.assertTrue(unconfigured['opencti-matches']['stats']['partial'])
-            self.assertEqual('done', unconfigured['sqldb']['state'])
-            self.request('PATCH', '/api/opencti/settings',
-                         {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})
-            self.assertEqual({'sqldb'}, set(run({})))
-            changed = run({'opencti_matches': True, 'opencti_url': 'https://old.example.test'})
-            self.assertTrue(changed['opencti-matches']['stats']['partial'])
-            with patch('server.app.sqldump.scan', return_value={'partial': True}):
-                incomplete = run({'opencti_matches': True})
-            self.assertEqual('done', incomplete['sqldb']['state'])
-            self.assertIn('incomplete', incomplete['opencti-matches']['stats']['reason'])
-            client.assert_not_called()
-            with closing(db.connect(self.case)) as conn:
-                db.upsert_finding(conn, 'logs', 1, 'Test observation', 'client', '192.0.2.42')
-                conn.commit()
-            from server.integrations.opencti.client import OpenCTIError
-            client.return_value.case_matches.side_effect = OpenCTIError('Offline', code='network')
-            jobs = run({'opencti_matches': True})
-            self.assertEqual('done', jobs['sqldb']['state'])
-            self.assertEqual(1, jobs['opencti-matches']['stats']['failed'])
-            self.assertTrue(jobs['opencti-matches']['stats']['partial'])
-            client.return_value.case_matches.assert_called_once()
-            with closing(db.connect(self.case)) as conn:
-                evidence = db.one(conn, 'SELECT scanned_at,stats FROM evidence')
-                self.assertTrue(evidence['scanned_at'])
-                self.assertEqual('complete', json.loads(evidence['stats'])['last_attempt']['status'])
+    def test_changing_case_reference_refreshes_links_for_existing_findings(self):
+        with closing(db.connect(self.case)) as conn:
+            db.upsert_finding(conn, 'logs', 1, 'Test observation', 'client', '192.0.2.41')
+            conn.commit()
+        with patch('server.integrations.opencti.matches.OpenCTIClient') as remote:
+            check = remote.return_value.case_matches
+            check.return_value = {'known': False, 'cases': [], 'truncated': False}
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {'url': 'https://cti.example.test',
+                'token': 'offline-test', 'auto_match': True, 'case_slug': self.slug})[0])
+            self.wait_for_match(self.slug, 'ip', '192.0.2.41')
+            self.assertEqual(200, self.request('PATCH', f'/api/cases/{self.slug}', {'reference': 'REF-NEW'})[0])
+            self.wait_for_match(self.slug, 'ip', '192.0.2.41')
+            self.assertEqual(['PIM-LOCAL-1', 'REF-NEW'], [c.kwargs['exclude_reference'] for c in check.call_args_list])
 
     def test_scan_checks_identical_flagged_files_once_after_hashes_are_published(self):
         base = f'/api/cases/{self.slug}'
@@ -347,22 +405,19 @@ class OpenCTIHTTPTests(unittest.TestCase):
             (folder / name).write_bytes(content)
         digest = hashlib.sha256(content).hexdigest()
         self.assertEqual(200, self.request('POST', base + '/evidence', {'kind': 'webroot', 'path': str(folder)})[0])
-        self.assertEqual(200, self.request('PATCH', '/api/opencti/settings',
-                         {'url': 'https://cti.example.test', 'token': 'offline-lookup-test'})[0])
         marker = [('fixture.marker', 1, 'Harmless test observation', 1, 'marker')]
-        prior = {'id': 'prior', 'name': 'Prior case'}
         with patch('server.app.webshell._yara_findings', return_value=marker), \
                 patch('server.integrations.opencti.matches.OpenCTIClient') as remote:
-            remote.return_value.case_matches.return_value = {'known': True, 'cases': [prior], 'truncated': False}
-            status, result = self.request('POST', base + '/analyze', {'opencti_matches': True})
+            remote.return_value.case_matches.return_value = {'known': True, 'cases': [{'id': 'prior', 'name': 'Prior case'}], 'truncated': False}
+            self.assertEqual(200, self.request('PATCH', '/api/opencti/settings', {'url': 'https://cti.example.test',
+                'token': 'offline-lookup-test', 'auto_match': True, 'case_slug': self.slug})[0])
+            status, result = self.request('POST', base + '/analyze', {})
             self.assertEqual(200, status, result)
             self.assertFalse(manager.wait_for(self.case.resolve(), [e['job'] for e in result['started']], timeout=15))
+            found = self.wait_for_match(self.slug, 'hash', digest)
+            self.assertEqual('prior', found['result']['cases'][0]['id'])
+            self.wait_for_match(self.slug, 'hash', digest, status='idle')
             remote.return_value.case_matches.assert_called_once_with('hash', digest, exclude_reference='PIM-LOCAL-1')
-            stats = next(j['stats'] for j in self.request('GET', base + '/jobs')[1] if j['kind'] == 'opencti-matches')
-            self.assertEqual([{'kind': 'hash', 'value': digest}], stats['linked_values'])
-            self.assertEqual((1, 1, 0), (stats['checked'], stats['linked'], stats['missing_hashes']))
-            self.assertEqual('prior', self.request('GET', base + '/opencti/matches?kind=hash&value='
-                             + digest)[1]['result']['cases'][0]['id'])
 
     def test_direct_provider_api_auth_cache_and_opencti_precedence(self):
         path = f"/api/cases/{self.slug}/enrich"

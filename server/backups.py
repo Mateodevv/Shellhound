@@ -99,6 +99,8 @@ def restore_inheritance(conn, inherited, reason):
         state = inherited['previous_state']
         conn.execute('UPDATE findings SET triage=?,triage_note=?,triaged_at=? WHERE artifact=?',
                      (state, inherited['previous_note'], db.now(), path))
+        if current['triage'] != state:
+            db.mark_finding_triage_changed(conn, path, 'file', state)
         conn.execute("INSERT INTO triage_events(artifact,artifact_kind,from_state,to_state,note,propagated,at) VALUES (?,'file',?,?,?,1,?)",
                      (path, current['triage'], state, reason, db.now()))
         conn.execute('UPDATE ioc_sources SET active=0 WHERE artifact=?', (path,))
@@ -480,6 +482,8 @@ def inherit_all(conn, ctx=None, digests=None):
             store(conn, path, json.loads(row['classifications']), desired)
         if before != desired or not previous:
             conn.execute('UPDATE findings SET triage=?,triaged_at=? WHERE artifact=?', (desired, db.now(), path))
+            if before != desired:
+                db.mark_finding_triage_changed(conn, path, 'file', desired)
             conn.execute('INSERT INTO triage_events(artifact,artifact_kind,from_state,to_state,note,propagated,at) VALUES (?,\'file\',?,?,?,1,?)',
                          (path, before, desired, 'Identical SHA-256 content assessment: ' + row['note'], db.now()))
             conn.execute('INSERT OR REPLACE INTO content_inheritance VALUES (?,?,?,?,?,?,?)',

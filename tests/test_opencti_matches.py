@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -201,6 +202,33 @@ class MatchTests(unittest.TestCase):
         self.assertEqual((0, 1), (result['total'], result['missing_hashes']))
         self.client.case_matches.assert_not_called()
 
+    def test_newer_clean_receipt_does_not_prove_a_previous_scan_finding(self):
+        self.finding('changed.php', 'file')
+        conn = db.connect(self.case)
+        try:
+            with conn:
+                conn.execute("UPDATE findings SET engine='webshell', seen_run=1 WHERE artifact='changed.php'")
+                conn.execute('INSERT INTO file_scan_receipts VALUES (?,?,?,?,?,?,?)',
+                             ('webshell', 'changed.php', 'a' * 64, 'old', 1, db.now(), 1))
+            db.complete_run(conn, 'webshell', 1)
+            # A full scan can commit examined bytes before its final retirement marker.
+            with conn:
+                conn.execute('INSERT OR REPLACE INTO file_scan_receipts VALUES (?,?,?,?,?,?,?)',
+                             ('webshell', 'changed.php', 'b' * 64, 'new', 2, db.now(), 2))
+                conn.execute('INSERT INTO content_files VALUES (?,?,?,?,?)',
+                             ('changed.php', 'b' * 64, 10, 'new', db.now()))
+            authority = matches.authority(self.root)
+            pending = matches.scan(self.root, self.case, Context(), expected_authority=authority)
+            self.assertEqual((0, 1), (pending['checked'], pending['missing_hashes']))
+            self.client.case_matches.assert_not_called()
+            with conn:
+                conn.execute("UPDATE findings SET seen_run=2 WHERE artifact='changed.php'")
+            reproduced = matches.scan(self.root, self.case, Context(), expected_authority=authority)
+            self.assertEqual((1, 0), (reproduced['checked'], reproduced['missing_hashes']))
+            self.client.case_matches.assert_called_once_with('hash', 'b' * 64, exclude_reference='CASE-1')
+        finally:
+            conn.close()
+
     def test_changed_connection_stops_remaining_requests(self):
         self.finding('192.0.2.1', 'client')
         self.finding('192.0.2.2', 'client')
@@ -209,6 +237,164 @@ class MatchTests(unittest.TestCase):
             return {'known': False, 'cases': [], 'truncated': False}
         self.client.case_matches.side_effect = change
         result = matches.scan(self.root, self.case, Context(), expected_authority=matches.authority(self.root))
-        self.assertEqual((2, 1, True), (result['total'], result['checked'], result['partial']))
+        self.assertEqual((2, 0, True), (result['total'], result['checked'], result['partial']))
         self.client.case_matches.assert_called_once()
         self.assertIsNone(matches.saved(self.root, self.case, 'ip', '192.0.2.1'))
+
+    def test_auto_skips_successful_unknown_and_manual_refresh_checks_again(self):
+        self.finding('192.0.2.1', 'client')
+        self.config['auto_match'] = True
+        self.client.case_matches.return_value = {'known': False, 'cases': [], 'truncated': False}
+        authority = matches.authority(self.root)
+        first = matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True)
+        second = matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True)
+        self.assertEqual((1, 0), (first['checked'], first['skipped']))
+        self.assertEqual((0, 1), (second['checked'], second['skipped']))
+        matches.scan(self.root, self.case, Context(), expected_authority=authority)
+        self.assertEqual(2, self.client.case_matches.call_count)
+        self.config['auto_match'] = False
+        with self.assertRaises(ValueError):
+            matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True)
+        matches.lookup(self.root, self.case, 'ip', '192.0.2.1')
+
+    def test_cached_sweep_uses_one_bulk_read_and_no_client(self):
+        for value in ('192.0.2.1', '192.0.2.2'):
+            self.finding(value, 'client')
+            matches.lookup(self.root, self.case, 'ip', value)
+        self.config['auto_match'] = True
+        self.client.reset_mock()
+        with patch('server.integrations.opencti.matches.saved', side_effect=AssertionError('per-value cache read')), \
+                patch('server.integrations.opencti.matches.OpenCTIClient', side_effect=AssertionError('unneeded client')):
+            result = matches.scan(self.root, self.case, Context(), expected_authority=matches.authority(self.root), only_new=True)
+        self.assertEqual((2, 0, 2), (result['total'], result['checked'], result['skipped']))
+
+    def test_log_observation_must_itself_be_visible(self):
+        self.finding('shared.php', 'file')
+        conn = db.connect(self.case)
+        for fp, ip, triage, rule in (('dismissed', '192.0.2.1', 'dismissed', ''),
+                                      ('muted', '192.0.2.2', 'new', 'muted.rule'),
+                                      ('visible', '192.0.2.3', 'new', '')):
+            conn.execute('INSERT INTO findings(fingerprint,source,severity,rule,rule_id,artifact_kind,artifact,created,last_seen,triage) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                         (fp, 'logs', 1, 'rule', rule, 'file', 'shared.php', db.now(), db.now(), triage))
+            conn.execute('INSERT INTO log_observations VALUES (?,?,?,?)', (fp, fp, 'source', json.dumps({'ip': ip})))
+        conn.commit()
+        conn.close()
+        with patch('server.integrations.opencti.matches.ruleswitch.disabled_ids', return_value={'muted.rule'}):
+            matches.scan(self.root, self.case, Context(), expected_authority=matches.authority(self.root))
+        self.client.case_matches.assert_called_once_with('ip', '192.0.2.3', exclude_reference='CASE-1')
+
+    def test_auto_waiting_on_manual_check_stops_when_cancelled(self):
+        self.finding('192.0.2.1', 'client')
+        self.config['auto_match'] = True
+        entered, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+        class Stoppable(Context):
+            def cancelled(self):
+                return cancelled.is_set()
+        def response(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return {'known': False, 'cases': [], 'truncated': False}
+        self.client.case_matches.side_effect = response
+        authority = matches.authority(self.root)
+        manual = threading.Thread(target=lambda: matches.lookup(self.root, self.case, 'ip', '192.0.2.1'))
+        results = []
+        automatic = threading.Thread(target=lambda: results.append(matches.scan(self.root, self.case, Stoppable(), expected_authority=authority, only_new=True)))
+        manual.start()
+        self.assertTrue(entered.wait(5))
+        automatic.start()
+        cancelled.set()
+        automatic.join(2)
+        release.set()
+        manual.join(5)
+        self.assertFalse(automatic.is_alive() or manual.is_alive())
+        self.assertTrue(results[0]['cancelled'])
+        self.client.case_matches.assert_called_once()
+
+    def test_auto_stops_without_saving_when_disabled_during_request(self):
+        self.finding('192.0.2.1', 'client')
+        self.finding('192.0.2.2', 'client')
+        self.config['auto_match'] = True
+        def disable(*args, **kwargs):
+            self.config['auto_match'] = False
+            return {'known': False, 'cases': [], 'truncated': False}
+        self.client.case_matches.side_effect = disable
+        result = matches.scan(self.root, self.case, Context(), expected_authority=matches.authority(self.root), only_new=True)
+        self.assertEqual((0, True), (result['checked'], result['partial']))
+        self.assertIsNone(matches.saved(self.root, self.case, 'ip', '192.0.2.1'))
+        self.client.case_matches.assert_called_once()
+
+    def test_concurrent_auto_checks_share_success_and_manual_runs_after(self):
+        self.finding('192.0.2.1', 'client')
+        self.config['auto_match'] = True
+        entered, release = threading.Event(), threading.Event()
+        def response(*args, **kwargs):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return {'known': False, 'cases': [], 'truncated': False}
+        self.client.case_matches.side_effect = response
+        authority = matches.authority(self.root)
+        results = []
+        def run_auto():
+            results.append(matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True))
+        first = threading.Thread(target=run_auto)
+        second = threading.Thread(target=run_auto)
+        first.start()
+        self.assertTrue(entered.wait(5))
+        second.start()
+        release.set()
+        first.join(5)
+        second.join(5)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual([0, 1], sorted(r['checked'] for r in results))
+        self.client.case_matches.assert_called_once()
+
+    def test_manual_refresh_cannot_be_overwritten_by_an_older_auto_request(self):
+        self.finding('192.0.2.1', 'client')
+        self.config['auto_match'] = True
+        entered, release = threading.Event(), threading.Event()
+        def response(*args, **kwargs):
+            if not entered.is_set():
+                entered.set()
+                self.assertTrue(release.wait(5))
+                return {'known': False, 'cases': [], 'truncated': False}
+            return {'known': True, 'cases': [], 'truncated': False}
+        self.client.case_matches.side_effect = response
+        authority = matches.authority(self.root)
+        automatic = threading.Thread(target=lambda: matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True))
+        manual = threading.Thread(target=lambda: matches.lookup(self.root, self.case, 'ip', '192.0.2.1'))
+        automatic.start()
+        self.assertTrue(entered.wait(5))
+        manual.start()
+        release.set()
+        automatic.join(5)
+        manual.join(5)
+        self.assertFalse(automatic.is_alive() or manual.is_alive())
+        self.assertTrue(matches.saved(self.root, self.case, 'ip', '192.0.2.1')['known'])
+        self.assertEqual(2, self.client.case_matches.call_count)
+
+    def test_auto_checks_hash_when_missing_receipt_becomes_available(self):
+        self.finding('first.php', 'file')
+        self.config['auto_match'] = True
+        conn = db.connect(self.case)
+        conn.execute("UPDATE findings SET engine='webshell' WHERE artifact='first.php'")
+        conn.commit()
+        conn.close()
+        authority = matches.authority(self.root)
+        first = matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True)
+        self.assertEqual((0, 1), (first['checked'], first['missing_hashes']))
+        conn = db.connect(self.case)
+        conn.execute('INSERT INTO file_scan_receipts VALUES (?,?,?,?,?,?,?)', ('webshell', 'first.php', 'a' * 64, 'marker', 0, db.now(), 0))
+        conn.commit()
+        conn.close()
+        second = matches.scan(self.root, self.case, Context(), expected_authority=authority, only_new=True)
+        self.assertEqual((1, 0), (second['checked'], second['missing_hashes']))
+        self.client.case_matches.assert_called_once()
+
+    def test_log_observation_ip_is_included_for_live_finding(self):
+        self.finding('observation', 'log_observation')
+        conn = db.connect(self.case)
+        conn.execute('INSERT INTO log_observations VALUES (?,?,?,?)', ('event', 'observation', 'source', json.dumps({'ip': '192.0.2.7', 'raw': '192.0.2.8'})))
+        conn.commit()
+        conn.close()
+        matches.scan(self.root, self.case, Context(), expected_authority=matches.authority(self.root))
+        self.client.case_matches.assert_called_once_with('ip', '192.0.2.7', exclude_reference='CASE-1')

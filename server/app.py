@@ -42,14 +42,14 @@ from server import correlation, coverage, db, diagnostics
 from server.integrations import geoip
 from server import huntrules, hunt_batches
 from server.integrations.opencti import matches as opencti_matches, service as opencti_service
+from server.integrations.opencti.automatic import AutomaticMatches
 from server.integrations import enrich
 from server.ioc import model as ioc_model
 from server.ioc import formats as ioclib
 from server import rules as rulelib, ruleswitch
 from server import patterns as patternlib
 from server import settings as settingslib, workspace
-from server.analysis import (AnalysisReceipts, current_warning_count, decode_job,
-                             describe_job, stats_complete)
+from server.analysis import AnalysisReceipts, current_warning_count, decode_job, describe_job
 from server import scan_retries
 from server.paths import display_path, io_path
 from server.artifacts import (ART_SQL, MUTED_CLAUSE, art_sql,
@@ -153,6 +153,8 @@ EVIDENCE_KINDS = ("webroot", "access_logs", "logs", "sql_dump", "reference")
 
 
 def create_app(config: Config) -> FastAPI:
+    automatic_matches = AutomaticMatches(config.workspace)
+
     @asynccontextmanager
     async def lifespan(_app):
         # The event hub is shared by the HTTP routes and the WebSocket.  It
@@ -160,9 +162,11 @@ def create_app(config: Config) -> FastAPI:
         # exist while create_app assembled the routes.
         hub.attach_loop(asyncio.get_running_loop())
         diagnostics.record(config.workspace, "info", "server", "Server started", port=config.port)
+        automatic_matches.configure()
         try:
             yield
         finally:
+            await asyncio.to_thread(automatic_matches.close)
             diagnostics.record(config.workspace, "info", "server", "Server stopped")
             diagnostics.close(config.workspace)
 
@@ -369,6 +373,7 @@ def create_app(config: Config) -> FastAPI:
         info["log_index"] = logindex.status(
             case_dir, log_targets, lang)
         info["has_access_logs"] = bool(log_targets)
+        automatic_matches.opened_case(case_dir)
         return info
 
     class PatchCase(BaseModel):
@@ -428,7 +433,7 @@ def create_app(config: Config) -> FastAPI:
         try:
             # Match transfer's lock order: case identity first, then scheduling.
             # Recheck after draining; a new job may have arrived in between.
-            with workspace._CASE_LOCK:
+            with automatic_matches.suspend(case_dir), workspace._CASE_LOCK:
                 case_dir = case_dir_or_404(slug)
                 with manager.case_operation(case_dir):
                     zip_path, summary = workspace.archive_case(config.workspace, case_dir)
@@ -448,7 +453,13 @@ def create_app(config: Config) -> FastAPI:
         original data and is never touched."""
         case_dir = case_dir_or_404(slug)
         _drain_jobs(case_dir, lang)
-        name = workspace.delete_case(case_dir)
+        try:
+            with automatic_matches.suspend(case_dir), workspace._CASE_LOCK:
+                case_dir = case_dir_or_404(slug)
+                with manager.case_operation(case_dir):
+                    name = workspace.delete_case(case_dir)
+        except CaseBusy as exc:
+            raise HTTPException(409, _t(lang, "err.jobsRunning")) from exc
         hub.publish({"type": "invalidate", "scope": "workspace"})
         return {"ok": True, "name": name}
 
@@ -721,12 +732,19 @@ def create_app(config: Config) -> FastAPI:
         url: str | None = None
         token: str | None = None
         ingester_id: str | None = None
+        auto_match: StrictBool | None = None
+        case_slug: str | None = None
         model_config = {"extra": "forbid"}
 
     @app.patch("/api/opencti/settings", dependencies=[auth])
     def opencti_settings_update(body: OpenCTISettings):
-        return _cti_call(settingslib.set_opencti, config.workspace,
-                         body.model_dump(exclude_unset=True))
+        case_dir = case_dir_or_404(body.case_slug) if body.case_slug else None
+        public = _cti_call(settingslib.set_opencti, config.workspace,
+                           body.model_dump(exclude_unset=True, exclude={'case_slug'}))
+        automatic_matches.configure()
+        if case_dir:
+            automatic_matches.opened_case(case_dir)
+        return public
 
     @app.post("/api/opencti/test", dependencies=[auth])
     def opencti_test():
@@ -738,7 +756,25 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/cases/{slug}/opencti/matches", dependencies=[auth])
     def saved_opencti_match(slug: str, kind: str, value: str):
-        return {"result": _cti_call(opencti_matches.saved, config.workspace, case_dir_or_404(slug), kind, value)}
+        case_dir = case_dir_or_404(slug)
+        return {"result": _cti_call(opencti_matches.saved, config.workspace, case_dir, kind, value),
+                "auto_status": automatic_matches.status(case_dir)}
+
+    class RecheckMatches(BaseModel):
+        expected_url: str
+        model_config = {"extra": "forbid"}
+
+    @app.post("/api/cases/{slug}/opencti/matches/recheck", dependencies=[auth])
+    def recheck_opencti_matches(slug: str, body: RecheckMatches):
+        authority = _cti_call(opencti_matches.authority, config.workspace, body.expected_url)
+        try:
+            with workspace._CASE_LOCK:
+                case_dir = case_dir_or_404(slug)
+                with manager.case_operation(case_dir):
+                    return {"job_id": manager.submit(case_dir, "opencti-matches", lambda ctx:
+                            automatic_matches.recheck(case_dir, ctx, authority))}
+        except CaseBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     class OpenCTIMatch(BaseModel):
         kind: str
@@ -811,7 +847,10 @@ def create_app(config: Config) -> FastAPI:
         at it was later muted."""
         if rule_id not in rulelib.known_ids():
             raise HTTPException(404, _t(lang, "err.ruleUnknown"))
-        return ruleswitch.set_enabled(config.workspace, rule_id, body.enabled)
+        switch = ruleswitch.set_enabled(config.workspace, rule_id, body.enabled)
+        if body.enabled:
+            automatic_matches.refresh_open_cases()
+        return switch
 
     # --- the rule files, as things the analyst edits ----------------------
     # They live in the WORKSPACE, like the pattern library and for the same
@@ -1009,8 +1048,6 @@ def create_app(config: Config) -> FastAPI:
 
     class AnalyzeBody(BaseModel):
         mode: str = "all"
-        opencti_matches: StrictBool = False
-        opencti_url: str | None = None
 
     @app.post("/api/cases/{slug}/analyze", dependencies=[auth])
     def analyze(slug: str, body: AnalyzeBody | None = None):
@@ -1046,14 +1083,6 @@ def create_app(config: Config) -> FastAPI:
         mode = body.mode if body is not None else "all"
         if mode not in ("new", "all"):
             raise HTTPException(400, "analysis mode must be 'new' or 'all'")
-
-        check_opencti = getattr(body, "opencti_matches", False)
-        if check_opencti:
-            try:
-                match_authority = opencti_matches.authority(config.workspace, body.opencti_url)
-            except (settingslib.SettingsError, ValueError):
-                # An unavailable optional connection must not prevent local analysis.
-                match_authority = None
 
         supported = ("webroot", "access_logs", "logs", "sql_dump")
         pending_by_kind = {
@@ -1265,19 +1294,6 @@ def create_app(config: Config) -> FastAPI:
             scan_context=contexts[kind],
             on_cancel=lambda engine=kind: cancel_engine(engine))}
             for kind, fn, _kinds in tasks]
-        if check_opencti:
-            def check_after_scan(ctx):
-                if match_authority is None:
-                    return {"partial": True, "reason": "OpenCTI settings changed or were unavailable. Review the connection and check again."}
-                with closing(db.connect(case_dir)) as conn:
-                    local_jobs = db.rows(conn, "SELECT kind,state,stats FROM jobs WHERE run_id=?", (run_id,))
-                if any(j["state"] != "done" or not stats_complete(json.loads(j["stats"] or "{}"), j["kind"])
-                       for j in local_jobs):
-                    return {"partial": True, "reason": "Local analysis was incomplete. Check individual findings or retry analysis."}
-                return opencti_matches.scan(config.workspace, case_dir, ctx, expected_authority=match_authority)
-
-            job_id = manager.submit_after_current(case_dir, "opencti-matches", check_after_scan)
-            started.append({"kind": "opencti-matches", "job": job_id})
         return {"run_id": run_id, "started": started}
 
     @app.get("/api/cases/{slug}/jobs", dependencies=[auth])
@@ -2126,6 +2142,7 @@ def create_app(config: Config) -> FastAPI:
             for artifact in artifacts:
                 before = previous.get(artifact)
                 if before and before["triage"] != body.state:
+                    db.mark_finding_triage_changed(conn, artifact, before["artifact_kind"], body.state)
                     conn.execute(
                         "INSERT INTO triage_events (artifact, artifact_kind, "
                         "from_state, to_state, note, propagated, at) "
@@ -2437,6 +2454,7 @@ def create_app(config: Config) -> FastAPI:
                 "UPDATE findings SET triage = 'confirmed', triage_note = ?, "
                 "triaged_at = ? WHERE artifact = ?",
                 (note, db.now(), item["artifact"]))
+            db.mark_finding_triage_changed(conn, item["artifact"], item["kind"], "confirmed")
             conn.execute(
                 "INSERT INTO triage_events (artifact, artifact_kind, "
                 "from_state, to_state, note, propagated, at) "

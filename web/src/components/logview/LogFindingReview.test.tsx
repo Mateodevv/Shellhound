@@ -108,3 +108,54 @@ it.each(['file','log_observation'] as const)('uses the new review for %s and pre
  fireEvent.keyDown(window,{key:'2'});fireEvent.keyDown(window,{key:'Enter'})
  await waitFor(()=>expect(onSave).toHaveBeenCalledWith('reviewed','',...(kind==='file'?[['webshell']]:[])))
 })
+
+
+it('shows stored matches only for the selected structured observation IP', async () => {
+ const other={...entry,id:'other',fingerprint:'other',line:88,line_end:88}
+ vi.mocked(api).mockImplementation(async url => {
+   if(url==='/api/opencti/settings') return {lookup_configured:true,url:'https://cti.example'}
+   if(url.includes('/opencti/matches?')) return {result:{known:true,cases:[{id:'1',name:'Related case',url:'https://cti.example/case/1'}],checked_at:'today',truncated:false}}
+   if(url.includes('/context?')) return eventContext(url.includes('/other/')?other:entry)
+   return context
+ })
+ renderWithProviders(<LogFindingReview slug="case" events={[entry,other]} configured onFile={vi.fn()}/>)
+ expect(await screen.findByRole('link',{name:'Related case'})).toBeVisible()
+ const calls=()=>vi.mocked(api).mock.calls.filter(([url])=>url.includes('/opencti/matches?'))
+ expect(calls()).toHaveLength(1)
+ expect(calls()[0][0]).toContain('value=192.0.2.42')
+ expect(post).not.toHaveBeenCalled()
+ fireEvent.change(screen.getByRole('combobox',{name:'Observation'}),{target:{value:'other'}})
+ expect(await screen.findByRole('link',{name:'Related case'})).toBeVisible()
+ expect(calls()).toHaveLength(1)
+})
+
+it('does not look up IP-like raw log text without a structured IP', async () => {
+ const e={...entry,ip:'',remote_host:'',raw:'unrelated 192.0.2.99'}
+ network(e); mount(e)
+ await screen.findByRole('heading',{name:'Transfer context'})
+ expect(vi.mocked(api).mock.calls.some(([url])=>url.includes('/opencti/matches'))).toBe(false)
+})
+
+
+it('loads mixed-file observation matches only when an observation is opened', async () => {
+ const other={...entry,id:'other',fingerprint:'other',line:88,line_end:88}
+ const mixed={...context, findings:[finding,{...finding,id:8,source:'yara',fingerprint:'file-rule'}],log_observations:[entry,other]}
+ vi.mocked(api).mockImplementation(async url=>{
+   if(url==='/api/opencti/settings') return {lookup_configured:true,url:'https://cti.example'}
+   if(url.includes('/opencti/matches?')) return {result:{known:false,cases:[],checked_at:'today',truncated:false}}
+   if(url.includes('/context?')) return eventContext(url.includes('/other/')?other:entry)
+   if(url.includes('/artifact?')) return mixed
+   if(url.includes('/file?')) return {mode:'raw',size:0,offset:0,length:0,eof:true,window:262144,from_line:1,lines:[]}
+   return mixed
+ })
+ renderWithProviders(<ArtifactWindow slug="case" artifact={{artifact:entry.artifact,artifact_kind:'file',worst:2,triage:'new',triage_note:''}} roots={[]} collected={[]} onSave={vi.fn()} onClose={vi.fn()} onView={vi.fn()} onTrace={vi.fn()}/>)
+ const first=await screen.findByText('ftp.log:87 · Log observation')
+ expect(vi.mocked(api).mock.calls.some(([url])=>url.includes('/opencti/matches?'))).toBe(false)
+ fireEvent.click(first)
+ expect(await screen.findByText('No visible match in OpenCTI.')).toBeVisible()
+ expect(vi.mocked(api).mock.calls.filter(([url])=>url.includes('/opencti/matches?'))).toHaveLength(1)
+ fireEvent.click(screen.getByText('ftp.log:88 · Log observation'))
+ await waitFor(()=>expect(screen.getByText('No visible match in OpenCTI.')).toBeVisible())
+ expect(screen.getAllByLabelText('OpenCTI case matches')).toHaveLength(1)
+ expect(vi.mocked(api).mock.calls.filter(([url])=>url.includes('/opencti/matches?'))).toHaveLength(1)
+})

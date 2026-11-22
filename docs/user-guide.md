@@ -609,8 +609,10 @@ it never searches raw findings or evidence.
 
 OpenCTI is optional. Configure an HTTPS URL and a dedicated read token in
 Settings to check an individual finding IP or SHA-256 for earlier incident cases.
-In **Evidence & analysis**, opt in for a single scan to check distinct finding
-values after local analysis. Open an item to see the saved result and case links.
+Enable automatic matching in **Settings → OpenCTI** to check each distinct
+finding IP or verified file SHA-256 when it first appears. Open a finding to
+see the saved result and case links. Use **Recheck** on an item or **Recheck
+all** in OpenCTI settings for the current case.
 For transfer of the saved case profile and selected IPs with tags, CVEs,
 software and hashes, also configure a TAXII push ingester with an authorized
 token. Review the preview before confirming.

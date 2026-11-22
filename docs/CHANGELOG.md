@@ -6,9 +6,9 @@ All notable changes to SHELLHOUND. Format after
 
 ## [Unreleased]
 
-- Optionally check finding IPs and SHA-256 hashes against incident cases visible
-  in OpenCTI, individually or after a selected analysis run. Local analysis works
-  without an OpenCTI connection.
+- Enable automatic OpenCTI checks for new finding IPs and SHA-256 hashes in
+  Settings. Review saved case links, recheck a single value, or refresh all
+  eligible findings in the current case. Local analysis works independently.
 
 ### Faster case navigation
 

@@ -18,15 +18,19 @@ refuses configurations that could automatically start external enrichment.
 
 ## Check for earlier cases
 
-- Open a finding for a file with a SHA-256 or for a client IP, or open the
-  corresponding object in the IOC Box. Choose **Check OpenCTI** to send that
-  single value to the displayed OpenCTI server. Reopening the item shows its
-  last saved result and check time locally.
-- In **Evidence & analysis**, select the OpenCTI option before starting a scan
-  to check all distinct finding IPs and available SHA-256 values afterward.
-  The option starts off for each run. Shellhound uses hashes already recorded
-  during analysis. Files without a usable hash are counted separately. An
-  incomplete local scan leaves individual checks available in review.
+- In **Settings → OpenCTI**, enable automatic checks for the displayed server
+  and save. Previously configured connections start with this option off.
+  Activation checks outstanding values in the current case. Other cases catch
+  up when opened or when new findings arrive. Generated training cases stay local.
+- As findings are saved, Shellhound checks each distinct client IP, IP recorded
+  in a finding's log observation, and verified file SHA-256 once per case and
+  connection. A file becomes eligible when its scan records the hash. Checks
+  reuse stored evidence and run independently of the local analysis.
+- Open the finding or its corresponding IOC to see the saved result and check
+  time. Hits and misses are both remembered. Use **Recheck** for that value,
+  or **Settings → OpenCTI → Recheck all** to refresh the current case's eligible
+  findings. With automatic checks off, **Check OpenCTI** remains available
+  for an explicit individual lookup.
 - Open a case link to review the earlier incident. The result distinguishes an
   exact observable with visible linked cases, a known observable with no visible
   case links, and no visible match. The token's permissions determine visibility.
@@ -41,14 +45,14 @@ database and travel with a case archive.
 ### Verify on your instance
 
 1. Pick an IP or SHA-256 already linked **directly** to an incident case your
-   token can read. Open that value in a different Shellhound case and choose
-   **Check OpenCTI**. Follow the returned link and confirm the expected case.
+   token can read. Enable automatic checks in a different Shellhound case with
+   a finding for that value. Open the finding and follow the returned case link.
 2. Try an observable with no case links, then a value absent from your instance.
    Check that the two results are distinct. An unavailable server or denied
    request should show an error.
-3. Run a small analysis with the OpenCTI option off, then on. Only the second
-   run should add an OpenCTI job. Check that the matching finding shows the
-   saved result and that its analyst decision is unchanged.
+3. Reopen the finding and repeat the analysis. An unchanged value should keep
+   its previous check time. Use **Recheck**, then **Recheck all**, and verify the
+   times update. Turn automatic checks off and confirm a new finding stays local.
 
 The query uses the observable's `containers` field to find incident cases that
 directly contain it. It was checked against the

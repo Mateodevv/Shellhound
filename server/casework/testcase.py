@@ -78,11 +78,25 @@ $summary = $total > 10 ? 'Several sample items' : 'A few sample items';
 '''
 
 
+TRAINING_MARKER = '.shellhound-training'
+TESTCASE_MANIFEST = 'testcase-generation.json'
+
+
+def is_generated_case(case):
+    evidence = case / 'training-evidence'
+    return ((case / TRAINING_MARKER).is_file()
+            or (case / TESTCASE_MANIFEST).is_file()
+            # Training cases created before the marker retain these fixtures.
+            or ((evidence / 'training-wordpress.sql').is_file()
+                and (evidence / 'webroot/uploads/training-shell.xml.php').is_file()))
+
+
 def generate(workspace, *, analyse=True, case=None):
     case = case or workspaces.create_case(workspace, 'Training case', notes=(
         'SYNTHETIC TRAINING DATA. The registered webroot, access logs and SQL dump are ready for review; '
         'then review findings and run Pattern Hunt. No analyst decisions have been made. '
         'Files contain harmless training markers, not malware.'))
+    (case / TRAINING_MARKER).touch()
     evidence = case / 'training-evidence'
     webroot = evidence / 'webroot'
     (webroot / 'uploads').mkdir(parents=True)
