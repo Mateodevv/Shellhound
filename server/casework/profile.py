@@ -91,9 +91,11 @@ def _validated(profile):
             result['hosting_providers'].append(value)
     if result['initial_access'] == 'unknown' and result['initial_access_status'] != 'unknown':
         raise ValueError('Choose an initial access route before assessing it')
-    result['initial_cve'] = _text(result['initial_cve'], 'initial CVE', 200).upper()
-    if result['initial_cve'] and not re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,}', result['initial_cve']):
-        raise ValueError('Initial CVE must use the format CVE-YYYY-NNNN (at least four sequence digits)')
+    result['initial_cve'] = _text(result['initial_cve'], 'initial CVE', 200)
+    if any(ord(char) < 32 or ord(char) == 127 for char in result['initial_cve']):
+        raise ValueError('Initial CVE must be single-line text')
+    if re.fullmatch(r'CVE-[0-9]{4}-[0-9]{4,}', result['initial_cve'], re.I):
+        result['initial_cve'] = result['initial_cve'].upper()
     for key in ("organization_id", "organization_name", "pseudonym", "city", "state"):
         result[key] = _text(result[key], key, 200)
     result["summary"] = _text(result["summary"], "summary", 10000)

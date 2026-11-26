@@ -98,10 +98,11 @@ it('restores and edits all company and incident fields without inferring missing
   expect(screen.getByRole('combobox', { name: 'Initial access assessment' })).toBeDisabled()
   const initialCve = screen.getByRole('textbox', { name: 'Initial CVE' })
   expect(initialCve).toHaveValue('CVE-2025-12345')
-  fireEvent.change(initialCve, { target: { value: 'cve-2026-123' } })
-  expect(initialCve).toBeInvalid()
-  fireEvent.change(initialCve, { target: { value: ' cve-2026-12345 ' } })
-  expect(initialCve).toHaveValue('CVE-2026-12345')
+  fireEvent.change(initialCve, { target: { value: 'wp2shell – Plugin flaw' } })
+  expect(initialCve).toHaveValue('wp2shell – Plugin flaw')
+  expect(initialCve).toBeValid()
+  fireEvent.change(initialCve, { target: { value: 'wp2shell – Plugin flaw with spaces' } })
+  expect(initialCve).toHaveValue('wp2shell – Plugin flaw with spaces')
   expect(initialCve).toBeValid()
   await screen.findByRole('option', { name: 'Managed hosting' })
   for (const [label, value] of [
@@ -118,7 +119,7 @@ it('restores and edits all company and incident fields without inferring missing
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/cases/context', expect.objectContaining({ profile: {
     ...profile, employee_count: '50-249', hosting_model: 'managed_hosting', hosting_providers: ['Saved Hosting', 'Synthetic Cloud'],
-    it_operating_model: 'external', initial_access: 'software_vulnerability', initial_access_status: 'suspected', initial_cve: 'CVE-2026-12345',
+    it_operating_model: 'external', initial_access: 'software_vulnerability', initial_access_status: 'suspected', initial_cve: 'wp2shell – Plugin flaw with spaces',
     spread: ['web_server', 'other_servers'], data_exfiltration: 'not_observed', attacker_encryption: 'not_investigated',
     discovered_by: 'soc_mdr', discovery_method: 'monitoring',
   } })))

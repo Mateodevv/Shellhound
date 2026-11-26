@@ -40,9 +40,9 @@ export function CaseContextFields({ profile, onChange }: {
         const choices = catalogue.data?.context_options?.[field] ?? []
         if (field === 'initial_cve') return <CtiField key={field} label={tr('caseContext.field.initial_cve')}>
           <input aria-label={tr('caseContext.field.initial_cve')} aria-describedby={initialCveHintId}
-            className={ctiInput} value={context.initial_cve} maxLength={200} placeholder="CVE-2026-12345"
-            pattern="CVE-[0-9]{4}-[0-9]{4,}" autoCapitalize="characters" spellCheck={false}
-            onChange={event => onChange(previous => ({ ...previous, initial_cve: event.target.value.trim().toUpperCase() }))} />
+            className={ctiInput} value={context.initial_cve} maxLength={200} placeholder="CVE-2026-12345 / wp2shell"
+            spellCheck={false}
+            onChange={event => onChange(previous => ({ ...previous, initial_cve: event.target.value }))} />
           <span id={initialCveHintId}>{tr('caseContext.initialCveHint')}</span>
         </CtiField>
         if (field === 'hosting_providers') return <fieldset key={field} className="min-w-0 space-y-2">

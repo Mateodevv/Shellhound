@@ -103,8 +103,7 @@ class CaseContextTests(unittest.TestCase):
                    {'hosting_providers': ['two\nlines']}, {'hosting_providers': ['x' * 201]},
                    {'hosting_providers': ['x'] * 21}, {'hosting_providers': [None]},
                    {'initial_access_status': 'confirmed'}, {'initial_cve': None}, {'initial_cve': ['CVE-2026-12345']},
-                   {'initial_cve': 'CVE-2026-123'}, {'initial_cve': 'CVE-2026-12345 extra'},
-                   {'initial_cve': 'CVE-２０２６-12345'}, {'initial_cve': 'CVE-2026-12345\nCVE-2026-99999'},
+                   {'initial_cve': 'invalid\x00text'}, {'initial_cve': 'invalid\ttext'}, {'initial_cve': 'CVE-2026-12345\nCVE-2026-99999'},
                    {'initial_cve': 'CVE-2026-' + '1' * 200}]
         for changes in invalid:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
@@ -115,6 +114,21 @@ class CaseContextTests(unittest.TestCase):
         self.assertEqual(['web_server'], saved['spread'])
         self.assertEqual('CVE-2026-12345', profile.validate({'initial_cve': ' cve-2026-12345 '})['initial_cve'])
         self.assertEqual('', profile.validate({'initial_cve': '  '})['initial_cve'])
+
+    def test_initial_vulnerability_free_text_survives_save_and_export(self):
+        text = 'wp2shell – Verdacht auf Plugin-Schwachstelle'
+        self.assertEqual(text, profile.validate({'initial_cve': '  ' + text + '  '})['initial_cve'])
+        with tempfile.TemporaryDirectory() as temporary:
+            case = workspace.create_case(Path(temporary), 'Synthetic', 'FREE-TEXT-1',
+                                         profile={'initial_cve': text})
+            saved = workspace.update_case(case, profile={'summary': 'Updated'})['profile']
+            self.assertEqual(text, saved['initial_cve'])
+            preview = graph.build_preview(case, {'ioc_ids': []})
+            self.assertEqual(text, preview['profile']['initial_cve'])
+            note = next(obj for obj in preview['objects'] if obj['type'] == 'note')
+            self.assertEqual(text, json.loads(note['content'])['initial_cve'])
+            self.assertIn('SH Initial-CVE: ' + text, preview['case_labels'])
+            self.assertFalse(any(obj['type'] == 'vulnerability' for obj in preview['objects']))
 
     def test_provider_redaction_and_owned_note_updates(self):
         with tempfile.TemporaryDirectory() as temporary:

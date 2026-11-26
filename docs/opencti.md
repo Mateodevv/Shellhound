@@ -75,8 +75,9 @@ within its group. New free-text values and cross-sector choices are rejected by
 the server. Existing custom values remain selectable as saved values; they are
 not renamed or deleted when the profile is edited.
 CVEs are managed in the IOC Box. The profile editor also has an optional
-**Initial CVE** field for the CVE associated with initial access. Enter one
-identifier such as `CVE-2026-12345`; lowercase input is normalized to uppercase.
+**Initial CVE** field accepts a CVE or a free-text description of the initial
+vulnerability, such as `CVE-2026-12345` or `wp2shell` (one line, up to 200 characters).
+Standalone CVE IDs are normalized to uppercase; free-text spelling is preserved.
 Leave it empty if unknown. No value is inferred from the IOC Box or older CVE
 lists, and entering a CVE does not confirm exploitation. Previously saved
 software and CVE profile details remain stored locally,
